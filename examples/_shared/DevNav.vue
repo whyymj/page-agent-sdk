@@ -20,11 +20,11 @@ const LINKS = [
   { href: '/examples/multi-agent-demo/', label: '多 Agent', match: (p: string) => p.startsWith('/examples/multi-agent-demo') },
   { href: '/examples/session-history-demo/', label: '会话历史', match: (p: string) => p.startsWith('/examples/session-history-demo') },
   { href: '/examples/human-confirm-demo/', label: '人工确认', match: (p: string) => p.startsWith('/examples/human-confirm-demo') },
-  { href: '/examples/precise-value-demo/', label: '精确值保护', match: (p: string) => p.startsWith('/examples/precise-value-demo') },
   { href: '/examples/planner-demo/', label: '规划反思', match: (p: string) => p.startsWith('/examples/planner-demo') },
   { href: '/examples/mcp-demo/', label: 'MCP', match: (p: string) => p.startsWith('/examples/mcp-demo') },
   { href: '/examples/proxy-demo/', label: '代理连接', match: (p: string) => p.startsWith('/examples/proxy-demo') },
   { href: '/examples/anthropic-demo/', label: 'Anthropic', match: (p: string) => p.startsWith('/examples/anthropic-demo') },
+  { href: '/examples/custom-dialog-demo/', label: '自定义对话框', match: (p: string) => p.startsWith('/examples/custom-dialog-demo') },
   { href: '/demo/plain.html', label: 'CDN', match: (p: string) => p.includes('plain') },
 ]
 const path = typeof location !== 'undefined' ? location.pathname : ''

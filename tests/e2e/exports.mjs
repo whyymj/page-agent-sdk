@@ -32,6 +32,8 @@ export async function run() {
       'jpEval', 'searchJson', 'runSandboxedScript',
       'toolError', 'zodError', 'jsonParseError', 'formatZodIssues',
       'ChatDialog', 'MessageContent', 'CodePreview', 'useChat',
+      'ChatHeader', 'ChatInput', 'MessageList', 'MessageRow', 'QueuedBar', 'ApprovalBar', 'ConflictBar', 'FocusBar',
+      'createChatContext', 'useChatContext',
     ]
     let allOk = true
     for (const fn of expectFns) {
@@ -39,6 +41,8 @@ export async function run() {
     }
     assert(allOk, `导出项齐全(${expectFns.length} 个函数/组件均导出)`)
     assert('CONTEXT_PRESETS' in mod && typeof mod.CONTEXT_PRESETS === 'object', 'CONTEXT_PRESETS 导出为对象')
+    // chatdialog-component-split:chatContextKey 是 Symbol(provide/inject 键);原子组件为 Vue DefineComponent(对象)
+    assert(typeof mod.chatContextKey === 'symbol', 'chatContextKey 导出为 symbol(provide/inject 注入键)')
   }
 
   console.log('[e2e:exports] 工具函数可用:isQuotaError / estimateTokens / jpEval / searchJson')

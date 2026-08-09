@@ -177,7 +177,7 @@ createChatSdk({
   /* ===== 容量与鲁棒性 ===== */
   vfs: { initialFiles?, maxBytes?, poolBytes? },      // 虚拟工作区(默认总上限 8MB;2.16.0+ 三池分池:large_results/drafts/userFiles 各自 LRU,`poolBytes` 单池配)
   maxSnapshots: 20,             // 主数据快照数(默认 20,FIFO)
-  maxMemoryRounds: 50,          // 内存保留对话轮数(默认 50,超限压缩为摘要;0 关闭)
+  maxMemoryRounds: 30,          // 内存保留对话轮数(默认 30,超限压缩为摘要;0 关闭)
   maxToolRounds: 10,            // 最多工具调用轮次(默认 10;只计真实工具轮,格式/verify 自纠不消耗;另有 maxIterations 总迭代硬上限防死循环)
   maxRetries: 2,                // 模型调用失败重试次数(默认 2;网络/429/5xx 重试)
   capabilities: { dataOps: true, fetch: true, planning: true, vfs: true, verify: true, domInspect: false, inspectEnv: true, draftWrite: false, workingMemory: true },  // 能力开关(默认全开;关掉省 token。dataOps/fetch 控制内置工具装载;verify 反向默认关需显式开;domInspect=get_dom 读渲染后 DOM(2.20+)默认关 opt-in;inspectEnv=inspect_env 读 window 环境/调试变量(2.20+)默认开排查用;draftWrite=draft_write/commit 分块构建大 JSON(2.20+)默认关 opt-in;workingMemory=跨压缩记忆(2.20+)默认开)
@@ -796,7 +796,7 @@ createChatSdk({ maxRetries: 0 })   // 关闭自动重试
   - `aggressive`:小模型/省上下文,阈值 0.3、窗口 0.3,召回 Top-5
   - `complex`(2.16.0+):多步复杂任务/大 JSON/长流程,比例制:窗口 0.6、触发阈值 0.7、召回 Top-5、开 LLM 摘要;`preserveLastToolResults` 默认含 `describe_data`/`read`/`query_data`/`search_data`(大 JSON 场景防字段描述被摘要丢)。详见下文「complex 预设 + vfs JSON 感知工具」
 - **摘要专用模型**:`summaryLlm` 可指定更便宜的小模型做摘要(不配用主 `llm`);`summaryTemperature`/`summaryMaxTokens`/`summaryTimeoutMs` 微调摘要 LLM。
-- **对话历史上限**:`maxMemoryRounds`(默认 50)超限把最旧轮次压缩为一条摘要 system 消息。
+- **对话历史上限**:`maxMemoryRounds`(默认 30)超限把最旧轮次压缩为一条摘要 system 消息。
 - **vfs 工作区上限**:`vfs.maxBytes`(默认 8MB,2.16.0+)超限按 LRU 淘汰最旧文件。2.16.0+ **三池分池**:`large_results/*`(工具结果外存,自动)、`drafts/*`(草稿)、`userFiles`(用户文件)各自独立 LRU 互不挤占(默认单池 2MB,large_results 4MB),`vfs.poolBytes` 可单池配,读写跨池透明。
 
 这些在 `storage: false`(纯内存)下也生效,防 OOM。
@@ -821,7 +821,7 @@ createChatSdk({ maxRetries: 0 })   // 关闭自动重试
 |---|---|---|---|---|
 | `capabilities.summarization` | 总开关 | 是否装载压缩中间件 | `true`(开) | 不压缩,只剩 `maxMemoryRounds` 硬截断(最旧轮次直接丢弃,无摘要) |
 | `contextOptions.windowRounds` | 每轮 LLM 输入层 | 滑动窗口保留最近 N 轮**原文**,更老的进摘要区 | 6(`auto` 预设) | 窗口=0 则全进摘要区(每轮都压缩,省上下文但丢原文细节) |
-| `maxMemoryRounds` | 持久化/内存层 | 对话历史**硬上限**,超限把最旧轮次压缩为一条摘要 system 消息 | 50 | 无上限(长会话 OOM 风险) |
+| `maxMemoryRounds` | 持久化/内存层 | 对话历史**硬上限**,超限把最旧轮次压缩为一条摘要 system 消息 | 30 | 无上限(长会话 OOM 风险) |
 
 **易混点澄清**:
 - `maxMemoryRounds` ≠ `windowRounds`:前者是「历史最多存多少轮」(超限压缩归档),后者是「每轮给 LLM 看多少轮原文」(更老的摘要化)。例:`maxMemoryRounds=50, windowRounds=6` = 最多存 50 轮历史,但每轮 LLM 只看最近 6 轮原文 + 更老的摘要。

@@ -56,8 +56,8 @@ export interface SessionSnapshot {
   mission?: Mission
   /** 跨压缩工作记忆 path/hash 备忘(context-persist-resilience:刷新后少重复 read;capabilities.workingMemory 开启时写入) */
   workingMemory?: WorkingMemory
-  /** 上下文聚焦焦点(focus-auto-switch:刷新/切会话后聚焦状态保留;capabilities.focus 开启时写入;null=清除标记,clearFocus 后 persist 覆盖防旧值残留) */
-  focus?: Focus | null
+  /** 上下文聚焦焦点(multi-focus:Focus[] 数组;null=清除标记;旧版本存单个 Focus 对象,applySnapshot 读时归一化 [focus]) */
+  focus?: Focus[] | null
 }
 
 /** 持久化的用户创建 skill(getContent 函数不可序列化,故 content 直接存字符串)

@@ -134,16 +134,49 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(!prompt.includes('焦点子树结构'), 'focus 无 schema → 跳过视野段(不渲染子树)')
   }
 
-  // ===== initialFocus 构造参数(focus-auto-switch Phase 3:子 agent 继承主焦点)=====
+  // ===== initialFocuses 构造参数(multi-focus:子 agent 继承主多焦点)=====
   {
     const schema = z.object({ components: z.array(z.object({ type: z.string() })) })
-    // 构造即带焦点(无需 setFocus)—— 子 agent 继承时用 initialFocus 一次到位
-    const mw = createFocusMiddleware({ getSchema: () => schema, initialFocus: { path: 'components.1', label: '导航' } })
-    assert(mw.getFocus()?.path === 'components.1', '✓ focus initialFocus → 构造即 getFocus 有值(无需 setFocus)')
+    // 构造即带焦点(无需 setFocus)—— 子 agent 继承时用 initialFocuses 一次到位
+    const mw = createFocusMiddleware({ getSchema: () => schema, initialFocuses: [{ path: 'components.1', label: '导航' }] })
+    assert(mw.getFocus()?.path === 'components.1', '✓ focus initialFocuses → 构造即 getFocus 有值(兼容返首个)')
+    assert(mw.getFocuses().length === 1 && mw.getFocuses()[0].path === 'components.1', '✓ focus initialFocuses → getFocuses 全量')
     const prompt = mw.augmentPrompt!({} as any)!
-    assert(prompt.includes('当前精修目标') && prompt.includes('components.1'), '✓ focus initialFocus → augmentPrompt 含目标段 + path(initialFocus 生效)')
-    // reset() 清空 initialFocus(切会话/清空)
+    assert(prompt.includes('当前精修目标') && prompt.includes('components.1'), '✓ focus initialFocuses → augmentPrompt 含目标段 + path')
+    // reset() 清空(切会话/清空)
     mw.reset()
-    assert(mw.getFocus() === undefined, '✓ focus initialFocus → reset() 后清空')
+    assert(mw.getFocus() === undefined && mw.getFocuses().length === 0, '✓ focus initialFocuses → reset() 后清空')
+  }
+
+  // ===== multi-focus:addFocus 累积 + removeFocus 移除 + 多前缀越界放行 =====
+  {
+    const schema = z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), props: z.object({ title: z.string() }).optional() })) })
+    const mw = createFocusMiddleware({ getSchema: () => schema })
+    const callNext = async () => ({ content: 'ok', status: 'done' as const })
+    // addFocus 累积两个焦点
+    mw.addFocus({ path: 'components.0', label: '导航' })
+    mw.addFocus({ path: 'components.2', label: '卡片' })
+    assert(mw.getFocuses().length === 2, '✓ multi-focus addFocus 累积 → getFocuses 含 2 个')
+    // 多前缀:写任一焦点子树放行
+    const w0 = await mw.wrapToolCall!({ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.0.props.title', value: 'a' } } } as any, callNext)
+    assert(w0.status === 'done', '✓ multi-focus 写 components.0(焦点之一)→ 放行')
+    const w2 = await mw.wrapToolCall!({ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.2.props.title', value: 'b' } } } as any, callNext)
+    assert(w2.status === 'done', '✓ multi-focus 写 components.2(另一焦点)→ 放行')
+    // 写不在任一焦点 → PATH_DENIED
+    const w1 = await mw.wrapToolCall!({ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.1.props.title', value: 'c' } } } as any, callNext)
+    assert(w1.status === 'error' && w1.content.includes('PATH_DENIED'), '✓ multi-focus 写 components.1(非任一焦点)→ PATH_DENIED')
+    // augmentPrompt 列出所有焦点
+    const prompt = mw.augmentPrompt!({} as any)!
+    assert(prompt.includes('components.0') && prompt.includes('components.2'), '✓ multi-focus augmentPrompt 列出所有焦点 path')
+    assert(prompt.includes('2 个聚焦子树'), '✓ multi-focus augmentPrompt 含焦点数提示')
+    // removeFocus 移除单个 → 写该子树重新越界
+    mw.removeFocus('components.0')
+    assert(mw.getFocuses().length === 1, '✓ multi-focus removeFocus → 剩余 1 个')
+    const w0After = await mw.wrapToolCall!({ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.0.props.title', value: 'd' } } } as any, callNext)
+    assert(w0After.status === 'error', '✓ multi-focus removeFocus(components.0)后写 components.0 → 越界拒')
+    // addFocus 去重:同 path 更新 label(不新增)
+    mw.addFocus({ path: 'components.2', label: '新标签' })
+    assert(mw.getFocuses().length === 1, '✓ multi-focus addFocus 同 path → 去重更新(不新增)')
+    assert(mw.getFocuses()[0].label === '新标签', '✓ multi-focus addFocus 同 path → 更新 label')
   }
 }

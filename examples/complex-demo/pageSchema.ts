@@ -190,6 +190,7 @@ const navbarSchema = z.object({
   props: z.object({
     logo: z.string().describe('logo 图片地址'),
     title: z.string().optional().describe('站点标题(可选)'),
+    trackId: z.string().optional().describe('埋点追踪 ID(系统冻结保护:read 返占位符,真实值不进 AI 消息流;write 改此字段被拒,只读)'),
     menu: z.array(z.object({ label: z.string().describe('菜单项文字'), link: z.string().optional().describe('跳转链接(可选)') })).describe('菜单项列表'),
   }).describe('导航栏配置'),
 })
@@ -439,7 +440,7 @@ export type PageData = z.infer<typeof pageSchema>
 export const initialPage: PageData = {
   title: '🔥 数码狂欢节 · 年中盛典',
   components: [
-    { type: 'navbar', props: { logo: 'https://picsum.photos/seed/logo/120/40', title: '数码专区', menu: [{ label: '首页', link: '#' }, { label: '手机', link: '#' }, { label: '电脑', link: '#' }, { label: '家电', link: '#' }, { label: '配件', link: '#' }] } },
+    { type: 'navbar', props: { logo: 'https://picsum.photos/seed/logo/120/40', title: '数码专区', trackId: 'trk_a8f3k9x2m7', menu: [{ label: '首页', link: '#' }, { label: '手机', link: '#' }, { label: '电脑', link: '#' }, { label: '家电', link: '#' }, { label: '配件', link: '#' }] } },
     { type: 'noticeBar', props: { text: '🎉 年中盛典 6.18-6.20,全场低至 5 折,满 3000 减 300,会员再享折上折!' } },
     { type: 'breadcrumb', props: { items: [{ label: '首页', link: '#' }, { label: '数码', link: '#' }, { label: '狂欢节' }] } },
     { type: 'banner', props: { image: 'https://picsum.photos/seed/banner/1200/200', link: '#', text: '年中盛典 低至 5 折' } },

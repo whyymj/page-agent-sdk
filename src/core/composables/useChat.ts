@@ -13,6 +13,7 @@
  */
 import { reactive, ref } from 'vue'
 import type { AgentMessage, AgentState, StreamHandler, ToolStep } from '../types'
+import type { Focus } from '../harness/state'
 import { isAbort } from '../harness/retry'
 
 type FetchFn = (messages: AgentMessage[], signal?: AbortSignal) => Promise<string>
@@ -89,8 +90,8 @@ export function useChat(
     })
   }
 
-  function addMessage(role: AgentMessage['role'], content: string) {
-    state.messages.push({ role, content, timestamp: Date.now() })
+  function addMessage(role: AgentMessage['role'], content: string, focuses?: Focus[]) {
+    state.messages.push({ role, content, timestamp: Date.now(), ...(focuses && focuses.length ? { focuses } : {}) })
     // 新消息默认跟随到底部(addMessage 用于 user 消息 + 非流式 assistant 回复)
     isStickyBottom.value = true
     scrollToBottom()
@@ -225,7 +226,7 @@ export function useChat(
    * 发送消息:添加用户消息 → 跑 assistant 生成。
    * 每次新建 AbortController;stop() 可中止,abort 不计入 error。
    */
-  async function sendMessage(content: string) {
+  async function sendMessage(content: string, focuses?: Focus[]) {
     if (!content.trim()) return
     // 生成中(loading):入排队区(不先进 messages,避免多条排队时打乱"最后 user"定位);生成完 finishRound 依次自动执行。
     // 修 bug:旧版 loading 时直接 return 不发,但 ChatDialog 已清空 inputText → 输入内容丢失 + 无反馈。排队区可撤销/修改
@@ -233,7 +234,7 @@ export function useChat(
       queuedTasks.value.push(content.trim())
       return
     }
-    addMessage('user', content.trim())
+    addMessage('user', content.trim(), focuses)
     state.loading = true
     state.error = null
     currentController = new AbortController()

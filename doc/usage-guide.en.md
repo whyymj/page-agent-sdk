@@ -169,7 +169,7 @@ createChatSdk({
   summaryLlm: { ... },             // summary-dedicated LLM (defaults to main llm)
   // (2.33+) agent-driven compression (opt-in): enable + summaryLlm available → per-turn shouldTriggerCompression gate → decide (inspect_context tool loop) → compress with decision; failure degrades to static
   capabilities: { agentCompression: true },  // requires summarization; decisionTimeoutMs (default 6s) / decisionMaxTokens (default 2048) configurable
-  maxMemoryRounds: 50,             // dialog history memory cap (0 disables trim)
+  maxMemoryRounds: 30,             // dialog history memory cap (0 disables trim)
   vfs: { maxBytes: 8*1024*1024, poolBytes? },  // workspace cap (default 8MB; 2.16.0+ three pools: large_results/drafts/userFiles, each its own LRU)
 
   // persistence
@@ -628,7 +628,7 @@ defineSkill({
 ### 6.8 Context & memory caps
 
 - 4-layer adaptive compression (`contextPreset`: auto/conservative/aggressive/complex)
-- vfs `maxBytes` (default 8MB; 2.16.0+ three independent pools) LRU evict; dialog `maxMemoryRounds` (default 50) trim
+- vfs `maxBytes` (default 8MB; 2.16.0+ three independent pools) LRU evict; dialog `maxMemoryRounds` (default 30) trim
 
 #### complex preset + vfs JSON-aware tools (2.16.0+)
 
@@ -808,7 +808,7 @@ createChatSdk({
 
 ### 6.13b Context archival `context_trimmed` (rescue content about to be deleted when the conversation grows long, context-persist-resilience)
 
-When the conversation exceeds `maxMemoryRounds` (default 50 rounds), the AI deletes the oldest rounds to free memory (originals gone forever, only a summary kept). If you need audit/compliance/backup, subscribe to `context_trimmed`: right before deletion it hands you the full originals (including referenced vfs large results) + the replacement summary — store them to your own server if you want (the SDK doesn't hoard; default deletion behavior is unchanged).
+When the conversation exceeds `maxMemoryRounds` (default 30 rounds), the AI deletes the oldest rounds to free memory (originals gone forever, only a summary kept). If you need audit/compliance/backup, subscribe to `context_trimmed`: right before deletion it hands you the full originals (including referenced vfs large results) + the replacement summary — store them to your own server if you want (the SDK doesn't hoard; default deletion behavior is unchanged).
 
 ```ts
 createChatSdk({

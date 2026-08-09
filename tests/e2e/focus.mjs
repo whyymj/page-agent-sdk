@@ -54,6 +54,21 @@ export async function run() {
   assert(sdk.getFocus() === undefined, 'clearFocus → getFocus undefined')
   assert(sdk.inspect().focus === undefined, 'clearFocus → inspect().focus undefined')
 
+  // multi-focus:addFocus 累积 + getFocuses + removeFocus(兼容:getFocus 返首个)
+  assert(sdk.getFocuses().length === 0, 'multi-focus getFocuses 初始 → 空数组')
+  sdk.addFocus({ path: 'components.0', label: '导航' })
+  assert(sdk.getFocuses().length === 1, 'multi-focus addFocus → getFocuses 累积 1 个')
+  sdk.addFocus({ path: 'components.1', label: '主视觉' })
+  assert(sdk.getFocuses().length === 2, 'multi-focus addFocus 再加 → 2 个')
+  assert(sdk.getFocus()?.path === 'components.0', 'multi-focus getFocus 兼容 → 返首个')
+  assert(sdk.addFocus({ path: 'nope' }).ok === false, 'multi-focus addFocus 非法 path → {ok:false}')
+  assert(sdk.getFocuses().length === 2, 'multi-focus addFocus 非法 → 焦点数不变')
+  sdk.addFocus({ path: 'components.0', label: '新导航' })
+  assert(sdk.getFocuses().length === 2 && sdk.getFocuses()[0].label === '新导航', 'multi-focus addFocus 同 path → 去重更新 label')
+  assert(Array.isArray(sdk.inspect().focuses) && sdk.inspect().focuses.length === 2, 'multi-focus inspect().focuses → 数组 2 个')
+  sdk.removeFocus('components.0')
+  assert(sdk.getFocuses().length === 1 && sdk.getFocus()?.path === 'components.1', 'multi-focus removeFocus → 剩余 components.1')
+
   // advanced 工具含 set_focus/clear_focus(source=builtin)
   const tools = sdk.inspect().tools
   const sf = tools.find((t) => t.name === 'set_focus')
@@ -62,6 +77,10 @@ export async function run() {
   assert(!!cf, 'advanced → tools 含 clear_focus')
   assert(sf?.source === 'builtin', 'set_focus → source=builtin')
   assert(cf?.source === 'builtin', 'clear_focus → source=builtin')
+  const af = tools.find((t) => t.name === 'add_focus')
+  const rf = tools.find((t) => t.name === 'remove_focus')
+  assert(!!af && af.source === 'builtin', 'advanced → tools 含 add_focus(source=builtin)')
+  assert(!!rf && rf.source === 'builtin', 'advanced → tools 含 remove_focus(source=builtin)')
   // middleware 含 focus
   assert(sdk.inspect().middleware.includes('focus'), 'inspect().middleware → 含 focus')
   sdk.unmount()
@@ -122,6 +141,11 @@ export async function run() {
   sdkP.setFocus({ path: 'components.0' })
   try { sdkP.setLlm(FAKE_LLM) } catch {}
   assert(sdkP.getFocus()?.path === 'components.0', 'persist: setLlm 后 focus 保留(setLlm 不碰 focusMw)')
+  // multi-focus 持久化:addFocus 累积 + switchSession 往返(focus kind 存数组,applySnapshot 归一化读)
+  sdkP.addFocus({ path: 'components.1', label: '主视觉' })
+  await sdkP.switchSession()
+  await sdkP.switchSession(origId)
+  assert(sdkP.getFocuses().length === 2, 'persist: multi-focus switchSession 往返 → focuses 数组还原 2 个')
   sdkP.unmount()
 
   return { pass: ctx.pass, fail: ctx.fail }

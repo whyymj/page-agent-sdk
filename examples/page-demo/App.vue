@@ -33,6 +33,30 @@ const tick = ref(0)
 const root = ref<HTMLElement>()
 let agent: ChatSdk | null = null
 
+// 两步拾取选中态(第 1 步:点组件 → 浮层边框 + 加入聊天按钮;第 2 步:点按钮才聚焦)
+const selectedPath = ref<string | null>(null)
+/** 第 1 步:点组件本体 → 仅选中(显示边框 + 按钮,不聚焦) */
+function onSelectComponent(path: string): void {
+  selectedPath.value = path
+}
+/** 第 2 步:点「💬 加入聊天」按钮 → 追加聚焦(multi-focus 累积,可同时聚焦多个组件;写越界被拒) */
+function onFocusComponent(path: string): void {
+  if (!agent) return
+  const m = /^components\.(\d+)$/.exec(path)
+  const idx = m ? Number(m[1]) : -1
+  const comp = pageObj.components[idx]
+  const label = comp?.type ? `${comp.type} #${idx}` : path
+  const r = agent.addFocus({ path, label }) // multi-focus:累积追加(非覆盖),多次加入聚焦多个组件
+  if (r?.ok) selectedPath.value = null // 加入成功 → 清选中态(边框消失,输入框 chip 接管)
+}
+/** chip 点击回调:点输入框内聚焦 chip → 滚动到对应组件 + PickOverlay 边框短暂高亮(回看聚焦对象) */
+function onFocusChipClick(path: string): void {
+  const el = document.querySelector(`[data-path="${path}"]`) as HTMLElement | null
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  selectedPath.value = path // PickOverlay 显示边框
+  setTimeout(() => { if (selectedPath.value === path) selectedPath.value = null }, 2000)
+}
+
 /**
  * 自定义中间件示例:对话埋点
  * 演示 afterModel / wrapToolCall / afterAgent 三个观察钩子。
@@ -91,6 +115,7 @@ onMounted(() => {
     // ↓ 非 reactive bind:监听 data_change 触发 tick,:key 强制画布重渲染读最新 page
     onEvent(e) {
       if (e.type === 'data_change') tick.value++
+      else if (e.type === 'focus_chip_click') onFocusChipClick(e.path) // chip 点击 → 滚动到组件 + 边框闪
     },
     debug: true,
     dialog: {
@@ -109,7 +134,7 @@ onUnmounted(() => agent?.unmount())
   <div class="layout">
     <aside class="pane pane-left">
       <EditableBanner title="AI 可编辑页面" hint="Agent 经 write 修改此区">
-        <PageRenderer :key="tick" :page="pageObj" />
+        <PageRenderer :key="tick" :page="pageObj" :selected-path="selectedPath" @select="onSelectComponent" @focus="onFocusComponent" />
       </EditableBanner>
     </aside>
     <section ref="root" class="pane pane-right"></section>

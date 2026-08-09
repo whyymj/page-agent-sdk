@@ -183,4 +183,22 @@ test.describe('page-demo: read → write → read', () => {
       .join('\n')
     expect(toolContents, 'write_todos 结果含框架生成的 id t-1').toContain('t-1')
   })
+
+  /**
+   * 两步拾取(focus-context):点组件 → 选中边框 + 加入聊天按钮 → 点按钮 → 聚焦 chip。
+   * 验证 page-demo 扁平 v-if 渲染 + PickOverlay 浮层 + setFocus 端到端(纯前端交互,不需 mock LLM)。
+   */
+  test('focus: 两步拾取 → 选中边框 → 加入聊天 → 聚焦 chip → ✕ 退出', async ({ page }) => {
+    // 第 1 步:点第一个组件(components.0 = heading)→ 浮层边框 + 「💬 加入聊天」按钮
+    await page.click('[data-path="components.0"]')
+    await expect(page.locator('.pick-overlay')).toBeVisible()
+    // 第 2 步:点「💬 加入聊天」→ setFocus → 焦点条 chip 出现(边框随选中态清除消失)
+    await page.click('.pick-overlay__btn')
+    const bar = page.locator('.focus-chip')
+    await expect(bar).toBeVisible()
+    await expect(bar).toContainText('components.0')
+    // ✕ 退出 → chip 消失(恢复全量可操作范围)
+    await page.click('[data-test="focus-clear"]')
+    await expect(bar).toHaveCount(0)
+  })
 })

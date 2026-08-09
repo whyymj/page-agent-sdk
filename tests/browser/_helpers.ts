@@ -195,6 +195,10 @@ export async function clearChat(page: Page): Promise<void> {
     const confirm = btns.find((b) => (b.textContent || '').trim() === '确认' && !b.disabled)
     if (confirm) confirm.click()
   }).catch(() => {})
+  // 兜底关闭「更多」下拉/历史面板:点 more-overlay 触发其 @click(moreOpen=false/historyOpen=false)。
+  // 若「清空对话」按钮不存在(无消息时下拉无该项,上面 clickByTitle catch 吞掉),下拉仍打开 →
+  // 全屏遮罩(position:fixed inset:0 z-index:15)残留会拦截后续 pane-left 交互(focus 测试点组件暴露)。
+  await page.evaluate(() => { const o = document.querySelector('.chat-dialog .more-overlay') as HTMLElement | null; if (o) o.click() }).catch(() => {})
   await clearStorage(page)  // 清持久化,防跨 spec/同 id(如 page-demo + error-recovery 共用 page-demo demo)storage 污染(followup P0)
   await page.waitForTimeout(200)
 }

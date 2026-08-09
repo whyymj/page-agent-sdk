@@ -218,7 +218,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, useChat
 | **上下文** | `contextPreset` | `'auto' \| 'conservative' \| 'aggressive' \| 'complex'` · 默认 `auto` | 压缩预设档位（`complex` 面向多步 / 大 JSON / 长流程编排任务） |
 | | `contextOptions` | `Partial<ContextManagerOptions> \| false` | 细参覆盖（`false` 关压缩）。含 `preserveLastToolResults`（默认 `['describe_data','describe_data']`——压缩摘要里保留字段说明） |
 | | `summaryLlm` | `BaseChatModel \| LLMConfig` | 摘要专用 LLM（不配用主 `llm`） |
-| | `maxMemoryRounds` | `number` · 默认 `50` | 对话历史内存上限轮次（`0` 关裁剪） |
+| | `maxMemoryRounds` | `number` · 默认 `30` | 对话历史内存上限轮次（`0` 关裁剪） |
 | | `vfs` | `{initialFiles?,maxBytes?}` · 默认 4MB | 内存工作区上限（超限 LRU 淘汰） |
 | **持久化** | `storage` | `'indexed' \| 'session' \| 'local' \| 'memory' \| 配置 \| false` · 默认关 | 赋值开启；多 agent 靠 `id` 隔离 |
 | | `session` | `{id?,autoResume?,title?}` | 会话控制 |

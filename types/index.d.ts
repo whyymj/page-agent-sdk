@@ -1,4 +1,4 @@
-import { DefineComponent, Ref } from 'vue';
+import { DefineComponent, InjectionKey, Ref } from 'vue';
 export { z } from 'zod';
 
 // 代理连接模块(防 apiKey 泄露:proxy 代理模式 / direct 直连模式)
@@ -47,6 +47,8 @@ export interface AgentMessage {
   timestamp: number;
   reasoning?: string;
   steps?: ToolStep[];
+  /** user 消息发送时的焦点快照(multi-focus;MessageRow 渲染 🎯 chip 标注背景组件限制,持久化随 messages) */
+  focuses?: Focus[];
 }
 
 export interface AgentConfig {
@@ -93,7 +95,8 @@ export type SdkEvent =
   | { type: 'usage'; round: number; usage: TokenUsage; cumulative: TokenUsage }
   | { type: 'error'; message: string; severity?: 'recoverable' | 'fatal' | 'observable'; code?: string; context?: unknown }
   | { type: 'trace'; spans: TraceSpan[]; metrics: TraceMetrics }
-  | { type: 'context_trimmed'; dropped: { round: number; user: unknown; assistant: unknown[]; steps: unknown[] }[]; vfsResults: Record<string, string>; summary: string; reason: string };
+  | { type: 'context_trimmed'; dropped: { round: number; user: unknown; assistant: unknown[]; steps: unknown[] }[]; vfsResults: Record<string, string>; summary: string; reason: string }
+  | { type: 'focus_chip_click'; path: string; label?: string };
 
 /** token 用量(OpenAI 协议字段名) */
 export interface TokenUsage {
@@ -131,13 +134,59 @@ export interface DebugLog {
   data: any;
 }
 
+/** ChatDialog 区块显隐控制(chatdialog-component-split):键=区块,false 关闭整块(含 slot);默认 undefined=全开 */
+export interface ChatDialogSections {
+  header?: boolean;
+  focus?: boolean;
+  body?: boolean;
+  queued?: boolean;
+  approval?: boolean;
+  conflict?: boolean;
+  footer?: boolean;
+  debug?: boolean;
+  skill?: boolean;
+}
+
 export interface ChatDialogProps {
   fetchResponse?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<string>;
   fetchStream?: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>;
   title?: string;
   placeholder?: string;
   debugLogs?: DebugLog[];
+  initialMessages?: AgentMessage[];
+  onPersist?: (messages: AgentMessage[]) => void;
+  onClear?: () => void;
   getInfo?: () => AgentInfo;
+  onUndo?: () => boolean;
+  canUndo?: () => boolean;
+  showAvatar?: boolean;
+  showTyping?: boolean;
+  pendingConflict?: PendingConflict | null;
+  onResolveConflict?: (action: ConflictResolution['action']) => void;
+  infoTick?: Ref<number>;
+  getSkillContent?: (name: string) => Promise<string | null>;
+  onAddSkill?: (skill: { name: string; description: string; getContent: () => string }) => void;
+  onRemoveSkill?: (name: string) => boolean;
+  getUserSkillNames?: () => string[];
+  onGetSkill?: (name: string) => { name: string; description: string; content: string } | undefined;
+  drawer?: boolean;
+  drawerWidth?: number | string;
+  drawerHidden?: boolean;
+  inputRows?: number;
+  sessions?: SessionMeta[];
+  currentSessionId?: string;
+  onNewSession?: () => void;
+  onOpenSession?: (sessionId: string) => void;
+  onRemoveSession?: (sessionId: string) => void;
+  getFocus?: () => Focus | undefined;
+  onSetFocus?: (focus: Focus) => { ok: boolean; error?: string };
+  onClearFocus?: () => void;
+  getFocuses?: () => Focus[];
+  onAddFocus?: (focus: Focus) => { ok: boolean; error?: string };
+  onRemoveFocus?: (path: string) => void;
+  onFocusChipClick?: (focus: Focus) => void;
+  /** 区块显隐(chatdialog-component-split);键=false 关闭整块(含 slot),默认全开 */
+  sections?: ChatDialogSections;
 }
 
 export interface ToolInfo { name: string; description: string; schema?: unknown; source?: string }
@@ -191,8 +240,10 @@ export interface AgentInfo {
   actions?: Record<string, { description: string; hasParams: boolean }>;
   /** 跨压缩工作记忆(workingMemory 中间件;pin 最近 read/query/search 定位 path + read hash,≤10 LRU) */
   workingMemory?: WorkingMemory;
-  /** 当前上下文聚焦焦点(focus 中间件;指定组件精修;未聚焦/未开启 → undefined) */
+  /** 当前上下文聚焦焦点(focus 中间件;兼容:首个;未聚焦/未开启 → undefined) */
   focus?: Focus;
+  /** 全部聚焦焦点(multi-focus;空数组=未聚焦) */
+  focuses?: Focus[];
   subagent: SubagentInfo;
   verify?: { enabled: boolean; maxAttempts: number; adversarial: boolean };
   mcp?: { servers: { name: string; url: string; toolCount: number }[] };
@@ -252,6 +303,55 @@ export declare function createContextInspectorMiddleware(opts?: ContextInspector
 export interface McpServerConfig { transport: 'http' | 'sse' | 'websocket'; url: string; name?: string; requestInit?: any; }
 
 export declare const ChatDialog: DefineComponent<ChatDialogProps>;
+// chatdialog-component-split:原子组件(可拼装/替换,经 ChatDialog 具名 slot 或 L2 自建根组件 provide ctx 后拼装)
+export declare const ChatHeader: DefineComponent<any>;
+export declare const ChatInput: DefineComponent<any>;
+export declare const MessageList: DefineComponent<any>;
+export declare const MessageRow: DefineComponent<any>;
+export declare const QueuedBar: DefineComponent<any>;
+export declare const ApprovalBar: DefineComponent<any>;
+export declare const ConflictBar: DefineComponent<any>;
+export declare const FocusBar: DefineComponent<any>;
+// chatContext 枢纽(L2 自建根组件调 createChatContext + provide(chatContextKey);原子组件 useChatContext inject)
+export interface ChatContextOptions {
+  fetchResponse?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<string>;
+  fetchStream?: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>;
+  messages?: AgentMessage[];
+  onPersist?: (messages: AgentMessage[]) => void;
+  onClear?: () => void;
+  getInfo?: () => AgentInfo;
+  canUndo?: () => boolean;
+  onUndo?: () => boolean;
+}
+export interface ChatContext {
+  /** 对话状态 + 操作(useChat 返回 14 项) */
+  readonly chat: any;
+  inputText: Ref<string>;
+  isExpanded: Ref<boolean>;
+  toggleCollapse: () => void;
+  debugVisible: Ref<boolean>;
+  openDebug: () => void;
+  closeDebug: () => void;
+  skillVisible: Ref<boolean>;
+  openSkill: () => void;
+  closeSkill: () => void;
+  reasoningExpanded: Ref<Record<number, boolean>>;
+  isReasoningExpanded: (idx: number) => boolean;
+  toggleReasoning: (idx: number) => void;
+  copiedMsg: Ref<boolean>;
+  copyMessage: (text: string) => void;
+  summary: Readonly<Ref<{ mcp: number; tools: number }>>;
+  canUndo: Readonly<Ref<boolean>>;
+  undo: () => void;
+  formatTime: (timestamp: number) => string;
+  send: () => void;
+  keydown: (e: KeyboardEvent) => void;
+  editQueued: (idx: number) => void;
+  isPendingAssistant: (idx: number) => boolean;
+}
+export declare const chatContextKey: InjectionKey<ChatContext>;
+export declare function createChatContext(opts?: ChatContextOptions): ChatContext;
+export declare function useChatContext(): ChatContext;
 export declare const MessageContent: DefineComponent<any>;
 export declare const CodePreview: DefineComponent<any>;
 export declare const SkillPanel: DefineComponent<any>;
@@ -498,8 +598,8 @@ export interface SessionSnapshot {
   mission?: Mission;
   /** 跨压缩工作记忆 path/hash 备忘(context-persist-resilience:刷新后少重复 read;capabilities.workingMemory 开启时写入) */
   workingMemory?: WorkingMemory;
-  /** 上下文聚焦焦点(focus-auto-switch:刷新/切会话后聚焦状态保留;capabilities.focus 开启时写入;null=清除标记) */
-  focus?: Focus | null;
+  /** 上下文聚焦焦点(multi-focus:Focus[] 数组;null=清除标记;旧版本单个 applySnapshot 读时归一化) */
+  focus?: Focus[] | null;
 }
 export type StorageEvent =
   | { type: 'degraded'; reason: string }
@@ -740,11 +840,17 @@ export interface ChatSdk {
   getMission(): Mission | undefined;
   /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
   setMission(mission: Partial<Mission>): void;
-  /** 读取当前聚焦焦点(指定组件精修;未聚焦 / capabilities.focus:false → undefined) */
+  /** 读取当前聚焦焦点(兼容:返回首个;未聚焦 / capabilities.focus:false → undefined) */
   getFocus(): Focus | undefined;
-  /** 设置聚焦焦点(path 经 getSchemaAtPath 校验在 schema 内才可聚焦);非法 path 返回 {ok:false,error};capabilities.focus:false 返回 {ok:false} 不抛 */
+  /** 读取全部聚焦焦点(multi-focus;空数组=未聚焦;capabilities.focus:false → []) */
+  getFocuses(): Focus[];
+  /** 设置聚焦焦点(替换全部;path 经 getSchemaAtPath 校验);非法 path 返回 {ok:false,error};capabilities.focus:false 返回 {ok:false} 不抛 */
   setFocus(focus: Focus): { ok: boolean; error?: string };
-  /** 清除聚焦焦点(退出精修模式,恢复全量可操作范围) */
+  /** 追加聚焦焦点(multi-focus 累积,去重 by path;校验同 setFocus);capabilities.focus:false 返回 {ok:false} */
+  addFocus(focus: Focus): { ok: boolean; error?: string };
+  /** 移除单个聚焦焦点(by path);capabilities.focus:false → no-op */
+  removeFocus(path: string): void;
+  /** 清除全部聚焦焦点(退出精修模式,恢复全量可操作范围) */
   clearFocus(): void;
   /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 主数据 + vfs + todos);需开启 checkpoint,无可用返回 false */
   restoreLastCheckpoint(): boolean;

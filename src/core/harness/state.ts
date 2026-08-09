@@ -98,8 +98,11 @@ export interface HarnessState {
   mission?: Mission
   /** 跨压缩工作记忆(workingMemory 中间件;经 augmentPrompt 每轮注入 system,天然跨压缩保留) */
   workingMemory?: WorkingMemory
-  /** 上下文聚焦焦点(focus 中间件;经 augmentPrompt 注入目标+子树 schema,wrapToolCall 拦写越界;天然跨压缩保留) */
+  /** 上下文聚焦焦点(focus 中间件;经 augmentPrompt 注入目标+子树 schema,wrapToolCall 拦写越界;天然跨压缩保留)。
+   *  focus=首个(兼容旧读 state.focus),focuses=全量数组(multi-focus) */
   focus?: Focus
+  /** 多焦点全量(multi-focus;beforeAgent 同时注入 focus=focuses[0] 兼容旧消费者) */
+  focuses?: Focus[]
 }
 
 export function createInitialState(): HarnessState {

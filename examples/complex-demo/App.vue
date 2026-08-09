@@ -50,14 +50,28 @@ function resetPage(): void {
   pageObj.components.splice(0, pageObj.components.length, ...initialPage.components.map((c) => ({ ...c })))
 }
 
-/** 点击组件拾取聚焦(focus-context):点左侧组件 → agent 聚焦该子树精修(写越界被拒) */
-function onPickComponent(path: string): void {
+// 两步拾取选中态(第 1 步:点组件 → 浮层边框 + 加入聊天按钮;第 2 步:点按钮才聚焦)
+const selectedPath = ref<string | null>(null)
+/** 第 1 步:点组件本体 → 仅选中(显示边框 + 按钮,不聚焦) */
+function onSelectComponent(path: string): void {
+  selectedPath.value = path
+}
+/** 第 2 步:点「💬 加入聊天」按钮 → 追加聚焦(multi-focus 累积,可同时聚焦多个组件;写越界被拒) */
+function onFocusComponent(path: string): void {
   if (!agent) return
   const m = /^components\.(\d+)$/.exec(path)
   const idx = m ? Number(m[1]) : -1
   const comp = pageObj.components[idx]
   const label = comp?.type ? `${comp.type} #${idx}` : path
-  agent.setFocus({ path, label })
+  const r = agent.addFocus({ path, label }) // multi-focus:累积追加(非覆盖),多次加入聚焦多个组件
+  if (r?.ok) selectedPath.value = null // 加入成功 → 清选中态(边框消失,输入框 chip 显示路径)
+}
+/** chip 点击回调:点输入框内聚焦 chip → 滚动到对应组件 + PickOverlay 边框短暂高亮(回看聚焦对象) */
+function onFocusChipClick(path: string): void {
+  const el = document.querySelector(`[data-path="${path}"]`) as HTMLElement | null
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  selectedPath.value = path // PickOverlay 显示边框
+  setTimeout(() => { if (selectedPath.value === path) selectedPath.value = null }, 2000)
 }
 
 const root = ref<HTMLElement>()
@@ -82,7 +96,9 @@ onMounted(() => {
     // 默认 true:自定义 systemPrompt 末尾用 '---' 分隔线自动追加 reliableWriteRules(改前先 read、字段以 describe 为准、写错看校验错误重试、优先增量 patch);设 false 关闭;不传 systemPrompt 用默认 prompt 时已内置
     appendReliableWriteRules: true,
     // data 单主对象配置:schema + bind 直连 reactive 对象,工具直接读写 bind(集成方自己挂 window.page 供 PageRenderer 读)
-    data: { schema: pageSchema, bind: pageObj },
+    // resources:freeze 保护 navbar(components.0)的 trackId —— read 返占位符(精确值不进 AI 消息流),write 改 trackId 被拒(演示精确值保护与两步拾取协同:聚焦 navbar → read 占位 → 改不动)。
+    // ⚠️ 路径按位置索引(非 id/type 锚定):若 agent 增删组件致 navbar 移出 components.0,保护会跟随索引漂移到新占据 0 号的组件。演示用;生产场景应按 id/type 动态定位路径。
+    data: { schema: pageSchema, bind: pageObj, resources: [{ path: 'components.0.props.trackId', mode: 'freeze' as const }] },
     // 胜任自动化:agent 能读渲染后 DOM(get_dom,看修改是否生效)+ 触发宿主页面动作(保存/发布,与配置面板同等)
     capabilities: { domInspect: true, draftWrite: true },
     toolMode: 'advanced', // complex 场景:暴露全工具 + draft_write/draft_commit(分块生成大页面;真 LLM 实测用)
@@ -117,6 +133,7 @@ onMounted(() => {
     ],
     // 预声明子 agent:配空数组占位,启用 SubagentsController(供动态重配置面板 addSubagent/removeSubagent 生效)
     subagents: [],
+    onEvent: (e) => { if (e.type === 'focus_chip_click') onFocusChipClick(e.path) }, // chip 点击 → 滚动到组件 + 边框闪
     debug: true,
     dialog: {
       title: '复杂页面 Agent',
@@ -137,7 +154,7 @@ onUnmounted(() => agent?.unmount())
       <DynamicReconfigPanel :agent="agentRef" />
       <PageConfigPanel :page="pageObj" :on-save="saveDraft" :on-publish="publish" :on-reset="resetPage" :publish-status="publishStatus" />
       <EditableBanner title="AI 可编辑页面" hint="Agent 经 write 修改此区">
-        <PageRenderer @pick="onPickComponent" />
+        <PageRenderer :selected-path="selectedPath" @select="onSelectComponent" @focus="onFocusComponent" />
       </EditableBanner>
     </aside>
     <section ref="root" class="pane pane-right"></section>

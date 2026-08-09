@@ -18,6 +18,8 @@ export interface AgentMessage {
   reasoning?: string
   /** 本轮对话中的工具调用步骤 */
   steps?: ToolStep[]
+  /** user 消息发送时的焦点快照(multi-focus;MessageRow 渲染 🎯 chip 标注该消息的背景组件限制,持久化随 messages) */
+  focuses?: import('../harness/state').Focus[]
 }
 
 export interface AgentConfig {
@@ -68,6 +70,7 @@ export type SdkEvent =
   | { type: 'error'; message: string; severity?: import('../tools/toolError').ErrorSeverity; code?: string; context?: unknown }
   | { type: 'trace'; spans: import('../harness/createAgent').TraceSpan[]; metrics: import('../harness/createAgent').TraceMetrics }
   | { type: 'context_trimmed'; dropped: { round: number; user: unknown; assistant: unknown[]; steps: unknown[] }[]; vfsResults: Record<string, string>; summary: string; reason: string }
+  | { type: 'focus_chip_click'; path: string; label?: string }
 
 /** token 用量(OpenAI 协议字段名) */
 export interface TokenUsage {
@@ -148,8 +151,10 @@ export interface AgentInfo {
   mission?: import('../harness/state').Mission
   /** 跨压缩工作记忆(workingMemory 中间件;pin 最近 read/query/search 定位 path + read hash,≤10 LRU) */
   workingMemory?: { locatedPaths: string[]; lastHashes: Record<string, string> }
-  /** 当前上下文聚焦焦点(focus 中间件;指定组件精修;未聚焦/未开启 → undefined) */
+  /** 当前上下文聚焦焦点(focus 中间件;兼容:首个;未聚焦/未开启 → undefined) */
   focus?: import('../harness/state').Focus
+  /** 全部聚焦焦点(multi-focus;空数组=未聚焦) */
+  focuses?: import('../harness/state').Focus[]
   /** 宿主动作元信息(actions 注册;集成方 save_draft/publish 等) */
   actions?: Record<string, { description: string; hasParams: boolean }>
   memory: string

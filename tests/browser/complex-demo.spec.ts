@@ -18,10 +18,14 @@ test.describe('complex-demo: 真实复杂度(30 类型 + 70 实例)', () => {
     await page.waitForSelector('textarea') // 等 ChatDialog input 渲染就绪(异步)
   })
 
-  test('focus: 点组件拾取 → 聚焦 chip 显示 → ✕ 退出(指定组件精修)', async ({ page }) => {
-    // 点击第一个组件(components.0)→ setFocus → 焦点条 chip 出现
+  test('focus: 两步拾取 → 选中边框 → 加入聊天 → 聚焦 chip → ✕ 退出', async ({ page }) => {
+    // 第 1 步:点组件(components.0)→ 浮层边框 + 「💬 加入聊天」按钮出现
     await page.click('[data-path="components.0"]')
-    const bar = page.locator('.focus-bar')
+    const overlay = page.locator('.pick-overlay')
+    await expect(overlay).toBeVisible()
+    // 第 2 步:点「💬 加入聊天」→ setFocus → 焦点条 chip 出现(边框随选中态清除消失)
+    await page.click('.pick-overlay__btn')
+    const bar = page.locator('.focus-chip')
     await expect(bar).toBeVisible()
     await expect(bar).toContainText('components.0')
     // ✕ 退出 → chip 消失(恢复全量可操作范围)
@@ -29,9 +33,51 @@ test.describe('complex-demo: 真实复杂度(30 类型 + 70 实例)', () => {
     await expect(bar).toHaveCount(0)
   })
 
-  test('focus: 聚焦后写越界被拒(PATH_DENIED)→ 自纠写聚焦内放行', async ({ page }) => {
-    await page.click('[data-path="components.0"]') // 聚焦 components.0
-    await expect(page.locator('.focus-bar')).toBeVisible()
+  test('focus multi: 两步拾取 2 组件 → 多 chip → ✕ 移除单个', async ({ page }) => {
+    // 拾取 components.0(navbar)
+    await page.click('[data-path="components.0"]')
+    await page.click('.pick-overlay__btn')
+    // 拾取 components.2(breadcrumb)→ 累积(addFocus 非覆盖)
+    await page.click('[data-path="components.2"]')
+    await page.click('.pick-overlay__btn')
+    // 多 chip:2 个(components.0 + components.2)
+    const chips = page.locator('.focus-chip')
+    await expect(chips).toHaveCount(2)
+    await expect(chips.first()).toContainText('components.0')
+    await expect(chips.nth(1)).toContainText('components.2')
+    // ✕ 移除第一个(components.0)→ 剩 1 个(components.2)
+    await chips.first().locator('[data-test="focus-clear"]').click()
+    await expect(chips).toHaveCount(1)
+    await expect(chips).toContainText('components.2')
+    // 清理剩余
+    await chips.first().locator('[data-test="focus-clear"]').click()
+  })
+
+  test('focus chip 标注历史:聚焦时发送 → user message 显示发送时焦点', async ({ page }) => {
+    // 拾取 components.0(navbar)→ 聚焦(输入框 chip)
+    await page.click('[data-path="components.0"]')
+    await page.click('.pick-overlay__btn')
+    // mock LLM(简单回复)
+    await mockLlm(page, [{ text: '好的,已了解导航栏需求。' }])
+    // 聚焦状态下发送消息
+    await fillInput(page, '改下导航栏标题')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    // user message 含 .msg-focus-chip(同输入框 chip:显示 path + ✕);点击 ✕ 移除当前焦点
+    const userRow = page.locator('.message-row.user').first()
+    const chip = userRow.locator('.msg-focus-chip')
+    await expect(chip).toHaveCount(1)
+    await expect(chip).toContainText('components.0') // chip 显示 path(同输入框)
+    expect(await chip.getAttribute('title')).toContain('components.0') // title 回看 path
+    // ✕ 移除当前焦点(同输入框 chip ✕,history chip ✕ = 移除当前焦点)→ 输入框 chip 消失
+    await chip.locator('.msg-focus-chip-x').click()
+    await expect(page.locator('.focus-chip')).toHaveCount(0)
+  })
+
+  test('focus: 两步聚焦后写越界被拒(PATH_DENIED)→ 自纠写聚焦内放行', async ({ page }) => {
+    await page.click('[data-path="components.0"]') // 第 1 步:选中 components.0
+    await page.click('.pick-overlay__btn') // 第 2 步:加入聊天 → 聚焦
+    await expect(page.locator('.focus-chip')).toBeVisible()
     // mock:第 1 轮写 components.1(越界被拒回灌)→ 第 2 轮写 components.0(聚焦内放行)→ 完成
     await mockLlm(page, [
       { tool_calls: [{ name: 'write', arguments: { patch: { op: 'set', jsonPath: 'components.1.props.title', value: '越界' } } }] },
@@ -47,6 +93,50 @@ test.describe('complex-demo: 真实复杂度(30 类型 + 70 实例)', () => {
     // 聚焦内写生效(自纠后 components.0 放行)
     const c0 = await page.evaluate(() => (window as any).page.components[0].props.title)
     expect(c0).toBe('聚焦内放行')
+  })
+
+  /**
+   * 精确值保护(placeholder-protected-read-write)合并演示:navbar(components.0)的 trackId 被 freeze 保护。
+   * 两步拾取聚焦 navbar → read trackId 返 ⟦frozen⟧ 占位符(真实值不进 AI 消息流)→ write 改 trackId 被 FROZEN_FIELD 拒 → 改普通字段 title 放行。
+   */
+  test('precise-value: freeze 保护 trackId → read 占位符 + write 被拒 + 普通字段放行', async ({ page }) => {
+    // 两步拾取聚焦 navbar(components.0)
+    await page.click('[data-path="components.0"]')
+    await page.click('.pick-overlay__btn')
+    await expect(page.locator('.focus-chip')).toBeVisible()
+
+    // 捕获 LLM 请求体(验证 read 返 freeze 占位符 —— 精确值不进 AI 消息流)
+    const requestBodies: any[] = []
+    page.on('request', (req) => {
+      if (req.method() === 'POST' && req.url().includes('chat/completions')) {
+        try { const body = req.postData(); if (body) requestBodies.push(JSON.parse(body)) } catch { /* ignore */ }
+      }
+    })
+
+    // mock:read trackId(返占位符)→ write 改 trackId(FROZEN_FIELD 拒)→ write 改 title(放行)→ 完成
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'read', arguments: { jsonPath: 'components.0.props.trackId' } }] },
+      { tool_calls: [{ name: 'write', arguments: { value: 'HACKED', patch: { op: 'set', jsonPath: 'components.0.props.trackId' } } }] },
+      { tool_calls: [{ name: 'write', arguments: { value: '已改标题', patch: { op: 'set', jsonPath: 'components.0.props.title' } } }] },
+      { text: 'trackId 受保护无法改,已改标题。' },
+    ])
+    await fillInput(page, '读 trackId 并改成 HACKED,改不了就改标题为「已改标题」')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+
+    // 断言 1:read 受保护字段返 freeze 占位符(精确值保护生效)
+    const toolContents = requestBodies
+      .flatMap((b) => (b?.messages || []).filter((m: any) => m.role === 'tool').map((m: any) => m.content))
+      .join('\n')
+    expect(toolContents, 'read 受保护字段返 ⟦frozen⟧ 占位符').toContain('⟦frozen')
+
+    // 断言 2:trackId 原值保留(write 被 FROZEN_FIELD 拒,未生效)
+    const trackId = await page.evaluate(() => (window as any).page.components[0].props.trackId)
+    expect(trackId).toBe('trk_a8f3k9x2m7')
+
+    // 断言 3:title 被改(普通字段不受保护,放行)
+    const title = await page.evaluate(() => (window as any).page.components[0].props.title)
+    expect(title).toBe('已改标题')
   })
 
   test('read 全量 → write patch 改 navbar title → read 子路径确认', async ({ page }) => {

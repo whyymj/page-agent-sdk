@@ -66,8 +66,8 @@ export interface SubagentOptions {
   debug?: boolean
   /** 子 agent 可写路径前缀白名单(给子 agent 写权限;写工具包 path guard,越界 PATH_OUT_OF_SCOPE;整体 set 禁)。subagent-writable Phase 2 */
   writablePaths?: string[]
-  /** 读主 agent 当前焦点(focus-auto-switch:子 agent 继承主焦点 → 构造 initialFocus) */
-  getFocus?: () => Focus | undefined
+  /** 读主 agent 全部焦点(multi-focus:子 agent 继承主焦点 → 构造 initialFocuses) */
+  getFocuses?: () => Focus[]
   /** 取主数据 schema getter(focus-auto-switch:子 focus 中间件做视野收敛 + path 校验用;透传主 liveData schema) */
   getSchema?: () => ZodType | null | undefined
 }
@@ -166,10 +166,10 @@ async function runSubagent(
   }
   // 递归物理切断:depth+1 >= maxDepth 时子 agent 不装本中间件 → 无 spawn 工具
   const childMiddleware = depth + 1 < maxDepth ? [createSubagentMiddleware({ ...opts, depth: depth + 1 })] : []
-  // focus-auto-switch:子 agent 继承主焦点(主聚焦 → 子默认同一焦点,三层收敛;主未聚焦 → undefined 不装,零回归)
-  const inheritedFocus = opts.getFocus?.()
-  const childFocusMw = inheritedFocus
-    ? createFocusMiddleware({ getSchema: opts.getSchema ?? (() => null), initialFocus: inheritedFocus })
+  // focus-auto-switch:子 agent 继承主焦点(主聚焦 → 子默认同焦点,三层收敛;主未聚焦 → 空数组不装,零回归)
+  const inheritedFocuses = opts.getFocuses?.() ?? []
+  const childFocusMw = inheritedFocuses.length
+    ? createFocusMiddleware({ getSchema: opts.getSchema ?? (() => null), initialFocuses: inheritedFocuses })
     : undefined
   // harden-context-resilience M3:从 llm 提取 model 名查表得 contextWindow/maxOutputTokens
   // (BaseChatModel 实例无 contextWindow 字段;不传则 createAgent 把实例 model 误判默认 gpt-3.5→16K,offload/压缩阈值全错算)
@@ -344,8 +344,8 @@ export interface SubagentsMiddlewareOptions {
   llm: SubagentLlmConfig | BaseChatModel
   /** 主 agent 全部工具(子 agent 按只读白名单筛)。支持 getter(P1-4:动态工具对子 agent 可见) */
   allTools: StructuredToolInterface[] | (() => StructuredToolInterface[])
-  /** 读主 agent 当前焦点(focus-auto-switch:预声明子 agent 同样继承主焦点) */
-  getFocus?: () => Focus | undefined
+  /** 读主 agent 全部焦点(multi-focus:预声明子 agent 同样继承主焦点) */
+  getFocuses?: () => Focus[]
   /** 取主数据 schema getter(focus-auto-switch:透传给子 focus 中间件) */
   getSchema?: () => ZodType | null | undefined
   debug?: boolean
@@ -369,7 +369,7 @@ function configToSubOpts(config: SubagentConfig, main: SubagentsMiddlewareOption
     debug: main.debug,
     ...(config.writablePaths?.length ? { writablePaths: config.writablePaths } : {}),
     // focus-auto-switch:预声明子 agent 同样继承主焦点 + schema
-    ...(main.getFocus ? { getFocus: main.getFocus } : {}),
+    ...(main.getFocuses ? { getFocuses: main.getFocuses } : {}),
     ...(main.getSchema ? { getSchema: main.getSchema } : {}),
   }
 }

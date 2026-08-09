@@ -6,6 +6,33 @@
 
 > ℹ️ 本段累积了 2.23.0 → 2.24.1 多个已发布版本的内容(harden-eval-sandbox / main-flow-audit / context-inspector / arch-review P1 / demo 主题 / session-history / 串行化 / simplify-toolset 等),待按 git tag 逐条归入对应版本段(已知文档债,本次未拆)。
 
+### Added(多焦点聚焦 multi-focus + 输入框 chip + chip 点击回调 · focus-multi)
+- **多焦点聚焦**:focus 从单焦点(Focus 单个)升级为多焦点(Focus[] 数组),可同时聚焦多个组件精修。场景:批量改多个相关组件(导航栏 + 页脚)。
+- **API(兼容旧 + 新增)**:`setFocus(focus)` 替换全部(兼容旧覆盖语义)/ `addFocus(focus)` 累积(去重 by path)/ `removeFocus(path)` 移除单个 / `clearFocus()` 清空 / `getFocus()` 返首个(兼容)/ `getFocuses()` 全量数组。`setFocus`/`addFocus` 4 道校验复用(抽 `validateFocusInput`);旧代码零改(getFocus/setFocus 兼容)。
+- **focus.ts 中间件**:`focuses: Focus[]` + wrapToolCall 越界判定改 `!focuses.some(isUnderFocus)`(写**不在任一**焦点子树才 PATH_DENIED,错误文案列所有焦点)+ augmentPrompt 多目标段(列所有 path + 各 `getSchemaAtPath` 子树 schema)。
+- **agent 工具**(advanced):新增 `add_focus`(累积)/`remove_focus`(移除单个),保留 `set_focus`/`clear_focus`;usageHints 引导多焦点用法。
+- **ChatDialog 输入框多 chip**:聚焦时输入框内顶部显示多 chip(🎯 path ✕,横向 flex wrap);chip 本体点击 → `onEvent('focus_chip_click',{path,label})`(集成方可滚动/高亮组件);✕ 移除单个焦点。原顶部 FocusBar 默认移至 chip(`sections.focus=true` 可恢复顶部独立条)。chatContext 改 `focuses: ComputedRef<Focus[]>` + addFocus/removeFocus/focusChipClick。
+- **持久化迁移**:`SessionSnapshot.focus` 存 `Focus[]` 数组(focus kind 复用,非新字段 —— storage 按 SnapshotKind 白名单存读);旧版本存单个 Focus,`applySnapshot` 读时归一化 `[focus]`;恢复逐 path 校验(`getSchemaAtPath` 失效剔除单个,非整体丢弃)。
+- **子 agent 继承多焦点**:`SubagentOptions.getFocuses`/`initialFocuses`(数组);主 agent 聚焦 → 子 agent 继承全部焦点。
+- **类型 + 事件**:`ChatSdk`/`AgentCore` 加 getFocuses/addFocus/removeFocus;`AgentInfo.focuses`;`SdkEvent` 加 `focus_chip_click`;`core.emit` 暴露(事件触发出口)。
+- **user message 标注焦点历史**:聚焦时 `send` 附当前 focuses 快照到 user message(`AgentMessage.focuses`)→ MessageRow 🎯 chip 标注「该消息在什么焦点下发」(背景组件限制可追溯,持久化随 messages)。
+- 测试:selftest 1575→1590(sec-54 多前缀越界 + addFocus/removeFocus/getFocuses;sec-57 focus 数组往返 + 旧快照归一化;sec-66 send 附 focuses)/ e2e 388→400(focus.mjs 多焦点 API + 持久化)/ browser +2(complex-demo 多 chip + ✕ 移除单个;user message chip 标注历史)。
+
+### Added(两步拾取交互 + 精确值保护合并 demo · demo-pick-overlay)
+- **两步拾取(focus-context demo 升级)**:page-demo / complex-demo 点组件由「单步直接聚焦」改为两步 —— ① 点组件本体 → 选中(浮层边框 + 「💬 加入聊天」按钮);② 点按钮才 `setFocus` 聚焦(焦点条 chip 接管,选中态清边框消失)。降低误触(点组件不立即锁定范围),「先选再确认」更直觉。
+- **共享 `_shared/PickOverlay.vue` 浮层**:`position:fixed` + `Teleport(body)` + `getBoundingClientRect` 定位选中组件,边框本体 `pointer-events:none`(穿透回组件可切换选中),仅按钮 `pointer-events:auto`。**不侵入组件树** —— 适配 complex-demo 递归 `CompRenderer`(容器嵌套 children,包 wrapper 会破坏布局)与 page-demo 扁平 v-if 分发;监听 scroll(capture)/resize 跟随。
+- **精确值保护合并 complex-demo**(原 precise-value-demo 删除,能力并入):navbar(components.0)增 `trackId` 字段,`data.resources:[{path:'components.0.props.trackId',mode:'freeze'}]` 保护 —— read 返 `⟦frozen⟧` 占位符(真实值不进 AI 消息流),write 改 trackId 被 `FROZEN_FIELD` 拒,改普通字段放行。演示「聚焦组件 → read 占位 → 改不动」闭环(与两步拾取协同)。
+- **修复 clearChat helper 残留遮罩**:`clearChat` 打开「更多」下拉(全屏 `more-overlay` z-index:15),若「清空对话」按钮不存在(无消息时下拉无该项,catch 吞掉)下拉未关 → 遮罩残留拦截后续 pane-left 交互(focus 测试点组件暴露;chat-dialog z-index 更高故 pane-right 操作不受影响,长期潜伏)。修复:末尾兜底点 `.more-overlay` 触发其 `@click` 关闭。
+- browser e2e 36→38(page-demo +两步拾取 / complex-demo +精确值保护 freeze,原 focus 两测试改两步);selftest/e2e 不变(纯 demo + helper 改动)。
+
+### Added(ChatDialog 拆分 · chatdialog-component-split)
+- **ChatDialog 拆分为可拼装/可替换的原子组件库**:982 行单文件 ChatDialog → 组合容器(`provide(ctx)` + 9 区块 slot/sections 双机制)+ 14 个原子组件(`ChatHeader`/`ChatInput`/`MessageList`/`MessageRow` + `message/` 下 Time/Actions/Reasoning/Steps/Bubble + `QueuedBar`/`ApprovalBar`/`ConflictBar`/`FocusBar`)+ `chatContext` 枢纽(`createChatContext`/`chatContextKey`/`useChatContext`,跨组件共享状态经 provide/inject,避免容器下钻 ~100 条 props)。
+- **sections 区块显隐**(`dialog.sections`):9 区块(header/focus/body/queued/approval/conflict/footer/debug/skill),键=`false` 关闭整块(含 slot),默认全开(向后兼容)。
+- **9 具名 slot**(scoped `{ chat }`):替换内置原子为自定义实现(slot vnode 在 provider 子树自动 inject 同一 ctx)。
+- **默认路径行为零变化**(全开 + 无 slot = 拆分前行为);scoped CSS 类名归属=DOM 归属,跨边界 `:deep()`(如 `.message-row.assistant:hover :deep(.msg-actions)`)。
+- 新增导出 8 原子组件 + chatContext 三件套 + `ChatDialogSections` 类型;`ChatDialogProps` 补全(6→34 字段);browser e2e 33→36(新增 `custom-dialog-demo.spec.ts`:sections 关 footer/queued 验证)。
+- **修复 pre-existing**:`playwright.config` 的 `gpt-3.5-turbo`(16K 上下文) 与 `MIN_CONTEXT_WINDOW`(200K,2.30.0 引入)冲突致 `createChatSdk` 启动 throw → `glm-5.2`(1M,mock 拦截不连真 LLM,model 名仅用于 modelCaps 解析)。
+
 ### Added(压缩决策 · agent-driven-compression)
 - **压缩 agent 自主决策压缩策略**(opt-in `capabilities.agentCompression`,requires summarization):summarization 中间件每轮先 `shouldTriggerCompression` gate(纯函数 token/轮数两模式,避免「开启后每条消息都 decide 烧 LLM」)→ `summaryLlm.decide` 两段式工具循环(bind `inspect_context` → 模型查上下文构成 → 输出决策 JSON)→ `compress(messages, decision)`;decide 失败 / 超时 / 模型不支持工具 → null 降级静态压缩(零阻塞,不丢压缩能力)。
 - **CompressDecision 双字段**:`keepRounds`(轮数模式 0-50)/ `windowRatio`(token 模式 0-1),`refine` 强制至少一个;决策覆盖切分 + 摘要 mode(index/llm)+ 召回 recallTopK(0 不召回)+ preserve(配置 ∪ preserveTools,扩展不减)。token 模式按 windowRatio 走累加循环保 token 封顶(不直接按 keepRounds 切,防大 JSON 压缩后仍超窗口),轮数模式补 older 空早退 + keepRounds≥1 下界(防贪省恒全压)。

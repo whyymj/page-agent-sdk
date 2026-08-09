@@ -21,7 +21,7 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import ChatDialog from '../components/ChatDialog.vue'
 import { createAgent } from '../harness/createAgent'
 import { asAgentError } from '../tools/toolError'
-import { z } from 'zod'
+import { z, type ZodType } from 'zod'
 import { getSchemaAtPath } from '../tools/schemaUtils'
 import { createTodosMiddleware } from '../harness/todos'
 import { createMissionMiddleware } from '../harness/mission'
@@ -343,6 +343,8 @@ export interface DialogConfig {
   inputRows?: number
   /** 抽屉模式关闭回调:点击遮罩/关闭按钮时调用(默认调 unmount 带退出动画)。集成方需同步外部挂载状态时传此选项覆盖默认行为 */
   onClose?: () => void
+  /** ChatDialog 区块显隐(chatdialog-component-split):键=false 关闭整块(含 slot);默认全开。键:header/focus/body/queued/approval/conflict/footer/debug/skill */
+  sections?: Record<string, boolean>
 }
 
 export interface ChatSdk {
@@ -379,11 +381,17 @@ export interface ChatSdk {
   getMission(): Mission | undefined
   /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
   setMission(mission: Partial<Mission>): void
-  /** 读取当前聚焦焦点(指定组件精修;未聚焦 / capabilities.focus:false → undefined) */
+  /** 读取当前聚焦焦点(兼容:返回首个;未聚焦 / capabilities.focus:false → undefined) */
   getFocus(): Focus | undefined
-  /** 设置聚焦焦点(path 经 getSchemaAtPath 校验在 schema 内才可聚焦);非法 path 返回 {ok:false,error};capabilities.focus:false 返回 {ok:false} 不抛 */
+  /** 读取全部聚焦焦点(multi-focus;空数组=未聚焦;capabilities.focus:false → []) */
+  getFocuses(): Focus[]
+  /** 设置聚焦焦点(替换全部;path 经 getSchemaAtPath 校验在 schema 内才可聚焦);非法 path 返回 {ok:false,error};capabilities.focus:false 返回 {ok:false} 不抛 */
   setFocus(focus: Focus): { ok: boolean; error?: string }
-  /** 清除聚焦焦点(退出精修模式,恢复全量可操作范围) */
+  /** 追加聚焦焦点(multi-focus 累积,去重 by path;校验同 setFocus);capabilities.focus:false → {ok:false} */
+  addFocus(focus: Focus): { ok: boolean; error?: string }
+  /** 移除单个聚焦焦点(by path);capabilities.focus:false → no-op */
+  removeFocus(path: string): void
+  /** 清除全部聚焦焦点(退出精修模式,恢复全量可操作范围) */
   clearFocus(): void
   /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 主数据 + vfs + todos);需开启 checkpoint 选项,无可用 checkpoint 返回 false */
   restoreLastCheckpoint(): boolean
@@ -499,7 +507,7 @@ interface SendOptions {
 }
 
 /** 内存中保留的对话轮数上限(超限压缩为摘要,防 OOM);0 表示关闭 */
-const DEFAULT_MAX_MEMORY_ROUNDS = 50
+const DEFAULT_MAX_MEMORY_ROUNDS = 30
 
 
 // ===== AgentCore:可被多实例共享的核心上下文 =====
@@ -567,7 +575,7 @@ interface AgentCore {
   liveData: () => DataConfig | undefined
   /** 累计 token 用量(每轮 LLM 调用累加;供 sdk.usage 暴露) */
   usage: import('../types').TokenUsage
-  /** 内部事件分发(供 return 对象的 importData 等手动发事件复用) */
+  /** 事件分发/外发(经 onEvent + listeners;供 return 对象 importData 等手动发事件复用 + UI 交互如 chip 点击触发 focus_chip_click,集成方可订阅) */
   emit: SdkEventHandler
   applySnapshot(snap: SessionSnapshot): void
   afterRound(): void
@@ -594,11 +602,17 @@ interface AgentCore {
   getMission(): Mission | undefined
   /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
   setMission(mission: Partial<Mission>): void
-  /** 读取当前聚焦焦点(未聚焦 / capabilities.focus:false → undefined) */
+  /** 读取当前聚焦焦点(兼容:返回首个;未聚焦 / capabilities.focus:false → undefined) */
   getFocus(): Focus | undefined
-  /** 设置聚焦焦点(path 经 getSchemaAtPath 校验在 schema 内才可聚焦);非法返回 {ok:false,error};capabilities.focus:false 返回 {ok:false} 不抛 */
+  /** 读取全部聚焦焦点(multi-focus;空数组=未聚焦;capabilities.focus:false → []) */
+  getFocuses(): Focus[]
+  /** 设置聚焦焦点(替换全部;path 经 getSchemaAtPath 校验在 schema 内才可聚焦);非法返回 {ok:false,error};capabilities.focus:false 返回 {ok:false} 不抛 */
   setFocus(focus: Focus): { ok: boolean; error?: string }
-  /** 清除聚焦焦点(退出精修模式) */
+  /** 追加聚焦焦点(multi-focus 累积,去重 by path;校验同 setFocus);capabilities.focus:false 返回 {ok:false} */
+  addFocus(focus: Focus): { ok: boolean; error?: string }
+  /** 移除单个聚焦焦点(by path);capabilities.focus:false → no-op */
+  removeFocus(path: string): void
+  /** 清除全部聚焦焦点(退出精修模式) */
   clearFocus(): void
   /** 运行时替换用户工具集(内置不动);立即 rebind + infoTick 刷新 */
   setTools(tools: StructuredToolInterface[]): void
@@ -682,6 +696,35 @@ function createSdkEventMiddleware(emit: SdkEventHandler, messages: AgentMessage[
       emit({ type: 'message_update', count: messages.length })
     },
   }
+}
+
+/** setFocus/addFocus 共享的 path 校验(4 道:useFocus 守卫 / path 非空 / schema 存在 / getSchemaAtPath 命中)。
+ *  返回 {ok:true} 或 {ok:false,error};debug 模式各拒绝路径 console.warn 防静默(schema 拒绝最易踩坑:数组须 z.array 包裹,裸 discriminatedUnion 致 getSchemaAtPath 降级返 null)。 */
+function validateFocusInput(
+  focus: Focus,
+  op: string,
+  useFocus: boolean,
+  getSchema: () => ZodType | null | undefined,
+  debug?: boolean,
+): { ok: true } | { ok: false; error: string } {
+  if (!useFocus) {
+    if (debug) console.warn(`[page-agent-sdk][focus] capabilities.focus 关闭,${op} 忽略`)
+    return { ok: false, error: 'capabilities.focus 关闭' }
+  }
+  if (!focus || !focus.path) {
+    if (debug) console.warn(`[page-agent-sdk][focus] ${op} 拒绝:path 必填且非空`)
+    return { ok: false, error: 'path 必填且非空' }
+  }
+  const schema = getSchema()
+  if (!schema) {
+    if (debug) console.warn(`[page-agent-sdk][focus] ${op} 拒绝:当前无主数据 schema`)
+    return { ok: false, error: '当前无主数据 schema,无法聚焦' }
+  }
+  if (!getSchemaAtPath(schema, focus.path)) {
+    if (debug) console.warn(`[page-agent-sdk][focus] ${op} 拒绝:path "${focus.path}" 不在 schema 内(getSchemaAtPath 返 null;数组组件须 z.array(...) 包裹,裸 discriminatedUnion/Union 会降级)`)
+    return { ok: false, error: `path "${focus.path}" 不在 schema 内` }
+  }
+  return { ok: true }
 }
 
 /** 构建一个独立的核心上下文(含持久化恢复 + agent 构造 + 操作函数) */
@@ -863,7 +906,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     },
     {
       name: 'set_focus',
-      description: '聚焦到指定组件子树(如 components.3)精修。聚焦后:仅可写该子树(越界 PATH_DENIED)+ 每轮只看到该组件结构。多组件页面精修其中一个时用,避免改到别处。先 read 定位 path 再聚焦;完成调 clear_focus。',
+      description: '聚焦到指定组件子树(如 components.3)精修,替换全部已有焦点(非累积;要保留已有焦点追加用 add_focus)。聚焦后:仅可写该子树(越界 PATH_DENIED)+ 每轮只看到该组件结构。多组件页面精修其中一个时用,避免改到别处。先 read 定位 path 再聚焦;完成调 clear_focus。',
       schema: z.object({ path: z.string().describe('要聚焦的组件 jsonPath,如 components.3'), label: z.string().optional().describe('人类可读标签,如「导航栏」') }),
     },
   )
@@ -874,7 +917,38 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     },
     { name: 'clear_focus', description: '清除当前聚焦,退出精修模式,恢复对全部组件的读写权限。', schema: z.object({}).optional() },
   )
-  const focusTools: StructuredToolInterface[] = useFocus && options.toolMode === 'advanced' ? [setFocusTool, clearFocusTool] : []
+  // add_focus:累积追加焦点(multi-focus;校验 path 在 schema 内 + 去重),用于同时精修多个相关组件
+  const addFocusTool = tool(
+    async ({ path, label }: { path: string; label?: string }) => {
+      const schema = liveData()?.schema
+      if (!schema) return '聚焦失败:当前无主数据 schema,无法聚焦。'
+      if (!getSchemaAtPath(schema, path)) return `PATH_DENIED · 聚焦失败:path "${path}" 不在 schema 内。请先用 read 查看可操作路径再聚焦。`
+      focusMw.addFocus({ path, ...(label ? { label } : {}) })
+      const foci = focusMw.getFocuses()
+      return `已聚焦 ${path}${label ? `(${label})` : ''}(当前共 ${foci.length} 个焦点:${foci.map((f) => f.path).join(', ')})。后续仅可写这些子树之一(越界被拒)。`
+    },
+    {
+      name: 'add_focus',
+      description: '追加聚焦一个组件子树(multi-focus,可同时聚焦多个相关组件)。校验 path 在 schema 内。聚焦后仅可写已聚焦的子树之一(越界 PATH_DENIED)。与 set_focus(替换全部)不同:本工具累积追加,不清除已有焦点。',
+      schema: z.object({ path: z.string().describe('要追加聚焦的组件 jsonPath,如 components.3'), label: z.string().optional().describe('人类可读标签') }),
+    },
+  )
+  // remove_focus:移除单个焦点(by path);移除最后一个等价退出精修
+  const removeFocusTool = tool(
+    async ({ path }: { path: string }) => {
+      const before = focusMw.getFocuses().length
+      focusMw.removeFocus(path)
+      const after = focusMw.getFocuses()
+      if (after.length === before) return `path "${path}" 不在当前焦点列表中(当前:${after.map((f) => f.path).join(', ') || '无'})。`
+      return after.length ? `已移除焦点 ${path}(剩余 ${after.length} 个:${after.map((f) => f.path).join(', ')})。` : `已移除焦点 ${path},聚焦已清空,恢复全量操作范围。`
+    },
+    {
+      name: 'remove_focus',
+      description: '移除单个聚焦焦点(by path),保留其他焦点。移除最后一个等价退出精修。全部退出用 clear_focus。',
+      schema: z.object({ path: z.string().describe('要移除的焦点 jsonPath') }),
+    },
+  )
+  const focusTools: StructuredToolInterface[] = useFocus && options.toolMode === 'advanced' ? [setFocusTool, clearFocusTool, addFocusTool, removeFocusTool] : []
   focusTools.forEach((t) => toolSources.set(t.name, 'builtin'))
   // skill 附带工具(load_skill 后动态注入;skill-external-scripts §5)。按 skill 名记录归属,便于 invalidate/setSkills 卸载
   let loadedSkillTools: StructuredToolInterface[] = []
@@ -950,7 +1024,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           maxParallel: subOpts?.maxParallel,
           debug: options.debug,
           // focus-auto-switch:子 agent 继承主焦点(focusMw/liveData 在该闭包可见)
-          getFocus: () => focusMw.getFocus(),
+          getFocuses: () => focusMw.getFocuses(),
           getSchema: () => liveData()?.schema ?? null,
         })
 
@@ -959,7 +1033,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 注:subagents:[](空数组)也创建 controller,支持「初始无子 agent,运行时动态 add」场景(不依赖 length 判定)
   // capabilities.subagent 关闭时不创建(与 spawn 中间件一致)
   const subagentsMw = useSubagent && options.subagents !== undefined
-    ? createSubagentsMiddleware(options.subagents, { llm: options.llm, allTools: () => allTools, debug: options.debug, getFocus: () => focusMw.getFocus(), getSchema: () => liveData()?.schema ?? null })
+    ? createSubagentsMiddleware(options.subagents, { llm: options.llm, allTools: () => allTools, debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null })
     : undefined
   const subagentsController = subagentsMw ? (subagentsMw as any).controller as import('../harness/subagent').SubagentsController : null
 
@@ -1223,13 +1297,22 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       // context-persist-resilience 功能A:恢复 mission/workingMemory(刷新/切会话后长任务目标 + 工作记忆不丢;reset 在 applySnapshot 前,恢复值不被清)
       if (snap.mission && useMission) missionMw.setMission(snap.mission)
       if (snap.workingMemory && useWorkingMemory) workingMemoryMw.restore(snap.workingMemory)
-      // focus-auto-switch:恢复 focus(刷新/切会话后聚焦状态保留);path 经 getSchemaAtPath 校验,schema 变化失效则丢弃(决策A,与 sdk.setFocus 单一真相)
-      if (snap.focus && useFocus) {
-        const focusSchema = liveData()?.schema
-        if (focusSchema && getSchemaAtPath(focusSchema, snap.focus.path)) {
-          focusMw.setFocus(snap.focus)
-        } else if (options.debug) {
-          console.warn('[page-agent-sdk][focus] 恢复的焦点 path 已失效(schema 变化/无 schema),丢弃:', snap.focus.path)
+      // focus-auto-switch:恢复 focus(刷新/切会话后聚焦状态保留)。
+      // multi-focus:归一化(优先 focuses 数组,fallback 旧 focus 单个 → [focus])+ 逐 path 校验剔除失效(schema 变化);与 sdk.setFocus 单一真相
+      if (useFocus) {
+        const raw = snap.focus
+        const foci: Focus[] = !raw ? [] : Array.isArray(raw) ? raw : [raw]
+        if (foci.length) {
+          const focusSchema = liveData()?.schema
+          const valid = focusSchema ? foci.filter((f) => getSchemaAtPath(focusSchema, f.path)) : []
+          if (valid.length) {
+            focusMw.setFocus(null) // 清默认态,逐个 addFocus 重建多焦点
+            valid.forEach((f) => focusMw.addFocus(f))
+          }
+          if (options.debug && valid.length < foci.length) {
+            const dropped = foci.filter((f) => !valid.includes(f)).map((f) => f.path)
+            console.warn('[page-agent-sdk][focus] 恢复的焦点部分 path 已失效(schema 变化/无 schema),剔除:', dropped)
+          }
         }
       }
       // context-persist-resilience 功能B:加载兜底 GC —— 清历史孤儿(旧存档漏网 / 上轮 GC 漏的);新会话无孤儿则空操作
@@ -1369,7 +1452,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         if (useMission) { const m = missionMw.getMission(); if (m) void store.save(agentId, core.sessionId, { mission: m } as Partial<SessionSnapshot>) }
         if (useWorkingMemory) { const wm = workingMemoryMw.getWorkingMemory(); if (wm) void store.save(agentId, core.sessionId, { workingMemory: wm } as Partial<SessionSnapshot>) }
         // focus-auto-switch:切走前 persist focus(有值存值;clearFocus 后存 null 覆盖清除)
-        if (useFocus) { const f = focusMw.getFocus(); void store.save(agentId, core.sessionId, { focus: f ?? null } as Partial<SessionSnapshot>) }
+        if (useFocus) { const fs = focusMw.getFocuses(); void store.save(agentId, core.sessionId, { focus: fs.length ? fs : null } as Partial<SessionSnapshot>) }
       }
       vfsStore.flush?.()
       await store.flush()
@@ -1593,6 +1676,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         mission: useMission ? missionMw.getMission() : undefined,
         workingMemory: useWorkingMemory ? workingMemoryMw.getWorkingMemory() : undefined,
         focus: useFocus ? focusMw.getFocus() : undefined,
+        focuses: useFocus ? focusMw.getFocuses() : [],
         trace: useTracing && core.agent?.spans ? { spans: core.agent.spans.value, metrics: getTraceMetrics(core.agent.spans.value) } : undefined,
         actions: actionsToInspectInfo(options.actions ?? {}),
         subagent: {
@@ -1637,29 +1721,46 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       missionMw.setMission(m)
       core.infoTick.value++ // 触发 DebugDrawer 刷新
     },
-    /** 读取当前聚焦焦点(未聚焦 / capabilities.focus:false → undefined) */
+    /** 读取当前聚焦焦点(兼容:返回首个 focus;未聚焦 / capabilities.focus:false → undefined) */
     getFocus(): Focus | undefined {
       return useFocus ? focusMw.getFocus() : undefined
     },
-    /** 设置聚焦焦点(path 经 getSchemaAtPath 校验在 schema 内才可聚焦);非法/无 schema 返回 {ok:false,error};capabilities.focus:false 返回 {ok:false} 不抛 */
+    /** 读取全部聚焦焦点(multi-focus;空数组=未聚焦;capabilities.focus:false → []) */
+    getFocuses(): Focus[] {
+      return useFocus ? focusMw.getFocuses() : []
+    },
+    /** 设置聚焦焦点(替换全部;path 经 getSchemaAtPath 校验在 schema 内才可聚焦);非法/无 schema 返回 {ok:false,error};capabilities.focus:false 返回 {ok:false} 不抛 */
     setFocus(focus: Focus): { ok: boolean; error?: string } {
-      if (!useFocus) {
-        if (options.debug) console.warn('[page-agent-sdk][focus] capabilities.focus 关闭,setFocus 忽略')
-        return { ok: false, error: 'capabilities.focus 关闭' }
-      }
-      if (!focus || !focus.path) return { ok: false, error: 'path 必填且非空' }
-      const schema = liveData()?.schema
-      if (!schema) return { ok: false, error: '当前无主数据 schema,无法聚焦' }
-      if (!getSchemaAtPath(schema, focus.path)) return { ok: false, error: `path "${focus.path}" 不在 schema 内` }
+      const r = validateFocusInput(focus, 'setFocus', useFocus, () => liveData()?.schema, options.debug)
+      if (!r.ok) return r
       focusMw.setFocus(focus)
       core.infoTick.value++ // 触发 DebugDrawer 刷新
       return { ok: true }
     },
-    /** 清除聚焦焦点(退出精修模式,恢复全量可操作范围) */
+    /** 追加聚焦焦点(multi-focus 累积,去重 by path;校验同 setFocus);capabilities.focus:false 返回 {ok:false} */
+    addFocus(focus: Focus): { ok: boolean; error?: string } {
+      const r = validateFocusInput(focus, 'addFocus', useFocus, () => liveData()?.schema, options.debug)
+      if (!r.ok) return r
+      // 焦点数上限:augmentPrompt 为每个焦点注入子树 schema,过多撑爆 system prompt(harden-context-resilience 25% 预算会 drop)
+      if (focusMw.getFocuses().length >= 8) {
+        if (options.debug) console.warn('[page-agent-sdk][focus] addFocus 拒绝:焦点数已达上限 8(augmentPrompt 注入每焦点子树 schema,过多致 system prompt 超预算)')
+        return { ok: false, error: '焦点数上限 8(避免 system prompt 撑爆)' }
+      }
+      focusMw.addFocus(focus)
+      core.infoTick.value++
+      return { ok: true }
+    },
+    /** 移除单个聚焦焦点(by path);capabilities.focus:false → no-op */
+    removeFocus(path: string): void {
+      if (!useFocus) return
+      focusMw.removeFocus(path)
+      core.infoTick.value++
+    },
+    /** 清除全部聚焦焦点(退出精修模式,恢复全量可操作范围) */
     clearFocus(): void {
       if (!useFocus) return
       focusMw.clearFocus()
-      core.infoTick.value++ // 触发 DebugDrawer 刷新
+      core.infoTick.value++
     },
   }
 
@@ -1792,8 +1893,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     }
     // focus-auto-switch:持久化 focus(有值存值;clearFocus 后存 null 覆盖清除,防旧值残留被下次 restore)
     if (useFocus) {
-      const f = focusMw.getFocus()
-      void store.save(agentId, core.sessionId, { focus: f ?? null } as Partial<SessionSnapshot>)
+      const fs = focusMw.getFocuses()
+      void store.save(agentId, core.sessionId, { focus: fs.length ? fs : null } as Partial<SessionSnapshot>)
     }
     // automation 断点续跑:持久化 checkpoint 栈 + 累计 usage(刷新/崩溃后恢复,长任务可续跑;仅 automation 开启时写,省空间)
     if (useAutomation && checkpointMgr) {
@@ -1981,10 +2082,15 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
             drawerWidth: dialogCfg.drawerWidth,
             drawerHidden: dialogCfg.drawerHidden === true,
             inputRows: dialogCfg.inputRows,
+            sections: dialogCfg.sections,
             // 上下文聚焦(指定组件精修;core.getFocus 返 undefined 时 chip 不显示;capabilities.focus:false → no-op chip 隐藏)
             getFocus: () => core.getFocus(),
+            getFocuses: () => core.getFocuses(),
             onSetFocus: (f: Focus) => core.setFocus(f),
+            onAddFocus: (f: Focus) => core.addFocus(f),
+            onRemoveFocus: (path: string) => core.removeFocus(path),
             onClearFocus: () => core.clearFocus(),
+            onFocusChipClick: (f: Focus) => core.emit({ type: 'focus_chip_click', path: f.path, label: f.label }),
             onClose: dialogCfg.onClose ?? (dialogCfg.drawer === true ? () => hide() : () => unmount()),  // 抽屉模式:点击遮罩/关闭按钮 → 默认 hide(保留 agent/历史/生成进程,再 mount 直接 show);非抽屉或用户传 onClose 时用自定义/卸载
             // 内置会话管理(storage 开启 → ChatDialog 默认显示「新建/历史」按钮 + 历史面板;关 → 不传,隐藏,向后兼容)
             ...(core.store ? {
@@ -2107,9 +2213,14 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
     setMission: core.setMission,
     /** 读取当前聚焦焦点(未聚焦 / capabilities.focus:false → undefined) */
     getFocus: core.getFocus,
-    /** 设置聚焦焦点(path 经 getSchemaAtPath 校验在 schema 内才可聚焦);非法返回 {ok:false,error} */
+    getFocuses: core.getFocuses,
+    /** 设置聚焦焦点(替换全部;path 经 getSchemaAtPath 校验);非法返回 {ok:false,error} */
     setFocus: core.setFocus,
-    /** 清除聚焦焦点(退出精修模式,恢复全量可操作范围) */
+    /** 追加聚焦焦点(multi-focus 累积,去重 by path;校验同 setFocus) */
+    addFocus: core.addFocus,
+    /** 移除单个聚焦焦点(by path) */
+    removeFocus: core.removeFocus,
+    /** 清除全部聚焦焦点(退出精修模式,恢复全量可操作范围) */
     clearFocus: core.clearFocus,
     messages: core.messages,
     /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 主数据 + vfs + todos);无可用 checkpoint 返回 false */

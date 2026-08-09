@@ -76,11 +76,12 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
       if (rc.draftWrite) hints.push('⚠️ 大 JSON 分块构建是典型多轮工具调用(draft_write×N + draft_commit + read 确认 + 调研 read/query),默认 maxToolRounds=10 可能触顶被 while 截断导致草稿写不完;目标组件数大时集成方应在 createChatSdk 配 maxToolRounds ≥ 20(或按 N+5 估算)。draft_commit 提交同样走乐观锁(改前 read 拿 hash,bind 被改过会触发冲突介入,不静默覆盖)。')
       if (rc.todoDeps) hints.push('复杂任务可用 todos 层级依赖:write_todos 时给 todo 传 parentId(父任务 id,表达层级)+ deps(依赖的 todo id 数组,必须先完成)。有依赖的任务,deps 全 completed 后再标 in_progress;完成时 update_todo({id, status:"completed", evidence:"完成证据"}) 记证据。无依赖关系的任务不传 parentId/deps(扁平)。')
       if (rc.focus && !simple) {
-        hints.push('【上下文聚焦】判断任务范围,用 set_focus/clear_focus 自动收敛工作范围:')
+        hints.push('【上下文聚焦】判断任务范围,用 set_focus/add_focus/remove_focus/clear_focus 自动收敛工作范围:')
         hints.push('  · 局部任务(只改某一组件/区域,如「调导航栏」「改 components.3 样式」)→ 先 read 定位 jsonPath,再 set_focus({path:"该子树路径"}) 聚焦;聚焦后每轮只看该子树结构,写其他位置会被 PATH_DENIED 拒绝。')
+        hints.push('  · 多个相关组件(如「同时改导航栏和页脚」)→ set_focus 聚焦首个后用 add_focus({path}) 追加其余;聚焦后可写任一焦点子树,越界仍被拒;移除单个用 remove_focus({path})。')
         hints.push('  · 全局任务(多处/整体结构,如「重排所有组件」「换主题」)→ 不要聚焦,保持全量视野直接写。')
-        hints.push('  · 完成局部精修、要转向其他区域或做整体改动 → 调 clear_focus 退出聚焦,恢复全部读写权限。')
-        hints.push('  · set_focus 的 path 必须在 schema 内(类型校验);不确定路径先 read/describe_data 查。')
+        hints.push('  · 完成局部精修、要转向其他区域或做整体改动 → 调 clear_focus 退出聚焦(清空全部焦点),恢复全部读写权限。')
+        hints.push('  · set_focus/add_focus 的 path 必须在 schema 内(类型校验);不确定路径先 read/describe_data 查。')
       }
       if (hasResources) {
         hints.push('【受保护资源·精确值保护】部分字段被 freeze/verbatim 保护(集成方在 data.resources 声明):')

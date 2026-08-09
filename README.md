@@ -222,7 +222,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, useChat
 | **Context** | `contextPreset` | `'auto' \| 'conservative' \| 'aggressive' \| 'complex'` · default `auto` | Compression preset (`complex` for multi-step / large-JSON / long-workflow tasks) |
 | | `contextOptions` | `Partial<ContextManagerOptions> \| false` | Fine params (`false` disables compression). Includes `preserveLastToolResults` (default `['describe_data','describe_data']` — keep field descriptions in compressed summary) |
 | | `summaryLlm` | `BaseChatModel \| LLMConfig` | Summary-dedicated LLM (defaults to main `llm`) |
-| | `maxMemoryRounds` | `number` · default `50` | Dialog history memory round cap (`0` disables trim) |
+| | `maxMemoryRounds` | `number` · default `30` | Dialog history memory round cap (`0` disables trim) |
 | | `vfs` | `{initialFiles?,maxBytes?}` · default 4MB | In-memory workspace cap (LRU evict on overflow) |
 | **Persistence** | `storage` | `'indexed' \| 'session' \| 'local' \| 'memory' \| config \| false` · default off | Assign to enable; multi-agent isolated by `id` |
 | | `session` | `{id?,autoResume?,title?}` | Session control |

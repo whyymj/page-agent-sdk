@@ -240,3 +240,14 @@ ReAct 循环维护双计数:`rounds`(工具轮,只在有 tool_calls 执行后 +1
 ## Requirement: 三档错误模型(unify-error-model;fix 后:内置 catch 简化硬编码 + routeError 供扩展)
 
 错误采用显式三档 `AgentError.severity`:**recoverable**(工具校验失败/执行错/乐观锁冲突)→ feedback 回灌 LLM 不中断;**fatal**(LLM 配置错/持久化致命错/invariant 违反)→ emit('error') + 中断当前调用;**observable**(emit 回调抛/afterAgent 清理错/非关键 IO)→ warn 不中断。**内置 catch 点用简化硬编码路由**(coreExecTool 总 recoverable 回灌 / afterAgent·emit observable warn / invoke fatal emit),各用 `asAgentError(err, defaultSeverity)` 归一化(默认 Error=fatal)。`routeError` 纯函数(据 severity 返 feedback/abort/log)**框架内置 catch 当前未消费**——作为公共工具导出:① 供集成方自定义中间件 catch 决策;② 为未来 `wrapToolCall` 实现 recoverable→feedback 自动路由预留扩展口(届时仅改执行器,catch 点/接口零改动;无需求驱动前不补全)。`onEvent('error')` payload 携带 `{ message, severity?, code?, context? }`(向后兼容)。重试判定与 severity 正交。新增导出 `ErrorSeverity`/`AgentError`/`ErrorRouting`/`routeError`/`asAgentError`/`agentError`。
+
+## Requirement: 压缩 agent 自主决策压缩策略(agent-driven-compression)
+
+opt-in `capabilities.agentCompression`(requires summarization)让摘要 LLM(summaryLlm,未配则主 LLM)在触发压缩时**先查看上下文构成、再输出结构化压缩决策**并按其执行;决策不可用时逐级降级到现状静态策略,默认关零破坏向后兼容。
+
+- **触发预检(`shouldTriggerCompression` 纯函数,单一真源)**:token 模式 `totalTokens > contextWindow × summaryThresholdRatio` / 轮数模式 `rounds.length > summaryThresholdRounds`(严格 >)。`summarization.compressInput` **先 gate 通过才 `decide`**,避免每条消息都烧 1~2 次 LLM 调用。
+- **`inspect_context` 工具(摘要决策专用,不进主 agent 工具池)**:参数 `{ path?, role?, limit? }`;返回 `{ totalTokens, occupancy, contextWindow?, categories[], rounds[{ round, tokens, tools, head }] }`;数据源 `analyzeContext`(分类)+ `groupRounds`+`estimateRoundTokens`+`roundToolNames`(rounds 级)。仅决策时临时 bind 到 summaryLlm。
+- **`CompressDecision` schema(zod,触发模式感知)**:`{ keepRounds?: 0-50(轮数模式), windowRatio?: 0-1(token 模式), summarize: { mode: 'index'|'llm' }, recallTopK?: 0-10, preserveTools?: string[]≤10, reason?: ≤200 }`,`refine` 强制 keepRounds/windowRatio 至少一个。schema 导出;校验失败重试一次 → null 降级静态;clamp + keepRounds≥1 下界防贪省恒全压。
+- **`decide` 两段式工具循环(`buildCompressDecisionInvoke`)**:bind `inspect_context`(独立实例,与主 agent 无冲突)→ system 决策 prompt(含触发模式)→ tool_calls 轮 → 执行工具(ToolMessage snake_case `tool_call_id`+call.id 兜底)→ 回灌 → 最终 JSON → `CompressDecisionSchema.safeParse`。失败逐条(校验/JSON/工具/超时)各重试一次 → null。独立 `decisionTimeoutMs`(默认 6s,不复用 summaryTimeoutMs 15s 两段叠加)+ `decisionMaxTokens`(默认 2048,不继承 1024 截断)。`bindTools` 方法检测 + 调用失败兜底(方法存在≠模型真支持,OpenAI 兼容端点可 400)。
+- **`compress(messages, decision?)` 决策改造**:有决策 token 模式按 windowRatio 换算预算(保 token 封顶,不直接按 keepRounds 切)、轮数模式按 keepRounds 切(补 older 空早退);按 recallTopK 召回(0=不召回)、按 summarize.mode 选摘要(index/llm undefined 回退)、preserve = 配置 ∪ preserveTools;无决策完全现状。summaryMsg 附注决策;stats 增 `decision?` 自动流到 `inspect().lastCompression`+`contextSnapshot.compression`。
+- **决策流边界**:决策仅覆盖「本次触发时的执行参数」,不持久化、不改 contextPreset;触发阈值/模式仍来自 config(决策改不了「何时触发」)。`maxMemoryRounds < summaryThresholdRounds` 时 trim 先触发、agentCompression 也永不生效。默认关时压缩行为与现状完全一致。
