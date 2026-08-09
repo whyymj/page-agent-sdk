@@ -581,27 +581,29 @@ The package ships three builds — pick by integration scenario:
 | ESM (bundled, peer external) | `dist/page-agent-sdk.js` | `import` via npm or esm.sh — recommended for module hosts | ~620 KB |
 | UMD | `dist/page-agent-sdk.umd.cjs` | `require()` in Node/legacy bundlers | ~560 KB |
 | IIFE (all-inlined, single file) | `dist/page-agent-sdk.iife.js` | `<script src>` CDN direct include, zero config | ~1.4 MB |
+| **headless ESM** (no UI layer) | `dist/page-agent-sdk.headless.js` | `page-agent-sdk/headless` — pure core for `ui:false` custom UI | **~325 KB** |
 
 ### Import only what you need (subpath exports)
 
-Besides the top-level `import { createChatSdk } from 'page-agent-sdk'`, three subpath entries scope your import to a single capability (the bundler tree-shakes the rest):
+Besides the top-level `import { createChatSdk } from 'page-agent-sdk'`, four subpath entries scope your import to a single capability:
 
 | subpath | key exports | use case |
 |---|---|---|
 | `page-agent-sdk/storage` | `createSessionStore` / `createMemoryBackend` / `createWebStorageBackend` / `isQuotaError` | persistence layer only, no Agent |
 | `page-agent-sdk/query` | `jpEval` / `searchJson` / `runSandboxedScript` + all jsonUtils/schemaUtils pure fns | JSON query / sandbox / path helpers |
 | `page-agent-sdk/llm` | `createProxyLlm` + `ProxyLlmMode` / `ProxyLlmOptions` | proxy connection to avoid leaking apiKey |
+| `page-agent-sdk/headless` | `createChatSdk` + full core API — **without** ChatDialog/marked/highlight.js/dompurify | `ui:false` custom UI, leanest bundle |
 
 ```js
 import { createSessionStore, createMemoryBackend } from 'page-agent-sdk/storage'
 import { jpEval, searchJson } from 'page-agent-sdk/query'
 ```
 
-> All three subpaths currently resolve to the same dist + types (no multi-entry build yet) — clear semantics and per-entry CDN fetch; when a multi-entry build lands, your import paths won't change.
+> `storage` / `query` / `llm` resolve to the same dist + types (clear semantics and per-entry CDN fetch); when a multi-entry build lands, your import paths won't change. `headless` is a **separately-built lean bundle** (own dist + types) — see below.
 
 `sideEffects` is set to `["**/*.css"]` only, so bundlers can tree-shake the JS when you import named symbols. Tips to keep your bundle lean:
 
-- **Headless (`ui:false`)**: skip the built-in dialog and render `agent.messages` yourself — you can avoid importing `ChatDialog`/`CodePreview` and drop the CSS (`import 'page-agent-sdk'` without `'page-agent-sdk/style.css'`). **Persistence pitfall**: `sdk.stream` does NOT auto-persist (built-in `useChat` calls `afterRound` via `onPersist`); in a self-built dialog call `sdk.afterRound()` after each turn, otherwise `switchSession` won't restore messages. **Reuse the built-in DebugDrawer**: `import { DebugDrawer }` — pure-props (`logs=sdk.debugLogs`, `getInfo=()=>sdk.inspect()`, `infoTick=sdk.infoTick`), mount it in your own UI without needing ChatDialog.
+- **Headless (`ui:false`)**: skip the built-in dialog and render `agent.messages` yourself. For the leanest bundle, import from the **headless subpath** — `import { createChatSdk } from 'page-agent-sdk/headless'` (~325 KB ESM vs ~789 KB main; drops marked/highlight.js/dompurify/ChatDialog you never use at runtime). Same `createChatSdk(options): ChatSdk` signature; pair with `ui:false`. From the main package you can also avoid importing `ChatDialog`/`CodePreview` and drop the CSS (`import 'page-agent-sdk'` without `'page-agent-sdk/style.css'`). **Persistence pitfall**: `sdk.stream` does NOT auto-persist (built-in `useChat` calls `afterRound` via `onPersist`); in a self-built dialog call `sdk.afterRound()` after each turn, otherwise `switchSession` won't restore messages. **Reuse the built-in DebugDrawer** (main package only): `import { DebugDrawer }` — pure-props (`logs=sdk.debugLogs`, `getInfo=()=>sdk.inspect()`, `infoTick=sdk.infoTick`), mount it in your own UI without needing ChatDialog.
 - **Disable unused capabilities**: `capabilities:{ dataOps:false, fetch:false, planning:false, skills:false, vfs:false, summarization:false, memory:false, subagent:false }` — removes the corresponding tool schemas and middleware from the agent prompt (saves tokens, not bytes).
 - **CDN via esm.sh**: `import { createChatSdk } from 'https://esm.sh/page-agent-sdk'` — peer deps (`zod`, `@langchain/*`) are resolved and deduped by esm.sh automatically; smallest for module scenarios.
 - **IIFE only for zero-config**: the all-inlined single file is convenient but heaviest; prefer ESM when the host supports modules.

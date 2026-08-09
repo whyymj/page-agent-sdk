@@ -1,6 +1,6 @@
 {
   "name": "page-agent-sdk",
-  "version": "2.35.0",
+  "version": "2.36.0",
   "type": "module",
   "description": "AI agent SDK for web pages — embed a chat assistant that edits page data via schema-validated tools. A lighter, framework-agnostic alternative to CopilotKit/LangChain for in-page JSON-editing agents. Vue-bundled; works with DeepSeek, OpenAI, MCP.",
   "main": "./dist/page-agent-sdk.umd.cjs",
@@ -29,6 +29,10 @@
       "types": "./types/index.d.ts",
       "import": "./dist/page-agent-sdk.js"
     },
+    "./headless": {
+      "types": "./types/headless.d.ts",
+      "import": "./dist/page-agent-sdk.headless.js"
+    },
     "./style.css": "./dist/style.css"
   },
   "files": [
@@ -42,8 +46,9 @@
     "mcp:probe": "tsx scripts/mcp-probe.ts",
     "proxy:mock": "tsx scripts/proxy-mock-server.ts",
     "verify:probe": "tsx scripts/verify-probe.ts",
-    "build": "npm run build:lib && npm run build:iife",
+    "build": "npm run build:lib && npm run build:headless && npm run build:iife",
     "build:lib": "vite build",
+    "build:headless": "vite build --config vite.headless.config.ts",
     "build:iife": "vite build --config vite.iife.config.ts",
     "preview": "vite preview",
     "test": "tsx src/core/__tests__/selftest.ts",

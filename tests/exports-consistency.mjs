@@ -50,5 +50,29 @@ assert(!!pkg.exports['./query']?.import && pkg.exports['./query'].import.endsWit
 assert(!!pkg.exports['./llm']?.import && pkg.exports['./llm'].import.endsWith('page-agent-sdk.js'), 'subpath ./llm 已配置(createProxyLlm 防 apiKey 泄露)')
 assert(pkg.exports['./style.css'], 'subpath ./style.css 保留')
 
+// headless 子路径(add-headless-subpath):page-agent-sdk/headless 纯核心,不含 UI
+console.log('[exports-consistency] headless 子路径:index.headless.ts ↔ headless.d.ts 对齐 + 不含组件')
+{
+  const headlessSrc = fs.readFileSync(new URL('../src/core/index.headless.ts', import.meta.url), 'utf8')
+  const headlessTypes = fs.readFileSync(new URL('../types/headless.d.ts', import.meta.url), 'utf8')
+  const headlessSrcExports = extractExports(headlessSrc)
+  const headlessTypesExports = extractExports(headlessTypes)
+  const missingInHeadlessTypes = [...headlessSrcExports].filter(n => !headlessTypesExports.has(n))
+  assert(missingInHeadlessTypes.length === 0, `headless.d.ts 无漏导出(缺失:${missingInHeadlessTypes.join(', ') || '无'})`)
+
+  // headless 不导出 13 个 .vue 组件(源 + 类型两侧均不含)
+  const components = ['ChatDialog', 'MessageContent', 'CodePreview', 'SkillPanel', 'ChatHeader', 'ChatInput', 'MessageList', 'MessageRow', 'QueuedBar', 'ApprovalBar', 'ConflictBar', 'FocusBar', 'DebugDrawer']
+  const leakedInSrc = components.filter(c => headlessSrcExports.has(c))
+  const leakedInTypes = components.filter(c => headlessTypesExports.has(c))
+  assert(leakedInSrc.length === 0, `index.headless.ts 不导出 UI 组件(泄露:${leakedInSrc.join(', ') || '无'})`)
+  assert(leakedInTypes.length === 0, `headless.d.ts 不声明 UI 组件(泄露:${leakedInTypes.join(', ') || '无'})`)
+
+  // package.json exports 配置 ./headless(types + import 指向 headless 产物)
+  assert(!!pkg.exports['./headless']?.types && pkg.exports['./headless'].types.endsWith('headless.d.ts'), 'subpath ./headless types 指向 headless.d.ts')
+  assert(!!pkg.exports['./headless']?.import && pkg.exports['./headless'].import.endsWith('page-agent-sdk.headless.js'), 'subpath ./headless import 指向 page-agent-sdk.headless.js')
+  // build 脚本含 build:headless
+  assert(typeof pkg.scripts['build:headless'] === 'string' && pkg.scripts.build.includes('build:headless'), 'package.json 含 build:headless 脚本并纳入 build 链')
+}
+
 console.log(`\n==== exports-consistency: ${pass} passed, ${fail} failed ====`)
 if (fail > 0) process.exit(1)

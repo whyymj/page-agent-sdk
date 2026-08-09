@@ -526,27 +526,29 @@ createChatSdk({
 | ESM(peer 外置) | `dist/page-agent-sdk.js` | npm 或 esm.sh `import`,模块化宿主推荐 | ~620 KB |
 | UMD | `dist/page-agent-sdk.umd.cjs` | Node/老 bundler `require` | ~560 KB |
 | IIFE(全量单文件) | `dist/page-agent-sdk.iife.js` | CDN `<script>` 直引,零配置 | ~1.4 MB |
+| **headless ESM**(无 UI 层) | `dist/page-agent-sdk.headless.js` | `page-agent-sdk/headless` —— `ui:false` 自建 UI 纯核心 | **~325 KB** |
 
 ### 按需引入(subpath exports)
 
-除了顶层 `import { createChatSdk } from 'page-agent-sdk'`,三个子路径入口让你只引特定能力(bundler 对未用部分 tree-shaking):
+除了顶层 `import { createChatSdk } from 'page-agent-sdk'`,四个子路径入口让你只引特定能力:
 
 | subpath | 主要导出 | 场景 |
 |---|---|---|
 | `page-agent-sdk/storage` | `createSessionStore` / `createMemoryBackend` / `createWebStorageBackend` / `isQuotaError` | 只要持久化层,不引 Agent |
 | `page-agent-sdk/query` | `jpEval` / `searchJson` / `runSandboxedScript` + jsonUtils/schemaUtils 全部纯函数 | JSON 查询 / 沙箱 / 路径操作工具集 |
 | `page-agent-sdk/llm` | `createProxyLlm` + `ProxyLlmMode` / `ProxyLlmOptions` | 防 apiKey 泄露的代理连接 |
+| `page-agent-sdk/headless` | `createChatSdk` + 全核心 API —— **不含** ChatDialog/marked/highlight.js/dompurify | `ui:false` 自建 UI,最精简 bundle |
 
 ```js
 import { createSessionStore, createMemoryBackend } from 'page-agent-sdk/storage'
 import { jpEval, searchJson } from 'page-agent-sdk/query'
 ```
 
-> 三个 subpath 当前指向同一份 dist + types(未拆多入口构建),语义清晰 + 便于 CDN 按入口拉取;未来切多入口构建时 import 路径零迁移。
+> `storage` / `query` / `llm` 指向同一份 dist + types(语义清晰 + 便于 CDN 按入口拉取);未来切多入口构建时 import 路径零迁移。`headless` 是**独立打包的精简产物**(独立 dist + types)—— 见下。
 
 `sideEffects` 仅标记 `["**/*.css"]`,打包器可对 JS 做 tree-shaking。瘦身建议:
 
-- **headless(`ui:false`)**:不渲染内置对话框,自渲染 `agent.messages` —— 可不引 `ChatDialog`/`CodePreview`,并省略 CSS(`import 'page-agent-sdk'` 不引 `'page-agent-sdk/style.css'`)。**持久化坑**:`sdk.stream` 不自动落盘(内置 useChat 经 onPersist 调 afterRound);自建对话框每轮后需手动 `sdk.afterRound()`,否则 `switchSession` 切回丢消息。**复用内置 DebugDrawer**:`import { DebugDrawer }`(纯 props:`logs=sdk.debugLogs` / `getInfo=()=>sdk.inspect()` / `infoTick=sdk.infoTick`),在自己的 UI 里挂载,无需 ChatDialog。
+- **headless(`ui:false`)**:不渲染内置对话框,自渲染 `agent.messages`。要最精简 bundle,从 **headless 子路径** 引入 —— `import { createChatSdk } from 'page-agent-sdk/headless'`(ESM ~325KB vs 主包 ~789KB;去掉运行时从不使用的 marked/highlight.js/dompurify/ChatDialog)。`createChatSdk(options): ChatSdk` 签名不变,配 `ui:false` 用。从主包引入也可不引 `ChatDialog`/`CodePreview` 并省略 CSS(`import 'page-agent-sdk'` 不引 `'page-agent-sdk/style.css'`)。**持久化坑**:`sdk.stream` 不自动落盘(内置 useChat 经 onPersist 调 afterRound);自建对话框每轮后需手动 `sdk.afterRound()`,否则 `switchSession` 切回丢消息。**复用内置 DebugDrawer**(仅主包):`import { DebugDrawer }`(纯 props:`logs=sdk.debugLogs` / `getInfo=()=>sdk.inspect()` / `infoTick=sdk.infoTick`),在自己的 UI 里挂载,无需 ChatDialog。
 - **关闭无用能力**:`capabilities:{ dataOps:false, fetch:false, planning:false, skills:false, vfs:false, summarization:false, memory:false, subagent:false }` —— 移除对应工具 schema 与中间件(省 token,非字节)。
 - **CDN 用 esm.sh**:`import { createChatSdk } from 'https://esm.sh/page-agent-sdk'` —— peer(`zod`、`@langchain/*`)由 esm.sh 自动解析去重,模块场景最小。
 - **IIFE 仅用于零配置**:全量单文件方便但最重,宿主支持模块时优先 ESM。

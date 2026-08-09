@@ -18,6 +18,7 @@ import { run as runLlmProvider } from './e2e/llm-provider.mjs'
 import { run as runFocus } from './e2e/focus.mjs'
 import { run as runResources } from './e2e/resources.mjs'
 import { run as runAgentCompression } from './e2e/agent-compression.mjs'
+import { run as runHeadlessSubpath } from './e2e/headless-subpath.mjs'
 
 const modules = [
   ['systemprompt', runSystemprompt],
@@ -37,6 +38,7 @@ const modules = [
   ['focus', runFocus],
   ['resources', runResources],
   ['agent-compression', runAgentCompression],
+  ['headless-subpath', runHeadlessSubpath],
 ]
 
 let totalPass = 0, totalFail = 0

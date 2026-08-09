@@ -76,20 +76,33 @@ import { createChatSdk, z } from 'page-agent-sdk'
 </script>
 ```
 
-**按需引入(subpath exports)**:除顶层 `page-agent-sdk` 外,三个子路径入口让你只引特定能力(bundler 对未用部分 tree-shaking):
+**按需引入(subpath exports)**:除顶层 `page-agent-sdk` 外,四个子路径入口让你只引特定能力:
 
 | subpath | 主要导出 | 场景 |
 |---|---|---|
 | `page-agent-sdk/storage` | `createSessionStore` / `createMemoryBackend` / `createWebStorageBackend` / `isQuotaError` | 只要持久化层,不引 Agent |
 | `page-agent-sdk/query` | `jpEval` / `searchJson` / `runSandboxedScript` + jsonUtils / schemaUtils 全部纯函数 | JSON 查询 / 沙箱 / 路径操作 |
 | `page-agent-sdk/llm` | `createProxyLlm` + `ProxyLlmMode` / `ProxyLlmOptions` | 防 apiKey 泄露的代理连接 |
+| `page-agent-sdk/headless` | `createChatSdk` + 全核心 API(`createChatContext`/`useChat` 等),**不含** ChatDialog/marked/highlight.js/dompurify | `ui:false` 自建对话框,要精简 bundle |
 
 ```js
 import { createSessionStore, createMemoryBackend } from 'page-agent-sdk/storage'
 import { getByPath, setByPath, hashValue } from 'page-agent-sdk/query' // jsonUtils 纯函数
 ```
 
-> 三个 subpath 当前指向同一份 dist + types(未拆多入口构建),语义清晰 + 便于 CDN 按入口拉取;未来切多入口构建时 import 路径零迁移。
+> `storage` / `query` / `llm` 三个 subpath 指向同一份 dist + types(语义清晰 + 便于 CDN 按入口拉取);未来切多入口构建时 import 路径零迁移。
+
+**🎯 headless 精简子路径(独立构建)**:`page-agent-sdk/headless` 是**独立打包的精简产物**(`dist/page-agent-sdk.headless.js`,ESM ~325KB / gzip ~106KB,主包 ESM ~789KB),给 `ui: false` 的 headless 集成方(自建对话框)去掉从不使用的 UI 层依赖(marked/highlight.js/dompurify/ChatDialog 全子树)。公开签名与主包完全一致(`createChatSdk(options): ChatSdk`),仅 `import` 源换一下:
+
+```js
+// 主包(含内置 ChatDialog UI)
+import { createChatSdk } from 'page-agent-sdk'
+
+// headless 子路径(纯核心,不含 UI;ui:false 自建 UI 用)
+import { createChatSdk } from 'page-agent-sdk/headless'
+```
+
+> headless 入口创建的 sdk 若不传 `ui:false`(默认 `'default'`)→ `mount()` 会 `console.warn` 提示降级 headless(不渲染 DOM)。显式 `ui:false` 即正常 headless 态,无 warn。如需内置 ChatDialog,用主包 `page-agent-sdk`。详见下文 [headless 自建 UI](#headless-自建-uiuifalse)。
 
 ## 3. 快速开始(3 分钟)
 

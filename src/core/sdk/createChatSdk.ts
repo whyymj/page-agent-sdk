@@ -15,10 +15,9 @@
  *   (messages/agent/vfsStore/store/todos/memory 全共享 = 「同一 agent 的多个对话框视图」)。
  *   模块级 sharedCores 注册表 + 引用计数;mount/unmount 各自渲染到不同 container。
  */
-import { createApp, h, defineComponent, reactive, ref, type App as VueApp, type Ref } from 'vue'
+import { reactive, ref, type Ref } from 'vue'
 import { tool, type StructuredToolInterface } from '@langchain/core/tools'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
-import ChatDialog from '../components/ChatDialog.vue'
 import { createAgent, type DebugLog } from '../harness/createAgent'
 import { asAgentError } from '../tools/toolError'
 import { z, type ZodType } from 'zod'
@@ -536,7 +535,7 @@ export interface PendingConflict {
   resolve: (r: ConflictResolution) => void
 }
 
-interface AgentCore {
+export interface AgentCore {
   agentId: string
   store: SessionStore | null
   messages: AgentMessage[]
@@ -641,6 +640,42 @@ interface AgentCore {
   /** 批处理(automation):逐任务跑 agent,每任务前 checkpoint,任务间错误隔离 */
   batch(tasks: string[], onProgress?: (p: BatchProgress) => void): Promise<BatchResult[]>
 }
+
+/**
+ * 依赖反转契约:把 UI 渲染(ChatDialog 挂载)从 createChatSdk 解耦为可注入实现。
+ * 主入口(index.ts)注入 mountChatDialog(含 UI);headless 入口(index.headless.ts)不注入(不含 UI)。
+ *
+ * _createChatSdk 在 mount() 时构造此 ctx 传给 mounter —— core 直接传入(避免在 ctx 枚举 30+ props 字段致漂移),
+ * 其余为渲染所需最小集(streaming/runSerial/hide/unmount/onDialogUnmounted)。
+ */
+export interface DialogMountContext {
+  el: HTMLElement
+  /** 直接传 core,mounter 内部从 core.* 读全部 props(InfoTick/pendingConflict/sessions/skillsController...) */
+  core: AgentCore
+  dialogCfg: DialogConfig
+  streaming: boolean
+  /** 实例级操作串行化器(会话切换等经此防并发 state 竞态);传给 ChatDialog 会话管理回调 */
+  runSerial: <T>(fn: () => Promise<T>) => Promise<T>
+  /** 传给 ChatDialog onClose:抽屉模式关 → hide(保留 agent/历史/生成进程) */
+  hide: () => void
+  /** 传给 ChatDialog onClose:非抽屉关 → unmount */
+  unmount: () => void
+  /** 退出动画完成后回调(createChatSdk 闭包内 = dialogController 置 null + core.release()) */
+  onDialogUnmounted: () => void
+}
+
+/** mounter 返回的 UI 生命周期控制器;createChatSdk 闭包持 dialogController 并委托 mount/unmount/show/hide */
+export interface DialogController {
+  /** 启动退出动画;transitionend/320ms 兜底后调 ctx.onDialogUnmounted */
+  unmount(): void
+  /** 移除 .chat-dialog/.chat-mask 的 cs-hidden */
+  show(): void
+  /** 添加 cs-hidden(opacity:0 + visibility:hidden) */
+  hide(): void
+}
+
+/** 依赖反转口:UI 渲染(ChatDialog 挂载 + props 透传 + 退出动画 + show/hide class 切换)的可注入实现 */
+export type DialogMounter = (ctx: DialogMountContext) => DialogController
 
 /** shareContext 注册表:agentId → AgentCore(同页同 id 复用) */
 const sharedCores = new Map<string, AgentCore>()
@@ -1990,7 +2025,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   return core
 }
 
-export function createChatSdk(options: ChatSdkOptions): ChatSdk {
+export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter): ChatSdk {
   // ===== agent 实例 id(多共存隔离)=====
   const agentId: string = options.id ?? makeId()
   if (!options.id) {
@@ -2014,8 +2049,8 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
   core.refCount++ // 本实例持有一引用
 
   // ===== 每实例:渲染 + 事件监听(不共享)=====
-  let vueApp: VueApp | null = null
-  let mountEl: HTMLElement | null = null
+  // UI 模式:mounter 返回的 controller(持有 vueApp/mountEl,封装退出动画/show/hide);headless 模式恒 null
+  let dialogController: DialogController | null = null
 
   // 对话框 UI 配置(归组写法;mount 渲染 ChatDialog 时读取)
   const dialogCfg = resolveDialogConfig(options)
@@ -2024,103 +2059,19 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
 
   async function mount(overrideContainer?: HTMLElement | string): Promise<void> {
     await core.initDone
-    // 已挂载且隐藏中(抽屉模式 hide 后再 mount):直接 show,不重建 vueApp,保留 agent/历史/生成进程
-    if (vueApp) {
-      show()
+    // 已挂载且隐藏中(抽屉模式 hide 后再 mount):直接 show,不重建,保留 agent/历史/生成进程
+    if (dialogController) {
+      dialogController.show()
       return
     }
     // mount 时传 container 覆盖 options.container(异步绑定:创建时可不传,mount 时才指定)
     if (overrideContainer !== undefined) options.container = overrideContainer
-    // headless:不渲染 UI,只 init agent + 装 flush 兜底(集成方用 messages/send 自建 UI)
-    if (ui === false) {
-      if (core.store) {
-        flushHandler = () => {
-          core.vfsStore.flush?.()
-          void core.store!.flush()
-        }
-        visHandler = () => {
-          if (document.visibilityState === 'hidden') void core.store!.flush()
-        }
-        if (typeof window !== 'undefined') window.addEventListener('pagehide', flushHandler)
-        if (typeof document !== 'undefined') document.addEventListener('visibilitychange', visHandler)
-      }
-      return
-    }
-    const el =
-      typeof options.container === 'string' ? document.querySelector(options.container) : options.container
-    if (!el) throw new Error(`createChatSdk: 挂载点未找到(${options.container})`)
-    mountEl = el as HTMLElement
-    const debugLogsRef = core.agent!.debugLogs
-    const Wrapper = defineComponent({
-      setup() {
-        return () =>
-          h(ChatDialog, {
-            fetchStream: streaming ? core.stream : undefined,   // P1-c:走 core.stream 包装(事件转发 onEvent/hook + abort 收口冲突),非裸 core.agent.stream
-            fetchResponse: streaming ? undefined : (msgs: AgentMessage[], signal?: AbortSignal) => {
-              if (signal) {
-                const abortConflict = () => core.resolveConflict('keep_external')
-                if (signal.aborted) abortConflict()
-                else signal.addEventListener('abort', abortConflict, { once: true })
-              }
-              return core.agent!.invoke(msgs, signal)
-            },
-            title: dialogCfg.title,
-            placeholder: dialogCfg.placeholder,
-            debugLogs: debugLogsRef.value,
-            initialMessages: core.messages,
-            getInfo: () => core.getInfo(),
-            onUndo: core.checkpoint ? () => core.checkpoint!.restore() : undefined,
-            canUndo: core.checkpoint ? () => core.checkpoint!.canRestore() : undefined,
-            onPersist: async () => {
-              core.afterRound()
-              if (core.store) await core.store.flush() // 等待落盘完成(useChat await 此 Promise,确保刷新前 indexed 已写入)
-            },
-            onClear: () => core.resetSession(),   // P0-4:收编进 core(见 core.resetSession);原闭包越界引用 buildCore 局部 lastTitle/titleLLMDone 致 ReferenceError
-            pendingConflict: core.pendingConflict.value,
-            onResolveConflict: (action: ConflictResolution['action']) => core.resolveConflict(action),
-            infoTick: core.infoTick,  // 响应式 tick:setSkills/setData 后 ++,DebugDrawer watch 后重新拉 getInfo() 实时刷新 Agent 信息
-            getSkillContent: core.skillsController ? (name: string) => core.skillsController!.getContent(name) : undefined,  // DebugDrawer 展开 skill 时调,取 skill 全文(优先缓存)
-            onAddSkill: core.skillsController ? (skill: import('../harness/skills').SkillSpec) => core.addSkill(skill) : undefined,  // ChatDialog 创建 skill 面板提交时调
-            onRemoveSkill: core.skillsController ? (name: string) => core.removeSkill(name) : undefined,  // ChatDialog 删除用户 skill 时调
-            getUserSkillNames: core.skillsController ? () => core.listUserSkills() : undefined,  // ChatDialog 列出用户创建的 skill 名(刷新面板)
-            onGetSkill: core.skillsController ? (name: string) => core.getUserSkill(name) : undefined,  // ChatDialog 编辑 skill 时读取详情
-            drawer: dialogCfg.drawer === true,
-            drawerWidth: dialogCfg.drawerWidth,
-            drawerHidden: dialogCfg.drawerHidden === true,
-            inputRows: dialogCfg.inputRows,
-            sections: dialogCfg.sections,
-            // 上下文聚焦(指定组件精修;core.getFocus 返 undefined 时 chip 不显示;capabilities.focus:false → no-op chip 隐藏)
-            getFocus: () => core.getFocus(),
-            getFocuses: () => core.getFocuses(),
-            onSetFocus: (f: Focus) => core.setFocus(f),
-            onAddFocus: (f: Focus) => core.addFocus(f),
-            onRemoveFocus: (path: string) => core.removeFocus(path),
-            onClearFocus: () => core.clearFocus(),
-            onFocusChipClick: (f: Focus) => core.emit({ type: 'focus_chip_click', path: f.path, label: f.label }),
-            onClose: dialogCfg.onClose ?? (dialogCfg.drawer === true ? () => hide() : () => unmount()),  // 抽屉模式:点击遮罩/关闭按钮 → 默认 hide(保留 agent/历史/生成进程,再 mount 直接 show);非抽屉或用户传 onClose 时用自定义/卸载
-            // 内置会话管理(storage 开启 → ChatDialog 默认显示「新建/历史」按钮 + 历史面板;关 → 不传,隐藏,向后兼容)
-            ...(core.store ? {
-              sessions: core.sessions.value,            // Ref 响应式 → Wrapper render 重渲染 → ChatDialog 自动更新
-              currentSessionId: core.sessionId,
-              onNewSession: () => { void runSerial(() => core.switchSession()) },          // 经 runSerial(与 return 的 switchSession 一致,防并发 state 竞态)
-              onOpenSession: (id: string) => { void runSerial(() => core.switchSession(id)) },
-              onRemoveSession: async (id: string) => { if (id !== core.sessionId) { await core.store!.deleteSession(agentId, id); await core.refreshSessions() } },
-            } : {}),
-          })
-      },
-    })
-    vueApp = createApp(Wrapper)
-    vueApp.mount(el)
 
-    // 抽屉模式默认隐藏:mount 后不显示,需 sdk.show() 才出现(「点击按钮才出现聊天框」场景)
-    if (dialogCfg.drawer === true && dialogCfg.drawerHidden === true) {
-      hide()
-    }
-
-    // 刷新/切页兜底 flush(防丢 debounce 内的待写)
-    if (core.store) {
+    // 装 flush/visibility 兜底 handler(headless 与 UI 两模式共用;防丢 debounce 内的待写)
+    const installFlush = () => {
+      if (!core.store) return
       flushHandler = () => {
-        core.vfsStore.flush?.() // vfs 自身的 800ms debounce 窗口也要立即落盘
+        core.vfsStore.flush?.()
         void core.store!.flush()
       }
       visHandler = () => {
@@ -2129,6 +2080,42 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
       if (typeof window !== 'undefined') window.addEventListener('pagehide', flushHandler)
       if (typeof document !== 'undefined') document.addEventListener('visibilitychange', visHandler)
     }
+
+    // headless:不渲染 UI(ui 显式 false,或 headless 入口未注入 mounter —— 后者无 mounter 但 ui 非 false → warn 降级提示)
+    if (ui === false || !mounter) {
+      if (ui !== false) {
+        console.warn('[page-agent-sdk/headless] 未含 UI 组件,ui 渲染降级 headless;如需 UI 请 import page-agent-sdk 主包')
+      }
+      installFlush()
+      return
+    }
+
+    const el =
+      typeof options.container === 'string' ? document.querySelector(options.container) : options.container
+    if (!el) throw new Error(`createChatSdk: 挂载点未找到(${options.container})`)
+
+    // 委托 mounter 渲染 ChatDialog(主入口注入 mountChatDialog;props 透传 + 退出动画 + show/hide 均封装于 controller)
+    dialogController = mounter({
+      el: el as HTMLElement,
+      core,
+      dialogCfg,
+      streaming,
+      runSerial,
+      hide,
+      unmount,
+      onDialogUnmounted: () => {
+        dialogController = null
+        core.release() // 引用计数--;shareContext 归零才真销毁(动画结束后才 release,保留期间 mount() 走 show() 分支)
+      },
+    })
+
+    // 抽屉模式默认隐藏:mount 后不显示,需 sdk.show() 才出现(「点击按钮才出现聊天框」场景)
+    if (dialogCfg.drawer === true && dialogCfg.drawerHidden === true) {
+      dialogController.hide()
+    }
+
+    // 刷新/切页兜底 flush(防丢 debounce 内的待写;UI 模式与 headless 共用 installFlush)
+    installFlush()
   }
 
   function unmount(): void {
@@ -2138,47 +2125,23 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
     if (visHandler && typeof document !== 'undefined') document.removeEventListener('visibilitychange', visHandler)
     flushHandler = null
     visHandler = null
-    // 退出动画:给根 .chat-dialog 加 cs-leaving class 触发淡出+缩放,动画结束再卸载 DOM
-    const dialogEl = mountEl?.querySelector?.('.chat-dialog') as HTMLElement | null
-    if (vueApp && dialogEl) {
-      dialogEl.classList.add('cs-leaving')
-      // 抽屉模式:遮罩同步淡出
-      const maskEl = mountEl?.querySelector?.('.chat-mask') as HTMLElement | null
-      if (maskEl) maskEl.classList.add('cs-leaving')
-      let done = false
-      const finish = () => {
-        if (done) return
-        done = true
-        vueApp?.unmount()
-        vueApp = null
-        mountEl = null
-        core.release() // 引用计数--;shareContext 归零才真销毁
-      }
-      dialogEl.addEventListener('transitionend', finish, { once: true })
-      setTimeout(finish, 320) // 兜底:防 transitionend 不触发(transition: all 0.3s ease)
-      return
+    if (dialogController) {
+      // UI 模式:委托 controller 跑退出动画 → transitionend/320ms 后 vueApp.unmount + onDialogUnmounted(回调内 null controller + core.release)
+      // 不在此 null dialogController —— 由 onDialogUnmounted 回调 null(保留动画期间 mount() 走 show() 的现状)
+      dialogController.unmount()
+    } else {
+      // headless 路径:无动画直接 release
+      core.release() // 引用计数--;shareContext 归零才真销毁
     }
-    vueApp?.unmount()
-    vueApp = null
-    mountEl = null
-    core.release() // 引用计数--;shareContext 归零才真销毁
   }
 
-  /** 抽屉模式隐藏:加 cs-hidden class(opacity:0 + visibility:hidden),不卸载 vueApp/不 release agent —— 保留聊天历史与正在进行的生成进程;再 mount() 直接 show 恢复 */
+  /** 抽屉模式隐藏:加 cs-hidden class(opacity:0 + visibility:hidden),不卸载 controller/不 release agent —— 保留聊天历史与正在进行的生成进程;再 mount() 直接 show 恢复 */
   function hide(): void {
-    if (!vueApp) return
-    const dialogEl = mountEl?.querySelector?.('.chat-dialog') as HTMLElement | null
-    const maskEl = mountEl?.querySelector?.('.chat-mask') as HTMLElement | null
-    if (dialogEl) dialogEl.classList.add('cs-hidden')
-    if (maskEl) maskEl.classList.add('cs-hidden')
+    dialogController?.hide()
   }
   /** 抽屉模式显示:移除 cs-hidden class,恢复可见(配合 hide 使用;首次挂载用 mount) */
   function show(): void {
-    if (!vueApp) return
-    const dialogEl = mountEl?.querySelector?.('.chat-dialog') as HTMLElement | null
-    const maskEl = mountEl?.querySelector?.('.chat-mask') as HTMLElement | null
-    if (dialogEl) dialogEl.classList.remove('cs-hidden')
-    if (maskEl) maskEl.classList.remove('cs-hidden')
+    dialogController?.show()
   }
 
   // P1-2(arch-review):实例级操作串行化 —— 并发 send/switchSession/batch 排队执行,防共享闭包 state 竞态

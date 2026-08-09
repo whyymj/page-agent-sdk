@@ -10,6 +10,7 @@ const limits = [
   { file: 'dist/page-agent-sdk.iife.js', max: 1.9 * MB, label: 'IIFE 全量(CDN <script> 直引;含 dompurify ~+95KB,P0-2 XSS 防护)' },
   { file: 'dist/page-agent-sdk.js', max: 1.1 * MB, label: 'ESM(npm import)' },
   { file: 'dist/page-agent-sdk.umd.cjs', max: 1.1 * MB, label: 'UMD(require)' },
+  { file: 'dist/page-agent-sdk.headless.js', max: 600 * KB, label: 'headless ESM(/headless 子路径;纯核心不含 UI,实测 ~333KB)' },
   { file: 'dist/style.css', max: 60 * KB, label: 'CSS' },
 ]
 

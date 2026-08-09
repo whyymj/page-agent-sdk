@@ -66,20 +66,33 @@ import { createChatSdk, z } from 'page-agent-sdk'
 </script>
 ```
 
-**Import only what you need (subpath exports)**: besides the top-level `page-agent-sdk`, three subpath entries scope your import to a single capability (the bundler tree-shakes the rest):
+**Import only what you need (subpath exports)**: besides the top-level `page-agent-sdk`, four subpath entries scope your import to a single capability:
 
 | subpath | key exports | use case |
 |---|---|---|
 | `page-agent-sdk/storage` | `createSessionStore` / `createMemoryBackend` / `createWebStorageBackend` / `isQuotaError` | persistence layer only, no Agent |
 | `page-agent-sdk/query` | `jpEval` / `searchJson` / `runSandboxedScript` + all jsonUtils / schemaUtils pure fns | JSON query / sandbox / path helpers |
 | `page-agent-sdk/llm` | `createProxyLlm` + `ProxyLlmMode` / `ProxyLlmOptions` | proxy connection to avoid leaking apiKey |
+| `page-agent-sdk/headless` | `createChatSdk` + full core API (`createChatContext`/`useChat`, etc.), **without** ChatDialog/marked/highlight.js/dompurify | `ui:false` custom UI, leaner bundle |
 
 ```js
 import { createSessionStore, createMemoryBackend } from 'page-agent-sdk/storage'
 import { getByPath, setByPath, hashValue } from 'page-agent-sdk/query' // jsonUtils pure fns
 ```
 
-> All three subpaths currently resolve to the same dist + types (no multi-entry build yet) — clear semantics and per-entry CDN fetch; when a multi-entry build lands, your import paths won't change.
+> `storage` / `query` / `llm` resolve to the same dist + types (clear semantics and per-entry CDN fetch); when a multi-entry build lands, your import paths won't change.
+
+**🎯 headless lean subpath (separate build)**: `page-agent-sdk/headless` is a **separately-built lean bundle** (`dist/page-agent-sdk.headless.js`, ESM ~325KB / gzip ~106KB vs main ESM ~789KB) for `ui: false` integrators building their own dialog — it drops UI-layer deps you never use at runtime (marked/highlight.js/dompurify/ChatDialog subtree). The public signature is identical to the main package (`createChatSdk(options): ChatSdk`); only the `import` source changes:
+
+```js
+// main package (includes built-in ChatDialog UI)
+import { createChatSdk } from 'page-agent-sdk'
+
+// headless subpath (pure core, no UI; for ui:false custom UI)
+import { createChatSdk } from 'page-agent-sdk/headless'
+```
+
+> An sdk created via the headless entry, when `ui:false` is not set (default `'default'`), will `console.warn` on `mount()` about degrading to headless (no DOM rendered). Explicit `ui:false` is the normal headless mode (no warn). If you need the built-in ChatDialog, use the main `page-agent-sdk`.
 
 ## 3. Quick start (3 min)
 

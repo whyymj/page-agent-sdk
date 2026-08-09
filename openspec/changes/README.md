@@ -2,6 +2,8 @@
 
 > **进行中(2026-08-08 立项,待 apply)**:`fix-context-window-stale-on-setllm`(setLlm 后 contextWindow 陈旧 → 切小窗口模型 + 历史超新窗口时 compressInput 用旧阈值不触发,新模型可能 `max context length` 报错且无收敛;方案 B 独立 setter,见该 change `proposal.md`/`design.md`/`tasks.md`)。
 
+> **进行中(2026-08-10 立项,待 apply)**:`add-headless-subpath`(新增 `page-agent-sdk/headless` 子路径:纯核心,不含 ChatDialog/marked/highlight.js/dompurify,给 `ui:false` 的 headless 用户精简 bundle ESM 789KB→~530KB;**非破坏 minor 2.36.0**,主包零变化;依赖反转 `_createChatSdk` + 独立 `vite.headless.config.ts` + 双入口;见该 change `proposal.md`/`design.md`/`specs`/`tasks.md`)。
+
 > **3 个活跃 change,均评估暂缓(等痛点驱动)**(`focus-context` / `harden-large-json-write` 已完成并发布,见 `archive/`)。2026-08-08 发布 **2.27.0**:`recall-and-trim-llm`(P1 召回 + trim LLM)+ `context-persist-resilience`(mission/workingMemory 持久化 + trim 收口 GC 归档)实施完成;`context-history-resilience` umbrella 归档(P1+A 收口;B 类决策 #2 维持「对话文本」模型;P2 其余 deferred)。已归档见 `archive/`。
 
 ## 全景盘点(均暂缓)

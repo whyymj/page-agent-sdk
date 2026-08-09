@@ -10,7 +10,7 @@
 
 采用**自研 Deep Agents 风格 harness**(规避 `deepagentsjs#292` 浏览器打包阻塞,不引入 LangGraph/langchain 整包)。
 
-- 构建产物:`dist/page-agent-sdk.{js,umd.cjs,iife.js,css}`;类型声明 `types/index.d.ts`(手动维护);入口 `src/index.ts`
+- 构建产物:`dist/page-agent-sdk.{js,umd.cjs,iife.js,css}` + `dist/page-agent-sdk.headless.js`(`/headless` 子路径,纯核心不含 UI);类型声明 `types/index.d.ts`(手动维护)+ `types/headless.d.ts`(核心子集,由 index.d.ts 派生);入口 `src/core/index.ts`(主)+ `src/core/index.headless.ts`(headless 子路径)
 
 ## Agent 身份
 
@@ -33,7 +33,7 @@ npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/
 npm run preview   # 预览构建产物
 npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,1590 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑 tests/e2e-integration.mjs,用构建产物 dist,405 项;覆盖各 API/配置项/功能模块/简单与复杂场景:默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置,含 toolMode simple/advanced/minimal) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件,含 filterByToolMode/extractSchemaHint) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 乐观锁冲突人工介入(pendingConflict/resolveConflict) / read/write 高层工具 + 拦截器 / data bind 字段直连 + schema .describe() 自动注入 + input/output 拦截器 / 错误场景)
+npm run test:e2e      # 集成层 e2e(node 跑 tests/e2e-integration.mjs,用构建产物 dist,428 项;覆盖各 API/配置项/功能模块/简单与复杂场景:默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置,含 toolMode simple/advanced/minimal) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件,含 filterByToolMode/extractSchemaHint) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 乐观锁冲突人工介入(pendingConflict/resolveConflict) / read/write 高层工具 + 拦截器 / data bind 字段直连 + schema .describe() 自动注入 + input/output 拦截器 / headless 子路径(/headless 纯核心:导出范围/降级 warn/ui:false 走通/bundle 纯净+体积) / 错误场景)
 npm run test:browser  # 浏览器 E2E(Playwright + mock LLM,跑 tests/browser/*.spec.ts;自动启 dev server,拦截 LLM API 返回确定性 SSE 响应;覆盖 page-demo read→write→read / human-confirm-demo 两层确认 / complex-demo 列组件+edit patch+子路径读+mission+深嵌套+配置面板+actions(save_draft/publish)+get_dom;不依赖真 LLM,可进 CI)
 ```
 
@@ -52,7 +52,7 @@ src/core/                       # 通用 SDK 核心(框架无关)
 │   ├── middleware.ts           # Middleware 契约 + 执行器
 │   ├── todos.ts/skills.ts/memory.ts/permissions.ts/summarization.ts/retry.ts
 │   ├── subagent.ts/verify.ts/usageHints.ts/focus.ts
-├── sdk/                        # createChatSdk(命令式入口)/ defineTool / promptBuilder / llmResolver / conflictManager / optionsResolver / events / contextPreset(预设比例映射)(模块抽离,见 architecture ⑫)
+├── sdk/                        # createChatSdk(命令式入口:_createChatSdk 内部工厂 + mountChatDialog 可注入 UI 渲染,依赖反转)/ defineTool / promptBuilder / llmResolver / conflictManager / optionsResolver / events / contextPreset(预设比例映射)(模块抽离,见 architecture ⑫)
 ├── tools/                      # dataOps / fetchDoc / dataSlotQuery / jsonUtils / schemaUtils(纯函数抽离)
 ├── toolsets.ts                 # 内置工具集预设
 ├── backends/{vfs,storage,skillStore}.ts # 内存工作区 / 持久化存储 / skill 独立持久化
@@ -60,7 +60,7 @@ src/core/                       # 通用 SDK 核心(框架无关)
 ├── llm/proxyLlm.ts              # 代理连接模块(防 apiKey 泄露:proxy 代理 / direct 直连)
 ├── composables/                # useChat / useContextManager / useMarkdown / contextIndex(压缩索引纯函数) / chatContext(ChatDialog 拆分枢纽:provide/inject)
 ├── components/                 # ChatDialog(组合容器:provide ctx + 9 区块 slot/sections) / MessageContent / CodePreview / DebugDrawer / ChatHeader / ChatInput / QueuedBar / ApprovalBar / ConflictBar / FocusBar / message/(MessageRow + Time/Actions/Reasoning/Steps/Bubble + MessageList)
-├── presets.ts / types/index.ts / index.ts
+├── presets.ts / types/index.ts / index.ts(主入口,注入 mountChatDialog 含 UI)/ index.headless.ts(headless 子路径入口,不注入 → 不含 UI)
 examples/                       # 各 demo(page-demo/complex-demo/subagent-demo/mcp-demo/nested-demo/planner-demo/toolsets-demo/human-confirm-demo/animation-demo/multi-agent-demo/proxy-demo/customize-demo)
                                 # 每个 demo 目录自带 index.html(dev 入口)+ main.ts;根目录仅 index.html(主入口→page-demo)
 doc/                            # architecture.md + README.md(索引)
@@ -237,7 +237,7 @@ npm test            # tsx 跑 src/core/__tests__/selftest.ts(runner),1590 项断
 #### 2. 集成层 e2e(改 createChatSdk 顶层 API 后必跑)
 ```bash
 npm run build       # 先构建(e2e 用 dist 产物)
-npm run test:e2e    # node 跑 tests/e2e-integration.mjs(runner),405 项断言
+npm run test:e2e    # node 跑 tests/e2e-integration.mjs(runner),428 项断言
 ```
 **按模块拆分**:测试代码在 `tests/e2e/<module>.mjs`,各导出 `run()` 返回 `{pass,fail}`,由 `tests/e2e-integration.mjs` runner 汇总。模块:
 - `systemprompt.mjs`(默认/自定义/能力概述/拼接)、`dynamic-register.mjs`(add·remove·list + inspect 同步 + dataOps 关闭 no-op)
@@ -363,7 +363,7 @@ createChatSdk({
 // sdk.setMemory(source) 更新持久指令(支持 string / 同步/异步函数,适合 RAG 加载文档)
 // sdk.setSubagents/addSubagent/removeSubagent 增删预声明子 agent(需创建时配 subagents:[])
 ```
-**headless**(`ui: false`):不渲染内置对话框,用 `agent.messages` + `send`/`stream` 自建 UI。**headless 持久化(重要)**:`sdk.stream` 不自动落盘(内置 useChat 经 onPersist 自动调 afterRound),自建对话框每轮后需手动 `sdk.afterRound()` 把 messages/vfs/todos 存 store,否则 `switchSession` 切回丢消息;`sdk.send` 自动持久化。**headless 调试**:复用内置 `DebugDrawer`(`import { DebugDrawer }`,纯 props:`logs=sdk.debugLogs` / `getInfo=()=>sdk.inspect()` / `infoTick=sdk.infoTick` / `getSkillContent`),挂载即用,不耦合 ChatDialog。
+**headless**(`ui: false`):不渲染内置对话框,用 `agent.messages` + `send`/`stream` 自建 UI。**headless 精简子路径 `/headless`(2.36+)**:`import { createChatSdk } from 'page-agent-sdk/headless'` —— 独立打包的纯核心产物(`dist/page-agent-sdk.headless.js`,ESM ~325KB vs 主包 ~789KB),去掉运行时从不使用的 UI 层(marked/highlight.js/dompurify/ChatDialog 全子树)。`createChatSdk(options): ChatSdk` 签名与主包一致,仅 import 源不同;配 `ui:false` 用。架构:依赖反转(`createChatSdk.ts` 不 import ChatDialog,UI 渲染抽成可注入 `mountChatDialog.ts`;内部工厂 `_createChatSdk(options, mounter?)` + 入口包装:主入口注入 mounter 含 UI / headless 入口不注入不含 UI)。**降级**:headless 入口创建的 sdk 若不传 `ui:false` → `mount()` console.warn 提示降级(不渲染 DOM),显式 `ui:false` 无 warn。**headless 持久化(重要)**:`sdk.stream` 不自动落盘(内置 useChat 经 onPersist 自动调 afterRound),自建对话框每轮后需手动 `sdk.afterRound()` 把 messages/vfs/todos 存 store,否则 `switchSession` 切回丢消息;`sdk.send` 自动持久化。**headless 调试**:复用内置 `DebugDrawer`(`import { DebugDrawer }` —— 仅主包,headless 子路径不含,需从 `page-agent-sdk` 引;纯 props:`logs=sdk.debugLogs` / `getInfo=()=>sdk.inspect()` / `infoTick=sdk.infoTick` / `getSkillContent`),挂载即用,不耦合 ChatDialog。
 
 **能力开关**(`capabilities`):关掉无用内置能力(`dataOps`/`fetch`/`planning`/`skills`/`vfs`/`summarization`/`memory`/`subagent`,默认全开)省 token/体积。`verify` 反向(默认关,需 `capabilities.verify:true`)。`domInspect` 同向默认关(agent 读渲染后 DOM 的 `get_dom` 工具,opt-in;有 token 成本)。`inspectEnv` **默认开**(`inspect_env` 轻量环境探查,读 window/location/调试变量,排查调试用;`false` 关)。`automation` **opt-in 默认关**(无人值守自动化:`tokenBudget`/`timeBudgetMs` 资源预算闸 + `maxAutoRetries` 错误自动恢复 + 断点续跑 + `sdk.batch` 批处理;最远,需 `capabilities.automation:true`)。**宿主动作 `actions`**(非 capabilities 开关,类 `tools`):集成方注册页面操作 `{ name: { description, run, params? } }`,SDK 自动包成命名 tool(save_draft/publish 等),agent 直接调用触发宿主保存/发布,配合 get_dom 形成"改数据→看 DOM→触发动作"闭环。**`focus` 默认开**(上下文聚焦·多组件精修 multi-focus:`sdk.setFocus`(替换)/`addFocus`(累积)/`removeFocus`(移除单个)/`getFocuses`/`clearFocus` + agent 工具 `set_focus`/`add_focus`/`remove_focus`/`clear_focus`(advanced 暴露)+ ChatDialog 输入框多 chip;聚焦后目标/视野/范围三层收敛到焦点子树,写不在任一焦点 `PATH_DENIED` 回灌自纠;`false` 关)。**`contextInspector` 默认开**(上下文构成诊断:`sdk.inspectContext()`/`inspect().context` 读每轮 wrapModelCall 的消息分类 token 占比,DebugDrawer「📊 上下文」tab 展示占用/分类/压缩;纯 estimateTokens 计算零 LLM 成本;`false` 关)。**`agentCompression` opt-in 默认关**(压缩 agent 自主决策:开 + `summaryLlm` 可用(支持工具)→ summarization 每轮 `shouldTriggerCompression` gate 通过才 `decide`(inspect_context 工具循环)→ compress 用决策;decide 失败降级静态;requires summarization;`decisionTimeoutMs`(默认 6s)/`decisionMaxTokens`(默认 2048)可配)。**`skillHostScript` opt-in 默认关**(skill `exec.context:'host'` 宿主全权执行,需 `capabilities.skillHostScript:true`;host 仅集成方内联 code,远程 `url`+`host` 禁止)。skill `exec`(sandbox 默认)/`tools` 是 `SkillSpec` 新增可选字段,无需 capability 开关(默认可用);沙箱防护见 `src/core/tools/sandbox.ts`。
 
@@ -407,7 +407,7 @@ createChatSdk({
 
 包名 `page-agent-sdk`(`package.json` 已配 `exports`/`files`/`peerDependencies`/`unpkg`/`jsdelivr`)。`vue` 打包进库;`zod`/`@langchain/*` 为 peer。三种引入:npm / CDN·ESM(esm.sh) / CDN·IIFE 全量(`unpkg` 单文件)。
 
-构建:`npm run build` = `build:lib`(ESM+UMD,peer 外置)+ `build:iife`(IIFE 全量)。发布前确保 `npm run build` + `npm test` 通过,`types/index.d.ts` 与 `src/core/index.ts` 导出一致。
+构建:`npm run build` = `build:lib`(ESM+UMD,peer 外置)+ `build:headless`(headless 子路径 ESM,纯核心不含 UI)+ `build:iife`(IIFE 全量)。发布前确保 `npm run build` + `npm test` 通过,`types/index.d.ts` 与 `src/core/index.ts` 导出一致,`types/headless.d.ts` 与 `src/core/index.headless.ts` 导出一致(exports-consistency 校验)。
 
 ## 发布流程 checklist(改代码 → 文档 → git → npm)
 
