@@ -32,7 +32,7 @@ export async function run() {
       'jpEval', 'searchJson', 'runSandboxedScript',
       'toolError', 'zodError', 'jsonParseError', 'formatZodIssues',
       'ChatDialog', 'MessageContent', 'CodePreview', 'useChat',
-      'ChatHeader', 'ChatInput', 'MessageList', 'MessageRow', 'QueuedBar', 'ApprovalBar', 'ConflictBar', 'FocusBar',
+      'ChatHeader', 'ChatInput', 'MessageList', 'MessageRow', 'QueuedBar', 'ApprovalBar', 'ConflictBar', 'FocusBar', 'DebugDrawer',
       'createChatContext', 'useChatContext',
     ]
     let allOk = true

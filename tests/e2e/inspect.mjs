@@ -533,5 +533,22 @@ export async function run() {
     sdkOff.unmount()
   }
 
+  console.log('[e2e:inspect] headless 调试/持久化 API:afterRound / debugLogs / infoTick(DebugDrawer 复用所需)')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-debug-api', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      data: { schema: z.object({ x: z.string() }), bind: { x: '1' } },
+    })
+    await sdk.mount()
+    assert(typeof sdk.afterRound === 'function', '✓ sdk.afterRound 是函数(headless 显式持久化;sdk.stream 不自动落盘,需手动调)')
+    sdk.afterRound() // memory backend → no-op,不抛
+    assert(Array.isArray(sdk.debugLogs.value), '✓ sdk.debugLogs 是 Ref<DebugLog[]>(mount 后 agent 存在)')
+    assert(sdk.debugLogs.value.length === 0, '✓ 初始 debugLogs 为空')
+    assert(typeof sdk.infoTick.value === 'number', '✓ sdk.infoTick 是 Ref<number>(供 DebugDrawer watch 重拉 inspect)')
+    sdk.setData({ schema: z.object({ y: z.string() }), bind: { y: '2' } })
+    assert(sdk.infoTick.value > 0, '✓ setData 后 infoTick ++(触发 DebugDrawer Agent 信息刷新)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

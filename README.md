@@ -195,7 +195,7 @@ resolveContextOptions, CONTEXT_PRESETS, resolveModelCaps, estimateTokens, isCont
 // storage
 createSessionStore, createMemoryBackend, createWebStorageBackend, isQuotaError
 // UI (reuse when headless)
-ChatDialog, MessageContent, CodePreview, SkillPanel, useChat
+ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 // types (omitted): ChatSdkOptions, Middleware, SubagentConfig, SkillSpec, DataConfig, AgentMessage, StreamEvent …
 ```
 
@@ -490,8 +490,7 @@ After `npm run dev`, visit the corresponding page:
 | mcp-demo | `/examples/mcp-demo/` | MCP remote tools (needs `npm run mcp:mock`) |
 | animation-demo | `/examples/animation-demo/` | ChatDialog enter/collapse/unmount animations + inline/drawer + hide/show |
 | multi-agent-demo | `/examples/multi-agent-demo/` | Multi-agent parallel + exclusive switch (3 independent agents, drawer hide/show keeps each history) |
-| proxy-demo | `/examples/proxy-demo/` | Proxy connection to prevent apiKey leakage (browser holds only userToken, proxy injects real key; includes auto-refresh on expired token; needs `npm run proxy:mock`) |
-| anthropic-demo | `/examples/anthropic-demo/` | Anthropic Claude (`provider:'anthropic'` uses Claude native protocol; streaming text + extended thinking; needs `.env` with Anthropic key + `claude-*` model) |
+| proxy-demo | `/examples/proxy-demo/` | LLM connection config: proxy to prevent apiKey leakage (browser holds only userToken, proxy injects real key; auto-refresh on expired token; needs `npm run proxy:mock`) + Provider switch (`provider:'anthropic'` for Claude native protocol, streaming + extended thinking) |
 
 Framework-agnostic integration: `demo/plain.html` (importmap + esm.sh).
 
@@ -602,7 +601,7 @@ import { jpEval, searchJson } from 'page-agent-sdk/query'
 
 `sideEffects` is set to `["**/*.css"]` only, so bundlers can tree-shake the JS when you import named symbols. Tips to keep your bundle lean:
 
-- **Headless (`ui:false`)**: skip the built-in dialog and render `agent.messages` yourself — you can avoid importing `ChatDialog`/`CodePreview` and drop the CSS (`import 'page-agent-sdk'` without `'page-agent-sdk/style.css'`).
+- **Headless (`ui:false`)**: skip the built-in dialog and render `agent.messages` yourself — you can avoid importing `ChatDialog`/`CodePreview` and drop the CSS (`import 'page-agent-sdk'` without `'page-agent-sdk/style.css'`). **Persistence pitfall**: `sdk.stream` does NOT auto-persist (built-in `useChat` calls `afterRound` via `onPersist`); in a self-built dialog call `sdk.afterRound()` after each turn, otherwise `switchSession` won't restore messages. **Reuse the built-in DebugDrawer**: `import { DebugDrawer }` — pure-props (`logs=sdk.debugLogs`, `getInfo=()=>sdk.inspect()`, `infoTick=sdk.infoTick`), mount it in your own UI without needing ChatDialog.
 - **Disable unused capabilities**: `capabilities:{ dataOps:false, fetch:false, planning:false, skills:false, vfs:false, summarization:false, memory:false, subagent:false }` — removes the corresponding tool schemas and middleware from the agent prompt (saves tokens, not bytes).
 - **CDN via esm.sh**: `import { createChatSdk } from 'https://esm.sh/page-agent-sdk'` — peer deps (`zod`, `@langchain/*`) are resolved and deduped by esm.sh automatically; smallest for module scenarios.
 - **IIFE only for zero-config**: the all-inlined single file is convenient but heaviest; prefer ESM when the host supports modules.

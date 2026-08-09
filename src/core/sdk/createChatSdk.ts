@@ -19,7 +19,7 @@ import { createApp, h, defineComponent, reactive, ref, type App as VueApp, type 
 import { tool, type StructuredToolInterface } from '@langchain/core/tools'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import ChatDialog from '../components/ChatDialog.vue'
-import { createAgent } from '../harness/createAgent'
+import { createAgent, type DebugLog } from '../harness/createAgent'
 import { asAgentError } from '../tools/toolError'
 import { z, type ZodType } from 'zod'
 import { getSchemaAtPath } from '../tools/schemaUtils'
@@ -363,6 +363,12 @@ export interface ChatSdk {
   send(message: string, options?: SendOptions): Promise<string>
   /** 暴露底层流式接口(高级用法,自行管理历史时使用) */
   stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>
+  /** 显式持久化当前轮(headless 用 sdk.stream 时需手动调:把 messages/vfs/todos 存 store;内置 useChat 经 onPersist 自动调。storage 未开启 → no-op) */
+  afterRound(): void
+  /** 调试日志(LLM 请求/响应/工具调用/中间件/错误;switchSession/onClear 清空;供 DebugDrawer 或外部消费) */
+  readonly debugLogs: Ref<DebugLog[]>
+  /** Agent 信息刷新 tick(setSkills/setData/setFocus 后 ++);传给 DebugDrawer watch 后重拉 inspect() 实时反映 */
+  readonly infoTick: Ref<number>
   /** 切换到指定会话(载入其上下文);不传 id 则新建。返回新会话 id。storage 未开启时抛错 */
   switchSession(sessionId?: string): Promise<string>
   /** 列出当前 agent 的所有历史会话(供「历史列表」UI;storage 未开启 → []) */
@@ -2205,6 +2211,12 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
     /** 当前会话 id(switchSession/onClear 后实时反映;供历史列表高亮当前项) */
     get sessionId(): string { return core.sessionId },
     stream: core.stream,
+    /** 显式持久化当前轮(headless sdk.stream 不自动落盘,需手动调;storage 未开启 → no-op) */
+    afterRound: core.afterRound,
+    /** 调试日志(供 DebugDrawer 等;switchSession/onClear 清空) */
+    get debugLogs() { return core.agent!.debugLogs },
+    /** Agent 信息刷新 tick(传 DebugDrawer 实时重拉 inspect) */
+    infoTick: core.infoTick,
     inspect: core.getInfo,
     /** 读取最近一次上下文构成快照(每轮 wrapModelCall 覆盖;capabilities.contextInspector:false → undefined) */
     inspectContext: () => core.getInfo().context,

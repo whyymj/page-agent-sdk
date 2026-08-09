@@ -1,4 +1,4 @@
-// 用途:会话历史管理 —— 一个聊天框 + 历史会话列表(新建/切换/删除)
+// 用途:自定义主题 + slot 替换 —— L2 深度定制(深色主题 --cs-* 变量 + 具名 #header slot)
 import { createApp } from 'vue'
 import App from './App.vue'
 import '../_shared/theme.css'

@@ -312,6 +312,19 @@ export declare const QueuedBar: DefineComponent<any>;
 export declare const ApprovalBar: DefineComponent<any>;
 export declare const ConflictBar: DefineComponent<any>;
 export declare const FocusBar: DefineComponent<any>;
+/** DebugDrawer props(纯 props 驱动,不耦合 ChatDialog;headless 自建对话框可复用) */
+export interface DebugDrawerProps {
+  logs?: DebugLog[];
+  visible: boolean;
+  /** 取 agent 详情(「Agent 信息」tab) */
+  getInfo?: () => AgentInfo;
+  /** 刷新 tick(watch 后重拉 getInfo;setSkills/setData 后 ++ 实时反映) */
+  infoTick?: Ref<number>;
+  /** 读 skill 全文(展开 skill 时调;返回 null 表示无内容) */
+  getSkillContent?: (name: string) => Promise<string | null>;
+}
+/** 调试抽屉(7 类日志筛选 / Agent 信息 / 上下文构成 / 上轮压缩 / skill 展开);v-model:visible 显隐,emit clear 清日志 */
+export declare const DebugDrawer: DefineComponent<DebugDrawerProps>;
 // chatContext 枢纽(L2 自建根组件调 createChatContext + provide(chatContextKey);原子组件 useChatContext inject)
 export interface ChatContextOptions {
   fetchResponse?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<string>;
@@ -832,6 +845,12 @@ export interface ChatSdk {
   /** 当前会话 id(switchSession/onClear 后实时反映;供历史列表高亮当前项) */
   readonly sessionId: string;
   stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>;
+  /** 显式持久化当前轮(headless 用 sdk.stream 时需手动调:把 messages/vfs/todos 存 store;内置 useChat 经 onPersist 自动调。storage 未开启 → no-op) */
+  afterRound(): void;
+  /** 调试日志(LLM 请求/响应/工具调用/中间件/错误;switchSession/onClear 清空;供 DebugDrawer 或外部消费) */
+  readonly debugLogs: Ref<DebugLog[]>;
+  /** Agent 信息刷新 tick(setSkills/setData/setFocus 后 ++);传给 DebugDrawer watch 后重拉 inspect() 实时反映 */
+  readonly infoTick: Ref<number>;
   /** 检视 agent 详细信息(tools/skills/data/middleware/todos) */
   inspect(): AgentInfo;
   /** 读取最近一次上下文构成快照(每轮 wrapModelCall 覆盖;capabilities.contextInspector:false → undefined) */

@@ -189,7 +189,7 @@ resolveContextOptions, CONTEXT_PRESETS, resolveModelCaps, estimateTokens, isCont
 // 存储
 createSessionStore, createMemoryBackend, createWebStorageBackend, isQuotaError
 // UI(headless 自建 UI 复用)
-ChatDialog, MessageContent, CodePreview, SkillPanel, useChat
+ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 // 类型(略):ChatSdkOptions, Middleware, SubagentConfig, SkillSpec, DataConfig, AgentMessage, StreamEvent …
 ```
 
@@ -435,8 +435,7 @@ createChatSdk({
 | mcp-demo | `/examples/mcp-demo/` | MCP 远程工具（需 `npm run mcp:mock`） |
 | animation-demo | `/examples/animation-demo/` | ChatDialog 入场/收起/卸载动画 + inline/drawer 模式 + hide/show |
 | multi-agent-demo | `/examples/multi-agent-demo/` | 多 Agent 并行 + 互斥切换（三独立 agent，drawer hide/show 保留各自历史） |
-| proxy-demo | `/examples/proxy-demo/` | 代理连接防 apiKey 泄露（浏览器只持 userToken，代理注入真实 key；含 token 过期自动刷新；需 `npm run proxy:mock`） |
-| anthropic-demo | `/examples/anthropic-demo/` | Anthropic Claude（`provider:'anthropic'` 走 Claude 原生协议；流式文本 + extended thinking；需 `.env` 配 Anthropic key + `claude-*` model） |
+| proxy-demo | `/examples/proxy-demo/` | LLM 连接配置：代理防 apiKey 泄露（浏览器只持 userToken，代理注入真实 key；含 token 过期自动刷新；需 `npm run proxy:mock`）+ Provider 切换（`provider:'anthropic'` 走 Claude 原生协议，流式 + extended thinking） |
 
 框架无关集成：`demo/plain.html`（importmap + esm.sh）。
 
@@ -547,7 +546,7 @@ import { jpEval, searchJson } from 'page-agent-sdk/query'
 
 `sideEffects` 仅标记 `["**/*.css"]`,打包器可对 JS 做 tree-shaking。瘦身建议:
 
-- **headless(`ui:false`)**:不渲染内置对话框,自渲染 `agent.messages` —— 可不引 `ChatDialog`/`CodePreview`,并省略 CSS(`import 'page-agent-sdk'` 不引 `'page-agent-sdk/style.css'`)。
+- **headless(`ui:false`)**:不渲染内置对话框,自渲染 `agent.messages` —— 可不引 `ChatDialog`/`CodePreview`,并省略 CSS(`import 'page-agent-sdk'` 不引 `'page-agent-sdk/style.css'`)。**持久化坑**:`sdk.stream` 不自动落盘(内置 useChat 经 onPersist 调 afterRound);自建对话框每轮后需手动 `sdk.afterRound()`,否则 `switchSession` 切回丢消息。**复用内置 DebugDrawer**:`import { DebugDrawer }`(纯 props:`logs=sdk.debugLogs` / `getInfo=()=>sdk.inspect()` / `infoTick=sdk.infoTick`),在自己的 UI 里挂载,无需 ChatDialog。
 - **关闭无用能力**:`capabilities:{ dataOps:false, fetch:false, planning:false, skills:false, vfs:false, summarization:false, memory:false, subagent:false }` —— 移除对应工具 schema 与中间件(省 token,非字节)。
 - **CDN 用 esm.sh**:`import { createChatSdk } from 'https://esm.sh/page-agent-sdk'` —— peer(`zod`、`@langchain/*`)由 esm.sh 自动解析去重,模块场景最小。
 - **IIFE 仅用于零配置**:全量单文件方便但最重,宿主支持模块时优先 ESM。

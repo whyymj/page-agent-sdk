@@ -1,34 +1,59 @@
 <script setup lang="ts">
 /**
- * 开发期导航 —— 收起态左上角圆按钮(不遮挡 demo 内容主体),悬停展开为左侧侧栏(176px,垂直全链接)。
+ * 开发期导航 —— 收起态左上角圆按钮(不遮挡 demo 内容主体),悬停展开为左侧侧栏(分组)。
  * 用纯 CSS :hover 控制(非 JS 状态),避免展开/收起 transition 期间 mouseenter/mouseleave 抖动闪烁。
  * 纯客户端,基于 location.pathname 判定当前页。仅 dev 用,不影响 SDK 产物。
+ *
+ * 扁平列表 → 4 分组(页面构建 / Agent 能力 / 连接配置 / UI & 实例)+ CDN,视觉降噪。
  */
 import { computed } from 'vue'
 
-const LINKS = [
-  { href: '/', label: '页面构建', match: (p: string) => p === '/' || p === '/index.html' },
-  { href: '/examples/minimal-demo/', label: '最简集成', match: (p: string) => p.startsWith('/examples/minimal-demo') },
-  { href: '/examples/rag-demo/', label: 'RAG 异步文档', match: (p: string) => p.startsWith('/examples/rag-demo') },
-  { href: '/examples/headless-demo/', label: 'Headless', match: (p: string) => p.startsWith('/examples/headless-demo') },
-  { href: '/examples/complex-demo/', label: '复杂页面', match: (p: string) => p.startsWith('/examples/complex-demo') },
-  { href: '/examples/subagent-demo/', label: '子 Agent', match: (p: string) => p.startsWith('/examples/subagent-demo') },
-  { href: '/examples/toolsets-demo/', label: '工具分离', match: (p: string) => p.startsWith('/examples/toolsets-demo') },
-  { href: '/examples/nested-demo/', label: '嵌套树', match: (p: string) => p.startsWith('/examples/nested-demo') },
-  { href: '/examples/dynamic-demo/', label: '动态注册', match: (p: string) => p.startsWith('/examples/dynamic-demo') },
-  { href: '/examples/animation-demo/', label: '动画演示', match: (p: string) => p.startsWith('/examples/animation-demo') },
-  { href: '/examples/multi-agent-demo/', label: '多 Agent', match: (p: string) => p.startsWith('/examples/multi-agent-demo') },
-  { href: '/examples/session-history-demo/', label: '会话历史', match: (p: string) => p.startsWith('/examples/session-history-demo') },
-  { href: '/examples/human-confirm-demo/', label: '人工确认', match: (p: string) => p.startsWith('/examples/human-confirm-demo') },
-  { href: '/examples/planner-demo/', label: '规划反思', match: (p: string) => p.startsWith('/examples/planner-demo') },
-  { href: '/examples/mcp-demo/', label: 'MCP', match: (p: string) => p.startsWith('/examples/mcp-demo') },
-  { href: '/examples/proxy-demo/', label: '代理连接', match: (p: string) => p.startsWith('/examples/proxy-demo') },
-  { href: '/examples/anthropic-demo/', label: 'Anthropic', match: (p: string) => p.startsWith('/examples/anthropic-demo') },
-  { href: '/examples/custom-dialog-demo/', label: '自定义对话框', match: (p: string) => p.startsWith('/examples/custom-dialog-demo') },
-  { href: '/demo/plain.html', label: 'CDN', match: (p: string) => p.includes('plain') },
+interface NavLink { href: string; label: string; match: (p: string) => boolean }
+interface NavGroup { title: string; links: NavLink[] }
+
+const GROUPS: NavGroup[] = [
+  {
+    title: '📦 页面构建',
+    links: [
+      { href: '/', label: '页面构建', match: (p: string) => p === '/' || p === '/index.html' },
+      { href: '/examples/minimal-demo/', label: '最简集成', match: (p: string) => p.startsWith('/examples/minimal-demo') },
+      { href: '/examples/complex-demo/', label: '复杂页面', match: (p: string) => p.startsWith('/examples/complex-demo') },
+      { href: '/examples/nested-demo/', label: '嵌套树', match: (p: string) => p.startsWith('/examples/nested-demo') },
+      { href: '/examples/dynamic-demo/', label: '动态注册', match: (p: string) => p.startsWith('/examples/dynamic-demo') },
+    ],
+  },
+  {
+    title: '🤖 Agent 能力',
+    links: [
+      { href: '/examples/subagent-demo/', label: '子 Agent', match: (p: string) => p.startsWith('/examples/subagent-demo') },
+      { href: '/examples/planner-demo/', label: '规划反思', match: (p: string) => p.startsWith('/examples/planner-demo') },
+      { href: '/examples/rag-demo/', label: 'RAG 文档', match: (p: string) => p.startsWith('/examples/rag-demo') },
+      { href: '/examples/mcp-demo/', label: 'MCP', match: (p: string) => p.startsWith('/examples/mcp-demo') },
+      { href: '/examples/human-confirm-demo/', label: '人工确认', match: (p: string) => p.startsWith('/examples/human-confirm-demo') },
+      { href: '/examples/toolsets-demo/', label: '工具分离', match: (p: string) => p.startsWith('/examples/toolsets-demo') },
+    ],
+  },
+  {
+    title: '🔌 连接配置',
+    links: [
+      { href: '/examples/headless-demo/', label: 'Headless', match: (p: string) => p.startsWith('/examples/headless-demo') },
+      { href: '/examples/proxy-demo/', label: '代理 + Provider', match: (p: string) => p.startsWith('/examples/proxy-demo') },
+    ],
+  },
+  {
+    title: '🎨 UI & 实例',
+    links: [
+      { href: '/examples/multi-agent-demo/', label: '多 Agent', match: (p: string) => p.startsWith('/examples/multi-agent-demo') },
+      { href: '/examples/animation-demo/', label: '动画演示', match: (p: string) => p.startsWith('/examples/animation-demo') },
+      { href: '/examples/customize-demo/', label: '自建对话框', match: (p: string) => p.startsWith('/examples/customize-demo') },
+      { href: '/demo/plain.html', label: 'CDN', match: (p: string) => p.includes('plain') },
+    ],
+  },
 ]
+
+const ALL_LINKS = GROUPS.flatMap((g) => g.links)
 const path = typeof location !== 'undefined' ? location.pathname : ''
-const current = computed(() => LINKS.find((l) => l.match(path)))
+const current = computed(() => ALL_LINKS.find((l) => l.match(path)))
 </script>
 
 <template>
@@ -37,14 +62,19 @@ const current = computed(() => LINKS.find((l) => l.match(path)))
       <span class="dev-nav__brand-icon">🧪</span>
       <span class="dev-nav__brand-label">demos</span>
     </div>
-    <a
-      v-for="l in LINKS"
-      :key="l.href"
-      :href="l.href"
-      class="dev-nav__link"
-      :class="{ active: l.match(path), current: current && l.href === current.href }"
-      :title="l.label"
-    >{{ l.label }}</a>
+    <div class="dev-nav__groups">
+      <div v-for="g in GROUPS" :key="g.title" class="dev-nav__group">
+        <div class="dev-nav__group-title">{{ g.title }}</div>
+        <a
+          v-for="l in g.links"
+          :key="l.href"
+          :href="l.href"
+          class="dev-nav__link"
+          :class="{ active: l.match(path), current: current && l.href === current.href }"
+          :title="l.label"
+        >{{ l.label }}</a>
+      </div>
+    </div>
   </nav>
 </template>
 
@@ -70,12 +100,29 @@ const current = computed(() => LINKS.find((l) => l.match(path)))
 .dev-nav__brand {
   display: flex; align-items: center; justify-content: center; gap: 6px;
   height: 50px; padding: 0; color: #e5e7eb; font-weight: 600; white-space: nowrap;
+  flex-shrink: 0;   /* 展开态内容滚动时不被压缩 */
 }
 .dev-nav:hover .dev-nav__brand { justify-content: flex-start; height: auto; padding: 4px 8px 8px; }
 .dev-nav__brand-icon { font-size: 18px; }
 .dev-nav__brand-label { display: none; }   /* 收起:不占位,避免挤压 icon */
 .dev-nav:hover .dev-nav__brand-label { display: inline; opacity: 0.7; }
+
+/* 分组容器:展开态可纵向滚动(组多时不溢出视口) */
+.dev-nav__groups { flex: 1; overflow-y: auto; overflow-x: hidden; }
+.dev-nav__groups::-webkit-scrollbar { width: 4px; }
+.dev-nav__groups::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 2px; }
+.dev-nav__group { margin-bottom: 6px; }
+.dev-nav__group-title {
+  display: none;   /* 收起:组标题不占位(与 link 一起隐藏) */
+  padding: 8px 8px 4px; font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
+  color: #8b80c4; text-transform: none; white-space: nowrap;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.dev-nav__group:first-child .dev-nav__group-title { border-top: none; padding-top: 4px; }
+.dev-nav:hover .dev-nav__group-title { display: block; }
+
 .dev-nav__link {
+  display: block;   /* a 默认 inline;新增 group 中间层后不再经 nav flex column 隐式堆叠,需显式 block 才垂直排列(否则同组链接水平挤成一行) */
   color: #d1d5db; text-decoration: none; padding: 7px 8px; border-radius: 6px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   transition: background 0.15s, color 0.15s;

@@ -12,6 +12,9 @@
  *   - demo-token-expired    → 401,触发 refreshToken 自动刷新重试
  *
  * 对话框里随便问问题,Agent 经代理调用 LLM(真实 apiKey 在服务端,浏览器不可见)。
+ *
+ * 附:Provider 切换 —— llm 传 LLMConfig 时还支持 provider:'anthropic' 走 Claude 原生协议
+ *    (见左侧「Provider 切换」段;合并自原 anthropic-demo —— 其与 minimal 区别仅 provider 配置)。
  */
 import { onMounted, onUnmounted, ref } from 'vue'
 import { createChatSdk, createProxyLlm, type ChatSdk } from '../../src/core'
@@ -76,7 +79,7 @@ onUnmounted(() => agent?.unmount())
   <DevNav />
   <div class="layout">
     <aside class="pane pane-left">
-      <h2>🔐 代理连接示例</h2>
+      <h2>🔐 LLM 连接(代理 + Provider)</h2>
       <p class="hint">
         浏览器只持 <code>userToken</code>,真实 <code>apiKey</code> 在代理 server(服务端),DevTools 抓不到。
         Agent 经代理调用 LLM,响应透传回浏览器。
@@ -124,6 +127,22 @@ onUnmounted(() => agent?.unmount())
           <span class="arch-box llm">LLM API</span>
         </div>
         <p class="muted small">真实 apiKey 只在「代理 server → LLM API」这一段,浏览器全程不可见</p>
+      </div>
+
+      <div class="provider">
+        <h3>🔄 Provider 切换(走 Claude 原生协议)</h3>
+        <p class="muted">
+          除代理模式外,<code>llm</code> 传 <code>LLMConfig</code> 时支持 <code>provider: 'anthropic'</code>
+          —— 动态加载 <code>@langchain/anthropic</code>(optional peer)走 Claude 原生协议,
+          展示流式文本逐字 + extended thinking(reasoning 区)。
+        </p>
+        <pre class="code">llm: {
+  provider: 'anthropic',                                  // 缺省 'openai' = OpenAI/DeepSeek 协议
+  apiKey: import.meta.env.VITE_AI_API_KEY,                // Anthropic key
+  model: 'claude-sonnet-4-5-20250929',                    // claude-* 系列
+  baseUrl: import.meta.env.VITE_AI_BASE_URL,              // 可选(自建网关/代理;不配走官方 api.anthropic.com)
+}</pre>
+        <p class="muted small">不用 Anthropic 的项目零影响(不装 <code>@langchain/anthropic</code> 即可)。</p>
       </div>
     </aside>
 
@@ -274,5 +293,29 @@ h2 {
 .arch-arrow {
   color: #94a3b8;
   font-size: 10px;
+}
+.provider {
+  padding: 14px;
+  background: rgba(168, 85, 247, 0.08);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  border-radius: 8px;
+}
+.provider h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--ark-fg);
+}
+.code {
+  margin: 10px 0;
+  padding: 10px 12px;
+  background: var(--ark-bg);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ark-fg);
+  font-family: ui-monospace, monospace;
+  overflow-x: auto;
+  white-space: pre;
 }
 </style>

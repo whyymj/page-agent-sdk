@@ -105,6 +105,7 @@ export { createSkillStore } from './backends/skillStore'
 export type { SkillStore, SkillStoreConfig, PersistedSkill } from './backends/skillStore'
 // 通用消息 / 上下文类型
 export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, SdkEvent, SdkEventHandler, TokenUsage, ToolStep, BatchResult, BatchProgress } from './types'
+export type { Focus } from './harness/state'
 export type { AgentInfo, ToolInfo, SkillInfo, DataInfo, SubagentInfo } from './types'
 export type { ContextManagerOptions, CompressionStats } from './composables/useContextManager'
 export { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars, MIN_CONTEXT_WINDOW } from './utils/modelCaps'
@@ -125,6 +126,8 @@ export { default as QueuedBar } from './components/QueuedBar.vue'
 export { default as ApprovalBar } from './components/ApprovalBar.vue'
 export { default as ConflictBar } from './components/ConflictBar.vue'
 export { default as FocusBar } from './components/FocusBar.vue'
+// DebugDrawer:调试抽屉(纯 props 驱动:logs/visible/getInfo/infoTick/getSkillContent;不 inject chatContext,headless 自建对话框可复用)
+export { default as DebugDrawer } from './components/DebugDrawer.vue'
 // chatContext 枢纽(L2 自建根组件时调 createChatContext + provide(chatContextKey);原子组件经 useChatContext inject)
 export { createChatContext, chatContextKey, useChatContext } from './composables/chatContext'
 export type { ChatContext, ChatContextOptions } from './composables/chatContext'

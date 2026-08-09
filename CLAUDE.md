@@ -33,7 +33,7 @@ npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/
 npm run preview   # 预览构建产物
 npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,1590 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑 tests/e2e-integration.mjs,用构建产物 dist,400 项;覆盖各 API/配置项/功能模块/简单与复杂场景:默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置,含 toolMode simple/advanced/minimal) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件,含 filterByToolMode/extractSchemaHint) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 乐观锁冲突人工介入(pendingConflict/resolveConflict) / read/write 高层工具 + 拦截器 / data bind 字段直连 + schema .describe() 自动注入 + input/output 拦截器 / 错误场景)
+npm run test:e2e      # 集成层 e2e(node 跑 tests/e2e-integration.mjs,用构建产物 dist,405 项;覆盖各 API/配置项/功能模块/简单与复杂场景:默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置,含 toolMode simple/advanced/minimal) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件,含 filterByToolMode/extractSchemaHint) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 乐观锁冲突人工介入(pendingConflict/resolveConflict) / read/write 高层工具 + 拦截器 / data bind 字段直连 + schema .describe() 自动注入 + input/output 拦截器 / 错误场景)
 npm run test:browser  # 浏览器 E2E(Playwright + mock LLM,跑 tests/browser/*.spec.ts;自动启 dev server,拦截 LLM API 返回确定性 SSE 响应;覆盖 page-demo read→write→read / human-confirm-demo 两层确认 / complex-demo 列组件+edit patch+子路径读+mission+深嵌套+配置面板+actions(save_draft/publish)+get_dom;不依赖真 LLM,可进 CI)
 ```
 
@@ -61,7 +61,7 @@ src/core/                       # 通用 SDK 核心(框架无关)
 ├── composables/                # useChat / useContextManager / useMarkdown / contextIndex(压缩索引纯函数) / chatContext(ChatDialog 拆分枢纽:provide/inject)
 ├── components/                 # ChatDialog(组合容器:provide ctx + 9 区块 slot/sections) / MessageContent / CodePreview / DebugDrawer / ChatHeader / ChatInput / QueuedBar / ApprovalBar / ConflictBar / FocusBar / message/(MessageRow + Time/Actions/Reasoning/Steps/Bubble + MessageList)
 ├── presets.ts / types/index.ts / index.ts
-examples/                       # 各 demo(page-demo/complex-demo/subagent-demo/mcp-demo/nested-demo/planner-demo/toolsets-demo/human-confirm-demo/animation-demo/multi-agent-demo/proxy-demo/anthropic-demo/custom-dialog-demo)
+examples/                       # 各 demo(page-demo/complex-demo/subagent-demo/mcp-demo/nested-demo/planner-demo/toolsets-demo/human-confirm-demo/animation-demo/multi-agent-demo/proxy-demo/customize-demo)
                                 # 每个 demo 目录自带 index.html(dev 入口)+ main.ts;根目录仅 index.html(主入口→page-demo)
 doc/                            # architecture.md + README.md(索引)
 demo/plain.html                 # 框架无关集成示例
@@ -237,7 +237,7 @@ npm test            # tsx 跑 src/core/__tests__/selftest.ts(runner),1590 项断
 #### 2. 集成层 e2e(改 createChatSdk 顶层 API 后必跑)
 ```bash
 npm run build       # 先构建(e2e 用 dist 产物)
-npm run test:e2e    # node 跑 tests/e2e-integration.mjs(runner),400 项断言
+npm run test:e2e    # node 跑 tests/e2e-integration.mjs(runner),405 项断言
 ```
 **按模块拆分**:测试代码在 `tests/e2e/<module>.mjs`,各导出 `run()` 返回 `{pass,fail}`,由 `tests/e2e-integration.mjs` runner 汇总。模块:
 - `systemprompt.mjs`(默认/自定义/能力概述/拼接)、`dynamic-register.mjs`(add·remove·list + inspect 同步 + dataOps 关闭 no-op)
@@ -264,9 +264,8 @@ npm run test:browser  # Playwright + mock LLM,自动启 dev server,确定性 SSE
 - `error-recovery.spec.ts`(2 项:write 违反 schema→SCHEMA_INVALID 回灌不写 / 非法→修正→read 确认自纠)
 - `rag-demo.spec.ts`(2 项:memory 异步注入→systemPrompt/preview 含文档 / 切知识库→memory 替换)
 - `queue.spec.ts`(3 项:生成中 loading 回车入排队区 → 完成后依次执行 + 撤销/修改)
-- `session-history-demo.spec.ts`(4 项:新建会话→列表+1+当前切换 / 多会话切换点历史项→active 迁移 / 删除历史→列表-1+当前不可删 / **清空对话→UI 清空 + 无 ReferenceError(P0-4 resetSession)**;验证 listSessions/switchSession/deleteSession/sessionId 对外 API 浏览器端到端,session-history-management)
+- `customize-demo.spec.ts`(7 项:**headless 完全自建对话框 + 低代码预览**(`ui:false` 不渲染内置 `.chat-dialog`,自建 `.my-dialog` + 深色 + 低代码 `.preview`)/ **headless 接线发消息走通**(`sdk.stream`+流式 delta → AI 回复)/ **低代码 write**(mock `write` 改 title → steps + `done` + reactive bind `.preview__title` 实时刷新 + 回复)/ **组件聚焦**(点卡片选中 `.selected` 边界 → 加入聊天 → 自建 `.focus-chip` → ✕ 移除)/ **聚焦历史**(聚焦发消息 → user message 🎯 chip 标注;退出聚焦后历史标注保留)/ **会话管理**(新建清空 + 历史面板高亮当前 + 切回恢复对话;`switchSession`/`sessions` + headless `afterRound` 持久化)/ **调试抽屉**(🛠 复用内置 `DebugDrawer`:Agent 信息 + 日志;纯 props 驱动 headless 直接用);验证 `ui:false` + `sdk.stream` + reasoning/tool/低代码/聚焦/会话/调试完整自建)
 - `xss-sanitize.spec.ts`(2 项:AI 回复 `<img onerror>` → sanitize 剥 onerror 不执行 / `<a href="javascript:">` → 拦危险协议;验证 P0-2 DOMPurify 真接入 v-html 渲染管线)
-- `custom-dialog-demo.spec.ts`(3 项:chatdialog-component-split 的 sections 区块显隐——`footer:false` → `.chat-footer` 不渲染 / 默认 header 开 / 默认 body 开;验证 `dialog.sections` 关区块 + 默认全开)
 - 共享 mock/交互工具在 `tests/browser/_helpers.ts`(mockLlm SSE/fillInput/clickSend/clickByText/waitForAgentIdle/clearChat + clearStorage 清 indexedDB/cookies 防跨 spec 污染)
 
 覆盖 selftest/e2e 触不到的「浏览器 + ChatDialog + 真实 DOM 渲染」层。**改 ChatDialog 组件、dataOps 工具行为、确认/冲突 UI 后必跑**。新增 demo 时按「新增功能测试同步约定」新建 spec 文件。
@@ -285,9 +284,8 @@ npm run dev         # 启动(端口 3000;被占自动换)
 - `human-confirm-demo`(3.0:`data` bind + schema)/ `planner-demo`(3.0:`data` bind + schema + 预声明子 agent)/ `toolsets-demo`(手动 toolset,关 dataOps 自动装配,不用 bind)
 - `animation-demo` 动画演示(ChatDialog 入场/收起/卸载动画 + inline/drawer 模式 + hide/show 保留历史)
 - `multi-agent-demo` 多 Agent 并行(三独立 agent 不同 id 隔离 + 各管各 data + drawer 互斥切换 hide/show,历史各自保留)
-- `proxy-demo` 代理连接演示(防 apiKey 泄露:浏览器只持 userToken,代理 server 注入真实 key 转发;含 token 过期自动刷新;需 `npm run proxy:mock`)
-- `anthropic-demo` Anthropic Claude(`provider:'anthropic'` 走 Claude 原生协议;展示流式文本逐字 + extended thinking;需 `.env` 配 Anthropic key + `claude-*` model;不用 Anthropic 的项目零影响,optional peer)
-- `custom-dialog-demo` 自定义对话框(chatdialog-component-split:`dialog.sections` 关 footer/queued 等区块;展示 ChatDialog 拆分后的区块显隐控制;9 区块键:header/focus/body/queued/approval/conflict/footer/debug/skill)
+- `proxy-demo` LLM 连接配置演示(代理防 apiKey 泄露:浏览器只持 userToken,代理 server 注入真实 key 转发;含 token 过期自动刷新;需 `npm run proxy:mock`;附 Provider 切换段:`provider:'anthropic'` 走 Claude 原生协议 + extended thinking,合并自原 anthropic-demo)
+- `customize-demo` 完全自建对话框(headless:`ui:false` 不用内置 ChatDialog,`sdk.messages`+`sdk.stream`+流式回调从零实现深色对话框;展示流式逐字/思考/工具步骤/低代码预览/组件聚焦/会话管理(新建·历史·切换)/调试抽屉(复用 `DebugDrawer`)/停止生成/深色主题;headless 完整参考)
 - `demo/plain.html` 框架无关 CDN 集成(importmap + esm.sh)
 
 #### 4. 运行时手动验证(依赖 LLM/server)
@@ -365,7 +363,7 @@ createChatSdk({
 // sdk.setMemory(source) 更新持久指令(支持 string / 同步/异步函数,适合 RAG 加载文档)
 // sdk.setSubagents/addSubagent/removeSubagent 增删预声明子 agent(需创建时配 subagents:[])
 ```
-**headless**(`ui: false`):不渲染内置对话框,用 `agent.messages` + `send`/`stream` 自建 UI。
+**headless**(`ui: false`):不渲染内置对话框,用 `agent.messages` + `send`/`stream` 自建 UI。**headless 持久化(重要)**:`sdk.stream` 不自动落盘(内置 useChat 经 onPersist 自动调 afterRound),自建对话框每轮后需手动 `sdk.afterRound()` 把 messages/vfs/todos 存 store,否则 `switchSession` 切回丢消息;`sdk.send` 自动持久化。**headless 调试**:复用内置 `DebugDrawer`(`import { DebugDrawer }`,纯 props:`logs=sdk.debugLogs` / `getInfo=()=>sdk.inspect()` / `infoTick=sdk.infoTick` / `getSkillContent`),挂载即用,不耦合 ChatDialog。
 
 **能力开关**(`capabilities`):关掉无用内置能力(`dataOps`/`fetch`/`planning`/`skills`/`vfs`/`summarization`/`memory`/`subagent`,默认全开)省 token/体积。`verify` 反向(默认关,需 `capabilities.verify:true`)。`domInspect` 同向默认关(agent 读渲染后 DOM 的 `get_dom` 工具,opt-in;有 token 成本)。`inspectEnv` **默认开**(`inspect_env` 轻量环境探查,读 window/location/调试变量,排查调试用;`false` 关)。`automation` **opt-in 默认关**(无人值守自动化:`tokenBudget`/`timeBudgetMs` 资源预算闸 + `maxAutoRetries` 错误自动恢复 + 断点续跑 + `sdk.batch` 批处理;最远,需 `capabilities.automation:true`)。**宿主动作 `actions`**(非 capabilities 开关,类 `tools`):集成方注册页面操作 `{ name: { description, run, params? } }`,SDK 自动包成命名 tool(save_draft/publish 等),agent 直接调用触发宿主保存/发布,配合 get_dom 形成"改数据→看 DOM→触发动作"闭环。**`focus` 默认开**(上下文聚焦·多组件精修 multi-focus:`sdk.setFocus`(替换)/`addFocus`(累积)/`removeFocus`(移除单个)/`getFocuses`/`clearFocus` + agent 工具 `set_focus`/`add_focus`/`remove_focus`/`clear_focus`(advanced 暴露)+ ChatDialog 输入框多 chip;聚焦后目标/视野/范围三层收敛到焦点子树,写不在任一焦点 `PATH_DENIED` 回灌自纠;`false` 关)。**`contextInspector` 默认开**(上下文构成诊断:`sdk.inspectContext()`/`inspect().context` 读每轮 wrapModelCall 的消息分类 token 占比,DebugDrawer「📊 上下文」tab 展示占用/分类/压缩;纯 estimateTokens 计算零 LLM 成本;`false` 关)。**`agentCompression` opt-in 默认关**(压缩 agent 自主决策:开 + `summaryLlm` 可用(支持工具)→ summarization 每轮 `shouldTriggerCompression` gate 通过才 `decide`(inspect_context 工具循环)→ compress 用决策;decide 失败降级静态;requires summarization;`decisionTimeoutMs`(默认 6s)/`decisionMaxTokens`(默认 2048)可配)。**`skillHostScript` opt-in 默认关**(skill `exec.context:'host'` 宿主全权执行,需 `capabilities.skillHostScript:true`;host 仅集成方内联 code,远程 `url`+`host` 禁止)。skill `exec`(sandbox 默认)/`tools` 是 `SkillSpec` 新增可选字段,无需 capability 开关(默认可用);沙箱防护见 `src/core/tools/sandbox.ts`。
 
