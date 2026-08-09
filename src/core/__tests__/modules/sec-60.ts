@@ -104,4 +104,16 @@ export async function run(ctx: TestCtx) {
   const r2 = await invoke(t2.read, {})
   assert(/⟦frozen:id⟧/.test(r2), '✓ 无 vfsStore → freeze 仍工作(protectedCtx 构造,不依赖池)')
   assert(!/⟦res:/.test(r2), '✓ 无 vfsStore → verbatim 降级不替换(返原值)')
+
+  // H2:resource_update 刷新 lastReadHash → 紧接 write 不冲突(与其他写路径一致,防 LLM 困惑)
+  const h2bind: { id: string; token: string; title: string; components: never[] } = { id: 'h2', token: 't1', title: 't', components: [] }
+  const h2tools = createDataOps({ schema, bind: h2bind, resources: [{ path: 'token', mode: 'verbatim' }] }, { vfsStore: createVfs() })
+  const h2t = byName(h2tools)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const h2ctrl = (h2tools as any).controller
+  await invoke(h2t.read, {})  // read 触发懒注册 + 置 lastReadHash
+  await invoke(h2t.resource_update, { path: 'token', value: 't2' })  // resource_update(刷新 lastReadHash)
+  const h2h = h2ctrl.getResource('token').handle
+  const h2w = await invoke(h2t.write, { value: { id: 'h2', token: `⟦res:${h2h}⟧`, title: 't', components: [] } })
+  assert(!/VERSION_CONFLICT/.test(h2w) && !/ERROR/.test(h2w), '✓ H2 resource_update 刷新 lastReadHash → 紧接 write 不 VERSION_CONFLICT')
 }

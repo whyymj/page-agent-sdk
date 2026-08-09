@@ -143,6 +143,14 @@
   - ⏸ 推后:`removeTool` 删内置(disabledNames 状态机,与 rebuild 交互边界复杂;集成方想禁用内置更直接用 capabilities,边缘场景)+ e2e 重名用例(selftest sec-47 白盒已覆盖纯函数)。
 - selftest 1119→1130(新建 sec-47 `dedupeTools` 白盒 11 断言);e2e 286 不变。
 
+## [2.32.1] - 2026-08-09
+
+### Fixed(placeholder-protected-read-write review 修复)
+- **H1 祖先 set 静默丢失受保护字段**:`normalizeAndCheck` 对 `valAt===undefined` 改为回填当前值(原 skip 在祖先 set 不含受保护子字段时静默丢失 hash/token,违背"精确值保护"承诺)
+- **H2 resource_update 不刷新乐观锁 hash**:`rupdate` 改 bind 后补 `lastReadHash = hashValue(bindRef)`(与其他写路径一致,防紧接 write `VERSION_CONFLICT` 让 LLM 困惑)
+- **M3 D1 复活已删字段**:`expandHandle` 在 `bindCur===undefined` 时返 `RESOURCE_NOT_FOUND`(原展开池旧值复活已删字段,§7c B4)
+- selftest 1480→1484(sec-58 H1/M3 + sec-60 H2)
+
 ## [2.32.0] - 2026-08-09
 
 ### placeholder-protected-read-write(占位符替换读写·精确值保护)

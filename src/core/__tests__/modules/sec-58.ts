@@ -157,4 +157,19 @@ export async function run(ctx: TestCtx) {
   const p6 = enforcePatches({ patches: [{ op: 'set', jsonPath: 'components', value: [{ verification: 'v1' }] }], clone: { components: [{ verification: 'v1' }] }, ctx: pctx })
   assert(!p6.ok && /VERBATIM_MISMATCH/.test(p6.error), '✓ enforcePatches → ancestor 整体替换改 verbatim 后代 → VERBATIM_MISMATCH')
   assert(enforcePatches({ patches: [{ op: 'set', jsonPath: 'id', value: 'new' }], clone: { id: 'new' }, ctx: undefined }).ok, '✓ enforcePatches → 无 ctx no-op(向后兼容)')
+
+  // ===== H1:祖先 set 不含受保护子字段 → 回填当前值保留(防静默丢失)=====
+  const h1store = new ResourceStore(createVfs())
+  h1store.ensure('components.0.hash', 'h0', 'verbatim')
+  const h1r = enforceSet({ value: { components: [{ type: 'nav2' }] }, ctx: makeCtx(makeMap([{ path: 'components.0.hash', mode: 'verbatim' }]), h1store, { components: [{ type: 'nav', hash: 'h0' }] }) })
+  assert(h1r.ok && (h1r as { value: { components: { hash?: string }[] } }).value.components[0].hash === 'h0', '✓ H1 verbatim 祖先 set 不含受保护子 → 回填当前值保留(防静默丢失)')
+  const h1fr = enforceSet({ value: { title: 'new' }, ctx: makeCtx(makeMap([{ path: 'id', mode: 'freeze' }]), new ResourceStore(createVfs()), { id: 'frozen', title: 't' }) })
+  assert(h1fr.ok && (h1fr as { value: { id: string } }).value.id === 'frozen', '✓ H1 freeze 祖先 set 未传 → 回填保留')
+
+  // ===== M3:bind 已删字段 + 池有旧值 → 不复活(RESOURCE_NOT_FOUND)=====
+  const m3store = new ResourceStore(createVfs())
+  m3store.ensure('token', 'oldval', 'verbatim')
+  const m3vh = m3store.get('token')!.handle
+  const m3r = enforceSet({ value: { token: resPlaceholder(m3vh) }, ctx: makeCtx(makeMap([{ path: 'token', mode: 'verbatim' }]), m3store, {}) })
+  assert(!m3r.ok && /RESOURCE_NOT_FOUND/.test(m3r.error), '✓ M3 bind 已删字段 + 池有旧值 → RESOURCE_NOT_FOUND(不展开旧值复活)')
 }

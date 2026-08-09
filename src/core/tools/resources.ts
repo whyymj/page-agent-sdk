@@ -265,8 +265,12 @@ function expandHandle(
     }
     return { code: 'RESOURCE_NOT_FOUND', message: `句柄 "${handle}" 不存在(字段 "${path}" 可能未注册或已被删除)`, hint: '重新 read 该字段触发懒注册' }
   }
+  // bind 已无该字段(被删 / restore 到无此字段快照)→ 不展开旧值复活(§7c B4:RESOURCE_NOT_FOUND)
+  if (bindCur === undefined) {
+    return { code: 'RESOURCE_NOT_FOUND', message: `字段 "${path}" 在 bind 中已不存在,无法展开句柄 "${handle}"`, hint: '该字段可能已被删除或 restore 到不含此字段的快照;重新 read 确认当前结构' }
+  }
   // D1 自愈:池值 vs bind 当前值不等 → 以 bind 当前值为准重注册(句柄不变),防展开旧值覆盖 restore/import 的新值
-  if (bindCur !== undefined && !deepEqual(entry.value, bindCur)) {
+  if (!deepEqual(entry.value, bindCur)) {
     store.update(path, bindCur)
     return { value: bindCur }
   }
@@ -285,7 +289,12 @@ function normalizeAndCheck(normalized: unknown, ctx: ProtectedCtx): CheckResult 
   for (const [path, spec] of ctx.resourcesByPath) {
     const cur = getByPath(bind, path)  // bind 当前原始值
     const valAt = getByPath(normalized, path)
-    if (valAt === undefined) continue  // LLM 未传该字段 → merge 保留,skip
+    if (valAt === undefined) {
+      // LLM 未传该字段(整体 set 部分提交)或祖先 set 丢弃了受保护子字段 → 回填当前值保留(防静默丢失,H1);
+      //   bind 无值(cur undefined)才 skip(§7c B4)
+      if (cur !== undefined) setByPath(normalized, path, cur)
+      continue
+    }
     if (spec.mode === 'freeze') {
       // C1 回显:LLM 原样带回 ⟦frozen:path⟧ → 视为未改,保留当前值(不把占位符串落 bind)
       if (valAt === frozenPlaceholder(path)) {

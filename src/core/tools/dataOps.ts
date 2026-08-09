@@ -1049,9 +1049,10 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           const chk = subSchema.safeParse(value)
           if (!chk.success) return toolError({ code: 'SCHEMA_INVALID', message: `resource_update 值不符合 "${path}" 的类型`, hint: '按字段类型传值', details: formatZodIssues(chk.error.issues) })
         }
-        // verbatim:更新池 + 同步 bind(D1 一致)+ 标脏(D2);handle 路径派生不变
+        // verbatim:更新池 + 同步 bind(D1 一致)+ 标脏(D2)+ 刷新乐观锁 hash(H2,与其他写路径一致,防下次 write VERSION_CONFLICT);handle 路径派生不变
         resourceStore!.update(np, value)
         setByPath(bindRef, np, value)
+        lastReadHash = hashValue(bindRef)
         markDataDirty()
         const h = resourceStore!.get(np)?.handle
         return `已更新 verbatim 资源 "${path}" = ${safeStringify(value, 200)}(handle ${h ?? '(未知)'} 不变)。后续 write 该字段写回句柄 ⟦res:${h}⟧ 或新值`
