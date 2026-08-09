@@ -6,6 +6,13 @@
 
 > ℹ️ 本段累积了 2.23.0 → 2.24.1 多个已发布版本的内容(harden-eval-sandbox / main-flow-audit / context-inspector / arch-review P1 / demo 主题 / session-history / 串行化 / simplify-toolset 等),待按 git tag 逐条归入对应版本段(已知文档债,本次未拆)。
 
+### Added(压缩决策 · agent-driven-compression)
+- **压缩 agent 自主决策压缩策略**(opt-in `capabilities.agentCompression`,requires summarization):summarization 中间件每轮先 `shouldTriggerCompression` gate(纯函数 token/轮数两模式,避免「开启后每条消息都 decide 烧 LLM」)→ `summaryLlm.decide` 两段式工具循环(bind `inspect_context` → 模型查上下文构成 → 输出决策 JSON)→ `compress(messages, decision)`;decide 失败 / 超时 / 模型不支持工具 → null 降级静态压缩(零阻塞,不丢压缩能力)。
+- **CompressDecision 双字段**:`keepRounds`(轮数模式 0-50)/ `windowRatio`(token 模式 0-1),`refine` 强制至少一个;决策覆盖切分 + 摘要 mode(index/llm)+ 召回 recallTopK(0 不召回)+ preserve(配置 ∪ preserveTools,扩展不减)。token 模式按 windowRatio 走累加循环保 token 封顶(不直接按 keepRounds 切,防大 JSON 压缩后仍超窗口),轮数模式补 older 空早退 + keepRounds≥1 下界(防贪省恒全压)。
+- **独立 `decisionTimeoutMs`(默认 6s)/ `decisionMaxTokens`(默认 2048)**:不复用 summaryTimeoutMs 15s(两段叠加阻塞首响应)/ summaryLlm 1024(截断 JSON safeParse 失败无谓降级)。
+- **decision 自动流到可观测**:`CompressionStats.decision` → `inspect().lastCompression` + `contextSnapshot.compression`(无需额外接线);DebugDrawer「📊 上下文」tab + 「🗜️ 上轮压缩」段显示「🤖 agent 决策」注记。
+- 新增导出 `CompressDecisionSchema` / `CompressDecision` / `shouldTriggerCompression`;selftest 1507→1550(sec-62~65)/ e2e 376→387(agent-compression.mjs)。
+
 ### Added(上下文健壮性 · harden-context-resilience)
 - **硬地板:contextWindow ≥200K**:启动 / `setLlm` / 子 agent 解析后,`contextWindow < 200000` → throw(排除 128K 档主流如老款 `deepseek`/`gpt-4o`/`glm-4.5`/`qwen-max`,SDK 默认 `deepseek-v4`/`glm-5.2`/`claude-*`/`kimi`/`qwen-1m`)。集成方换 ≥200K 模型或 `llm:{contextWindow}` 声明覆盖。`MIN_CONTEXT_WINDOW` 导出可调。
 - **三道闸阈值跟随实时窗口**:offload / trim / compress 阈值此前创建时按 `contextWindow` 固化,`setLlm` 切模型后陈旧 → 切小窗口 + 恢复大历史可能裸失败。修复:`createAgent.setModelCaps` + summarization/contextInspector 中间件 `setContextWindow` controller,`setLlm` 集中回灌新窗口;子 agent 也从实例提取 model 名正确解析(兼修 gpt-3.5→16K silent bug)。

@@ -169,6 +169,8 @@ export interface AgentInfo {
     originalMessages: number
     compressedMessages: number
     strategy: string
+    /** 触发本次压缩的 agent 决策(agentCompression;无决策=静态压缩) */
+    decision?: import('../sdk/compressDecision').CompressDecision
   }
   /** 最近一次 wrapModelCall 的上下文构成快照(context-inspector 中间件;capabilities.contextInspector 关 → undefined) */
   context?: import('../utils/contextAnalysis').ContextSnapshot

@@ -170,6 +170,11 @@ const ctxOccupancyLevel = computed<'green' | 'yellow' | 'red' | ''>(() => {
   return 'green'
 })
 function spanIcon(t: string) { return t === 'round' ? '🔄' : t === 'model' ? '🧠' : t === 'tool' ? '🔧' : t === 'compression' ? '📦' : '•' }
+// 压缩决策摘要(agent-driven-compression;DebugDrawer 上下文 tab + lastCompression 显示)
+function decisionSummary(d: { keepRounds?: number; windowRatio?: number; summarize: { mode: string }; recallTopK?: number; reason?: string }): string {
+  const main = d.windowRatio != null ? `windowRatio=${d.windowRatio}` : `keepRounds=${d.keepRounds ?? '?'}`
+  return `${main} · ${d.summarize.mode}摘要 · 召回${d.recallTopK ?? '?'}${d.reason ? ' · ' + d.reason : ''}`
+}
 /** 流程节点摘要(每轮流水一览;详情看「日志」tab) */
 function flowNodeDetail(lg: DebugLog): string {
   const d = (lg.data || {}) as any
@@ -273,6 +278,7 @@ function flowNodeDetail(lg: DebugLog): string {
                     <span class="ctx-kv">摘要 {{ contextSnap.compression.roundsSummarized }}/{{ contextSnap.compression.roundsTotal }} 轮</span>
                     <span class="ctx-kv">召回 {{ contextSnap.compression.roundsRecalled }}</span>
                     <span class="ctx-kv">{{ contextSnap.compression.strategy }}</span>
+                    <span class="ctx-kv" v-if="contextSnap.compression.decision">🤖 agent 决策:{{ decisionSummary(contextSnap.compression.decision) }}</span>
                   </div>
                 </div>
               </template>
@@ -513,6 +519,7 @@ function flowNodeDetail(lg: DebugLog): string {
                     <div class="kv"><span class="k">召回</span><span class="v">{{ agentInfo.lastCompression.roundsRecalled }} 条</span></div>
                     <div class="kv"><span class="k">消息数</span><span class="v">{{ agentInfo.lastCompression.originalMessages }} → {{ agentInfo.lastCompression.compressedMessages }}</span></div>
                     <div class="kv"><span class="k">策略</span><span class="v" style="font-size: 11px">{{ agentInfo.lastCompression.strategy }}</span></div>
+                    <div class="kv" v-if="agentInfo.lastCompression.decision"><span class="k">压缩决策</span><span class="v" style="font-size: 11px">🤖 {{ decisionSummary(agentInfo.lastCompression.decision) }}</span></div>
                   </div>
                 </div>
               </template>

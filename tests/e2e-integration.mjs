@@ -17,6 +17,7 @@ import { run as runAutomation } from './e2e/automation.mjs'
 import { run as runLlmProvider } from './e2e/llm-provider.mjs'
 import { run as runFocus } from './e2e/focus.mjs'
 import { run as runResources } from './e2e/resources.mjs'
+import { run as runAgentCompression } from './e2e/agent-compression.mjs'
 
 const modules = [
   ['systemprompt', runSystemprompt],
@@ -35,6 +36,7 @@ const modules = [
   ['llm-provider', runLlmProvider],
   ['focus', runFocus],
   ['resources', runResources],
+  ['agent-compression', runAgentCompression],
 ]
 
 let totalPass = 0, totalFail = 0

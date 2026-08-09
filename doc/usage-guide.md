@@ -188,6 +188,8 @@ createChatSdk({
   contextPreset: 'auto',        // 压缩预设:auto(默认)/conservative(省成本)/aggressive(省上下文)/complex(多步复杂任务/大 JSON/长流程,2.16.0+)
   contextOptions: {...},        // 压缩细参,覆盖 preset 个别字段(false 关闭压缩)
   summaryLlm: { apiKey, baseUrl, model },  // 摘要专用模型(不配用主 llm)
+  // (2.33+)压缩 agent 自主决策(opt-in):开 + summaryLlm 可用 → 每轮 shouldTriggerCompression gate 通过才 decide(inspect_context 工具循环)→ compress 用决策;失败降级静态压缩(零阻塞)
+  capabilities: { agentCompression: true },  // requires summarization;decisionTimeoutMs(默认 6s)/decisionMaxTokens(默认 2048)可配
   summaryTemperature: 0.3,      // 摘要 LLM 温度(默认 0.3)
   summaryMaxTokens: 1024,        // 摘要 LLM 输出上限(默认 1024)
   summaryTimeoutMs: 15000,       // 摘要 LLM 超时(默认 15s,超时回退索引摘要)

@@ -27,9 +27,9 @@ export type CapabilityFlags = Partial<Record<string, boolean>>
 export type ResolvedCapabilities = Record<string, boolean>
 
 /**
- * 能力注册表(19 开关)。
- * - opt-out 默认开(12 个):核心能力,关才需显式 false
- * - opt-in 默认关(7 个):有 token 成本/最远能力,需显式 true 开启
+ * 能力注册表(21 开关)。
+ * - opt-out 默认开(13 个):核心能力,关才需显式 false
+ * - opt-in 默认关(8 个):有 token 成本/最远能力,需显式 true 开启
  */
 export const CAPABILITIES: readonly Capability[] = [
   // —— opt-out 默认开 ——
@@ -54,6 +54,7 @@ export const CAPABILITIES: readonly Capability[] = [
   { name: 'todoDeps', defaultOn: false },
   { name: 'skillHostScript', defaultOn: false, requires: ['skills'] },
   { name: 'automation', defaultOn: false },
+  { name: 'agentCompression', defaultOn: false, requires: ['summarization'] }, // 压缩 agent 自主决策(opt-in;开 + summaryLlm 可用 → decide 驱动压缩;失败降级静态)
 ]
 
 /**

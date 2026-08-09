@@ -380,10 +380,10 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(dr2.draftWrite === false, 'resolveCapabilities → draftWrite:true 但 dataOps:false → 强制关(requires 未满足)')
     const dr3 = resolveCapabilities({ draftWrite: true, vfs: false })
     assert(dr3.draftWrite === false, 'resolveCapabilities → draftWrite:true 但 vfs:false → 强制关(requires 未满足)')
-    // CAPABILITIES 注册表完整(20 开关;13 opt-out + 7 opt-in,skillHostScript opt-in / focus opt-out 新增)
-    assert(CAPABILITIES.length === 20, 'CAPABILITIES 注册表 → 20 开关')
+    // CAPABILITIES 注册表完整(21 开关;13 opt-out + 8 opt-in,agentCompression opt-in 新增)
+    assert(CAPABILITIES.length === 21, 'CAPABILITIES 注册表 → 21 开关')
     assert(CAPABILITIES.filter((c) => c.defaultOn).length === 13, 'CAPABILITIES → 13 opt-out(默认开)')
-    assert(CAPABILITIES.filter((c) => !c.defaultOn).length === 7, 'CAPABILITIES → 7 opt-in(默认关)')
+    assert(CAPABILITIES.filter((c) => !c.defaultOn).length === 8, 'CAPABILITIES → 8 opt-in(默认关)')
     // skillHostScript opt-in 默认关 + requires skills
     const shs = CAPABILITIES.find((c) => c.name === 'skillHostScript')!
     assert(!!shs && shs.defaultOn === false && shs.requires?.includes('skills'), '✓ skillHostScript:opt-in 默认关 + requires skills')

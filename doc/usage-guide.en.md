@@ -167,6 +167,8 @@ createChatSdk({
   contextPreset: 'auto',           // auto / conservative / aggressive / complex (2.16.0+)
   contextOptions: { ... },         // fine params (false disables compression)
   summaryLlm: { ... },             // summary-dedicated LLM (defaults to main llm)
+  // (2.33+) agent-driven compression (opt-in): enable + summaryLlm available → per-turn shouldTriggerCompression gate → decide (inspect_context tool loop) → compress with decision; failure degrades to static
+  capabilities: { agentCompression: true },  // requires summarization; decisionTimeoutMs (default 6s) / decisionMaxTokens (default 2048) configurable
   maxMemoryRounds: 50,             // dialog history memory cap (0 disables trim)
   vfs: { maxBytes: 8*1024*1024, poolBytes? },  // workspace cap (default 8MB; 2.16.0+ three pools: large_results/drafts/userFiles, each its own LRU)
 

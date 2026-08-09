@@ -1,6 +1,9 @@
 # Tasks: agent-driven-compression(压缩 agent 自主决策压缩策略)
 
 > 关联 `proposal.md`。**独立 change**,依赖前置 `2026-08-04-context-inspector`(复用其 `analyzeContext`)。用户拍板:压缩 agent=summaryLlm / 工具调用+结构化决策 / 独立 change。
+>
+> **实施状态(2026-08-09)**:✅ task 1-8 全部完成。新增 `shouldTriggerCompression`(`composables/contextIndex.ts`)/ `CompressDecisionSchema`+`CompressDecision`+`CompressDecisionInput`(`sdk/compressDecision.ts`)/ `createInspectContextTool`(`sdk/inspectContextTool.ts`)/ `buildCompressDecisionInvoke`(`sdk/llmResolver.ts`);`compress(messages, decision?)` 决策改造(`composables/useContextManager.ts`);`capabilities.agentCompression` 注册 + createChatSdk 装配 + summarization gate(shouldTriggerCompression → decide → compress) + types 同步 + DebugDrawer 决策注记。测试:selftest sec-62~65(43 断言,1507→1550)+ e2e `agent-compression.mjs`(11 断言,376→387)+ 全量门禁绿(build/exports/types/size/browser)。文档:CLAUDE.md 架构段 + CHANGELOG + README 中英 + usage-guide 中英。
+> ⏭️ **task 9 demo / browser spec 后置**:agentCompression 是 opt-in 后台能力(默认关 = 零行为变化),core 逻辑已被 selftest/e2e 充分覆盖;browser 层无新增 UI 交互,且 mock LLM 两段式工具循环(tool_calls → ToolMessage → JSON)扩展工作量大、价值低 —— 决策压缩的真实验证需配真 LLM 跑长对话触发,属运行时手动验证范畴(见 CLAUDE.md 测试流程 §4)。openspec change 归档待发布后。
 
 ## 1. `shouldTriggerCompression` 触发预检纯函数(评审修正 HIGH)
 - [ ] 抽 `shouldTriggerCompression(messages, config): boolean` 纯函数(token 模式 `totalTokens > threshold` / 轮数模式 `rounds.length > summaryThresholdRounds`)

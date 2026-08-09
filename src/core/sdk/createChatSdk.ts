@@ -311,6 +311,10 @@ export interface ChatSdkOptions {
   summaryMaxTokens?: number
   /** 摘要 LLM 超时毫秒(默认 15000;超时回退零成本索引摘要,不阻塞用户) */
   summaryTimeoutMs?: number
+  /** 压缩决策(agentCompression)LLM 超时毫秒(默认 6000;不复用 summaryTimeoutMs 15s,两段叠加阻塞首响应) */
+  decisionTimeoutMs?: number
+  /** 压缩决策 LLM 输出上限(默认 2048;避免继承 summaryLlm 1024 截断 JSON → safeParse 失败无谓降级) */
+  decisionMaxTokens?: number
   /**
    * SDK 事件回调:订阅常用时机(数据槽变化 / 消息更新 / 工具调用 / 流式文本 / 轮次 / 错误)。
    * UI 与 headless 模式均生效;用于外部联动(如宿主页面响应式刷新、埋点、日志),替代轮询。
@@ -698,7 +702,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
   // ===== 模型能力 + 摘要 LLM invoke(统一由 resolveLlm 解析;声明优先 > model 名查表 > 缺省)=====
   // let modelCaps:setLlm 后经 onLlmChange 重解析(影响 offload 阈值/压缩触发/maxTokens 缺省)
-  const { modelCaps: initialModelCaps, summaryLlmInvoke, titleLlmInvoke } = resolveLlm(options)
+  const { modelCaps: initialModelCaps, summaryLlmInvoke, titleLlmInvoke, compressDecisionInvoke } = resolveLlm(options)
   let modelCaps = initialModelCaps
   if (options.debug) console.log('[page-agent-sdk][modelCaps]', modelCaps)
   // harden-context-resilience:最小窗口校验(<200K throw,排除小窗口模型;设计假设 ≥200K)
@@ -911,6 +915,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     for (const t of todosMw.tools ?? []) toolSources.set(t.name, 'builtin')
   }
   const useSummarization = caps.summarization
+  const useAgentCompression = caps.agentCompression && !!compressDecisionInvoke // agentCompression 开 + summaryLlm 可用(支持工具)→ decide 驱动;否则降级静态
+  if (options.debug && caps.agentCompression && !compressDecisionInvoke) {
+    console.warn('[page-agent-sdk][agentCompression] agentCompression 开启但 summaryLlm 不可用(或缺 apiKey / 模型不支持工具),压缩决策不启用,回退静态压缩')
+  }
   const useMemory = caps.memory
   const useSubagent = caps.subagent
   // verify 默认关(烧 token);需 capabilities.verify:true + 未显式 enabled:false + maxAttempts>0(check 可选,省略则用 createWriteBackCheck)
@@ -1080,6 +1088,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         getRegisteredData: () => liveData() ? [{ description: liveData()!.description ?? '主数据对象' }] : [],
         // C:跨轮摘要时保留 describe/read 工具的 result 摘要(防字段描述被摘要掉);复用 buildCore 顶部 trimPreserveArr
         preserveLastToolResults: trimPreserveArr,
+        // agentCompression:开 + summaryLlm 可用 → decide 驱动压缩(getSnapshot 从 contextInspector 取分类喂 inspect_context)
+        ...(useAgentCompression ? { decideInvoke: compressDecisionInvoke, getSnapshot: () => contextInspectorMw?.getSnapshot() } : {}),
       })
     : undefined
   // 中间件按声明式 priority 排序(替代数组字面量位置硬编码);条件构造顺序无关,末尾统一排序保证约束(declarative-middleware-ordering)

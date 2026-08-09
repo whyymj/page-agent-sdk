@@ -14,8 +14,9 @@
  */
 import type { AgentMessage } from '../types'
 import { groupRounds, plainSummary, parseSummarySegment, type Round } from '../utils/rounds'
-import { estimateRoundTokens, indexSummarize, recallRounds } from './contextIndex'
+import { estimateRoundTokens, indexSummarize, recallRounds, shouldTriggerCompression } from './contextIndex'
 import { estimateTokens } from '../utils/modelCaps'
+import type { CompressDecision } from '../sdk/compressDecision'
 
 export interface ContextManagerOptions {
   /** 滑动窗口：保留最近几轮完整对话（轮数模式用） */
@@ -60,6 +61,8 @@ export interface CompressionStats {
   originalMessages: number
   compressedMessages: number
   strategy: string
+  /** 触发本次压缩的 agent 决策(agentCompression 开启且 decide 成功时;无决策=静态压缩) */
+  decision?: CompressDecision
 }
 
 export const DEFAULT_CONTEXT_OPTIONS: ContextManagerOptions = {
@@ -79,7 +82,8 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
    * 若未达阈值，原样返回（triggered=false）。
    */
   async function compress(
-    messages: AgentMessage[]
+    messages: AgentMessage[],
+    decision?: CompressDecision,
   ): Promise<{ messages: AgentMessage[]; stats: CompressionStats }> {
     const rounds = groupRounds(messages)
     const originalCount = messages.length
@@ -112,15 +116,16 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
       },
     })
 
-    // 切分窗口:token 驱动(大模型自适应)优先,否则按轮数
+    // 触发预检(单一真源;agentCompression decide 前置 gate + compress 共用;design §1 HIGH:避免每条消息都 decide)
+    if (!shouldTriggerCompression(rounds, config)) return notTriggered('none')
+
+    // 切分窗口:token 驱动(大模型自适应)优先,否则按轮数;决策(decision)覆盖切分参数
     let recent: Round[]
     let older: Round[]
     let strategyPrefix: string
     if (config.contextWindow && config.contextWindow > 0) {
-      const totalTokens = rounds.reduce((s, r) => s + estimateRoundTokens(r), 0)
-      const threshold = config.contextWindow * (config.summaryThresholdRatio ?? 0.5)
-      if (totalTokens <= threshold) return notTriggered('none')
-      const windowBudget = config.contextWindow * (config.windowRatio ?? 0.4)
+      // token 模式:决策 windowRatio 覆盖静态比例(仍走累加循环,保留 token 封顶保证;不直接按 keepRounds 切,防大 JSON 压缩后仍超窗口)
+      const windowBudget = config.contextWindow * (decision?.windowRatio ?? config.windowRatio ?? 0.4)
       // 从最新轮往回累加 token,加进去就超预算的轮纳入 older(被摘),其后保留
       let acc = 0
       let splitIdx = 0
@@ -138,10 +143,12 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
       if (!older.length) return notTriggered('none')
       strategyPrefix = 'token-window+'
     } else {
-      if (rounds.length <= config.summaryThresholdRounds) return notTriggered('none')
-      const recentCount = Math.min(config.windowRounds, rounds.length)
+      // 轮数模式:决策 keepRounds 覆盖 windowRounds(下界 ≥1 防「贪省恒全压」);older 空(keepRounds≥总轮)→ notTriggered
+      const rawKeep = decision?.keepRounds ?? config.windowRounds
+      const recentCount = Math.min(Math.max(1, rawKeep), rounds.length)
       recent = rounds.slice(rounds.length - recentCount)
       older = rounds.slice(0, rounds.length - recentCount)
+      if (!older.length) return notTriggered('none')
       strategyPrefix = 'window+'
     }
 
@@ -149,25 +156,32 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
     const lastUser = [...messages].reverse().find((m) => m.role === 'user')
     const query = lastUser?.content || ''
 
-    // 摘要
-    const preserveSet = config.preserveLastToolResults?.length ? new Set(config.preserveLastToolResults) : undefined
+    // 摘要模式:决策 summarize.mode 覆盖 enableLLMSummary(llm 模式但 llmInvoke undefined → 回退 index)
+    const summaryMode = decision?.summarize?.mode ?? (config.enableLLMSummary ? 'llm' : 'index')
+    // preserve 集:配置 ∪ 决策 preserveTools(决策是扩展,不减;design §7)
+    const preserveSet = new Set<string>([
+      ...(config.preserveLastToolResults ?? []),
+      ...(decision?.preserveTools ?? []),
+    ])
+    const preserveArg = preserveSet.size ? preserveSet : undefined
     let summaryText: string
     let strategy: string
-    if (config.enableLLMSummary && config.llmInvoke) {
+    if (summaryMode === 'llm' && config.llmInvoke) {
       try {
-        summaryText = await config.llmInvoke(indexSummarize(older, preserveSet))
+        summaryText = await config.llmInvoke(indexSummarize(older, preserveArg))
         strategy = strategyPrefix + 'llm_summary'
       } catch {
-        summaryText = indexSummarize(older, preserveSet)
+        summaryText = indexSummarize(older, preserveArg)
         strategy = strategyPrefix + 'index_summary(llm_fallback)'
       }
     } else {
-      summaryText = indexSummarize(older, preserveSet)
+      summaryText = indexSummarize(older, preserveArg)
       strategy = strategyPrefix + 'index_summary'
     }
 
-    // 召回
-    const recalled = config.enableRecall ? recallRounds(older, query, config.recallTopK) : []
+    // 召回:决策 recallTopK 覆盖(0=不召回);无决策用 config.enableRecall + recallTopK
+    const recallTopK = decision?.recallTopK != null ? decision.recallTopK : (config.enableRecall ? config.recallTopK : 0)
+    const recalled = recallTopK > 0 ? recallRounds(older, query, recallTopK) : []
     const recallBlock = recalled.length
       ? recalled
           .map(
@@ -185,6 +199,13 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
       `【对话历史摘要】以下是之前 ${older.length} 轮对话的要点（最新 ${recent.length} 轮已完整保留）：`,
       fullSummaryText,
     ]
+    if (decision) {
+      // 决策注记(随摘要驻留上下文供 UI 审计;design §5)
+      const modeTag = config.contextWindow && config.contextWindow > 0
+        ? `windowRatio=${decision.windowRatio ?? config.windowRatio}`
+        : `keepRounds=${decision.keepRounds ?? config.windowRounds}`
+      parts.push(`\n(压缩决策:${modeTag} · 摘要=${decision.summarize.mode} · 召回=${recallTopK}${decision.reason ? ' · ' + decision.reason : ''})`)
+    }
     if (recallBlock) {
       parts.push(`\n【与当前问题可能相关的早期对话】`, recallBlock)
     }
@@ -236,6 +257,7 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
         originalMessages: originalCount,
         compressedMessages: compressed.length,
         strategy,
+        decision,
       },
     }
   }

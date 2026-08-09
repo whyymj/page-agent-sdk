@@ -96,3 +96,26 @@ export function recallRounds(older: Round[], query: string, topK: number): Round
     .slice(0, topK)
     .map((s) => s.r)
 }
+
+/** 触发预检所需配置(useContextManager 传 config 对象,结构兼容;解耦不引 ContextManagerOptions 防循环依赖) */
+export interface CompressionTriggerConfig {
+  contextWindow?: number
+  summaryThresholdRatio?: number
+  summaryThresholdRounds?: number
+}
+
+/**
+ * 压缩触发预检(纯函数):是否已达压缩阈值(agent-driven-compression §1 HIGH)。
+ * - token 模式(contextWindow>0):历史估算 token > contextWindow * summaryThresholdRatio(默认 0.5)
+ * - 轮数模式:轮数 > summaryThresholdRounds(默认 8,严格 >)
+ * 单一真源:compressInput 的 decide 前置 gate + compress() 内部触发判断共用,
+ * 避免「开启 agentCompression 后每条消息都 decide 烧 1~2 次 LLM 调用」(design §1 HIGH)。
+ */
+export function shouldTriggerCompression(rounds: Round[], config: CompressionTriggerConfig): boolean {
+  if (config.contextWindow && config.contextWindow > 0) {
+    const totalTokens = rounds.reduce((s, r) => s + estimateRoundTokens(r), 0)
+    const threshold = config.contextWindow * (config.summaryThresholdRatio ?? 0.5)
+    return totalTokens > threshold
+  }
+  return rounds.length > (config.summaryThresholdRounds ?? 8)
+}

@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-1480%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-1550%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -273,6 +273,7 @@ createChatSdk({ subagents: [
 - **抓取**：`fetch_document`
 - **DOM 读取**（2.18+,`capabilities.domInspect:true` 开,默认关）：`get_dom`（读渲染后 DOM 结构,看修改是否生效;区别于 eval_script 的结构化只读）
 - **上下文检查**（`capabilities.contextInspector` 默认开）：`sdk.inspectContext()`/`inspect().context` 读每轮实际消息的分类 token 占比（system 段 / 工具结果 / 历史等）,DebugDrawer「📊 上下文」tab 展示占用/分类/压缩;纯计算零 LLM 成本
+- **压缩决策**（`capabilities.agentCompression` opt-in 默认关,需 `summaryLlm`,2.33+）：开 + summaryLlm 可用 → summarization 每轮先 `shouldTriggerCompression` gate(纯函数 token/轮数两模式,避免每条消息都 decide 烧 LLM)→ `decide` 两段式工具循环(bind `inspect_context` 查构成 → 输出决策 JSON)→ `compress(messages, decision)` 用决策切分/摘要 mode/召回/preserve(∪ 扩展);decide 失败/超时/模型不支持工具 → null 降级静态压缩(零阻塞)。`decisionTimeoutMs`(默认 6s)/`decisionMaxTokens`(默认 2048)可配;决策自动流到 `inspect().lastCompression.decision` + DebugDrawer「🤖 agent 决策」注记
 - **宿主动作**（2.18+,`actions` 注册）：集成方注册 save_draft/publish 等页面操作,SDK 自动生成命名 tool,agent 直接调用触发宿主(无需 trigger_action 中转)
 - **vfs**：`vfs_read` / `vfs_write` / `vfs_edit` / `vfs_ls` / `vfs_glob` / `vfs_grep`
 - **规划/技能**：`write_todos` / `define_skill` / `load_skill`（skill 可配 `exec` 加载时执行脚本注入实时数据 + `tools` 附带可反复调用的工具;`exec.context:'host'` 需 `capabilities.skillHostScript:true`）
@@ -470,8 +471,8 @@ function switchTo(i: number) {
 ## 自测
 
 ```bash
-npm test            # 1480 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 376 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm test            # 1550 项断言（tsx 源码级，不依赖 LLM）
+npm run test:e2e    # 387 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试

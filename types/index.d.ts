@@ -200,6 +200,7 @@ export interface AgentInfo {
   lastCompression?: {
     triggered: boolean; roundsTotal: number; roundsSummarized: number; roundsRecalled: number;
     originalMessages: number; compressedMessages: number; strategy: string;
+    decision?: CompressDecision;
   };
   /** 会话级 checkpoint 装载状态(未开启 → undefined) */
   checkpoints?: { enabled: boolean; auto: boolean; list: CheckpointMeta[] };
@@ -963,6 +964,7 @@ export declare function estimateMessageTokens(m: any): number;
 export declare function estimateRoundTokens(r: any): number;
 export declare function indexSummarize(older: any[], preserve?: Set<string>): string;
 export declare function recallRounds(older: any[], query: string, topK: number): any[];
+export declare function shouldTriggerCompression(rounds: any[], config: { contextWindow?: number; summaryThresholdRatio?: number; summaryThresholdRounds?: number }): boolean;
 // ============ LLM 解析(llmResolver,refactor-module-extraction 期二 从 createChatSdk 抽离)============
 export declare function isChatModel(v: unknown): boolean;
 export declare function resolveLlm(options: any): { modelCaps: any; summaryLlmInvoke: ((prompt: string) => Promise<string>) | undefined };
@@ -1191,7 +1193,23 @@ export declare function createVfs(opts?: any): any;
 
 // 上下文管理
 export interface ContextManagerOptions { [k: string]: any }
-export interface CompressionStats { [k: string]: any }
+export interface CompressionStats {
+  triggered: boolean; roundsTotal: number; roundsSummarized: number; roundsRecalled: number;
+  originalMessages: number; compressedMessages: number; strategy: string;
+  decision?: CompressDecision;
+}
+// 压缩决策(agent-driven-compression;summaryLlm.decide 输出)
+export interface CompressDecision {
+  keepRounds?: number;
+  windowRatio?: number;
+  summarize: { mode: 'index' | 'llm' };
+  recallTopK?: number;
+  preserveTools?: string[];
+  reason?: string;
+}
+export declare const CompressDecisionSchema: {
+  safeParse: (input: unknown) => { success: true; data: CompressDecision } | { success: false; error: unknown };
+};
 
 // 模型能力 / token 估算 / offload 阈值
 export declare const MIN_CONTEXT_WINDOW: number;

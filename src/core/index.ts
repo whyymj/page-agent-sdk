@@ -75,7 +75,8 @@ export type { EditOp } from './tools/jsonUtils'
 export { getSchemaTopKeys, isPathAllowed, unwrapSchema, getSchemaAtPath, projectBySchemaDeep, projectBySchema, describeSchemaNode, renderSchemaHint, renderSchemaOverview, renderSchemaShallow, formatConstraints } from './tools/schemaUtils'
 export type { SchemaNodeDesc } from './tools/schemaUtils'
 // 上下文索引纯函数(refactor-module-extraction 期二 从 useContextManager 抽离;白盒可测)
-export { STOP_WORDS, tokenize, estimateMessageTokens, estimateRoundTokens, indexSummarize, recallRounds } from './composables/contextIndex'
+export { STOP_WORDS, tokenize, estimateMessageTokens, estimateRoundTokens, indexSummarize, recallRounds, shouldTriggerCompression } from './composables/contextIndex'
+export { CompressDecisionSchema, type CompressDecision } from './sdk/compressDecision'
 // LLM 解析(refactor-module-extraction 期二 从 createChatSdk 抽离;isChatModel 实例判定 + resolveLlm 初始装配入口)
 export { isChatModel, resolveLlm, deriveTitle } from './sdk/llmResolver'
 // 乐观锁冲突管理器(refactor-module-extraction 期二 从 createChatSdk 抽离;headless 自建冲突 UI 可复用)
