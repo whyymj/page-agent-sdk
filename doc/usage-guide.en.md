@@ -566,6 +566,34 @@ createChatSdk({
 
 Auto-capture rules (no LLM call): `read`/`query_data`/`search_data` results → `locatedPaths` (LRU ≤10, deduped); `hash=` in `read` results → `lastHashes[path]` (LRU ≤10). Complementary to `preserveLastToolResults` (which keeps tool-result summaries so field descriptions aren't lost); orthogonal to mission (mission = goal, workingMemory = intermediate state).
 
+#### Capability packs: specialized subagent factories (createRagSubagent / createHtmlSubagent, 2.37+)
+
+For complex tasks, delegate to **specialized subagents** tuned for the job (independent context, process stays out of the main token budget). The two packs are **composable / splitable**, opt-in (not mounted = zero change):
+
+```ts
+import { createChatSdk, createRagSubagent, createHtmlSubagent } from 'page-agent-sdk'
+
+const sdk = createChatSdk({
+  subagents: [
+    // ① RAG retrieval subagent: multi-source doc / UI-spec lookup, read-only, independent context
+    createRagSubagent({
+      retriever: async (q) => (await vectorDB.search(q)).map((h) => ({ content: h.text, source: h.doc })),
+      loader: async (id) => fetch(`/api/docs/${id}`).then((r) => r.json()),
+      // useVfs default true: subagent greps docs injected via sdk.vfsWrite
+    }),
+    // ② HTML code-component subagent: planning + code→vfs + scoped write
+    createHtmlSubagent({ writablePaths: ['components'] }),
+  ],
+}).mount()
+
+// Async-inject docs into vfs (RAG subagent finds them via vfs_grep)
+sdk.vfsWrite('docs/components/hero.md', 'Hero component is for the above-the-fold hero...')
+```
+
+- **RAG** (retrieval): `search_docs` (semantic via retriever) / `load_doc` (async via loader) / vfs search / `fetch_document`; read-only; ships with `rag-search` skill. `retriever`/`loader` injected by the integrator (SDK has zero data-source deps — no vector-DB binding). Large retrieved docs **never pollute the main context** (only structured conclusions return).
+- **HTML** (generation): planning (`write_todos`/`update_todo`) + **code body→vfs** (`html/<name>.vue`, session-scoped) + data stores a `codeRef:'vfs://...'` reference (main data stays lean; code edits via `vfs_edit` don't touch data) + scoped write (`writablePaths` path guard). `summarization` on by default (frequent code edits accumulate fast); ships with `html-builder` skill.
+- **Underlying — subagent arch extensions**: `SubagentConfig` adds `allowedTools` (pull vfs/draft tools from main) / `middleware` (mount planning) / `summarization` (cross-round compression); `sdk.vfsWrite(path, content)` async-injects vfs. Both packs build on these; integrators can also use the three fields directly to configure any specialized subagent.
+
 ### 6.2 Custom tools
 
 ```ts

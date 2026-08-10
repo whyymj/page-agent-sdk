@@ -617,6 +617,34 @@ createChatSdk({
 
 自动捕获规则(不调 LLM):`read`/`query_data`/`search_data` 结果 → `locatedPaths`(LRU ≤10 去重);`read` 结果里的 `hash=` → `lastHashes[path]`(LRU ≤10)。与 `preserveLastToolResults`(保工具结果摘要防字段描述丢)互补;与 mission(mission 管目标,workingMemory 管中间态)正交。
 
+#### 能力包:专用子 agent 工厂(createRagSubagent / createHtmlSubagent,2.37+)
+
+复杂任务用**专用子 agent**针对性处理(独立上下文,过程不占主 token)。两包**可组合/拆分**,opt-in(不挂 = 现状零变化):
+
+```ts
+import { createChatSdk, createRagSubagent, createHtmlSubagent } from 'page-agent-sdk'
+
+const sdk = createChatSdk({
+  subagents: [
+    // ① RAG 检索子 agent:多源查组件文档/UI 规范,只读,独立上下文综合
+    createRagSubagent({
+      retriever: async (q) => (await vectorDB.search(q)).map(h => ({ content: h.text, source: h.doc })),
+      loader: async (id) => fetch(`/api/docs/${id}`).then(r => r.json()),
+      // useVfs 默认 true:子 agent 经 vfs_grep 搜 sdk.vfsWrite 注入的文档
+    }),
+    // ② HTML 代码组件生成子 agent:规划 + 代码→vfs + 限定写
+    createHtmlSubagent({ writablePaths: ['components'] }),
+  ],
+}).mount()
+
+// 异步注入文档到 vfs(RAG 子 agent 经 vfs_grep 搜到)
+sdk.vfsWrite('docs/components/hero.md', 'Hero 组件用于首屏主视觉...')
+```
+
+- **RAG**(检索型):`search_docs`(语义检索 retriever)/ `load_doc`(异步加载 loader)/ vfs 搜索 / `fetch_document`;只读;默认装 `rag-search` skill。`retriever`/`loader` 集成方注入(SDK 零数据源依赖,不绑向量库)。检索的大段文档**不污染主上下文**(只回结构化结论)
+- **HTML**(生成型):规划(`write_todos`/`update_todo`)+ **代码正文→vfs**(`html/<name>.vue`,会话级)+ data 存 `codeRef:'vfs://...'` 引用(主 data 精简、代码改 `vfs_edit` 增量不动 data)+ 限定写(`writablePaths` path guard)。默认开 `summarization`(频繁改代码累积快);装 `html-builder` skill
+- **底层:子 agent 架构扩展**:`SubagentConfig` 加 `allowedTools`(从主 allTools 拿 vfs/draft 工具)/ `middleware`(装规划中间件)/ `summarization`(跨轮压缩);`sdk.vfsWrite(path, content)` 异步注入 vfs。两包都基于这些扩展;集成方亦可直接用 `SubagentConfig` 三字段自配任意专用子 agent
+
 ### 6.2 自定义工具
 
 给 Agent 加任意能力(API 调用、计算、宿主页面操作……):

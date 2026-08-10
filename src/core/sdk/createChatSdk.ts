@@ -53,7 +53,7 @@ import { createSdkEvents } from './events'
 import type { ContextManagerOptions } from '../composables/useContextManager'
 import { resolveContextOptions, PRESET_PRESERVE, type ContextPreset } from './contextPreset'
 import { composeMiddlewareStack } from './middlewareStack'
-import { createVfs, createVfsMiddleware, VFS_TOOL_NAMES, type VfsStore } from '../backends/vfs'
+import { createVfs, createVfsMiddleware, VFS_TOOL_NAMES, normalize as normalizeVfsPath, type VfsStore } from '../backends/vfs'
 import type { VfsFile, HarnessState, Mission, Focus } from '../harness/state'
 import { createDataOps, filterByToolMode, type DataConfig, type DataOpsController, type ConflictResolution } from '../tools/dataOps'
 import { fetchDocTools } from '../tools/fetchDoc'
@@ -453,6 +453,8 @@ export interface ChatSdk {
    * - opts.validate:false 跳过校验(集成方自行保证数据合法);opts.emit:false 不发 data_change 事件
    */
   importData(json: any, opts?: { validate?: boolean; emit?: boolean }): { ok: boolean; error?: string }
+  /** 往 vfs 异步注入/更新文件(RAG 文档池 / HTML 代码等);content 字符串直存,对象 JSON.stringify。storage 开则 persist。与 vfs_write 工具一致语义(集成方侧命令式入口) */
+  vfsWrite(path: string, content: string | object): void
   /** 受保护资源(精确值保护):创建/注册资源 → 返 handle;需 data.resources + vfsStore,否则抛错 */
   createResource(path: string, value?: unknown): string
   getResource(pathOrHandle: string): { path: string; mode: string; value: unknown; handle: string } | undefined
@@ -2285,6 +2287,11 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
       core.dataOpsController?.markDataDirty?.()  // 整体替换 bind → 标脏(下次 checkpoint save 必 clone 新基线,防复用旧 bind clone)
       if (opts?.emit !== false) core.emit({ type: 'data_change', operation: 'set', value: bind })
       return { ok: true }
+    },
+    /** 往 vfs 异步注入/更新文件(集成方侧命令式入口;与 vfs_write 工具一致语义) */
+    vfsWrite: (path, content) => {
+      const text = typeof content === 'string' ? content : JSON.stringify(content)
+      core.vfsStore.files[normalizeVfsPath(path)] = { content: text, updatedAt: Date.now() }
     },
     createResource: (path: string, value?: unknown) => {
       const c = core.dataOpsController

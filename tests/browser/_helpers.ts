@@ -129,6 +129,12 @@ export async function fillInput(page: Page, text: string): Promise<void> {
 
 /** 点击发送按钮(在输入区域内找最后一个可点击按钮) */
 export async function clickSend(page: Page): Promise<void> {
+  // 记 assistant 消息基线(click 前:agent 未启动,旧 assistant 数干净),供配对的 waitForAgentIdle 消除 TOCTOU。
+  // 放 click 前而非 waitForAgentIdle 内取:clickSend 返回 → waitForAgentIdle 首行之间,高负载下 evaluate 延迟,
+  // 可能赶上 agent 已产出首条 assistant → baseline 偏高 → waitForAgentIdle 永等新 assistant 超时。click 前取杜绝此竞态。
+  ;(page as any)._paAssistantBaseline = await page
+    .evaluate(() => document.querySelectorAll('.chat-dialog .message-row.assistant[data-msg-idx]').length)
+    .catch(() => 0)
   // 等 input area 出现 enabled button(fillInput 后 Vue 响应式更新 send button enabled 可能有延迟,
   // 尤其大 schema 页面如 complex-demo;已 enabled 则立即过,不影响 page-demo 等)
   await page.waitForFunction(() => {
@@ -167,20 +173,41 @@ export async function clickByText(page: Page, text: string): Promise<void> {
   }, text)
 }
 
-/** 等待 agent 处理完成:先等「停止生成」出现(开始处理),再等它消失(完成) */
+/**
+ * 等待 agent 处理完成:消息数基线 + busy(class 检测)。两层判定消除旧版 flaky:
+ *
+ * ① baseline(clickSend click 前记的 assistant 消息数):要求「产生新 assistant 消息」才认「agent 已处理」,
+ *    消除旧版 TOCTOU —— 旧两阶段都判「停止按钮」瞬时显隐,阶段1 等「停止出现」10s 超时被 .catch 吞掉后,
+ *    阶段2「停止消失」无法区分「未开始」与「已完成」,agent 启动延迟时误判 idle,读到未改数据。
+ * ② busy 读 send-btn 的 stop-btn class(布尔绑定 state.loading)。旧版用 textContent.includes('停止') 是错的:
+ *    ChatInput 停止按钮内容是 SVG 图标(rect/箭头,无文字),textContent 恒不含「停止」→ busy 恒 false →
+ *    waitForAgentIdle 永远立即返回(仅靠阶段1 的 10s 超时「碰运气」等待,多轮/高负载下 10s 跑不完即读到中间态)。
+ *    stop-btn class 布尔绑定 state.loading(整个 fetchStream 期间恒 true),稳定可靠。
+ *
+ * baseline 取自 clickSend(click 前,旧 assistant 数);未配对调用(无 clickSend 前置)则当场取,兼容降级。
+ * `.message-row.assistant[data-msg-idx]` 排除 MessageList 的 loading 占位行(占位行无 data-msg-idx,避免 count 误增)。
+ */
 export async function waitForAgentIdle(page: Page, timeout = 60_000): Promise<void> {
-  // 阶段 1:等 agent 开始处理(停止生成按钮出现)
-  await page.waitForFunction(() => {
-    const btns = Array.from(document.querySelectorAll('.chat-dialog button'))
-    return btns.some((b) => (b.textContent || '').includes('停止'))
-  }, { timeout: 10_000 }).catch(() => {})
-
-  // 阶段 2:等 agent 处理完毕(停止生成按钮消失)
-  await page.waitForFunction(() => {
-    const btns = Array.from(document.querySelectorAll('.chat-dialog button'))
-    const stopBtn = btns.some((b) => (b.textContent || '').includes('停止'))
-    return !stopBtn
-  }, { timeout })
+  const stored = (page as any)._paAssistantBaseline
+  delete (page as any)._paAssistantBaseline // 用完清,防同 test 多轮调用残留(下次 clickSend 重记)
+  const baseline = typeof stored === 'number'
+    ? stored
+    : await page
+        .evaluate(() => document.querySelectorAll('.chat-dialog .message-row.assistant[data-msg-idx]').length)
+        .catch(() => 0)
+  await page.waitForFunction(
+    (base) => {
+      const dialog = document.querySelector('.chat-dialog')
+      const inputArea = (dialog && (dialog.querySelector('.chat-input-area, .input-area, .chat-footer') || dialog)) || document
+      // busy 读 send-btn 的 stop-btn class(绑定 state.loading);按钮内容是 SVG 图标无文字,不可用 textContent 检测
+      const sendBtn = inputArea.querySelector('button.send-btn')
+      const busy = !!sendBtn && sendBtn.classList.contains('stop-btn')
+      const assistantCount = document.querySelectorAll('.chat-dialog .message-row.assistant[data-msg-idx]').length
+      return assistantCount > base && !busy
+    },
+    baseline,
+    { timeout },
+  )
 }
 
 /** 清空对话(避免上一轮残留) */

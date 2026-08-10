@@ -48,6 +48,11 @@ export type { CreateAgentOptions, DebugLog, TraceSpan, TraceMetrics, SpanType, S
 export type { Middleware, ModelRequest, ModelResponse, ToolCallContext, StateUpdate } from './harness/middleware'
 export { createSubagentMiddleware, createSubagentsMiddleware } from './harness/subagent'
 export type { SubagentOptions, SubagentLlmConfig, SubagentConfig, SubagentsController } from './harness/subagent'
+// 能力包(专用子 agent 工厂):RAG 多源检索(createRagSubagent)+ HTML 代码组件生成(createHtmlSubagent)
+export { createRagSubagent } from './sdk/ragSubagent'
+export type { RagHit, RagRetrieveOptions, RagRetriever, RagLoader, CreateRagSubagentOptions } from './sdk/ragSubagent'
+export { createHtmlSubagent } from './sdk/htmlSubagent'
+export type { CreateHtmlSubagentOptions } from './sdk/htmlSubagent'
 export { createVerifyMiddleware, createWriteBackCheck } from './harness/verify'
 export type { VerifyCheck, VerifyCheckContext, VerifyCheckResult, VerifyMiddlewareOptions, WriteBackCheckOptions } from './harness/verify'
 export { createContextInspectorMiddleware } from './harness/contextInspector'

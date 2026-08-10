@@ -216,6 +216,12 @@ export interface SubagentConfig {
   maxToolRounds?: number;
   /** 子 agent 可写路径前缀白名单(给子 agent 写权限;写工具包 path guard,越界 PATH_OUT_OF_SCOPE;整体 set 禁)。subagent-writable Phase 2 */
   writablePaths?: string[];
+  /** 从主 allTools 额外拿的工具名(追加到默认只读白名单);如 ['vfs_grep','vfs_write'] */
+  allowedTools?: string[];
+  /** 子 agent 自定义中间件(如 createTodosMiddleware 给规划能力) */
+  middleware?: any[];
+  /** 跨轮上下文压缩;true=默认索引摘要(零 LLM),或 SummarizationOptions 自配(含 llmInvoke 升级)。不传=不装 */
+  summarization?: boolean | any;
 }
 export interface AgentInfo {
   id: string;
@@ -909,6 +915,8 @@ export interface ChatSdk {
   exportData(): any;
   /** 导入数据整体替换主数据 bind(就地还原,保留 reactive 引用);默认经 schema 校验,不合法返回 {ok:false,error};opts.validate:false 跳过校验,opts.emit:false 不发 data_change */
   importData(json: any, opts?: { validate?: boolean; emit?: boolean }): { ok: boolean; error?: string };
+  /** 往 vfs 异步注入/更新文件(RAG 文档池 / HTML 代码等);content 字符串直存,对象 JSON.stringify。与 vfs_write 工具一致语义(集成方侧命令式入口) */
+  vfsWrite(path: string, content: string | object): void;
   /** 创建/注册受保护资源(返回 handle);需配 data.resources + vfsStore,否则抛错 */
   createResource(path: string, value?: unknown): string;
   /** 取受保护资源真值(by path 或 handle);不存在返 undefined */
@@ -1306,6 +1314,42 @@ export interface SubagentOptions {
   [k: string]: any;
 }
 export interface SubagentLlmConfig { [k: string]: any }
+
+// 能力包(专用子 agent 工厂):RAG 多源检索 + HTML 代码组件生成(add-capability-packs)
+export interface RagHit { content: string; source?: string; score?: number }
+export interface RagRetrieveOptions { topK?: number }
+export type RagRetriever = (query: string, opts?: RagRetrieveOptions) => Promise<RagHit[]>;
+export type RagLoader = (source: string) => Promise<RagHit | RagHit[]>;
+export interface CreateRagSubagentOptions {
+  retriever?: (query: string, opts?: RagRetrieveOptions) => Promise<RagHit[]>;
+  loader?: (source: string) => Promise<RagHit | RagHit[]>;
+  useVfs?: boolean;
+  id?: string;
+  description?: string;
+  topK?: number;
+  searchToolName?: string;
+  loadToolName?: string;
+  maxToolRounds?: number;
+  summarization?: boolean | any;
+  skills?: SkillSpec[];
+  extraTools?: any[];
+  [k: string]: any;
+}
+export interface CreateHtmlSubagentOptions {
+  writablePaths: string[];
+  codeVfsPrefix?: string;
+  id?: string;
+  description?: string;
+  planning?: boolean;
+  summarization?: boolean | any;
+  maxToolRounds?: number;
+  temperature?: number;
+  skills?: SkillSpec[];
+  extraTools?: any[];
+  [k: string]: any;
+}
+export declare function createRagSubagent(options: CreateRagSubagentOptions): SubagentConfig;
+export declare function createHtmlSubagent(options: CreateHtmlSubagentOptions): SubagentConfig;
 
 // checkpoint / dataOps / permissions
 export interface CheckpointDeps { [k: string]: any }

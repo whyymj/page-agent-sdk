@@ -229,7 +229,7 @@ function estimateFileBytes(files: Record<string, VfsFile>): number {
 }
 
 /** 规范化路径:去前导/、去重复斜杠 */
-function normalize(path: string): string {
+export function normalize(path: string): string {
   return path.replace(/^\/+/, '').replace(/\/+/g, '/')
 }
 

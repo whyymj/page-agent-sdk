@@ -24,6 +24,7 @@ import type { StreamEvent } from '../types'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { resolveModelCaps, MIN_CONTEXT_WINDOW } from '../utils/modelCaps'
 import { createFocusMiddleware } from './focus'
+import { createSummarizationMiddleware, type SummarizationOptions } from './summarization'
 import type { Focus } from './state'
 import type { ZodType } from 'zod'
 
@@ -70,6 +71,10 @@ export interface SubagentOptions {
   getFocuses?: () => Focus[]
   /** 取主数据 schema getter(focus-auto-switch:子 focus 中间件做视野收敛 + path 校验用;透传主 liveData schema) */
   getSchema?: () => ZodType | null | undefined
+  /** 子 agent 自定义中间件(如 createTodosMiddleware 给规划能力);装在 skills/递归/focus 之后,对齐主「内置→用户」序 */
+  middleware?: Middleware[]
+  /** 跨轮上下文压缩;true=默认索引摘要(零 LLM),或 SummarizationOptions 自配(含 llmInvoke 升级 LLM 摘要)。不传=不装 */
+  summarization?: boolean | SummarizationOptions
 }
 
 /** 判定 llm 是模型实例(BaseChatModel)还是配置对象(SubagentLlmConfig) */
@@ -187,6 +192,14 @@ async function runSubagent(
       `[page-agent-sdk][subagent] 子 agent 模型上下文窗口 ${subCaps.contextWindow} 小于最小支持 ${MIN_CONTEXT_WINDOW}(需 ≥200K 窗口模型)`,
     )
   }
+  // summarization(子 agent 跨轮压缩;HTML agent 频繁改代码累积快):true=默认索引摘要(零 LLM),对象自配(可含 llmInvoke 升级)
+  const summarizationMw = opts.summarization !== undefined
+    ? createSummarizationMiddleware(
+        typeof opts.summarization === 'object'
+          ? { contextWindow: subCaps.contextWindow, ...opts.summarization }
+          : { contextWindow: subCaps.contextWindow },
+      )
+    : undefined
   const child = createAgent({
     // 模型能力透传(显式声明优先,驱动子 agent offload 阈值/压缩触发,修原 16K 误算 silent bug)
     contextWindow: subCaps.contextWindow,
@@ -210,8 +223,10 @@ async function runSubagent(
     // 子 agent 专属 skills(独立,不继承主)+ 递归 subagent 中间件(防递归)
     middleware: [
       ...(opts.skills?.length ? [createSkillsMiddleware(opts.skills)] : []),
+      ...(summarizationMw ? [summarizationMw] : []),
       ...childMiddleware,
       ...(childFocusMw ? [childFocusMw] : []),
+      ...(opts.middleware ?? []),
     ],
     maxToolRounds: opts.maxToolRounds ?? DEFAULT_CHILD_ROUNDS,
     onLog, // 子 agent 日志下沉 → spawn 工具转发到主 debugLogs(带 source 标签)
@@ -337,6 +352,12 @@ export interface SubagentConfig {
   maxToolRounds?: number
   /** 子 agent 可写路径前缀白名单(给写权限;写工具包 path guard,越界 PATH_OUT_OF_SCOPE;整体 set 禁) */
   writablePaths?: string[]
+  /** 从主 allTools 额外拿的工具名(追加到默认只读白名单);如 ['vfs_grep','vfs_write','draft_write'] */
+  allowedTools?: string[]
+  /** 子 agent 自定义中间件(如 createTodosMiddleware 给规划能力);configToSubOpts 透传 */
+  middleware?: Middleware[]
+  /** 跨轮上下文压缩;true=默认索引摘要(零 LLM),或 SummarizationOptions 自配。不传=不装 */
+  summarization?: boolean | SummarizationOptions
 }
 
 export interface SubagentsMiddlewareOptions {
@@ -368,6 +389,9 @@ function configToSubOpts(config: SubagentConfig, main: SubagentsMiddlewareOption
     maxToolRounds: config.maxToolRounds,
     debug: main.debug,
     ...(config.writablePaths?.length ? { writablePaths: config.writablePaths } : {}),
+    ...(config.allowedTools?.length ? { allowedTools: config.allowedTools } : {}),
+    ...(config.middleware?.length ? { middleware: config.middleware } : {}),
+    ...(config.summarization !== undefined ? { summarization: config.summarization } : {}),
     // focus-auto-switch:预声明子 agent 同样继承主焦点 + schema
     ...(main.getFocuses ? { getFocuses: main.getFocuses } : {}),
     ...(main.getSchema ? { getSchema: main.getSchema } : {}),
@@ -495,7 +519,7 @@ export function createSubagentsMiddleware(
         ? [
             '## 可用子 agent(预声明,经专属工具委派)',
             ...valid.map((s) => `- use_${s.id}: ${s.description}`),
-            '需要某子 agent 时,直接调用对应的 use_<id>({ task }) 委派,任务描述要清晰。',
+            '复杂或专项任务(检索 / 生成 / 调研 / 多步等)优先委派子 agent:过程隔离不占主上下文 + 各子 agent 专项处理更优。需要时直接调 use_<id>({ task }) 委派,任务描述要清晰(含背景 + 用户观点/反馈,转述给子 agent);委派后信任子 agent 自主完成,不微操、不读其代码/中间细节(少占主上下文),只据其结论继续。简单任务(单字段改、直接读)用内置工具更快,不必委派。',
           ].join('\n')
         : undefined,
     wrapToolCall: async (ctx, next) => {

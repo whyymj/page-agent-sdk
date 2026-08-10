@@ -19,6 +19,7 @@ import { run as runFocus } from './e2e/focus.mjs'
 import { run as runResources } from './e2e/resources.mjs'
 import { run as runAgentCompression } from './e2e/agent-compression.mjs'
 import { run as runHeadlessSubpath } from './e2e/headless-subpath.mjs'
+import { run as runCapabilityPacks } from './e2e/capability-packs.mjs'
 
 const modules = [
   ['systemprompt', runSystemprompt],
@@ -39,6 +40,7 @@ const modules = [
   ['resources', runResources],
   ['agent-compression', runAgentCompression],
   ['headless-subpath', runHeadlessSubpath],
+  ['capability-packs', runCapabilityPacks],
 ]
 
 let totalPass = 0, totalFail = 0
