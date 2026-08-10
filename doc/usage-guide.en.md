@@ -594,6 +594,24 @@ sdk.vfsWrite('docs/components/hero.md', 'Hero component is for the above-the-fol
 - **HTML** (generation): planning (`write_todos`/`update_todo`) + **code body→vfs** (`html/<name>.vue`, session-scoped) + data stores a `codeRef:'vfs://...'` reference (main data stays lean; code edits via `vfs_edit` don't touch data) + scoped write (`writablePaths` path guard). `summarization` on by default (frequent code edits accumulate fast); ships with `html-builder` skill.
 - **Underlying — subagent arch extensions**: `SubagentConfig` adds `allowedTools` (pull vfs/draft tools from main) / `middleware` (mount planning) / `summarization` (cross-round compression); `sdk.vfsWrite(path, content)` async-injects vfs. Both packs build on these; integrators can also use the three fields directly to configure any specialized subagent.
 
+#### Subagent observability: active/history runtime state (2.38+)
+
+Multi-subagent scenarios (parallel HTML/RAG, complex orchestration) need a consolidated view: how many are running, what each is doing, how far along, who finished. The SDK maintains session-level active (running) / history (LRU≤20) state in the subagent middleware — a pure observation layer (does not change the one-shot lifecycle or event chain).
+
+```js
+// Active subagents (empty array = none running; each has taskId/task/label/status/steps/startedAt)
+const active = sdk.getActiveSubagents()        // equivalent to sdk.inspect().subagent.active
+
+// Delegation history (newest first; LRU≤20; each has durationMs/resultPreview)
+const history = sdk.subagentHistory            // equivalent to sdk.inspect().subagent.history
+
+// DebugDrawer "🤖 subagent" tab: running cards (status badge / step count / elapsed) + collapsible history (click to expand steps)
+```
+
+- Session-level, not persisted (cleared on refresh); steps are summaries (only `{kind,name,ts}` — full content in messages); resultPreview truncated to 120 chars
+- Concurrency-safe: pre-declared use_<id> uses a unique observeId (event taskId stays `use_${id}`)
+- Follows the `subagent` capability; build your own tracker: `import { createSubagentTracker } from 'page-agent-sdk'` (historyLimit default 20)
+
 ### 6.2 Custom tools
 
 ```ts

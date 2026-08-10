@@ -199,6 +199,29 @@ export interface ChatDialogProps {
 export interface ToolInfo { name: string; description: string; schema?: unknown; source?: string }
 export interface SkillInfo { name: string; description: string }
 export interface DataInfo { description?: string; schema?: unknown }
+/** 子 agent 工具调用进度摘要(只记 kind+name+ts,不含 args/result 全文,防膨胀) */
+export interface SubagentStep { kind: 'tool_call' | 'tool_result'; name: string; ts: number }
+/** 单个子 agent 运行状态(观察层;会话级纯内存,不持久化跨刷新) */
+export interface SubagentRunState {
+  taskId: string;
+  task: string;
+  label: string;
+  status: 'running' | 'done' | 'error';
+  steps: SubagentStep[];
+  startedAt: number;
+  durationMs?: number;
+  resultPreview?: string;
+}
+/** 子 agent 观察层 tracker(会话级 active/history 状态管理) */
+export interface SubagentTracker {
+  start(taskId: string, task: string, label: string, startedAt: number): void;
+  pushStep(taskId: string, step: SubagentStep): void;
+  finish(taskId: string, status: 'done' | 'error', result: string): void;
+  getActive(): SubagentRunState[];
+  getHistory(): SubagentRunState[];
+}
+/** 创建子 agent 观察层 tracker(会话级纯内存;historyLimit 默认 20,resultPreview 截断 120 字) */
+export declare function createSubagentTracker(historyLimit?: number): SubagentTracker;
 export interface SubagentInfo {
   enabled: boolean;
   maxDepth: number;
@@ -206,6 +229,10 @@ export interface SubagentInfo {
   allowedTools: string[];
   /** 预声明子 agent 列表(动态:反映 setSubagents/addSubagent/removeSubagent 后的最新) */
   subagents?: { id: string; description: string }[];
+  /** 运行中子 agent(观察层;空=无在跑;capabilities.subagent 关闭 → 空数组) */
+  active?: SubagentRunState[];
+  /** 历史委派(观察层;LRU≤20,最新在前) */
+  history?: SubagentRunState[];
 }
 /** 预声明子 agent 配置(同主配置子集 + id/description;缺省继承主 agent) */
 export interface SubagentConfig {
@@ -943,6 +970,10 @@ export interface ChatSdk {
   addSubagent(config: SubagentConfig): void;
   /** 运行时移除预声明子 agent(by id);返回是否移除成功;需创建时配 subagents:[] */
   removeSubagent(id: string): boolean;
+  /** 运行中子 agent 列表(观察层;空=无在跑;capabilities.subagent 关闭 → 空数组) */
+  getActiveSubagents(): SubagentRunState[];
+  /** 子 agent 委派历史(观察层 getter;LRU≤20,最新在前) */
+  readonly subagentHistory: SubagentRunState[];
 }
 
 /** 乐观锁冲突挂起(dataOps 写入时 expectedHash 不匹配,挂起等用户决定) */

@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-1550%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-1658%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -220,6 +220,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | **Subagents** | `subagent` | `{allowedTools?,systemPrompt?,temperature?,llm?,maxDepth?·1,maxParallel?·4}` | Runtime ad-hoc delegation (`spawn_agent`/`spawn_agents`) |
 | | `subagents` | `SubagentConfig[]` | Pre-declared named subagents → each generates `use_<id>` tool |
 | **Capability packs** (2.37+) | `subagents` | `createRagSubagent({retriever?,loader?,useVfs?})` / `createHtmlSubagent({writablePaths,codeVfsPrefix?})` | Specialized subagent factories — **RAG**: multi-source retrieval (semantic `search_docs` / async `load_doc` / vfs / fetch), read-only, independent context; **HTML**: code-component generation (code→vfs + data `codeRef`, planning `write_todos` + limited write). Composable/splitable, opt-in, ship with `rag-search`/`html-builder` skills. Plus `sdk.vfsWrite(path,content)` for async doc injection. See [doc/usage-guide.md](doc/usage-guide.md#capability-packs) |
+| **Subagent observability** (2.38+) | — | `inspect().subagent.{active,history}` / `sdk.{getActiveSubagents,subagentHistory}` | active/history runtime state + DebugDrawer "🤖 subagent" tab (follows `subagent` capability, session-level, not persisted) |
 | **Context** | `contextPreset` | `'auto' \| 'conservative' \| 'aggressive' \| 'complex'` · default `auto` | Compression preset (`complex` for multi-step / large-JSON / long-workflow tasks) |
 | | `contextOptions` | `Partial<ContextManagerOptions> \| false` | Fine params (`false` disables compression). Includes `preserveLastToolResults` (default `['describe_data','describe_data']` — keep field descriptions in compressed summary) |
 | | `summaryLlm` | `BaseChatModel \| LLMConfig` | Summary-dedicated LLM (defaults to main `llm`) |

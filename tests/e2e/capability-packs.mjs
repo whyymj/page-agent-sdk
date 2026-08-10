@@ -80,5 +80,24 @@ export async function run() {
     assert(JSON.stringify(pkg.files).includes('skills'), 'package.json files 含 skills/')
   }
 
+  console.log('[e2e:capability-packs] 子 agent 观察层(inspect active/history + 便利 API)')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-obs', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      subagents: [createRagSubagent({ retriever: async () => [] })],
+    })
+    await sdk.mount()
+    const sub = sdk.inspect().subagent
+    assert(Array.isArray(sub.active), 'inspect().subagent.active 为数组(默认空)')
+    assert(sub.active.length === 0, '默认 active 空(无委派)')
+    assert(Array.isArray(sub.history), 'inspect().subagent.history 为数组(默认空)')
+    assert(sub.history.length === 0, '默认 history 空(无委派)')
+    assert(typeof sdk.getActiveSubagents === 'function', 'sdk.getActiveSubagents 为 function')
+    assert(Array.isArray(sdk.getActiveSubagents()), 'getActiveSubagents() 返回数组')
+    assert(Array.isArray(sdk.subagentHistory), 'sdk.subagentHistory 为数组(getter 实时)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

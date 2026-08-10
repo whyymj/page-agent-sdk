@@ -85,7 +85,7 @@ function roleOf(t: string) {
 function close() { emit('update:visible', false) }
 function clearLogs() { rawExpanded.value = new Set(); emit('clear') }
 
-const tab = ref<'logs' | 'flow' | 'trace' | 'context' | 'info'>('logs')
+const tab = ref<'logs' | 'flow' | 'trace' | 'context' | 'subagent' | 'info'>('logs')
 const agentInfo = ref<AgentInfo | null>(null)
 // skill 全文展开状态:name → { loading, content, error }
 const skillExpanded = ref<Record<string, { loading: boolean; content: string | null; error?: string }>>({})
@@ -115,14 +115,14 @@ function refreshInfo() {
     try { agentInfo.value = props.getInfo() } catch { agentInfo.value = null }
   }
 }
-function switchTab(t: 'logs' | 'flow' | 'context' | 'info') {
+function switchTab(t: 'logs' | 'flow' | 'trace' | 'context' | 'subagent' | 'info') {
   tab.value = t
-  // 切到「Agent 信息」/「上下文」时实时拉取(含动态 todos / 上下文快照)
-  if (t === 'info' || t === 'context') refreshInfo()
+  // 切到「子 agent」/「Agent 信息」/「上下文」时实时拉取(含动态 active/history / todos / 上下文快照)
+  if (t === 'subagent' || t === 'info' || t === 'context') refreshInfo()
 }
-// infoTick 变化(setSkills/setData 后 ++):抽屉可见且停在 info tab 时实时刷新,反映动态 skill/data
+// infoTick 变化(setSkills/setData 后 ++):抽屉可见且停在 subagent/info/context tab 时实时刷新,反映动态 skill/data/子 agent 状态
 watch(() => props.infoTick?.value, () => {
-  if (props.visible && (tab.value === 'info' || tab.value === 'context')) refreshInfo()
+  if (props.visible && (tab.value === 'subagent' || tab.value === 'info' || tab.value === 'context')) refreshInfo()
 })
 const statusMeta: Record<string, { label: string; color: string }> = {
   pending: { label: '待办', color: '#9ca3af' },
@@ -169,6 +169,20 @@ const ctxOccupancyLevel = computed<'green' | 'yellow' | 'red' | ''>(() => {
   if (s.thresholdRatio > 0 && s.occupancy >= s.thresholdRatio) return 'yellow'
   return 'green'
 })
+/** 子 agent 观察层(subagent-observability):active 运行态 + history 历史 */
+const subagentActive = computed(() => agentInfo.value?.subagent?.active ?? [])
+const subagentHistory = computed(() => agentInfo.value?.subagent?.history ?? [])
+const subStatusMeta: Record<string, { label: string; color: string }> = {
+  running: { label: '运行中', color: '#059669' },
+  done: { label: '完成', color: '#6b7280' },
+  error: { label: '错误', color: '#dc2626' },
+}
+const subExpanded = ref<Set<number>>(new Set())
+function toggleSub(idx: number) {
+  const s = new Set(subExpanded.value)
+  s.has(idx) ? s.delete(idx) : s.add(idx)
+  subExpanded.value = s
+}
 function spanIcon(t: string) { return t === 'round' ? '🔄' : t === 'model' ? '🧠' : t === 'tool' ? '🔧' : t === 'compression' ? '📦' : '•' }
 // 压缩决策摘要(agent-driven-compression;DebugDrawer 上下文 tab + lastCompression 显示)
 function decisionSummary(d: { keepRounds?: number; windowRatio?: number; summarize: { mode: string }; recallTopK?: number; reason?: string }): string {
@@ -202,6 +216,7 @@ function flowNodeDetail(lg: DebugLog): string {
               <button class="tab-btn" :class="{ active: tab === 'flow' }" @click="switchTab('flow')">🔀 流程</button>
               <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'trace' }" @click="switchTab('trace')">🌳 Trace</button>
               <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'context' }" @click="switchTab('context')">📊 上下文</button>
+              <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'subagent' }" @click="switchTab('subagent')">🤖 子 agent</button>
               <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'info' }" @click="switchTab('info')">🧬 Agent 信息</button>
             </div>
             <div class="header-actions">
@@ -279,6 +294,44 @@ function flowNodeDetail(lg: DebugLog): string {
                     <span class="ctx-kv">召回 {{ contextSnap.compression.roundsRecalled }}</span>
                     <span class="ctx-kv">{{ contextSnap.compression.strategy }}</span>
                     <span class="ctx-kv" v-if="contextSnap.compression.decision">🤖 agent 决策:{{ decisionSummary(contextSnap.compression.decision) }}</span>
+                  </div>
+                </div>
+              </template>
+            </div>
+            <div v-if="tab === 'subagent'" class="subagent-panel">
+              <div v-if="!subagentActive.length && !subagentHistory.length" class="trace-empty">
+                尚未委派子 agent。主 agent 调用 <code>use_&lt;id&gt;</code> 或 <code>spawn_agent</code> 后,这里展示运行状态与委派历史。
+              </div>
+              <template v-else>
+                <div v-if="subagentActive.length" class="sub-section">
+                  <div class="sub-section-title">▶ 运行中 ({{ subagentActive.length }})</div>
+                  <div v-for="(s, i) in subagentActive" :key="'a'+i" class="sub-card" :class="s.status">
+                    <div class="sub-head">
+                      <span class="sub-status" :style="{ background: (subStatusMeta[s.status] && subStatusMeta[s.status].color) || '#9ca3af' }">{{ (subStatusMeta[s.status] && subStatusMeta[s.status].label) || s.status }}</span>
+                      <span class="sub-label">{{ s.label }}</span>
+                      <span class="sub-steps-badge">{{ s.steps.length }} 步</span>
+                    </div>
+                    <div class="sub-task">{{ truncate(s.task, 80) }}</div>
+                  </div>
+                </div>
+                <div v-if="subagentHistory.length" class="sub-section">
+                  <div class="sub-section-title">🕐 历史 ({{ subagentHistory.length }})</div>
+                  <div v-for="(s, i) in subagentHistory" :key="'h'+i" class="sub-card" :class="s.status">
+                    <div class="sub-head">
+                      <span class="sub-status" :style="{ background: (subStatusMeta[s.status] && subStatusMeta[s.status].color) || '#9ca3af' }">{{ (subStatusMeta[s.status] && subStatusMeta[s.status].label) || s.status }}</span>
+                      <span class="sub-label">{{ s.label }}</span>
+                      <span v-if="s.durationMs != null" class="sub-dur">{{ s.durationMs }}ms</span>
+                      <button v-if="s.steps.length" class="sub-toggle" @click="toggleSub(i)">{{ subExpanded.has(i) ? '收起' : '步骤' }}</button>
+                    </div>
+                    <div class="sub-task">{{ truncate(s.task, 80) }}</div>
+                    <div v-if="s.resultPreview" class="sub-result">{{ s.resultPreview }}</div>
+                    <div v-if="subExpanded.has(i) && s.steps.length" class="sub-steps-list">
+                      <div v-for="(st, si) in s.steps" :key="si" class="sub-step">
+                        <span class="sub-step-kind">{{ st.kind === 'tool_call' ? '🔧' : '✅' }}</span>
+                        <span class="sub-step-name">{{ st.name }}</span>
+                        <span class="sub-step-ts">{{ formatTime(st.ts) }}</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </template>
@@ -694,4 +747,27 @@ function flowNodeDetail(lg: DebugLog): string {
 .ctx-cat-tokens { min-width: 76px; text-align: right; color: #6b7280; font-family: 'SF Mono', Monaco, Consolas, monospace; flex-shrink: 0; }
 .ctx-cat-tokens i { font-style: normal; color: #9ca3af; }
 .ctx-compression { margin-top: 14px; padding-top: 10px; border-top: 1px solid #f3f4f6; }
+
+/* 子 agent 观察层(subagent-observability):active 运行卡片 + history 历史 */
+.subagent-panel { padding: 12px; }
+.sub-section { margin-bottom: 16px; }
+.sub-section-title { font-size: 11px; font-weight: 600; color: #6b7280; margin-bottom: 8px; }
+.sub-card { padding: 8px 10px; background: #f9fafb; border-radius: 8px; margin-bottom: 6px; border-left: 3px solid var(--cs-primary); }
+.sub-card.running { border-left-color: #059669; }
+.sub-card.done { border-left-color: #6b7280; }
+.sub-card.error { background: #fef2f2; border-left-color: #dc2626; }
+.sub-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.sub-status { font-size: 10px; color: #fff; padding: 1px 6px; border-radius: 8px; flex-shrink: 0; }
+.sub-label { font-size: 12px; font-weight: 600; color: #1f2937; font-family: 'SF Mono', Monaco, Consolas, monospace; }
+.sub-steps-badge { font-size: 10px; color: #6b7280; margin-left: auto; }
+.sub-dur { font-size: 10px; color: #6b7280; margin-left: auto; font-family: 'SF Mono', Monaco, Consolas, monospace; }
+.sub-toggle { border: 1px solid #d1d5db; background: #fff; color: #6b7280; font-size: 10px; padding: 1px 6px; border-radius: 8px; cursor: pointer; }
+.sub-toggle:hover { background: #f3f4f6; }
+.sub-task { font-size: 11px; color: #374151; line-height: 1.5; }
+.sub-result { font-size: 11px; color: #4b5563; background: #fff; border: 1px solid #e5e7eb; border-radius: 4px; padding: 4px 6px; margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
+.sub-steps-list { margin-top: 6px; padding-top: 6px; border-top: 1px dashed #e5e7eb; }
+.sub-step { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 11px; }
+.sub-step-kind { flex-shrink: 0; }
+.sub-step-name { flex: 1; color: #374151; font-family: 'SF Mono', Monaco, Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub-step-ts { font-size: 10px; color: #9ca3af; font-family: 'SF Mono', Monaco, Consolas, monospace; flex-shrink: 0; }
 </style>

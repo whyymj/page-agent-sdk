@@ -1,3 +1,5 @@
+import type { SubagentRunState } from '../harness/subagent'
+
 /** 工具调用步骤（用于在消息内展示思考过程） */
 export interface ToolStep {
   name: string
@@ -132,6 +134,10 @@ export interface SubagentInfo {
   allowedTools: string[]
   /** 预声明子 agent 列表(动态:反映 setSubagents/addSubagent/removeSubagent 后的最新) */
   subagents?: { id: string; description: string }[]
+  /** 运行中子 agent(观察层;空=无在跑;capabilities.subagent 关闭 → 空数组) */
+  active?: SubagentRunState[]
+  /** 历史委派(观察层;LRU≤20,最新在前) */
+  history?: SubagentRunState[]
 }
 export interface AgentInfo {
   id: string

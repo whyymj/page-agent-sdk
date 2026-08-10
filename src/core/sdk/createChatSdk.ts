@@ -38,7 +38,7 @@ import {
   type CheckpointManager,
 } from '../harness/checkpoint'
 import type { Middleware } from '../harness/middleware'
-import { createSubagentMiddleware, createSubagentsMiddleware, type SubagentConfig } from '../harness/subagent'
+import { createSubagentMiddleware, createSubagentsMiddleware, createSubagentTracker, type SubagentConfig, type SubagentRunState } from '../harness/subagent'
 import { createVerifyMiddleware, createWriteBackCheck, type VerifyCheck } from '../harness/verify'
 import { createContextInspectorMiddleware } from '../harness/contextInspector'
 import { connectMcp, type McpServerConfig } from '../mcp/client'
@@ -504,6 +504,10 @@ export interface ChatSdk {
   addSubagent(config: SubagentConfig): void
   /** 运行时移除预声明子 agent(by id);返回是否移除成功;需创建时配 subagents:[] */
   removeSubagent(id: string): boolean
+  /** 运行中子 agent 列表(观察层;空=无在跑;capabilities.subagent 关闭 → 空数组) */
+  getActiveSubagents(): SubagentRunState[]
+  /** 子 agent 委派历史(观察层 getter;LRU≤20,最新在前) */
+  readonly subagentHistory: SubagentRunState[]
 }
 
 /** send/stream options:mission 显式覆盖(优先于自动 capture)+ interceptors per-call 覆盖(顶层 input/output)+ automation 重试次数覆盖 */
@@ -639,6 +643,10 @@ export interface AgentCore {
   addSubagent(config: SubagentConfig): void
   /** 运行时移除预声明子 agent(by id);返回是否移除成功 */
   removeSubagent(id: string): boolean
+  /** 运行中子 agent 列表(观察层;空=无在跑;capabilities.subagent 关闭 → 空数组) */
+  getActiveSubagents(): SubagentRunState[]
+  /** 子 agent 委派历史(观察层 getter;LRU≤20,最新在前) */
+  readonly subagentHistory: SubagentRunState[]
   /** 批处理(automation):逐任务跑 agent,每任务前 checkpoint,任务间错误隔离 */
   batch(tasks: string[], onProgress?: (p: BatchProgress) => void): Promise<BatchResult[]>
 }
@@ -1038,6 +1046,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   }
   const useMemory = caps.memory
   const useSubagent = caps.subagent
+  // 子 agent 观察层 tracker(会话级共享:spawn + 预声明中间件统一记录 active/history 运行态)
+  const subagentTracker = useSubagent ? createSubagentTracker() : undefined
   // verify 默认关(烧 token);需 capabilities.verify:true + 未显式 enabled:false + maxAttempts>0(check 可选,省略则用 createWriteBackCheck)
   const verifyMaxAttempts = options.verify?.maxAttempts ?? 2
   const useVerify = caps.verify && options.verify?.enabled !== false && verifyMaxAttempts > 0
@@ -1069,6 +1079,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           // focus-auto-switch:子 agent 继承主焦点(focusMw/liveData 在该闭包可见)
           getFocuses: () => focusMw.getFocuses(),
           getSchema: () => liveData()?.schema ?? null,
+          tracker: subagentTracker,
         })
 
   // 预声明子 agent(subagents:[] → 每个 use_<id> 委派工具;与上面 spawn 中间件共存)
@@ -1076,7 +1087,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 注:subagents:[](空数组)也创建 controller,支持「初始无子 agent,运行时动态 add」场景(不依赖 length 判定)
   // capabilities.subagent 关闭时不创建(与 spawn 中间件一致)
   const subagentsMw = useSubagent && options.subagents !== undefined
-    ? createSubagentsMiddleware(options.subagents, { llm: options.llm, allTools: () => allTools, debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null })
+    ? createSubagentsMiddleware(options.subagents, { llm: options.llm, allTools: () => allTools, debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null, tracker: subagentTracker })
     : undefined
   const subagentsController = subagentsMw ? (subagentsMw as any).controller as import('../harness/subagent').SubagentsController : null
 
@@ -1693,6 +1704,14 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       if (removed) core.infoTick.value++
       return removed
     },
+    /** 运行中子 agent 列表(观察层;空=无在跑;capabilities.subagent 关闭 → 空数组) */
+    getActiveSubagents(): SubagentRunState[] {
+      return subagentTracker?.getActive() ?? []
+    },
+    /** 子 agent 委派历史(观察层 getter;LRU≤20,最新在前;每次访问实时取最新) */
+    get subagentHistory(): SubagentRunState[] {
+      return subagentTracker?.getHistory() ?? []
+    },
 
     /** 检视 agent 详情:tools/skills/data/memory/middleware/todos(inspect() 与 debug 窗口消费) */
     getInfo(): AgentInfo {
@@ -1729,6 +1748,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           allowedTools: options.subagent?.allowedTools ?? [],
           // 预声明子 agent 列表(动态:反映 setSubagents/addSubagent/removeSubagent 后的最新)
           subagents: subagentsController?.get() ?? [],
+          // 观察层:运行中(active)+ 历史(history LRU≤20)委派状态(会话级,实时反映)
+          active: subagentTracker?.getActive() ?? [],
+          history: subagentTracker?.getHistory() ?? [],
         },
         verify: {
           enabled: !!verifyMw,
@@ -2327,5 +2349,9 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
     setSubagents: (configs: SubagentConfig[]) => core.setSubagents(configs),
     addSubagent: (config: SubagentConfig) => core.addSubagent(config),
     removeSubagent: (id: string) => core.removeSubagent(id),
+    /** 运行中子 agent 列表(观察层;空=无在跑;capabilities.subagent 关闭 → 空数组) */
+    getActiveSubagents: () => core.getActiveSubagents(),
+    /** 子 agent 委派历史(观察层 getter;LRU≤20,最新在前;每次访问实时取最新) */
+    get subagentHistory(): SubagentRunState[] { return core.subagentHistory },
   }
 }

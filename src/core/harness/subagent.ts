@@ -39,6 +39,78 @@ export interface SubagentLlmConfig {
   maxTokens?: number
 }
 
+// ===== 子 agent 观察层(active/history 状态;纯观察,不改子 agent 生命周期/事件链)=====
+
+/** 子 agent 工具调用进度摘要(只记 kind+name+ts,不含 args/result 全文,防膨胀;全文在 messages/事件) */
+export interface SubagentStep {
+  kind: 'tool_call' | 'tool_result'
+  name: string
+  ts: number
+}
+
+/** 单个子 agent 运行状态(观察层;会话级纯内存,不持久化跨刷新) */
+export interface SubagentRunState {
+  /** 唯一标识(每次委派生成;并发安全 —— spawn 用 sub-xxx,预声明用 use_<id>-xxx 避免同 id 冲突) */
+  taskId: string
+  /** 委派任务(use_<id> 的 task / spawn_agent 的 prompt 摘要) */
+  task: string
+  /** 子 agent 标识(role / use_<id> 的 id / spawn label) */
+  label: string
+  status: 'running' | 'done' | 'error'
+  /** 进度(子 agent 工具调用摘要,累积;只记 kind+name+ts,不含 args/result 全文) */
+  steps: SubagentStep[]
+  startedAt: number
+  /** 完成后填(= Date.now() - startedAt) */
+  durationMs?: number
+  /** 结论摘要(完成时;截断 120 字,非全文 —— 全文在 messages/tool result) */
+  resultPreview?: string
+}
+
+/** 子 agent 观察层 tracker(会话级 active/history 状态管理;纯内存,不进 storage) */
+export interface SubagentTracker {
+  /** 委派开始:记 active(status running) */
+  start(taskId: string, task: string, label: string, startedAt: number): void
+  /** 子工具进度:累积 step 到对应 active entry(只记 kind+name+ts) */
+  pushStep(taskId: string, step: SubagentStep): void
+  /** 委派结束:更新 status/durationMs/resultPreview(截断)→ 从 active 移入 history(LRU) */
+  finish(taskId: string, status: 'done' | 'error', result: string): void
+  /** 运行中子 agent 快照(空数组=无在跑) */
+  getActive(): SubagentRunState[]
+  /** 历史委派快照(LRU ≤ historyLimit,最新在前) */
+  getHistory(): SubagentRunState[]
+}
+
+/**
+ * 创建子 agent 观察层 tracker(会话级纯内存)。
+ * createChatSdk 内部创建一个共享实例,注入 spawn + 预声明中间件 → 两类委派统一观察。
+ * historyLimit 防 LRU 膨胀(默认 20);resultPreview 截断 120 字;steps 只记摘要(非全文)。
+ */
+export function createSubagentTracker(historyLimit = 20): SubagentTracker {
+  const active = new Map<string, SubagentRunState>()
+  const history: SubagentRunState[] = []
+  return {
+    start(taskId, task, label, startedAt) {
+      active.set(taskId, { taskId, task, label, status: 'running', steps: [], startedAt })
+    },
+    pushStep(taskId, step) {
+      const st = active.get(taskId)
+      if (st) st.steps.push(step)
+    },
+    finish(taskId, status, result) {
+      const st = active.get(taskId)
+      if (!st) return
+      st.status = status
+      st.durationMs = Date.now() - st.startedAt
+      st.resultPreview = result.length > 120 ? result.slice(0, 120) + '…' : result
+      active.delete(taskId)
+      history.unshift(st)
+      while (history.length > historyLimit) history.pop()
+    },
+    getActive() { return [...active.values()] },
+    getHistory() { return [...history] },
+  }
+}
+
 export interface SubagentOptions {
   /** 主 agent 的 LLM(配置对象或预构造实例,子 agent 复用) */
   llm: SubagentLlmConfig | BaseChatModel
@@ -75,6 +147,8 @@ export interface SubagentOptions {
   middleware?: Middleware[]
   /** 跨轮上下文压缩;true=默认索引摘要(零 LLM),或 SummarizationOptions 自配(含 llmInvoke 升级 LLM 摘要)。不传=不装 */
   summarization?: boolean | SummarizationOptions
+  /** 观察层 tracker(createChatSdk 注入共享实例;记录委派 active/history)。不传=不记录(零回归) */
+  tracker?: SubagentTracker
 }
 
 /** 判定 llm 是模型实例(BaseChatModel)还是配置对象(SubagentLlmConfig) */
@@ -249,8 +323,10 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
   let currentEmit: ((e: StreamEvent) => void) | undefined
   let currentLogSink: ((e: any) => void) | undefined
 
-  /** 把子进度(subagent 事件)转发到主 UI(经 currentEmit) */
+  /** 把子进度(subagent 事件)转发到主 UI(经 currentEmit)+ 观察层累积 steps */
   const makeForward = (taskId: string, label: string) => (e: SubProgress): void => {
+    // 观察层:累积子工具进度摘要(只记 kind+name+ts;全文在事件/messages)
+    opts.tracker?.pushStep(taskId, { kind: e.type, name: e.name, ts: Date.now() })
     if (!currentEmit) return
     currentEmit({
       type: 'subagent',
@@ -272,7 +348,17 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
       const taskId = `sub-${Math.random().toString(36).slice(2, 8)}`
       const label = role?.trim() || '子任务'
       const onLog = (entry: any) => currentLogSink?.({ ...entry, source: `子:${label}` })
-      return await runSubagent({ prompt, role, model }, subOpts, currentSignal, makeForward(taskId, label), onLog)
+      // 观察层:记 active(委派开始)
+      const startedAt = Date.now()
+      opts.tracker?.start(taskId, prompt, label, startedAt)
+      try {
+        const result = await runSubagent({ prompt, role, model }, subOpts, currentSignal, makeForward(taskId, label), onLog)
+        opts.tracker?.finish(taskId, 'done', result)
+        return result
+      } catch (e) {
+        opts.tracker?.finish(taskId, 'error', String((e as Error)?.message ?? e))
+        throw e
+      }
     },
     {
       name: 'spawn_agent',
@@ -298,7 +384,17 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
           const taskId = `sub-${i}-${Math.random().toString(36).slice(2, 6)}`
           const label = t.role?.trim() || `子任务${i + 1}`
           const onLog = (entry: any) => currentLogSink?.({ ...entry, source: `子:${label}` })
-          return runSubagent(t, opts, currentSignal, makeForward(taskId, label), onLog)
+          // 观察层:记 active(并行委派,各 taskId 独立 entry)
+          const startedAt = Date.now()
+          opts.tracker?.start(taskId, t.prompt, label, startedAt)
+          try {
+            const r = await runSubagent(t, opts, currentSignal, makeForward(taskId, label), onLog)
+            opts.tracker?.finish(taskId, 'done', r ?? '(未完成)')
+            return r
+          } catch (e) {
+            opts.tracker?.finish(taskId, 'error', String((e as Error)?.message ?? e))
+            throw e
+          }
         },
         currentSignal,
       )
@@ -370,6 +466,8 @@ export interface SubagentsMiddlewareOptions {
   /** 取主数据 schema getter(focus-auto-switch:透传给子 focus 中间件) */
   getSchema?: () => ZodType | null | undefined
   debug?: boolean
+  /** 观察层 tracker(同 SubagentOptions.tracker;createChatSdk 注入共享实例,两类委派统一观察) */
+  tracker?: SubagentTracker
 }
 
 /** 合法工具名校验(生成 use_<id>) */
@@ -395,6 +493,8 @@ function configToSubOpts(config: SubagentConfig, main: SubagentsMiddlewareOption
     // focus-auto-switch:预声明子 agent 同样继承主焦点 + schema
     ...(main.getFocuses ? { getFocuses: main.getFocuses } : {}),
     ...(main.getSchema ? { getSchema: main.getSchema } : {}),
+    // 观察层:透传 tracker(递归子 agent 的 spawn 也记录到主 tracker)
+    ...(main.tracker ? { tracker: main.tracker } : {}),
   }
 }
 
@@ -461,7 +561,24 @@ export function createSubagentsMiddleware(
           async ({ task }) => {
             const opts = configToSubOpts(s, main)
             const onLog = (entry: any) => currentLogSink?.({ ...entry, source: `子:${s.id}` })
-            return runSubagent({ prompt: task }, opts, currentSignal, makeForward(`use_${s.id}`, s.id), onLog)
+            // 观察层:唯一 observeId(并发安全 —— 同 use_<id> 多次并发不冲突);
+            // 事件 taskId 保持 use_${s.id} 不变(不破坏 UI 嵌套分组),steps 经 forward wrapper 累积到 observeId
+            const tracker = main.tracker
+            const observeId = tracker ? `use_${s.id}-${Math.random().toString(36).slice(2, 6)}` : `use_${s.id}`
+            const baseForward = makeForward(`use_${s.id}`, s.id)
+            const forward = tracker
+              ? (e: SubProgress) => { tracker.pushStep(observeId, { kind: e.type, name: e.name, ts: Date.now() }); baseForward(e) }
+              : baseForward
+            const startedAt = Date.now()
+            tracker?.start(observeId, task, s.id, startedAt)
+            try {
+              const result = await runSubagent({ prompt: task }, opts, currentSignal, forward, onLog)
+              tracker?.finish(observeId, 'done', result)
+              return result
+            } catch (e) {
+              tracker?.finish(observeId, 'error', String((e as Error)?.message ?? e))
+              throw e
+            }
           },
           {
             name: `use_${s.id}`,

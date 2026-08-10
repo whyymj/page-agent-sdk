@@ -645,6 +645,24 @@ sdk.vfsWrite('docs/components/hero.md', 'Hero 组件用于首屏主视觉...')
 - **HTML**(生成型):规划(`write_todos`/`update_todo`)+ **代码正文→vfs**(`html/<name>.vue`,会话级)+ data 存 `codeRef:'vfs://...'` 引用(主 data 精简、代码改 `vfs_edit` 增量不动 data)+ 限定写(`writablePaths` path guard)。默认开 `summarization`(频繁改代码累积快);装 `html-builder` skill
 - **底层:子 agent 架构扩展**:`SubagentConfig` 加 `allowedTools`(从主 allTools 拿 vfs/draft 工具)/ `middleware`(装规划中间件)/ `summarization`(跨轮压缩);`sdk.vfsWrite(path, content)` 异步注入 vfs。两包都基于这些扩展;集成方亦可直接用 `SubagentConfig` 三字段自配任意专用子 agent
 
+#### 子 agent 观察层:active/history 运行态(2.38+)
+
+多子 agent 场景(并行 HTML/RAG、复杂编排)需集中观察:当前几个在跑、各做什么、跑到哪、谁完成。SDK 在 subagent 中间件维护会话级 active(运行中)/history(历史 LRU≤20)状态,纯观察层(不改一次性生命周期/事件链)。
+
+```js
+// 运行中子 agent(空数组=无在跑;含 taskId/task/label/status/steps/startedAt)
+const active = sdk.getActiveSubagents()        // 等价 sdk.inspect().subagent.active
+
+// 委派历史(最新在前;LRU≤20;含 durationMs/resultPreview)
+const history = sdk.subagentHistory            // 等价 sdk.inspect().subagent.history
+
+// DebugDrawer「🤖 子 agent」tab:运行卡片(状态徽标/步数/耗时)+ 历史折叠(点开看 steps)
+```
+
+- 会话级不持久化(刷新清空);steps 非全文(只记 `{kind,name,ts}`,全文在 messages);resultPreview 截断 120 字
+- 并发安全:预声明 use_<id> 用唯一 observeId(事件 taskId 保持 `use_${id}` 不变)
+- 随 `subagent` 能力开;自建 tracker:`import { createSubagentTracker } from 'page-agent-sdk'`(historyLimit 默认 20)
+
 ### 6.2 自定义工具
 
 给 Agent 加任意能力(API 调用、计算、宿主页面操作……):
