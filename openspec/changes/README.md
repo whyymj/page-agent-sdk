@@ -1,12 +1,14 @@
 # 活跃 Changes 优先级索引
 
-> **fix-authorization-surface(进行中,2026-08-11 立)**:审计 P0-1 + P1-15/16/18/21/22 修复(授权与拦截面完整性)。Q1-Q5 已拍板(审计 tasks §7.1):装配期源头 filter / 本 change 含 focus 绕过 / hang 批次先 design / N1 并 main-sub-isolation / 五维下轮。见 `2026-08-11-fix-authorization-surface/`。
+> **2026-08-11 发布 2.38.2**:`fix-authorization-surface` 实施完成并归档 —— 审计 P0-1(子 agent allowedTools 装配断层:rag/html 能力包 vfs 工具恒不可见)+ P1-15/16/18/21/22(子栈继承 approval/permissions + approval_request 直通转发 / spawn 自授收紧 + 装配期源头 filter / writablePaths guard 补根写拦截 / focus strict 兑现 + eval_script 拦截 / permissions 根 scope 校验 / 子 offload 桥接主 vfs)。Q1-Q5 拍板落地。见 `archive/2026-08-11-fix-authorization-surface/`。
+
+> **fix-hang-and-feedback(已实施,2026-08-11,待发布)**:审计组 1 七项(P1-1..7,挂起与反馈)。三契约:超时默认值表(无响应方 approval 30s 自动拒 / MCP 15s / skills 30s / 流停滞 90s)+ 可见性事件 + abort 收口(activeControllers + send/batch signal + unmount/switchSession 断流)。D-1/D-2 拍板落地。selftest 1709 / e2e 469。见 `2026-08-11-fix-hang-and-feedback/`。
+
+> **audit-sdk-integrity(进行中)**:SDK 完整性审计 —— 产出 `2026-08-10-audit-sdk-integrity/audit-report.md`(**P0×1 + P1×27** + P2×64 + P3×33,H1-H28 全落结论;§十一 二审复核)。**P0 已修(2.38.2)**;无疑问 P1 已修(2.38.1);组 1 design 已出(评审中)。待立:fix-main-sub-isolation(组3 + N1 per-caller 基线)/ fix-data-integrity 剩余项;P2→deferred.md 登记(带触发条件)。见 `2026-08-10-audit-sdk-integrity/`。
 
 > **2026-08-10 发布 2.37.0**:`add-capability-packs` 实施完成并归档(专用子 agent 工厂 `createRagSubagent`/`createHtmlSubagent` + 子 agent 架构扩展 `allowedTools`/`middleware`/`summarization` + `sdk.vfsWrite` + `rag-search`/`html-builder` skill + `rag-subagent-demo`/`html-subagent-demo` + augmentPrompt 委派引导)。见 `archive/2026-08-10-add-capability-packs/`。
 
 > **2026-08-10 发布 2.38.0**:`add-subagent-observability` 实施完成并归档(子 agent 观察层:`createSubagentTracker` + `inspect().subagent.{active,history}` + `sdk.getActiveSubagents()`/`sdk.subagentHistory` + DebugDrawer「🤖 子 agent」tab;纯观察层不改生命周期/事件链)。见 `archive/2026-08-10-add-subagent-observability/`。
-
-> **audit-sdk-integrity(进行中)**:SDK 完整性审计已执行完毕 —— 14 路并行评审(R1-R8 模块 + D/E/C/P/A/T 专项)+ 主审对抗核实;产出 `2026-08-10-audit-sdk-integrity/audit-report.md`(**P0×1 + P1×27** + P2×64 + P3×33,H1-H28 全落结论)。P0 = 子 agent allowedTools 装配断层(rag/html 能力包 vfs 工具恒不可见,已实测复现)。待立 fix changes(P0 立即 + P1 三批次)。见 `2026-08-10-audit-sdk-integrity/`。
 
 > **2026-08-08 归档(未实施,被取代)**:`fix-context-window-stale-on-setllm` —— 其核心问题(setLlm 后 contextWindow 陈旧不回灌,切小窗口模型 + 历史超新窗口时 compressInput 用旧阈值不触发)由同期 `harden-context-resilience` 的「三闸跟随窗口 + 反应性重试」覆盖解决,本独立 change(方案 B 独立 setter)未实施直接归档。见 `archive/2026-08-08-fix-context-window-stale-on-setllm/`。
 

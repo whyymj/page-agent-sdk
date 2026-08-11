@@ -28,6 +28,7 @@ import { getTraceMetrics } from '../utils/traceMetrics'
 import { extractTextDelta, extractReasoningDelta, extractUsage } from '../utils/contentParts'
 import { createInitialState, type HarnessState } from './state'
 import { withRetry, isAbort, type RetryOptions } from './retry'
+import { withStallTimeout, StreamStalledError, DEFAULT_STREAM_STALL_MS } from '../utils/stallTimeout'
 import { isContextLengthError } from './errors'
 import {
   type Middleware,
@@ -183,6 +184,8 @@ export interface CreateAgentOptions {
   maxRetries?: number
   /** 重试退避基数 ms(默认 500,第 n 次重试等待 = base*2^n + jitter) */
   retryDelayMs?: number
+  /** LLM 流停滞看门狗(fix-hang-and-feedback P1-7):chunk 间隔(含等首个)超此 ms → 中断抛错。默认 90s;0 = 关闭 */
+  stallMs?: number
   /** 同轮多个工具调用的并发上限(默认 1 = 串行,保持现有工具语义);>1 时并发执行 */
   maxParallelTools?: number
   /** beforeReturn 自纠上限(默认 0 = 关闭,纯放行);>0 时 agent 返回前跑 beforeReturn 钩子,有 feedback 则回灌 user 消息继续循环,达上限强制 return 防死循环 */
@@ -262,6 +265,7 @@ export function createAgent(options: CreateAgentOptions) {
     maxIterations: userMaxIterations,
     maxRetries = 2,
     retryDelayMs = 500,
+    stallMs = DEFAULT_STREAM_STALL_MS,
     maxParallelTools = 1,
     maxVerifyAttempts = 0,
     onLog,
@@ -440,9 +444,15 @@ export function createAgent(options: CreateAgentOptions) {
     }
     // P1-d:仅 stream「启动」(连接建立)走重试;迭代中失败时已 emit 文本 delta,withRetry 重跑 run 会从头再 emit
     // → UI 文本重复两遍。故启动失败(连接)可重试,迭代失败(已吐字)不重试,直接抛。
+    // P1-7(fix-hang-and-feedback):内部 AbortController —— 流停滞超时时 abort 清理底层流(外层 signal 联动传入)
+    const inner = new AbortController()
+    if (signal) {
+      if (signal.aborted) inner.abort()
+      else signal.addEventListener('abort', () => inner.abort(), { once: true })
+    }
     let stream: AsyncIterable<AIMessageChunk> | undefined
     try {
-      stream = await withRetry(() => streamer.stream(req.messages, signal ? { signal } : undefined), retryOpts)
+      stream = await withRetry(() => streamer.stream(req.messages, { signal: inner.signal }), retryOpts)
     } catch (err) {
       // 启动阶段 abort:带空 partial(等同未开始);其他错误透传(withRetry 已对可重试类重试过)
       if (isAbort(err, signal)) return { message: new AIMessage(''), toolCalls: [], content: '', aborted: true }
@@ -464,7 +474,8 @@ export function createAgent(options: CreateAgentOptions) {
     let aggregated: AIMessageChunk | null = null
     let content = ''
     try {
-      for await (const chunk of stream) {
+      // P1-7:停滞看门狗 —— chunk 间隔(含等首个)超 stallMs 抛 StreamStalledError(stallMs<=0 透传关闭)
+      for await (const chunk of withStallTimeout(stream, stallMs)) {
         aggregated = aggregated ? aggregated.concat(chunk) : chunk
         const textDelta = extractTextDelta(chunk)
         if (textDelta && onEvent) {
@@ -476,6 +487,12 @@ export function createAgent(options: CreateAgentOptions) {
         if (rDelta && onEvent) onEvent({ type: 'reasoning', delta: rDelta })
       }
     } catch (err) {
+      // P1-7:流停滞 → abort 清理底层流 + 上抛(status=408 不被当网络错重试;UI 显错误,send 路径 throw)
+      if (err instanceof StreamStalledError) {
+        inner.abort()
+        log('error', { stage: 'stream_stalled', waitedMs: err.waitedMs, stallMs })
+        throw err
+      }
       // abort:不抛,带出已累积 partial;迭代中其他失败不重试(已 emit,重发会重复)→ 直接抛
       if (isAbort(err, signal)) {
         const message = (aggregated as unknown as BaseMessage) ?? new AIMessage(content)
@@ -807,13 +824,14 @@ export function createAgent(options: CreateAgentOptions) {
     }
   }
 
-  /** 非流式入口(复用 stream,聚合最终文本;透传 signal 支持停止) */
-  async function invoke(messages: AgentMessage[], signal?: AbortSignal): Promise<string> {
+  /** 非流式入口(复用 stream,聚合最终文本;透传 signal 支持停止;onEvent 可选监听过程事件 —— fix-hang-and-feedback P1-1:send/batch 经此收口 approval_request) */
+  async function invoke(messages: AgentMessage[], signal?: AbortSignal, onEvent?: StreamHandler): Promise<string> {
     let final = ''
     await stream(
       messages,
       (e) => {
         if (e.type === 'done') final = e.content
+        onEvent?.(e)
       },
       signal,
     )

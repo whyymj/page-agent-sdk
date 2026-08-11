@@ -337,7 +337,7 @@ export interface ContextInspectorMiddleware {
 }
 /** 创建上下文检查中间件(capabilities.contextInspector 默认开) */
 export declare function createContextInspectorMiddleware(opts?: ContextInspectorOptions): ContextInspectorMiddleware;
-export interface McpServerConfig { transport: 'http' | 'sse' | 'websocket'; url: string; name?: string; requestInit?: any; }
+export interface McpServerConfig { transport: 'http' | 'sse' | 'websocket'; url: string; name?: string; requestInit?: any; /** 握手超时 ms(默认 15s;fix-hang-and-feedback P1-2);超时按连接失败降级 */ timeoutMs?: number; }
 
 /** DebugDrawer props(纯 props 驱动,不耦合 ChatDialog;headless 自建对话框可复用) */
 export interface DebugDrawerProps {
@@ -754,6 +754,8 @@ export interface ChatSdkOptions {
   maxPlanRevisions?: number;
   /** 模型调用失败自动重试次数(默认 2;网络/429/5xx 重试,4xx 与 abort 不重试) */
   maxRetries?: number;
+  /** LLM 流停滞看门狗(fix-hang-and-feedback P1-7):chunk 间隔(含等首个)超此 ms → 中断抛错防 loading 永转。默认 90s;0 = 关闭 */
+  streamStallMs?: number;
   /** token 预算上限(累计 total_tokens 超过 → 停止 agent + emit BUDGET_EXCEEDED;需 capabilities.automation:true) */
   tokenBudget?: number;
   /** 时间预算 ms(从 agent 开始计时,超过 → 停止;需 capabilities.automation:true) */
@@ -863,7 +865,7 @@ export interface ChatSdk {
   hide(): void;
   /** 抽屉模式显示:移除 cs-hidden class 恢复可见(配合 hide 使用;首次挂载用 mount) */
   show(): void;
-  send(message: string, options?: { mission?: Partial<Mission>; interceptors?: { input?: (input: unknown) => unknown; output?: (json: unknown) => unknown }; maxAutoRetries?: number }): Promise<string>;
+  send(message: string, options?: { mission?: Partial<Mission>; interceptors?: { input?: (input: unknown) => unknown; output?: (json: unknown) => unknown }; maxAutoRetries?: number; /** 中断信号(fix-hang-and-feedback P1-4) */ signal?: AbortSignal }): Promise<string>;
   switchSession(sessionId?: string): Promise<string>;
   /** 列出当前 agent 的所有历史会话(供「历史列表」UI;storage 未开启 → []) */
   listSessions(): Promise<SessionMeta[]>;
@@ -909,7 +911,7 @@ export interface ChatSdk {
    * 适合无人值守批量操作(批量生成/改一批页面)。不经 UI 排队(直接 invoke);返回每个任务结果(成功 reply / 失败 error)。
    * 配合 capabilities.automation + checkpoint 使用。
    */
-  batch(tasks: string[], onProgress?: (p: BatchProgress) => void): Promise<BatchResult[]>;
+  batch(tasks: string[], onProgress?: (p: BatchProgress) => void, signal?: AbortSignal): Promise<BatchResult[]>;
   /** 运行时订阅 SDK 事件(可多个监听器,返回取消函数);与构造时 onEvent 互补 */
   hook(handler: SdkEventHandler): () => void;
   /** 运行时替换主数据配置(如页面切换、schema 变更);立即对数据工具生效,无需重建 agent。需开启 dataOps */

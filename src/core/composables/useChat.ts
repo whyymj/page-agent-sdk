@@ -36,9 +36,11 @@ export function useChat(
     onPersist?: (messages: AgentMessage[]) => void | Promise<void>
     /** 清空对话时回调(用于新建会话) */
     onClear?: () => void
+    /** stop() 清空排队任务时回调(fix-hang-and-feedback P1-5 可见性:丢弃条数与内容由消费方记日志,防无声丢失) */
+    onQueuedCleared?: (dropped: string[]) => void
   } = {},
 ) {
-  const { fetchResponse, fetchStream, onPersist, onClear } = opts
+  const { fetchResponse, fetchStream, onPersist, onClear, onQueuedCleared } = opts
 
   /** 对话状态:消息列表 + loading + 错误(messages 可与父级共享同一引用) */
   const state = reactive<AgentState>({
@@ -272,8 +274,9 @@ export function useChat(
     state.error = null
   }
 
-  /** 停止当前生成(abort) + 清空排队(用户主动停,不再续跑后续排队任务) */
+  /** 停止当前生成(abort) + 清空排队(用户主动停,不再续跑后续排队任务);丢弃经 onQueuedCleared 留痕(P1-5) */
   function stop() {
+    if (queuedTasks.value.length) onQueuedCleared?.([...queuedTasks.value])
     queuedTasks.value = []
     currentController?.abort()
   }

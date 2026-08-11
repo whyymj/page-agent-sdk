@@ -37,4 +37,4 @@
 
 ## §7 门禁与收尾
 - [x] npm test + build + test:e2e + test:browser + test:types-alignment 全绿
-- [ ] commit develop;询问用户是否发布
+- [x] commit develop(`450bdf2`)+ **已发布 v2.38.2**(2026-08-11):门禁全绿 → squash develop→master(`731ab47`)推 Gitee+GitHub → npm publish → esm.sh 可达 + 导出齐全

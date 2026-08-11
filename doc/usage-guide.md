@@ -854,6 +854,14 @@ createChatSdk({ maxRetries: 0 })   // 关闭自动重试
 **③ 出错重试**
 请求失败时,错误条上出现「重试」按钮,点击移除失败回复、用最后一条用户消息重发。
 
+**④ 挂起有界收口(fix-hang-and-feedback)**
+所有「等外部/等人」的挂起点都有超时兜底与中断通道,不会永久挂死:
+
+- **无 UI 场景的确认请求自动拒**:`send`/`batch` 路径(无 ApprovalBar 响应方)触发人工确认时,**30s 无响应自动拒绝** + error 事件留痕,LLM 收到拒绝继续/收口(不再永挂)。`approval.timeoutMs` 可覆盖(传 `Infinity` = 无限等,给自建确认通道的集成方)
+- **send/batch 可中断**:`send(msg, { signal })` / `batch(tasks, onProgress, signal)` 接 AbortSignal;`unmount()` / `switchSession()` 也会自动中止在途流(无幽灵流烧 token)
+- **MCP 握手超时**:默认 15s(`mcp[].timeoutMs` 可调),黑洞端点降级跳过,不阻塞 SDK 启动
+- **LLM 流停滞看门狗**:chunk 间隔(含等首个)超 `streamStallMs`(默认 90s,0 关)→ 自动中断报错,防 loading 永转
+
 ### 6.8 上下文与内存上限
 
 长会话不会撑爆内存:

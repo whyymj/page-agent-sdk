@@ -693,6 +693,11 @@ defineSkill({
 - Auto-retry model calls (network/429/5xx, exponential backoff, `maxRetries` default 2)
 - Stop generation (abort) — preserves partial content
 - Retry on error (UI)
+- **Bounded hangs (fix-hang-and-feedback)** — every "wait for human / external IO" point has a timeout + interrupt path:
+  - Approval requests on `send`/`batch` (no UI responder) **auto-reject after 30s** with an error event (override via `approval.timeoutMs`; `Infinity` = wait forever for integrators with their own confirmation channel)
+  - `send(msg, { signal })` / `batch(tasks, onProgress, signal)` accept an AbortSignal; `unmount()` / `switchSession()` abort in-flight streams (no ghost streams)
+  - MCP handshake timeout: default 15s (`mcp[].timeoutMs`); black-hole endpoints degrade gracefully instead of hanging init
+  - LLM stream stall watchdog: no chunk for `streamStallMs` (default 90s; 0 = off) → abort with error (no infinite loading)
 
 ### 6.8 Context & memory caps
 

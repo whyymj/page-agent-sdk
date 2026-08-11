@@ -8,7 +8,7 @@
  * 逻辑从 `createChatSdk.ts` 原样搬迁(零行为改动):props 透传 + 退出动画(cs-leaving + transitionend/320ms 兜底)+ show/hide class 切换。
  * 返回 DialogController,createChatSdk 闭包持有并委托 mount/unmount/show/hide。
  */
-import { createApp, h, defineComponent, type App as VueApp } from 'vue'
+import { createApp, h, defineComponent, triggerRef, type App as VueApp } from 'vue'
 import ChatDialog from '../components/ChatDialog.vue'
 import type { AgentMessage } from '../types'
 import type { ConflictResolution } from '../tools/dataOps'
@@ -51,6 +51,13 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
             if (core.store) await core.store.flush() // 等待落盘完成(useChat await 此 Promise,确保刷新前 indexed 已写入)
           },
           onClear: () => core.resetSession(),   // P0-4:收编进 core(见 core.resetSession);原闭包越界引用 buildCore 局部 lastTitle/titleLLMDone 致 ReferenceError
+          // P1-5(fix-hang-and-feedback):stop() 清空排队的丢弃留痕(记 debugLogs,防无声丢失)
+          onQueuedCleared: (dropped: string[]) => {
+            const logs = core.agent?.debugLogs
+            if (!logs) return
+            logs.value.push({ timestamp: Date.now(), type: 'middleware', data: { stage: 'queued_cleared', dropped: dropped.length, preview: dropped.map((t) => t.slice(0, 60)) } })
+            triggerRef(logs)
+          },
           pendingConflict: core.pendingConflict.value,
           onResolveConflict: (action: ConflictResolution['action']) => core.resolveConflict(action),
           infoTick: core.infoTick,  // 响应式 tick:setSkills/setData 后 ++,DebugDrawer watch 后重新拉 getInfo() 实时刷新 Agent 信息

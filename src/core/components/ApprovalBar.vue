@@ -45,12 +45,13 @@ const approvalArgsPreview = computed(() => {
       <div v-if="pendingApproval.args?.question" class="approval-question">{{ pendingApproval.args.question }}</div>
       <div v-if="pendingApproval.args?.context" class="approval-context">{{ pendingApproval.args.context }}</div>
       <div v-if="pendingApproval.args?.recommendation" class="approval-recommend">💡 推荐:{{ pendingApproval.args.recommendation }}</div>
+      <!-- 可选方案纵向排列(方案文案常较长,横向拥挤;整行按钮更易点选) -->
+      <div v-if="approvalOptions.length" class="approval-options">
+        <button v-for="opt in approvalOptions" :key="opt" class="approval-opt" @click="resolveApproval(opt)">{{ opt }}</button>
+      </div>
       <div class="approval-actions">
         <button class="approval-deny" @click="resolveApproval(false)">拒绝</button>
-        <template v-if="approvalOptions.length">
-          <button v-for="opt in approvalOptions" :key="opt" class="approval-opt" @click="resolveApproval(opt)">{{ opt }}</button>
-        </template>
-        <button v-else class="approval-allow" @click="resolveApproval(true)">允许</button>
+        <button v-if="!approvalOptions.length" class="approval-allow" @click="resolveApproval(true)">允许</button>
       </div>
     </template>
     <!-- 工具调用确认:展示工具名 + 参数 -->
@@ -81,6 +82,8 @@ const approvalArgsPreview = computed(() => {
 .approval-toggle:hover { background: #fef3c7; border-color: #f59e0b; }
 .approval-args { margin: 10px 0; padding: 10px; max-height: 160px; overflow: auto; border-radius: 8px; background: #fff; border: 1px solid #fde68a; font-size: 12px; color: #57534e; white-space: pre-wrap; word-break: break-all; line-height: 1.5; }
 .approval-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+.approval-options { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.approval-options .approval-opt { width: 100%; text-align: left; padding: 9px 14px; white-space: normal; line-height: 1.5; }
 .approval-actions button { padding: 6px 18px; border: none; border-radius: 7px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
 .approval-deny { background: #fff; color: #6b7280; border: 1px solid #e5e7eb; }
 .approval-deny:hover { background: #f3f4f6; color: #374151; border-color: #d1d5db; }

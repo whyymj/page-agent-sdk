@@ -21,6 +21,7 @@ import { run as runAgentCompression } from './e2e/agent-compression.mjs'
 import { run as runHeadlessSubpath } from './e2e/headless-subpath.mjs'
 import { run as runCapabilityPacks } from './e2e/capability-packs.mjs'
 import { run as runAuthorizationSurface } from './e2e/authorization-surface.mjs'
+import { run as runHangFeedback } from './e2e/hang-feedback.mjs'
 
 const modules = [
   ['systemprompt', runSystemprompt],
@@ -43,6 +44,7 @@ const modules = [
   ['headless-subpath', runHeadlessSubpath],
   ['capability-packs', runCapabilityPacks],
   ['authorization-surface', runAuthorizationSurface],
+  ['hang-feedback', runHangFeedback],
 ]
 
 let totalPass = 0, totalFail = 0

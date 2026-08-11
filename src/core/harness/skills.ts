@@ -86,9 +86,21 @@ export function normalizeVfsPath(p: string): string {
   return p.replace(/^vfs:\/\//, '').replace(/^\/+/, '').replace(/\/+/g, '/')
 }
 
+/** 远程拉取超时(fix-hang-and-feedback P1-6):对齐 fetchDoc 30s 先例 —— 原裸 fetch 无 signal,远端不响应时 load_skill 永挂拖死当轮 */
+const SKILL_FETCH_TIMEOUT_MS = 30_000
+async function fetchWithTimeout(url: string): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), SKILL_FETCH_TIMEOUT_MS)
+  try {
+    return await fetch(url, { signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /**
  * 读取 skill 文档(http 远程 / vfs 本地)。
- * - http:fetch 读取(浏览器 CORS 约束),超长截断
+ * - http:fetch 读取(浏览器 CORS 约束,30s 超时),超长截断
  * - vfs:经 readVfs 回调读取(由 createChatSdk 在 vfs 启用时注入);未注入或未找到 → error
  */
 export async function readSkillDoc(
@@ -97,12 +109,15 @@ export async function readSkillDoc(
 ): Promise<DocReadResult> {
   if (resolveDocKind(doc) === 'http') {
     try {
-      const res = await fetch(doc)
+      const res = await fetchWithTimeout(doc)
       if (!res.ok) return { ok: false, error: `HTTP ${res.status} ${res.statusText}(${doc})` }
       const text = await res.text()
       // 不截断:大文档由 load_skill 工具结果经 createAgent 的 offload 统一外存 vfs(可 vfs_read 分页回读 / vfs_grep 检索)
       return { ok: true, content: text }
     } catch (e) {
+      if ((e as Error)?.name === 'AbortError') {
+        return { ok: false, error: `读取超时(${SKILL_FETCH_TIMEOUT_MS / 1000}s):${doc}` }
+      }
       const msg = (e as Error)?.message || String(e)
       if (/Failed to fetch|NetworkError|CORS|blocked/i.test(msg)) {
         return { ok: false, error: `CORS 跨域或网络错误(${msg});浏览器仅能 GET 同源或已配 CORS 的资源` }
@@ -156,10 +171,10 @@ function stringifyExecResult(result: unknown): string {
   try { return JSON.stringify(result, null, 2) } catch { return String(result) }
 }
 
-/** 远程脚本拉取(借鉴 readSkillDoc 的 CORS 友好处理);失败返回 null */
+/** 远程脚本拉取(借鉴 readSkillDoc 的 CORS 友好处理;30s 超时同 fetchWithTimeout);失败返回 null */
 async function fetchSkillScript(url: string): Promise<string | null> {
   try {
-    const res = await fetch(url)
+    const res = await fetchWithTimeout(url)
     if (!res.ok) return null
     return await res.text()
   } catch { return null }

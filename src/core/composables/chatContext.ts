@@ -27,6 +27,8 @@ export interface ChatContextOptions {
   onPersist?: (messages: AgentMessage[]) => void | Promise<void>
   /** 清空对话回调(新建会话) */
   onClear?: () => void
+  /** stop() 清空排队任务时回调(P1-5 可见性;→ DebugDrawer 日志) */
+  onQueuedCleared?: (dropped: string[]) => void
   /** 获取 agent 详细信息(能力徽标 summary + DebugDrawer「Agent 信息」) */
   getInfo?: () => AgentInfo
   /** 是否有可回退的 checkpoint(checkpoint 选项开启注入) */
@@ -113,6 +115,7 @@ export function createChatContext(opts: ChatContextOptions = {}): ChatContext {
     messages: opts.messages,
     onPersist: opts.onPersist,
     onClear: opts.onClear,
+    onQueuedCleared: opts.onQueuedCleared,
   })
   const { state, sendMessage, removeQueuedTask, queuedTasks } = chat
 

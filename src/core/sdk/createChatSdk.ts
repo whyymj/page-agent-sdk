@@ -20,6 +20,7 @@ import { tool, type StructuredToolInterface } from '@langchain/core/tools'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { createAgent, type DebugLog } from '../harness/createAgent'
 import { asAgentError } from '../tools/toolError'
+import { isAbort } from '../harness/retry'
 import { z, type ZodType } from 'zod'
 import { getSchemaAtPath } from '../tools/schemaUtils'
 import { createTodosMiddleware } from '../harness/todos'
@@ -73,6 +74,7 @@ import { resolveModelCaps, MIN_CONTEXT_WINDOW } from '../utils/modelCaps'
 import { trimMemoryMessagesImpl, composeTrimSummary } from '../utils/rounds'
 import { indexSummarize } from '../composables/contextIndex'
 import { extractVfsRefs, gcVfsLargeResults } from '../utils/vfsGc'
+import { DEFAULT_STREAM_STALL_MS } from '../utils/stallTimeout'
 import { createSerialRunner } from '../utils/serialRunner'
 import type { AgentMessage, StreamHandler, AgentInfo, SdkEvent, SdkEventHandler, TokenUsage, BatchResult, BatchProgress } from '../types'
 import type { ToolCallContext } from '../harness/middleware'
@@ -211,6 +213,8 @@ export interface ChatSdkOptions {
   maxPlanRevisions?: number
   /** 模型调用失败自动重试次数(默认 2;网络/429/5xx 重试,4xx 与 abort 不重试) */
   maxRetries?: number
+  /** LLM 流停滞看门狗(fix-hang-and-feedback P1-7):chunk 间隔(含等首个)超此 ms → 中断抛错防 loading 永转。默认 90s;0 = 关闭 */
+  streamStallMs?: number
   /** token 预算上限(累计 total_tokens 超过 → 停止 agent + emit BUDGET_EXCEEDED;需 capabilities.automation:true) */
   tokenBudget?: number
   /** 时间预算 ms(从 agent 开始计时,超过 → 停止;需 capabilities.automation:true) */
@@ -408,7 +412,7 @@ export interface ChatSdk {
    * 适合无人值守批量操作(批量生成/改一批页面)。不经 UI 排队(直接 invoke);返回每个任务结果(成功 reply / 失败 error)。
    * 配合 capabilities.automation + checkpoint 使用;onProgress 每任务完成调一次(done/total/task/ok)。
    */
-  batch(tasks: string[], onProgress?: (p: BatchProgress) => void): Promise<BatchResult[]>
+  batch(tasks: string[], onProgress?: (p: BatchProgress) => void, signal?: AbortSignal): Promise<BatchResult[]>
   /**
    * 运行时订阅 SDK 事件(常用时机:数据槽变化 / 消息更新 / 工具调用 / 流式文本 / 轮次 / 错误)。
    * 与构造时 `onEvent` 选项互补:可注册多个监听器、运行时动态订阅;返回取消函数。
@@ -511,11 +515,13 @@ export interface ChatSdk {
   readonly subagentHistory: SubagentRunState[]
 }
 
-/** send/stream options:mission 显式覆盖(优先于自动 capture)+ interceptors per-call 覆盖(顶层 input/output)+ automation 重试次数覆盖 */
+/** send/stream options:mission 显式覆盖(优先于自动 capture)+ interceptors per-call 覆盖(顶层 input/output)+ automation 重试次数覆盖 + signal 中断(fix-hang-and-feedback P1-4) */
 interface SendOptions {
   mission?: Partial<Mission>
   interceptors?: { input?: (input: unknown) => unknown; output?: (json: unknown) => unknown }
   maxAutoRetries?: number
+  /** 中断信号(fix-hang-and-feedback P1-4):abort → 本次 send 中止(挂起的确认/冲突随 signal 自动收口)。headless 无停止按钮场景的退出通道 */
+  signal?: AbortSignal
 }
 
 /** 内存中保留的对话轮数上限(超限压缩为摘要,防 OOM);0 表示关闭 */
@@ -591,7 +597,7 @@ export interface AgentCore {
   emit: SdkEventHandler
   applySnapshot(snap: SessionSnapshot): void
   afterRound(): void
-  send(message: string, options?: { mission?: Partial<Mission> }): Promise<string>
+  send(message: string, options?: SendOptions): Promise<string>
   switchSession(sessionId?: string): Promise<string>
   /** 新建/清空会话:重置内存态 + 新 sessionId + emit session_restored(onClear 调;P0-4 收编,原 onClear 闭包越界引用 buildCore 局部致 ReferenceError) */
   resetSession(): void
@@ -606,6 +612,8 @@ export interface AgentCore {
   getUserSkill(name: string): { name: string; description: string; content: string } | undefined
   /** 实例 unmount 时调;引用计数归零才真销毁(store.dispose + 移出注册表) */
   release(): void
+  /** 中止全部在途流(fix-hang-and-feedback 契约 C;由 _createChatSdk 注入实例;resetSession 等 core 内部收口路径调用) */
+  abortAllActive?: () => void
   /** 冲突解决:用户点「保留外部」/「强制覆盖」/「回退」→ 收口挂起的 conflict,工具继续 */
   resolveConflict(action: ConflictResolution['action']): void
   /** 检视 agent 详情(inspect() 与 debug 窗口消费) */
@@ -649,7 +657,7 @@ export interface AgentCore {
   /** 子 agent 委派历史(观察层 getter;LRU≤20,最新在前) */
   readonly subagentHistory: SubagentRunState[]
   /** 批处理(automation):逐任务跑 agent,每任务前 checkpoint,任务间错误隔离 */
-  batch(tasks: string[], onProgress?: (p: BatchProgress) => void): Promise<BatchResult[]>
+  batch(tasks: string[], onProgress?: (p: BatchProgress) => void, signal?: AbortSignal): Promise<BatchResult[]>
 }
 
 /**
@@ -1289,6 +1297,30 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
   const maxMemoryRounds = options.maxMemoryRounds ?? DEFAULT_MAX_MEMORY_ROUNDS
 
+  // P1-1(fix-hang-and-feedback):approval/humanConfirm「无响应方路径」自动拒 ——
+  // send/batch 走 invoke 无 UI,approval_request 挂起后无人可 resolve → 原实现永久挂死且零可见(humanConfirm 默认开,headless+send 高发)。
+  // 超时默认 30s;approval.timeoutMs 显式覆盖(0 同默认 —— 该路径无 UI,等无意义;Infinity/负数 = 无限等,给自建确认通道的集成方留口)。
+  // 被拒后 emit observable error 留痕(契约 B);abort 已收口的确认不再误报(查 signal.aborted)。
+  const rawApprovalMs = options.approval?.timeoutMs
+  const approvalAutoRejectMs =
+    rawApprovalMs === undefined || rawApprovalMs === 0 ? 30_000
+    : !Number.isFinite(rawApprovalMs) || rawApprovalMs < 0 ? 0
+    : rawApprovalMs
+  /** invoke 过程事件 handler:监听 approval_request,超时无响应自动拒 + emit error */
+  function makeApprovalWatch(signal?: AbortSignal): ((e: import('../types').StreamEvent) => void) | undefined {
+    if (!approvalAutoRejectMs) return undefined
+    return (e) => {
+      if (e.type !== 'approval_request') return
+      const startedAt = Date.now()
+      const toolName = e.toolName
+      setTimeout(() => {
+        if (signal?.aborted) return // abort 已自动拒(中间件 signal 联动),不误报
+        e.resolve(false)
+        emit({ type: 'error', message: `确认请求(${toolName})${Math.round((Date.now() - startedAt) / 1000)}s 无响应已自动拒绝 —— send/batch 路径无 UI 响应方;可传 approval.timeoutMs 调整(Infinity = 无限等)`, severity: 'observable', code: 'APPROVAL_AUTO_REJECTED', context: { toolName, waitedMs: Date.now() - startedAt } } as any)
+      }, approvalAutoRejectMs)
+    }
+  }
+
   // session-history Phase 6:会话历史响应式状态下沉(集成方直接消费 sdk.sessions,无需手动 listSessions/refresh/hook)
   const sessionsRef: Ref<SessionMeta[]> = ref([])
   /** 刷新历史会话列表到 sessionsRef(switchSession/deleteSession/onClear/init 后调;storage 未开启 no-op) */
@@ -1436,13 +1468,16 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       const maxAuto = useAutomation ? (options.maxAutoRetries ?? 1) : 0
       let attempt = 0
       let pushed = false
+      // P1-1(fix-hang-and-feedback):无响应方路径自动拒确认(详见 makeApprovalWatch 注释)
+      const approvalWatch = makeApprovalWatch(options.signal)
       while (true) {
         if (!pushed) {
           messages.push({ role: 'user', content: msg, timestamp: Date.now() })
           pushed = true
         }
         try {
-          let reply = await core.agent!.invoke(messages)
+          // P1-4(fix-hang-and-feedback):signal 穿透 —— 原 invoke 不带 signal,send 完全不可中断(headless 唯一出路=刷新)
+          let reply = await core.agent!.invoke(messages, options.signal, approvalWatch)
           // output 拦截器:返回前 postprocess(可改写最终回复)
           if (options.interceptors?.output) {
             try { const r = options.interceptors.output(reply); if (typeof r === 'string') reply = r } catch { /* 拦截器抛错忽略,用原 reply */ }
@@ -1452,6 +1487,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           if (store) await store.flush() // 确保落盘完成(indexed 异步事务;刷新前已写入)
           return reply
         } catch (err) {
+          // abort(用户经 signal 中止):不计错误,静默上抛(同 useChat「abort 不计入 error」语义)
+          if (isAbort(err, options.signal)) throw err
           const ae = asAgentError(err, 'fatal')
           // 仍有重试次数 + 有 checkpoint 可回退 → restore 回本轮前(含本轮 user)+ 重试,emit observable 告知
           if (attempt < maxAuto && checkpointMgr?.canRestore()) {
@@ -1473,18 +1510,24 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
      * 任务间错误隔离(单任务失败不中断整批,记 observable error 继续下一个)。适合无人值守批量操作(批量生成/改一批页面)。
      * 不经 UI 排队(直接 invoke);返回每个任务结果(成功 reply / 失败 error)。配合 capabilities.automation + checkpoint 使用。
      */
-    async batch(tasks: string[], onProgress?: (p: BatchProgress) => void): Promise<BatchResult[]> {
+    async batch(tasks: string[], onProgress?: (p: BatchProgress) => void, signal?: AbortSignal): Promise<BatchResult[]> {
       await core.initDone
       if (!tasks.length) return []
       const results: BatchResult[] = []
+      const approvalWatch = makeApprovalWatch(signal)  // P1-1:批处理同样无 UI 响应方,确认超时自动拒
       for (let i = 0; i < tasks.length; i++) {
+        // P1-4(fix-hang-and-feedback):外部 abort → 停止剩余任务(剩余记 aborted,不静默丢)
+        if (signal?.aborted) {
+          for (let j = i; j < tasks.length; j++) results.push({ index: j, task: tasks[j], error: 'aborted(外部中止)', ok: false })
+          break
+        }
         const task = tasks[i]
         // 每任务前存 checkpoint:该任务失败时 restoreLastCheckpoint 可回退到任务前态
         if (checkpointMgr) checkpointMgr.save(`batch:${i}`)
         const beforeLen = messages.length  // 失败时 truncate 回(撤销本轮 user + invoke 期间的中间 push)
         try {
           messages.push({ role: 'user', content: task, timestamp: Date.now() })
-          const reply = await core.agent!.invoke(messages)
+          const reply = await core.agent!.invoke(messages, signal, approvalWatch)
           messages.push({ role: 'assistant', content: reply, timestamp: Date.now() })
           core.afterRound()
           if (store) await store.flush()
@@ -1493,6 +1536,12 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         } catch (err) {
           // 任务级错误隔离:invoke 抛错不中断整批;truncate 回本轮前(撤销 user + 中间 push,防失败 user 残留致下一任务连续 user 上下文错乱 — bug-review MED)+ 记 observable error
           if (messages.length > beforeLen) messages.splice(beforeLen)
+          // abort:本任务记 aborted,剩余任务同样标记后收口(不继续跑)
+          if (isAbort(err, signal)) {
+            results.push({ index: i, task, error: 'aborted(外部中止)', ok: false })
+            for (let j = i + 1; j < tasks.length; j++) results.push({ index: j, task: tasks[j], error: 'aborted(外部中止)', ok: false })
+            break
+          }
           const ae = asAgentError(err, 'fatal')
           emit({ type: 'error', message: `批量任务 ${i + 1}/${tasks.length} 失败:${ae.message}`, severity: 'observable', code: 'BATCH_TASK_FAILED', context: { index: i, task: task.slice(0, 100) } } as any)
           results.push({ index: i, task, error: ae.message, ok: false })
@@ -1555,6 +1604,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
      *  共享状态变更一律 AgentCore 方法(mount Wrapper 只传引用不写逻辑,1.3.1 教训机制化)。 */
     resetSession: () => {
       if (!store) return
+      core.abortAllActive?.() // 契约 C(fix-hang-and-feedback):清空会话先中止在途流(防幽灵流写进新会话)
       core.sessionId = makeId()
       vfsStore.clear?.()
       todosMw.reset([])
@@ -2026,6 +2076,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       middleware: middlewares,
       maxToolRounds: options.maxToolRounds,
       maxRetries: options.maxRetries,
+      // P1-7(fix-hang-and-feedback):流停滞看门狗(默认 90s;0 关;chunk 间隔超时中断防 loading 永转)
+      stallMs: options.streamStallMs ?? DEFAULT_STREAM_STALL_MS,
       maxParallelTools: options.maxParallelTools,
       // 模型能力透传(已在 buildCore 解析,声明优先 > 表 > 缺省):驱动 maxTokens 缺省与 offload 阈值
       contextWindow: modelCaps.contextWindow,
@@ -2149,6 +2201,9 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
   }
 
   function unmount(): void {
+    // 契约 C(fix-hang-and-feedback P1-3):先中止全部在途流 —— 幽灵流停烧 token/停写 bind;
+    // 挂起的 approval/humanConfirm 随 signal 自动拒收口(原:永挂,shareContext 复用污染下次 mount)
+    abortAllActive()
     // 收口挂起的冲突(按「保留外部」),防 unmount 后旧 conflict Promise 永久挂起泄漏
     core.resolveConflict('keep_external')
     if (flushHandler && typeof window !== 'undefined') window.removeEventListener('pagehide', flushHandler)
@@ -2178,15 +2233,45 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
   // (单实例同一时刻只服务一个会话:一个操作完整跑完下一个才开始;「一个会话操作 data 时,其他会话等它结束」)
   const runSerial = createSerialRunner()
 
+  // ===== 契约 C(fix-hang-and-feedback):在途流控制器注册表 =====
+  // unmount/switchSession/resetSession 收口前先 abort 全部在途流(幽灵流停烧 + approval/conflict 随 signal 自动收口)。
+  // 实例级(非 core 级):shareContext 多实例各管各的流,一个实例 unmount 不中断另一实例的生成。
+  const activeControllers = new Set<AbortController>()
+  /** 登记在途流:建内部 controller + 联动外部 signal;返回 controller 与注销函数 */
+  function trackActive(outer?: AbortSignal): { controller: AbortController; untrack: () => void } {
+    const controller = new AbortController()
+    if (outer) {
+      if (outer.aborted) controller.abort()
+      else outer.addEventListener('abort', () => controller.abort(), { once: true })
+    }
+    activeControllers.add(controller)
+    return { controller, untrack: () => activeControllers.delete(controller) }
+  }
+  function abortAllActive(): void {
+    for (const c of activeControllers) c.abort()
+    activeControllers.clear()
+  }
+  core.abortAllActive = abortAllActive  // 供 core 内部收口路径调用(resetSession)
+
   return {
     mount,
     unmount,
     hide,
     show,
-    send: (...args: Parameters<typeof core.send>) => runSerial(() => core.send(...args)),
+    // P1-4(fix-hang-and-feedback):send/batch 接外部 signal(可中断);内部 controller 登记进注册表供 unmount/switchSession 收口
+    send: (msg, opts) => runSerial(async () => {
+      const { controller, untrack } = trackActive(opts?.signal)
+      try { return await core.send(msg, { ...opts, signal: controller.signal }) } finally { untrack() }
+    }),
     /** 批处理(automation):逐任务跑 agent,每任务前 checkpoint,任务间错误隔离(单任务失败不中断整批);详见 ChatSdk.batch */
-    batch: (...args: Parameters<typeof core.batch>) => runSerial(() => core.batch(...args)),
-    switchSession: (...args: Parameters<typeof core.switchSession>) => runSerial(() => core.switchSession(...args)),
+    batch: (tasks, onProgress, signal) => runSerial(async () => {
+      const { controller, untrack } = trackActive(signal)
+      try { return await core.batch(tasks, onProgress, controller.signal) } finally { untrack() }
+    }),
+    switchSession: (...args: Parameters<typeof core.switchSession>) => runSerial(async () => {
+      abortAllActive() // P1-10 同根:切会话先中止在途流(防旧流写进新会话);approval/conflict 随 signal/既有逻辑收口
+      return core.switchSession(...args)
+    }),
     /** 历史会话列表(响应式;switchSession/deleteSession/onClear/init 后自动 refresh;直接消费无需手动 listSessions/refresh/hook) */
     sessions: core.sessions,
     /** 列出当前 agent 的所有历史会话(主动查;一般用响应式 sessions 替代;storage 未开启 → []) */
@@ -2203,7 +2288,11 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
     },
     /** 当前会话 id(switchSession/onClear 后实时反映;供历史列表高亮当前项) */
     get sessionId(): string { return core.sessionId },
-    stream: core.stream,
+    // 契约 C:stream 同样登记(UI useChat 的 controller 经此纳入 unmount 收口;外部 signal 联动)
+    stream: (msgs, onEvent, signal) => {
+      const { controller, untrack } = trackActive(signal)
+      return core.stream(msgs, onEvent, controller.signal).finally(untrack)
+    },
     /** 显式持久化当前轮(headless sdk.stream 不自动落盘,需手动调;storage 未开启 → no-op) */
     afterRound: core.afterRound,
     /** 调试日志(供 DebugDrawer 等;switchSession/onClear 清空) */

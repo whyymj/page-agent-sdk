@@ -22,7 +22,12 @@ export interface McpServerConfig {
   name?: string
   /** 透传给 transport 的请求 init(headers / 认证等;websocket 忽略) */
   requestInit?: RequestInit
+  /** 握手超时 ms(fix-hang-and-feedback P1-2;默认 15s)。sse/websocket 握手裸等 onopen,黑洞端点会永挂拖死 initDone → 超时按连接失败降级(其余 server 与 SDK 启动不受影响) */
+  timeoutMs?: number
 }
+
+/** MCP 握手默认超时 15s:握手本应 <1s,宽容弱网;黑洞端点(防火墙吞 SYN)是最常见故障形态 */
+export const DEFAULT_MCP_HANDSHAKE_MS = 15_000
 
 export interface McpConnection {
   tools: StructuredToolInterface[]
@@ -95,7 +100,23 @@ export async function connectMcp(config: McpServerConfig): Promise<McpConnection
   const { Client } = await import('@modelcontextprotocol/sdk/client')
   const transport = await buildTransport(config)
   const client = new Client({ name: 'page-agent-sdk', version: '1.0' }, { capabilities: {} })
-  await client.connect(transport as Parameters<Client['connect']>[0])
+  // P1-2(fix-hang-and-feedback):握手超时闸 —— sse/websocket 裸等 onopen,黑洞端点永挂 → initDone(allSettled)不 settle
+  // → mount/send/switchSession/batch 全瘫零反馈。超时抛错 → 调用方 allSettled 按连接失败降级跳过该 server
+  const timeoutMs = config.timeoutMs ?? DEFAULT_MCP_HANDSHAKE_MS
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      client.connect(transport as Parameters<Client['connect']>[0]),
+      new Promise<never>((_, rej) => {
+        timer = setTimeout(() => rej(new Error(`MCP 握手超时(${timeoutMs}ms):${config.url}`)), timeoutMs)
+      }),
+    ])
+  } catch (err) {
+    try { await (transport as { close?: () => Promise<void> }).close?.() } catch { /* 清理失败忽略 */ }
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
   const { tools } = await client.listTools()
   const lcTools = tools.map((t) => toLangChainTool(t, client))
   return { tools: lcTools, close: () => client.close() }
