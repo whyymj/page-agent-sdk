@@ -251,6 +251,8 @@ export interface SubagentConfig {
   middleware?: any[];
   /** 跨轮上下文压缩;true=默认索引摘要(零 LLM),或 SummarizationOptions 自配(含 llmInvoke 升级)。不传=不装 */
   summarization?: boolean | any;
+  /** beforeReturn 自纠上限(默认 0 = 关闭);>0 时返回前跑中间件 beforeReturn 钩子(如 verify 格式门禁),feedback 回灌自纠。配 verify 类中间件时必开 */
+  maxVerifyAttempts?: number;
 }
 export interface AgentInfo {
   id: string;
@@ -1401,10 +1403,35 @@ export interface CreateHtmlSubagentOptions {
   temperature?: number;
   skills?: SkillSpec[];
   extraTools?: any[];
+  /** 代码形态:'sfc'(默认,Vue SFC)/ 'html'(纯 HTML 片段,v-html 注入场景) */
+  codeKind?: 'sfc' | 'html';
+  /** 输出格式校验(validate_code 工具 + verify beforeReturn 门禁);默认 true */
+  formatCheck?: boolean;
   [k: string]: any;
 }
 export declare function createRagSubagent(options: CreateRagSubagentOptions): SubagentConfig;
 export declare function createHtmlSubagent(options: CreateHtmlSubagentOptions): SubagentConfig;
+export interface HtmlFormatIssue {
+  /** 行号(1 基) */
+  line: number;
+  /** 问题码:UNCLOSED_TAG / STRAY_CLOSE_TAG / UNCLOSED_COMMENT / DOCTYPE_IN_FRAGMENT / DOC_TAG_IN_FRAGMENT / SCRIPT_IN_FRAGMENT */
+  code: string;
+  message: string;
+}
+export interface ValidateHtmlFormatOptions {
+  /** Vue SFC 模式:允许 <script>(SFC 自有块);默认 false = 纯 HTML 片段(禁 <script>) */
+  sfc?: boolean;
+}
+/** HTML 格式校验(标签闭合 + v-html 片段契约);纯函数,node/浏览器通用(集成方渲染层纵深防御可复用) */
+export declare function validateHtmlFormat(source: string, opts?: ValidateHtmlFormatOptions): HtmlFormatIssue[];
+/** HTML void 元素集合(无需闭合标签;validateHtmlFormat 用,集成方可复用) */
+export declare const HTML_VOID_TAGS: Set<string>;
+export interface HtmlFormatCheckOptions {
+  /** vfs 代码路径前缀(与 createHtmlSubagent 的 codeVfsPrefix 一致);默认 'html/' */
+  vfsPrefix?: string;
+}
+/** HTML 格式 verify check(beforeReturn 门禁):扫 state.files 代码文件,不通过回灌 feedback 自纠 */
+export declare function createHtmlFormatCheck(opts?: HtmlFormatCheckOptions): VerifyCheck;
 
 // checkpoint / dataOps / permissions
 export interface CheckpointDeps { [k: string]: any }

@@ -99,5 +99,71 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:capability-packs] HTML 格式校验(导出 + 工厂装配 + verify 门禁运行时)')
+  {
+    const { validateHtmlFormat, createHtmlFormatCheck } = await import('../../dist/page-agent-sdk.js')
+    // 导出面:纯函数校验器 + verify check 工厂(dist 可用)
+    assert(typeof validateHtmlFormat === 'function', 'validateHtmlFormat 导出为 function')
+    assert(typeof createHtmlFormatCheck === 'function', 'createHtmlFormatCheck 导出为 function')
+    assert(validateHtmlFormat('<div><p>x</p></div>').length === 0, 'validateHtmlFormat → 合法片段通过')
+    const iss = validateHtmlFormat('<!DOCTYPE html><div>x')
+    assert(iss.some((i) => i.code === 'DOCTYPE_IN_FRAGMENT'), 'validateHtmlFormat → DOCTYPE 报片段契约违背')
+    assert(iss.some((i) => i.code === 'UNCLOSED_TAG'), 'validateHtmlFormat → 未闭合标签检出')
+    const chk = createHtmlFormatCheck({ vfsPrefix: 'html/' })
+    const bad = chk({ messages: [], state: { files: { 'html/a.html': { content: '<div>x', updatedAt: 1 } } } })
+    assert(bad.ok === false && bad.feedback.includes('a.html'), 'createHtmlFormatCheck → 问题文件 ok:false 带路径')
+
+    // 工厂装配面:formatCheck 默认开(validate_code 工具 + verify 门禁 + maxVerifyAttempts)
+    const fc = createHtmlSubagent({ writablePaths: ['components'] })
+    assert(fc.middleware?.some((m) => m.name === 'html-validate-tools'), 'formatCheck 默认开 → middleware 含 html-validate-tools')
+    assert(fc.middleware?.some((m) => m.name === 'verify'), 'formatCheck 默认开 → middleware 含 verify(beforeReturn 门禁)')
+    assert(fc.maxVerifyAttempts === 2, 'formatCheck 默认开 → maxVerifyAttempts 2(子 agent 自纠兜底)')
+    const fcOff = createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })
+    assert(!fcOff.middleware?.some((m) => m.name === 'verify') && fcOff.maxVerifyAttempts === undefined, 'formatCheck:false → 无校验链')
+    const fcHtml = createHtmlSubagent({ writablePaths: ['components'], codeKind: 'html' })
+    assert(fcHtml.systemPrompt?.includes('v-html') && fcHtml.skills?.[0]?.name === 'html-fragment', "codeKind:'html' → v-html 片段契约 prompt + html-fragment skill")
+  }
+
+  console.log('[e2e:capability-packs] verify 门禁运行时(子 agent 写坏代码 → 回灌自纠 → 修正后放行)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    // 队列序:主委派 → 子写坏代码 → 子想收口(门禁拦) → 子 vfs_edit 修正 → 子收口(过) → 主收口
+    const llm = stubModel(
+      { toolCalls: [{ name: 'use_html', args: { task: '生成横幅代码' } }] },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/banner.html', content: '<div>横幅' } }] },
+      { text: '生成完成' },
+      { toolCalls: [{ name: 'vfs_edit', args: { path: 'html/banner.html', oldString: '<div>横幅', newString: '<div>横幅</div>' } }] },
+      { text: '已修正完成' },
+      { text: '已生成横幅组件' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-htmlgate', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'] })],
+    })
+    await sdk.mount()
+    const reply = await sdk.send('生成一个横幅')
+    assert(/已生成横幅组件/.test(reply), '✓ 门禁自纠后主流程正常收口')
+    assert(llm.calls === 6, `✓ 门禁生效:子 agent 被回灌自纠(6 次 model 调用,实际 ${llm.calls})`)
+    sdk.unmount()
+
+    // 对照:formatCheck:false → 子 agent 写完坏代码直接收口(4 次调用,无自纠)
+    const llm2 = stubModel(
+      { toolCalls: [{ name: 'use_html', args: { task: '生成横幅代码' } }] },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/banner.html', content: '<div>横幅' } }] },
+      { text: '生成完成' },
+      { text: '已生成横幅组件' },
+    )
+    const sdk2 = createChatSdk({
+      ui: false, id: 'e2e-cap-htmlgate-off', storage: false, llm: llm2,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
+    })
+    await sdk2.mount()
+    await sdk2.send('生成一个横幅')
+    assert(llm2.calls === 4, `✓ formatCheck:false 对照:无门禁自纠(4 次调用,实际 ${llm2.calls})`)
+    sdk2.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

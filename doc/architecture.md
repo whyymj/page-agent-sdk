@@ -3,7 +3,7 @@
 > 框架无关的「页面内 Agent」JS SDK。Agent 通过自定义 tool 读写宿主页面 `window` 对象(schema 校验 + 乐观锁),并具备 planning / skills / 内存工作区 / context 管理 / 冲突人工介入能力。
 > 核心为**自研 Deep Agents 风格 harness**(ReAct + 可插拔中间件),不引入 LangGraph/langchain 整包(规避 [`deepagentsjs#292`](https://github.com/langchain-ai/deepagentsjs/issues/292) 浏览器打包阻塞)。
 
-本文从六个视角描述:**分层结构**、**组装与挂载**、**ReAct 主循环**、**数据操作与乐观锁**、**冲突人工介入**、**上下文压缩与持久化**。
+本文从多个视角描述:**分层结构**、**组装与挂载**、**ReAct 主循环**、**数据操作与乐观锁**、**冲突人工介入**、**上下文压缩与持久化**、**事件流**、**会话恢复**、**子 agent 编排**、**MCP**、**Approval**、**模块抽离**、**体验平面**、**数据槽深潜(⑭)**、**能力全景与鲁棒性契约(⑮)**。
 
 ---
 
@@ -211,7 +211,7 @@ flowchart LR
   I -->|否| H
 ```
 
-> 详细压缩策略见 [`context-management.md`](./context-management.md);持久化配额/淘汰/降级见 `CLAUDE.md`「持久化存储」小节。
+> 详细压缩策略见 [`context-management.md`](./context-management.md);持久化配额/淘汰/降级见 [`usage-guide.md`](./usage-guide.md)「存储」段与上方流程图。
 
 ---
 
@@ -448,6 +448,94 @@ flowchart LR
 **④ offload 结构化元数据**:工具结果外存返回值升级为 `OffloadResult`,大结果(>10000 字符)附 `suggestedReadPlan`(vfs_read 分页/分段读取建议)。动机:外存后 LLM 面对一个大文件不知从何读起、易一次塞满上下文;`suggestedReadPlan` 给出分块消费指引,引导 Agent 分页 `vfs_read` 而非整体加载。
 
 > 四项均**默认可用、零配置**,集成方按需通过 `contextPreset:'complex'` / `vfs.{maxBytes,poolBytes}` / 调用 vfs JSON 工具采用;不调用 = 现状。详见 `doc/usage-guide.md` §6.8「complex 预设 + vfs JSON 感知工具」。
+
+---
+
+## ⑭ 数据槽深潜(白名单 / 读写链 / 工具形态 / 受保护资源 / vfs)
+
+> CLAUDE.md「架构要点 · 数据槽操作」只留不变量;细节在这。源码:`src/core/tools/{dataOps,dataSlotQuery,jsonUtils,schemaUtils,resources}.ts` + `backends/vfs.ts`。
+
+**schema 形状白名单(ZodObject 时生效;非 ZodObject 全开放向后兼容):**
+- 顶层 key = 可读写白名单。**读路径统一深投影**:`projectBySchemaDeep` 单一口径(read 整体 / get_data 整体 / jsonPaths 根 / query / search / eval 根 / diff 一律递归投影,未声明字段不泄露)
+- **写路径逐段校验**:`write`/`edit`/`delete` 的 `jsonPath` 经 `isPathAllowed` 逐段判(ZodArray 严格判索引 `/^\d+$/`;discriminatedUnion/union 静态不知 option → 降级开放,交 `schema.safeParse` 兜底)
+- 整体 `set` 自动转 **merge 语义**(未声明字段保留防误删);拦截器补充的未声明字段同样被白名单挡下
+- 校验不合法 → **结构化错误**(不写入);错误码/JSONPath 子集/sandbox 禁用列表见 `dataOps.ts` 头注
+
+**快照回退:**`set/edit/delete` 前自动存快照(**per-path 栈**);`restore_data` 一键回退;`history_data({list:true})` 只读查看快照时间线;`diff_data` 对比。
+
+**乐观锁与冲突:**`get_data`/`read` 返回附 `hash=xxx`;写工具传 `expectedHash` 或高层 `write` `autoLock`(默认开,用最后 read 的 hash)启用。外部改过(hash 不匹配)→ 冲突挂起 `sdk.pendingConflict`(ref)+ ChatDialog 冲突条三选一 → `sdk.resolveConflict('keep_external'|'overwrite'|'restore')`(状态机见 §⑤)。**per-scope 基线**:基线 Map 按 caller scope 隔离,子 agent 委派期间经 scope proxy 切换,子 read/write 不污染主基线。**契约:同 scope 连续写永不互相冲突**(写成功即刷基线,解析→检查→提交同步无 await)。headless 可 watch `pendingConflict` 自建 UI。
+
+**高层 `read`/`write`:**
+- `read({jsonPath?, jsonPaths?, fields?, depth?, offset?, limit?})`:多路径一次读、字段裁剪、深度截断、数组分页
+- `write({value?, patch?, patches?, del?, dryRun?})`:四意图(整体 set / 单 patch / **批量 patches 原子应用任一失败回滚** / 删除)+ dryRun 预检(校验链全走但不落盘,冲突照常检测不挂起)
+
+**eval_script:**`transform` 沙箱脚本(Worker 三层防护)返回新值或 `{patches}` 增量;`jsonPath` 子树模式(仅 clone 子树,>100KB 超时自适应)。
+
+**分块写(opt-in `capabilities.draftWrite`):**`draft_write`/`draft_commit`(类 git add→commit),commit 走完整校验链 + 乐观锁;大 JSON 场景建议 `maxToolRounds` 20-30。
+
+**toolMode:**`simple`(默认,7 工具,主推 read/write)/ `advanced`(14,全暴露)/ `minimal`(2);`filterByToolMode` 纯函数;usageHints 按 mode 注入运行时工具说明(**集成方 systemPrompt 只写业务知识,不重复声明工具语法**)。
+
+**interceptors:**`read(value)` 脱敏/派生(只改 LLM 看到的值);`write(payload, current)` 转换/审计/拒绝(返回 `{error}`)。**仅守高层 read/write;advanced 底层工具绕过**(集成方需知情);`input(input)`/`output(json)` 在 agent IO 入口/出口改写。
+
+**受保护资源(opt-in):**`data.resources:[{path, mode}]`;`freeze` 只读(read 返 `⟦frozen:path⟧` 占位符,写撞 `FROZEN_FIELD`);`verbatim` 原样保留(read 返 `⟦res:handle⟧`,改值经 `resource_update`,直写新值 `VERBATIM_MISMATCH`)。**bind 恒持原始值,占位符只在读写边界替换**(hash/快照/乐观锁零干扰);强制层 `enforceSet`/`enforcePatches` 先于 schema 校验;需 vfsStore;配 `resourcesPin` 跨压缩注入。skill `precise-value-protection`。
+
+**vfs 四池 + 大结果外存:**`large_results`(4MB)/`drafts`(2MB)/`userFiles`(2MB)/`resources`(4MB)独立 LRU(§⑬ 三池 + resources 池);`vfs.maxBytes` 默认 8MB 总上限兜底。工具结果超自适应阈值(窗口 3.5% 推导,clamp [2000,20000])转存 vfs,留预览 + 引用;`offloadLargeResult` 返回结构化 `OffloadResult`。JSON 感知工具:`vfs_json_read`/`vfs_json_patch`/`vfs_write({jsonString})`(§⑬)。
+
+**零桥接 + 审计:**工具直接读写 `bind`(reactive 响应式);set/edit/delete/restore 记审计日志(`onAudit` 回调)。
+
+---
+
+## ⑮ 能力全景与鲁棒性契约
+
+> CLAUDE.md「架构要点」各能力小节的细节汇总。
+
+### 记忆与上下文管理
+- **上下文压缩**(纯内存、会话级):`summarization` 中间件复用 `useContextManager`(滑动窗口 + 摘要 + 关键词召回);`contextPreset`:`auto`/`conservative`/`aggressive`/`complex`(比例制,映射在 `sdk/contextPreset.ts`);详见 [`context-management.md`](./context-management.md)
+- **压缩 LLM 摘要异步化**:模板先行 + 后台前缀缓存 —— 触发时立即用索引摘要返回(零阻塞),fire-and-forget 后台 LLM 入前缀缓存(`{coveredCount, text}`);后续命中:全覆盖直接用 / 部分覆盖 = LLM 前缀 + 尾部索引增量;失败不污染缓存。agentCompression 的 decide(≤6s)维持同步(opt-in 默认关)
+- **压缩不丢关键信息**:① 压缩时注入当前主数据 description 快照;② `preserveLastToolResults`(默认 `['describe_data','read']`)跨轮保留工具 result 摘要;③ 写成功返回附可操作 path 列表;④ `systemPromptHelpers.reliableWriteRules` 建议拼进 systemPrompt
+- **双摘要协同**:`summarization`(compressInput,不改 messages 原数组)与 `trimMemoryMessages`(afterRound,内存 OOM 裁剪)独立。配置建议:`maxMemoryRounds >= summaryThresholdRounds`
+- **跨轮召回 + trim 异步增强**:关键词召回纳入 `steps.result`;trim 触发后同步模板占位 + 异步 LLM 增强(fire-and-forget,竞态守卫,失败保留模板)
+- **持久化韧性**:mission/workingMemory/focus 跨刷新持久化(switchSession 切走前补 persist);trim 删前 emit `context_trimmed`(dropped 原文 + 引用的 vfs 大结果)+ 可达性 GC;vfs 在 storage 开时随 persist 持久化
+- **健壮性**:窗口 ≥200K 硬约束(`MIN_CONTEXT_WINDOW`,启动/setLlm/子 agent 解析后校验);三闸阈值(offload/trim/compress)跟随 `setLlm` 新窗口;反应性兜底:context overflow 识别 → 激进 trim → 单次重试 → 仍超抛;vfs 引用保护(LRU 跳过被引用 large_results);系统段预算(超 25% 窗口 drop 非 pin 段;systemPrompt 本身超预算 fatal 早退)
+- **agentCompression**(opt-in):gate(`shouldTriggerCompression`)通过才 `summaryLlm.decide`(两段式工具循环:bind 临时 `inspect_context` 工具 → 模型查构成 → 回灌 → JSON schema 校验;`decisionTimeoutMs` 6s / `decisionMaxTokens` 2048);决策覆盖切分/摘要 mode/召回/preserve;失败降级静态压缩;决策经 `inspect().lastCompression` 可观测
+
+### 规划与任务锚定
+- **自适应规划**:`write_todos`(整表替换,框架生成 id `t-1/t-2…`)+ `update_todo({id, content?, status?})`(增量改单项);一轮内两者不可混用;`maxPlanRevisions`(默认 5)防规划死循环:主数据写工具成功才退出规划,超限回灌「停止调研去执行」;复杂度判断由 LLM 做(usageHints 引导),框架不做启发式;`capabilities.planning:false` 关
+- **Mission**(默认开 `capabilities.missionAnchor`):会话级目标锚定 `{goal, acceptanceCriteria?, …}`;首条任务型 user 启发式 capture(宁漏不误)+ `send({mission})`/`setMission` 显式;`augmentPrompt` 每轮注入 pin 段(在 state 不在 messages → 天然跨压缩)
+- **workingMemory**(默认开):自动捕获 `read`/`query_data`/`search_data` 的 locatedPaths(LRU ≤10)+ read hash(lastHashes,LRU ≤10);pin 段每轮注入跨压缩;防压缩后重复检索/凭记忆写致 autoLock 误冲突
+- **Focus 上下文聚焦**(默认开,opt-in 需主动聚焦):多焦点 `Focus[] {path, label?}`;三层收敛 —— 目标提示 + 子树 schema 视野 + **范围 strict**(写工具 `jsonPath` 不在任一焦点子树 → `PATH_DENIED` 回灌自纠;无 jsonPath 整体写 = 越界拒;eval_script 参与拦截;vfs_write/vfs_edit 不拦);API `setFocus`/`addFocus`/`removeFocus`/`clearFocus`/`getFocuses` + agent 工具(advanced)+ ChatDialog 输入框 chip + user message 焦点历史标注;持久化 + 子 agent 继承全部焦点
+
+### 子 agent 授权面与协同
+- **授权与拦截面**:子池装配期源头 filter(排除 `spawn_*`/`use_*`/`load_skill`/`write_todos`/`update_todo`/`restore_last_checkpoint`/`request_human_confirmation`/`*_focus` 等框架/保留工具);`allTools` getter 指向 agent 合并池(含中间件工具);spawn 自授 `tools` 剥离写工具(写权限仅经 `writablePaths` path guard,含 patches 无 jsonPath 根写拦截);**子栈继承主 permissions/approval 实例**,子的 approval_request 直通转发回主循环;子 offload 直落主 vfs 共享池(vfs-bridge)
+- **子 agent 扩展**(`SubagentConfig`):`allowedTools`(额外工具名)/`middleware`(自定义)/`summarization`(跨轮压缩)/`maxVerifyAttempts`(beforeReturn 自纠上限,配 verify 类中间件时必开);`sdk.vfsWrite(path, content)` 集成方注入 vfs 文件
+- **能力包工厂**(opt-in 可组合):`createRagSubagent({retriever?, loader?, useVfs?})`(多源知识检索,只读)/ `createHtmlSubagent({writablePaths, codeVfsPrefix?, codeKind?, formatCheck?})`(代码组件生成:代码正文→vfs,data 存 codeRef;装 todos + summarization)。HTML 包细节:`codeKind:'sfc'`(默认,Vue SFC,html-builder skill)/`'html'`(v-html 注入片段:无 html/head/body/DOCTYPE 外围、片段禁 script,html-fragment skill);`formatCheck` 默认开 = `validate_code` 自检工具 + verify beforeReturn 门禁(确定性扫 vfs 代码文件,回灌自纠,`maxVerifyAttempts:2`),校验器纯函数 `validateHtmlFormat` 已导出(集成方渲染层纵深防御复用)
+- **观察层**:`createSubagentTracker` 会话级 active/history 运行态(纯观察,不改生命周期);`inspect().subagent.{active,history}` + DebugDrawer「🤖 子 agent」tab
+- **主×子协同**:per-scope 乐观锁基线(子上);spawn_agents allSettled(单失败不拖垮整批,逐任务 ✓/✗ 结算);子 usage 回传 `core.usage`(`sdk.usage` 含子消耗);子执行超时 opt-in(`subagent.timeoutMs`,链式 abort)
+
+### 其他能力
+- **MCP**:`createChatSdk({ mcp: [{ transport, url, name?, timeoutMs? }] })` 连远程 server 动态注入 tools(`Promise.allSettled` 故障隔离;握手 15s 超时降级);动态 import;dev 需 `optimizeDeps.include` 预声明(§⑩)
+- **Verify 自检**(opt-in `capabilities.verify`):agent 返回前跑 `check`,不通过 feedback 回灌自纠(限 `maxAttempts`,默认 2);内置 `createWriteBackCheck()`(写操作读回 + schema 校验);可自定义 + adversarial 对抗验证(§③)
+- **DOM 读取**:`get_dom`(opt-in `capabilities.domInspect`):结构化 `{tag, attrs, text, children[]}`,`depth` 默认 3,attrs 白名单 id/class/style/href+data-*
+- **环境探查**:`inspect_env`(默认开):window 安全摘要 + `key` 读调试变量;`safeSerialize` 防超大
+- **actions 宿主动作**:`createChatSdk({ actions: { name: { description, run, params? } } })` 自动包成命名 tool;run 异常隔离(错误字符串回灌自纠)
+- **Skill 扩展**:`SkillSpec.exec`(加载时执行脚本:sandbox 默认三层防护 / host 需 `capabilities.skillHostScript` 且仅集成方内联;失败不缓存)+ `tools`(附带工具工厂,load_skill 后注入,卸载随 setSkills);exec=一次性初始化,tools=反复查询,勿双轨
+- **Approval 人工确认**:`approval:{ tools?, confirm?, timeoutMs? }` 工具调用前 human-in-the-loop;无响应方路径 30s 自动拒(`APPROVAL_AUTO_REJECTED`);UI 交互确认无限等用户(§⑪)
+- **Checkpoint**(opt-in `checkpoint:true`):每轮自动存档(对话 + bind + vfs + todos),脏标记增量 save;`restoreLastCheckpoint()` / LLM 工具 / UI 回退按钮;叶子 bind(原始类型)无法就地还原
+- **Automation**(opt-in `capabilities.automation`):tokenBudget/timeBudgetMs 资源预算 + maxAutoRetries 错误恢复 + 断点续跑 + `sdk.batch` 批处理
+
+### 对话鲁棒性契约
+- **三档错误模型**:`AgentError.severity`(recoverable 回灌 LLM 自纠 / fatal emit+中断 / observable 记录);`routeError`/`asAgentError`/`agentError` 导出(框架内置 catch 用简化路由,供集成方自定义);`onEvent('error')` payload 带 `{severity?,code?,context?}`
+- **模型调用重试**(`harness/retry.ts`):网络/429/5xx 指数退避(默认 `maxRetries`=2);4xx 与 abort 不重试;⚠️ 错误判定**先排除 abort 再判 status**
+- **停止生成(abort)**:signal 穿透 `llm.stream`;abort 保留已生成 partial
+- **挂起有界收口三契约**:① 超时默认值表(approval/humanConfirm 无响应方 30s 自动拒 / MCP 握手 15s / skills fetch 30s / LLM 流停滞看门狗 `streamStallMs` 90s,`StreamStalledError` 408 不重试);② 兜底收口必留痕(结构化 error/warn/debugLogs);③ abort 收口:`activeControllers` 注册表 **core 级**,send/batch 接 `signal` 可中断;unmount/switchSession/resetSession 先 abort 全部在途流再收口
+- **resetSession**(同步公开 API):abort 在途流 + 收口挂起冲突(keep_external)+ 重置全部内存态(messages/vfs/todos/memory/mission/workingMemory/focus/checkpoint/debugLogs)+ 新 sessionId;**storage 关也完整执行**(store 相关才门控)
+- **shareContext**:同 `id` 多实例复用同一 `AgentCore`;**串行闸与在途流注册表 core 级**(send/batch/switchSession/stream 全经 `core.runSerial`);生命周期收口中止共享 core 的**全部**在途流(含其他实例发起的)
+- **onEvent / hook**:构造时 `onEvent` 订阅常用时机(`data_change`/`message_update`/`tool_call`/`tool_result`/`text`/`round_start`/`done`/`usage`/`session_restored`/`error` 等,§⑦);`approval_request` 不外发;流式事件仅 stream 模式;`sdk.hook(handler)` 运行时动态订阅(返回取消函数)
+- **便捷 API**:`exportData()`/`importData(json,{validate?})`/`setSkills`/`invalidateSkillCache`/`addSkill`/`removeSkill`/`listUserSkills`/`getUserSkill`(用户 skill 独立 SkillStore 持久化,默认 indexedDB)/ `sdk.usage` 累计 token
+- **运行时动态重配置**(零破坏):`setTools`/`addTool`/`removeTool`(内置不动,rebind)/ `setLlm`(切模型/切 provider;重解析窗口)/ `setMemory(string|同步/异步函数;异步后台求值,`refreshMemory` 强制)`/`setSubagents`/`addSubagent`/`removeSubagent`(需创建时配 `subagents:[]`)。均触发 `infoTick++` DebugDrawer 刷新
+- **工具重名覆盖**:装配期 `dedupeTools` 按名去重,后注册覆盖先者 + warn;`removeTool` 仅删用户工具(禁用内置用 `capabilities`)
+- **SkillPanel**:ChatDialog 内置 skill 管理面板(创建/编辑/删除用户 skill),已从入口导出
+- **markdown 渲染性能**:`useMarkdown` 尾随节流(大内容 ≤100ms 渲染一次 + 尾沿保证)+ hljs 尺寸闸(单代码块 >20K 跳高亮转义直出;**sanitize 永不跳过**)。导出 `renderMarkdownHtml`/`markedToHtml`/`HLJS_BLOCK_MAX_CHARS`(仅主包)
 
 ---
 

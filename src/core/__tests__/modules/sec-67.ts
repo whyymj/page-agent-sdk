@@ -83,9 +83,9 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert(!!hcfg.middleware && hcfg.middleware.length > 0, '✓ middleware 默认装(planning:true)')
   assert(typeof (hcfg.middleware![0] as any).getPlanPhase === 'function', '✓ middleware[0] 是 todos 中间件(getPlanPhase)')
 
-  // planning:false → middleware 不装
-  const hcfg2 = createHtmlSubagent({ writablePaths: ['components'], planning: false })
-  assert(!hcfg2.middleware, '✓ planning:false → middleware 不装')
+  // planning:false + formatCheck:false → middleware 不装(formatCheck 默认开会装校验链,见 sec-72)
+  const hcfg2 = createHtmlSubagent({ writablePaths: ['components'], planning: false, formatCheck: false })
+  assert(!hcfg2.middleware, '✓ planning:false + formatCheck:false → middleware 不装')
 
   // summarization:false → 不开
   const hcfg3 = createHtmlSubagent({ writablePaths: ['components'], summarization: false })

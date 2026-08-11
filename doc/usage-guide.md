@@ -642,7 +642,9 @@ sdk.vfsWrite('docs/components/hero.md', 'Hero 组件用于首屏主视觉...')
 ```
 
 - **RAG**(检索型):`search_docs`(语义检索 retriever)/ `load_doc`(异步加载 loader)/ vfs 搜索 / `fetch_document`;只读;默认装 `rag-search` skill。`retriever`/`loader` 集成方注入(SDK 零数据源依赖,不绑向量库)。检索的大段文档**不污染主上下文**(只回结构化结论)
-- **HTML**(生成型):规划(`write_todos`/`update_todo`)+ **代码正文→vfs**(`html/<name>.vue`,会话级)+ data 存 `codeRef:'vfs://...'` 引用(主 data 精简、代码改 `vfs_edit` 增量不动 data)+ 限定写(`writablePaths` path guard)。默认开 `summarization`(频繁改代码累积快);装 `html-builder` skill
+- **HTML**(生成型):规划(`write_todos`/`update_todo`)+ **代码正文→vfs**(`html/<name>.<vue|html>`,会话级)+ data 存 `codeRef:'vfs://...'` 引用(主 data 精简、代码改 `vfs_edit` 局部不动 data)+ 限定写(`writablePaths` path guard)。默认开 `summarization`(频繁改代码累积快);按形态装 skill
+  - **`codeKind`**:`'sfc'`(默认,Vue SFC,装 `html-builder` skill)/ `'html'`(纯 HTML 片段,v-html 注入场景:无 `<html>/<head>/<body>/DOCTYPE` 外围、片段禁 `<script>`,装 `html-fragment` skill)
+  - **输出格式校验**(`formatCheck`,默认开):① `validate_code` 自检工具(子 agent 生成/修改后自主调用;标签配对闭合 + 片段契约,带行号报错)② verify beforeReturn 门禁(返回前确定性扫 vfs 代码文件,不通过回灌 feedback 自纠,`maxVerifyAttempts:2` 兜底防循环)。校验器为纯函数 `validateHtmlFormat`(已导出,集成方渲染层可复用做纵深防御);`formatCheck:false` 关闭整条校验链
 - **底层:子 agent 架构扩展**:`SubagentConfig` 加 `allowedTools`(从主 allTools 拿 vfs/draft 工具)/ `middleware`(装规划中间件)/ `summarization`(跨轮压缩);`sdk.vfsWrite(path, content)` 异步注入 vfs。两包都基于这些扩展;集成方亦可直接用 `SubagentConfig` 三字段自配任意专用子 agent
 
 #### 子 agent 观察层:active/history 运行态(2.38+)

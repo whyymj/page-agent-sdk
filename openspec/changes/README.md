@@ -1,5 +1,7 @@
 # 活跃 Changes 优先级索引
 
+> **2026-08-11 发布 2.42.0**(minor):**内置深色主题 `dialog.theme:'dark'`**(方舟专题设计稿 Figma 471:6389/469:5947/469:5973 色板)。ChatDialog `.cs-theme-dark` 色板块(#222 紫微光外框 / #353535 气泡+工具栏 / #7063E7 用户气泡 / 状态点 #00C562·#F04848 / 紫边输入框+渐变发送钮 / 28px 渐变头像)+ DebugDrawer 同款内置主题(`csTheme` prop,ChatDialog 自动透传;--dd-* 全变量化)+ 「思考中」态设计稿化(8px 主色方点脉冲+文案)+ 历史下拉当前项整行主色。全部经 `--cs-*`/`--dd-*` 变量驱动,light 默认零回归,集成方可祖先覆盖自定义。browser 42 项。
+
 > **2026-08-11 发布 2.41.1**(patch):① **DebugDrawer 日志列表生成期间实时刷新**(审计组 6 未编号 P1 级残留真·清零:mountChatDialog/customize-demo 传 `.slice()` 新引用 + browser 断言 ×2,41 项);② **rag-demo anthropic 协议修复**(根因:@anthropic-ai/sdk buildURL `new URL(baseURL+path)` 相对 baseUrl 抛 Invalid URL → 改绝对路径;apiKey 移出代码进 `.env` VITE_ANTHROPIC_*;mockLlm 双协议拦截 chat/completions + /v1/messages);③ **CLAUDE.md 整理**(87KB→33KB:保留全部规则/契约/坑,删版本演进叙事)。
 
 > **2026-08-11 发布 2.41.0**:`fix-data-integrity` 实施完成并归档 —— 审计 P1 最后一批六项(**P1×27 至此清零**)。① **resetSession 收口统一**(P1-8/9:删 `!store` 早退,无 storage 也完整重置 mission/focus/todos 等 + 收口挂起冲突 keep_external + 公开 `sdk.resetSession()`);② **shareContext 串行闸上移 core**(P1-11:runSerial/activeControllers 建 core 级,双实例 send/switchSession 串行,生命周期收口断共享 core 全部在途流);③ **白名单深投影统一**(P1-19:7 处根级读 projectBySchemaDeep 递归,嵌套未声明字段不再泄露 —— 护城河唯一破口堵上);④ **压缩 LLM 摘要异步化**(P1-25:模板先行 + 后台前缀缓存,首 token 零阻塞);⑤ **markdown 渲染节流 + hljs 尺寸闸**(P1-26:修流式 O(n²) 冻结)。见 `archive/2026-08-11-fix-data-integrity/`。

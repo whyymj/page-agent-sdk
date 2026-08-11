@@ -162,6 +162,8 @@ export interface SubagentOptions {
   onUsage?: (u: TokenUsage) => void
   /** 单个子 agent 执行超时 ms(P1-17b:opt-in 默认关;超时 abort 子流 + 错误回灌 recoverable,主 LLM 可重试/拆分) */
   timeoutMs?: number
+  /** beforeReturn 自纠上限(默认 0 = 关闭);>0 时子 agent 返回前跑中间件 beforeReturn 钩子(如 verify 格式门禁),feedback 回灌自纠,达上限强制 return 防死循环 */
+  maxVerifyAttempts?: number
 }
 
 /** 判定 llm 是模型实例(BaseChatModel)还是配置对象(SubagentLlmConfig) */
@@ -389,6 +391,8 @@ async function runSubagent(
       ...(opts.middleware ?? []),
     ],
     maxToolRounds: opts.maxToolRounds ?? DEFAULT_CHILD_ROUNDS,
+    // beforeReturn 自纠上限(子 agent verify 门禁;默认 0 = 不跑 beforeReturn 钩子,零回归)
+    maxVerifyAttempts: opts.maxVerifyAttempts ?? 0,
     onLog, // 子 agent 日志下沉 → spawn 工具转发到主 debugLogs(带 source 标签)
     debug: opts.debug,
   })
@@ -577,6 +581,8 @@ export interface SubagentConfig {
   middleware?: Middleware[]
   /** 跨轮上下文压缩;true=默认索引摘要(零 LLM),或 SummarizationOptions 自配。不传=不装 */
   summarization?: boolean | SummarizationOptions
+  /** beforeReturn 自纠上限(默认 0 = 关闭);>0 时返回前跑中间件 beforeReturn 钩子(如 verify 格式门禁),feedback 回灌自纠防死循环。配 verify 类中间件时必开 */
+  maxVerifyAttempts?: number
 }
 
 export interface SubagentsMiddlewareOptions {
@@ -625,6 +631,7 @@ function configToSubOpts(config: SubagentConfig, main: SubagentsMiddlewareOption
     ...(config.allowedTools?.length ? { allowedTools: config.allowedTools } : {}),
     ...(config.middleware?.length ? { middleware: config.middleware } : {}),
     ...(config.summarization !== undefined ? { summarization: config.summarization } : {}),
+    ...(config.maxVerifyAttempts !== undefined ? { maxVerifyAttempts: config.maxVerifyAttempts } : {}),
     // focus-auto-switch:预声明子 agent 同样继承主焦点 + schema
     ...(main.getFocuses ? { getFocuses: main.getFocuses } : {}),
     ...(main.getSchema ? { getSchema: main.getSchema } : {}),
