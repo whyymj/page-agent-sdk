@@ -303,7 +303,9 @@ export function createWebStorageBackend(storage: Storage): StorageBackend {
   return {
     async get(key) {
       const v = storage.getItem(key)
-      return v == null ? undefined : JSON.parse(v)
+      if (v == null) return undefined
+      // 修复(P1-12):损坏记录 JSON.parse 抛穿 → load/listSessions 永久失败。降级 undefined,守「storage 永不冒泡」
+      try { return JSON.parse(v) } catch { return undefined }
     },
     async set(key, value) {
       storage.setItem(key, JSON.stringify(value))
@@ -320,7 +322,11 @@ export function createWebStorageBackend(storage: Storage): StorageBackend {
       keys.sort()
       for (const k of keys) {
         const raw = storage.getItem(k)
-        if (raw != null && cb(k, JSON.parse(raw)) === false) return
+        if (raw == null) continue
+        // 修复(P1-12):损坏记录 JSON.parse 抛穿 → 跳过该条,守「storage 永不冒泡」
+        let parsed: unknown
+        try { parsed = JSON.parse(raw) } catch { continue }
+        if (cb(k, parsed) === false) return
       }
     },
     async clearPrefix(prefix) {

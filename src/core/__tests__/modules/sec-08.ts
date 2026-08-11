@@ -27,6 +27,7 @@ import {
   defaultMaxBytesFor,
   createMemoryBackend,
   createSessionStore,
+  createWebStorageBackend,
 } from '../../backends/storage'
 import { createSkillStore } from '../../backends/skillStore'
 import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from '../../utils/modelCaps'
@@ -279,6 +280,28 @@ export async function run(ctx: TestCtx): Promise<void> {
     await s10.flush()
     const snap10 = await s10.load('weblocal', sid10)
     assert(snap10?.memory === 'hello-local', 'backend:local → localStorage save/load round-trip')
+
+    // P1-12(audit-sdk-integrity):WebStorage 读路径裸 JSON.parse → try/catch 守卫,损坏记录不抛穿(守「storage 永不冒泡」)
+    const corruptStorage = () => {
+      const m = new Map<string, string>()
+      m.set('pre_good', '{"x":1}')
+      m.set('pre_bad', '{invalid json') // 损坏记录
+      return {
+        get length() { return m.size },
+        key: (i: number) => Array.from(m.keys())[i] ?? null,
+        getItem: (k: string) => (m.has(k) ? (m.get(k) as string) : null),
+        setItem: (k: string, v: string) => { m.set(k, v) },
+        removeItem: (k: string) => { m.delete(k) },
+        clear: () => { m.clear() },
+      }
+    }
+    const wb = createWebStorageBackend(corruptStorage() as unknown as Storage)
+    assert((((await wb.get('pre_good')) as { x: number } | undefined)?.x) === 1, 'P1-12 WebStorage get → 合法 JSON 正常解析')
+    assert((await wb.get('pre_bad')) === undefined, 'P1-12 WebStorage get → 损坏记录返 undefined(不抛穿)')
+    assert((await wb.get('pre_missing')) === undefined, 'P1-12 WebStorage get → 不存在 key 返 undefined')
+    const scanned: Array<{ k: string; v: unknown }> = []
+    await wb.scan('pre_', (k, v) => { scanned.push({ k, v }) })
+    assert(scanned.length === 1 && scanned[0].k === 'pre_good', 'P1-12 WebStorage scan → 损坏记录跳过,合法记录正常收集(不抛穿)')
   }
 
   // ============ SkillStore(独立于 SessionSnapshot 的 skill 持久化)============

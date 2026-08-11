@@ -131,9 +131,17 @@ export const _optFields: Pick<ChatSdkOptions,
   | 'interceptors' | 'augmentSystem' | 'appendReliableWriteRules' | 'skillStorage' | 'schemaHint'
 > = null as any
 
-// 5. capabilities 17 开关名完整性(防开关名漂移/缺漏;与 src/core/capabilities.ts CAPABILITIES 注册表呼应)
+// 5. capabilities 21 开关名完整性(防开关名漂移/缺漏;与 src/core/capabilities.ts CAPABILITIES 注册表呼应;audit P1-27 扩到全 21)
 export const _capKeys: Pick<NonNullable<ChatSdkOptions['capabilities']>,
-  'dataOps' | 'fetch' | 'planning' | 'missionAnchor' | 'workingMemory' | 'skills' | 'vfs'
-  | 'summarization' | 'memory' | 'subagent' | 'inspectEnv' | 'verify' | 'domInspect'
-  | 'draftWrite' | 'tracing' | 'todoDeps' | 'automation'
+  'dataOps' | 'fetch' | 'planning' | 'missionAnchor' | 'workingMemory' | 'focus' | 'skills' | 'vfs'
+  | 'summarization' | 'memory' | 'subagent' | 'inspectEnv' | 'contextInspector' | 'verify' | 'domInspect'
+  | 'draftWrite' | 'tracing' | 'todoDeps' | 'skillHostScript' | 'automation' | 'agentCompression'
 > = null as any
+
+// 6. send options per-call 字段(audit P1-24:d.ts 与 src SendOptions 对齐,防 interceptors/maxAutoRetries 漂移)
+//    对象字面量赋值触发 excess-property 检查 —— d.ts send options 缺任一字段即编译失败
+export const _sendOpts: Parameters<ChatSdk['send']>[1] = {
+  mission: { goal: '目标' },
+  interceptors: { input: (x: unknown) => x, output: (x: unknown) => x },
+  maxAutoRetries: 2,
+}

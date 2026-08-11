@@ -29,7 +29,7 @@
 - [x] D1 e2e 新增断言:inspect().subagent.active/history(mock 委派);或扩 subagents.mjs
 - [ ] D2 浏览器 E2E(可选):DebugDrawer 子 agent tab 渲染(mock use_html → tab 显示 active/done)
 - [x] D3 文档:README/usage-guide 中英(子 agent observability)+ CLAUDE.md(DebugDrawer tab + inspect.subagent.active/history + 计数)
-- [ ] D4 发布:add-capability-packs 2.37.0 发布后;本 change 2.38.0;build → test → e2e → browser → exports → types → size → pack → publish
+- [x] D4 发布:2.38.0 已发布(全门禁绿 + npm/esm.sh CDN 验证通过)
 
 ## 验证门禁
 

@@ -40,7 +40,10 @@ export function isPathAllowed(jsonPath: string, schema: ZodType | null, allowKey
       if (!(seg in shape)) return false
       s = shape[seg]
     } else if (s && (s._def?.type === 'array' || s.constructor?.name === 'ZodArray')) {
-      // ZodArray:严格判(_def.type === 'array' 字符串相等,防 discriminatedUnion 等被误判);seg 是索引跳过,取元素 schema
+      // ZodArray:严格判(_def.type === 'array' 字符串相等,防 discriminatedUnion 等被误判)
+      // 修复(P1-20):seg 必须是非负整数索引(与 deleteByPath /^\d+$/ 一致),否则 PATH_DENIED ——
+      // 防 components.-1.x 类负/非数字索引过白名单 → setByPath 挂非索引属性 → zod 数组校验忽略 → 静默成功零落地
+      if (!/^\d+$/.test(seg)) return false
       s = s.element
     } else if (s && (s._def?.type === 'union' || s._def?.type === 'discriminatedUnion' || Array.isArray(s.options))) {
       // discriminatedUnion/ZodUnion:静态无 bind 不知具体 option,降级开放(后续段交 schema.safeParse 兜底校验)
@@ -79,7 +82,8 @@ export function getSchemaAtPath(schema: ZodType, jsonPath: string): ZodType | nu
       const shape = typeof s.shape === 'function' ? s.shape() : s.shape
       s = shape[seg]
     } else if (s && (s._def?.type === 'array' || s.constructor?.name === 'ZodArray')) {
-      // ZodArray:严格判(_def.type === 'array' 字符串相等);seg 是索引,取元素 schema
+      // ZodArray:严格判(_def.type === 'array' 字符串相等);seg 须非负整数索引(同 isPathAllowed P1-20),否则返 null
+      if (!/^\d+$/.test(seg)) return null
       s = s.element
     } else if (s && (s._def?.type === 'union' || s._def?.type === 'discriminatedUnion' || Array.isArray(s.options))) {
       // discriminatedUnion/ZodUnion:静态不知具体 option,降级返 null(投影原样;

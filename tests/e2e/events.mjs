@@ -1,5 +1,6 @@
 // 事件:hook 返回取消函数 / onEvent + hook 联动 / 多监听器 + off 重复调用安全
 import { setupEnv, createAssert, FAKE_LLM, MIN_CAPS, createChatSdk, z } from './_helpers.mjs'
+import { stubModel } from './_stub-model.mjs'
 
 export async function run() {
   setupEnv()
@@ -77,6 +78,23 @@ export async function run() {
     await sdk.switchSession('e2e-restore')
     // restored 可能为 null(无快照)或对象(有快照);两种均合法,仅验证不报错
     assert(restored === null || (typeof restored.sessionId === 'string' && typeof restored.rounds === 'number'), 'session_restored 事件类型正确(有快照时含 sessionId/rounds,无快照时不发)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:events] P1-23 → 不传 options.onEvent 时 sdk.hook 也能收到流式事件(headless 常见路径;修复 emit 恒调用)')
+  {
+    const types = []
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-hook-stream', storage: false, llm: stubModel({ text: '流式回复' }), capabilities: MIN_CAPS,
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' } },
+    })
+    await sdk.mount()
+    const off = sdk.hook((e) => { types.push(e.type) })
+    // 直接调 stream(headless 路径,构造时不传 onEvent):bug 是 userOnEvent 缺失 → emit 不调用 → hook 收不到流式事件
+    await sdk.stream([{ role: 'user', content: 'hi', timestamp: Date.now() }], () => {})
+    off()
+    assert(types.includes('done'), 'P1-23 → 不传 onEvent 时 hook 收到流式 done 事件(修复:emit 恒调用)')
+    assert(types.some((t) => ['text', 'round_start'].includes(t)), 'P1-23 → hook 收到流式过程事件(text/round_start)')
     sdk.unmount()
   }
 

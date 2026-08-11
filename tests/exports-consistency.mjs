@@ -29,8 +29,15 @@ const typesContent = fs.readFileSync(new URL('../types/index.d.ts', import.meta.
 const srcExports = extractExports(srcContent)
 const typesExports = extractExports(typesContent)
 
+// type-only 辅助类型:d.ts 为 TS 使用者声明,但非 src/core/index.ts 运行时导出(audit P1-27/A 专项:多余名改 fail 需此白名单排除)
+const TYPES_ONLY_ALLOWLIST = new Set([
+  'ChatDialogSections', 'ChatDialogProps', 'DebugDrawerProps', 'ChatModelLike',
+  'SkillExecSpec', 'SkillToolFactory', 'Checkpoint', 'SessionOptions', 'WorkingMemory', 'Mission',
+])
 const missingInTypes = [...srcExports].filter(n => !typesExports.has(n))
 const extraInTypes = [...typesExports].filter(n => !srcExports.has(n))
+const unexpectedExtras = extraInTypes.filter(n => !TYPES_ONLY_ALLOWLIST.has(n))
+const staleAllowlist = [...TYPES_ONLY_ALLOWLIST].filter(n => !typesExports.has(n))
 
 let pass = 0, fail = 0
 function assert(cond, msg) { if (cond) { pass++; console.log('  ✓', msg) } else { fail++; console.error('  ✗', msg) } }
@@ -38,8 +45,9 @@ function assert(cond, msg) { if (cond) { pass++; console.log('  ✓', msg) } els
 console.log('[exports-consistency] src/core/index.ts 导出数:', srcExports.size)
 console.log('[exports-consistency] types/index.d.ts 导出数:', typesExports.size)
 assert(missingInTypes.length === 0, `types/index.d.ts 无漏导出(缺失:${missingInTypes.join(', ') || '无'})`)
-if (missingInTypes.length > 0) console.error('  ✗ types 缺失:', missingInTypes.join(', '))
-if (extraInTypes.length > 0) console.log('  ℹ types 多余(可能内部类型):', extraInTypes.join(', '))
+assert(unexpectedExtras.length === 0, `types/index.d.ts 无意料外多余导出(白名单外:${unexpectedExtras.join(', ') || '无'})`)
+assert(staleAllowlist.length === 0, `type-only 白名单无失效项(d.ts 已移除:${staleAllowlist.join(', ') || '无'})`)
+if (extraInTypes.length > 0) console.log('  ℹ types 多余(白名单内 type-only,已豁免):', extraInTypes.join(', '))
 
 // subpath exports 配置断言(refactor-module-extraction:./storage / ./query / ./llm 按需引入)
 // 注:实际运行时可达性由 e2e(浏览器经同一 dist)覆盖;此处校验 package.json exports 配置正确(语义可达 + CDN 入口独立)

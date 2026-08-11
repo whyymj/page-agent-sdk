@@ -53,6 +53,16 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert(isPathAllowed('', schema, keys) === true, 'isPathAllowed → 空路径允许(整体由调用方处理)')
   assert(isPathAllowed('name', schema, null) === true, 'isPathAllowed → allowKeys null 全开放(向后兼容)')
 
+  // P1-20(audit-sdk-integrity):ZodArray 段必须非负整数索引(与 deleteByPath /^\d+$/ 一致)——
+  // 防 components.-1.x 类负/非数字索引过白名单 → setByPath 挂非索引属性 → zod 数组校验忽略 → 静默成功零落地
+  assert(isPathAllowed('tags.-1', schema, keys) === false, 'P1-20 isPathAllowed → 数组负索引拒绝(防静默零落地写)')
+  assert(isPathAllowed('tags.abc', schema, keys) === false, 'P1-20 isPathAllowed → 数组非数字索引拒绝')
+  assert(isPathAllowed('tags.0', schema, keys) === true, 'P1-20 isPathAllowed → 合法数字索引仍放行(无回归)')
+  assert(isPathAllowed('components.-1.type', unionSchema, uKeys) === false, 'P1-20 isPathAllowed → union 数组负索引拒绝')
+  assert(getSchemaAtPath(schema, 'tags.-1') === null, 'P1-20 getSchemaAtPath → 数组负索引返 null')
+  assert(getSchemaAtPath(schema, 'tags.abc') === null, 'P1-20 getSchemaAtPath → 数组非数字索引返 null')
+  assert(getSchemaAtPath(schema, 'tags.0') !== null, 'P1-20 getSchemaAtPath → 合法数字索引仍返元素 schema(无回归)')
+
   // getSchemaAtPath
   assert(getSchemaAtPath(schema, 'name') !== null, 'getSchemaAtPath → 字段子 schema 非 null')
   assert(getSchemaAtPath(schema, 'tags') !== null, 'getSchemaAtPath → 数组子 schema 非 null')

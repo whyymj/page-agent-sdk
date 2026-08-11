@@ -777,7 +777,7 @@ export interface ChatSdkOptions {
   /** 模型最大输出(token);顶层声明对 llm 实例场景也生效,缺省按 model 名查表 */
   maxOutputTokens?: number;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
-  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; tracing?: boolean; todoDeps?: boolean; automation?: boolean; workingMemory?: boolean; focus?: boolean; skillHostScript?: boolean; contextInspector?: boolean };
+  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; tracing?: boolean; todoDeps?: boolean; automation?: boolean; workingMemory?: boolean; focus?: boolean; skillHostScript?: boolean; contextInspector?: boolean; agentCompression?: boolean };
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number };
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[];
@@ -785,6 +785,8 @@ export interface ChatSdkOptions {
   verify?: { enabled?: boolean; check?: VerifyCheck; maxAttempts?: number; adversarial?: boolean };
   /** 人工确认:工具调用前弹确认框,用户「允许/拒绝」后才执行(默认关闭,不传 = 不装) */
   approval?: ApprovalOptions;
+  /** 主动征询(默认开启):装载 request_human_confirmation 工具,LLM 在不确定/多方案/高风险时主动征询;false 关闭(types-alignment 补漏) */
+  humanConfirm?: boolean;
   /** 会话级 checkpoint 回滚(回到上次正常时)。默认关闭;传 true 或 { maxCheckpoints?, auto? } 开启 */
   checkpoint?: boolean | { maxCheckpoints?: number; auto?: boolean };
   /** MCP server 列表(连远程 server 动态注入其 tools;浏览器仅 http/sse/websocket) */
@@ -805,6 +807,10 @@ export interface ChatSdkOptions {
   summaryMaxTokens?: number;
   /** 摘要 LLM 超时毫秒(默认 15000;超时回退索引摘要) */
   summaryTimeoutMs?: number;
+  /** 压缩决策(agentCompression)LLM 超时毫秒(默认 6000;不复用 summaryTimeoutMs 15s,两段叠加阻塞首响应) */
+  decisionTimeoutMs?: number;
+  /** 压缩决策 LLM 输出上限(默认 2048;避免继承 summaryLlm 1024 截断 JSON → safeParse 失败无谓降级) */
+  decisionMaxTokens?: number;
   /**
    * SDK 事件回调:订阅常用时机(数据槽变化 / 消息更新 / 工具调用 / 流式文本 / 轮次 / 错误)。
    * UI 与 headless 模式均生效;用于外部联动(宿主页面响应式刷新、埋点、日志),替代轮询。
@@ -867,7 +873,7 @@ export interface ChatSdk {
   hide(): void;
   /** 抽屉模式显示:移除 cs-hidden class 恢复可见(配合 hide 使用;首次挂载用 mount) */
   show(): void;
-  send(message: string, options?: { mission?: Partial<Mission> }): Promise<string>;
+  send(message: string, options?: { mission?: Partial<Mission>; interceptors?: { input?: (input: unknown) => unknown; output?: (json: unknown) => unknown }; maxAutoRetries?: number }): Promise<string>;
   switchSession(sessionId?: string): Promise<string>;
   /** 列出当前 agent 的所有历史会话(供「历史列表」UI;storage 未开启 → []) */
   listSessions(): Promise<SessionMeta[]>;

@@ -245,6 +245,7 @@ export interface ChatSdkOptions {
     automation?: boolean     // 无人值守自动化(默认 false;预算闸 token/time + 错误恢复;automation-layer Phase 4,opt-in 最远)
     skillHostScript?: boolean  // skill exec 宿主脚本执行(默认 false;opt-in,允许 skill exec.context:'host' 全权执行;仅集成方内联 code,远程 url+host 禁止)
     contextInspector?: boolean // 上下文检查 inspectContext(默认 true;读每轮消息分类 token 占比,纯计算零 LLM 成本)
+    agentCompression?: boolean // 压缩 agent 自主决策(默认 false;opt-in,开 + summaryLlm 可用 → decide 驱动压缩,失败降级静态;requires summarization)
   }
   /** 子 agent 委派(spawn_agent/spawn_agents);默认开启,{ enabled: false } 关闭 */
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | BaseChatModel; maxDepth?: number; maxParallel?: number }
@@ -1148,9 +1149,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         },
       }
     : null
-  // SDK 事件回调:把常用时机外发给集成方(数据槽变化 / 消息更新 / 流式事件 / 错误)
-  const userOnEvent = options.onEvent
-  // SDK 事件系统(sdk.hook 注册监听器;emit 外发事件,approval_request 不外发,onEvent/listeners 各自 try/catch 隔离)
+  // SDK 事件系统(sdk.hook 注册监听器;emit 外发事件给 options.onEvent + 各 listener,approval_request 不外发,各自 try/catch 隔离)
   const events = createSdkEvents(options.onEvent)
   const emit = events.emit
 
@@ -1567,10 +1566,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       if (!core.agent) throw new Error('page-agent-sdk: agent 尚未初始化完成,请先 await mount()')
       // P4(harden-context-resilience):注入被引用集 → vfs LRU 淘汰时跳过被消息引用的 large_results(防 vfs_read 404)
       vfsStore?.setProtectedRefs?.(extractVfsRefs(msgs))
-      // 包装:把 stream 事件同时转发给集成方 onEvent(approval_request 已由 emit 过滤)
-      const wrappedHandler: StreamHandler = userOnEvent
-        ? (event) => { onEvent?.(event); emit(event as SdkEvent) }
-        : onEvent
+      // 包装:流式事件恒转发内部 UI handler + emit(外发 options.onEvent + sdk.hook listeners)。
+      // 修复(P1-23):旧实现仅当传了 options.onEvent 才调 emit → 不传 onEvent 时 sdk.hook() 收不到流式事件。
+      const wrappedHandler: StreamHandler = (event) => { onEvent?.(event); emit(event as SdkEvent) }
       // abort 联动:用户停止生成时,自动收口挂起的乐观锁冲突(按「保留外部」处理,防工具永久挂起)
       if (signal) {
         const abortConflict = () => conflictMgr.resolve('keep_external')
