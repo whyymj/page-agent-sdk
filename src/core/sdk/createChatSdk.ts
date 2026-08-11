@@ -348,6 +348,8 @@ export interface DialogConfig {
   inputRows?: number
   /** 抽屉模式关闭回调:点击遮罩/关闭按钮时调用(默认调 unmount 带退出动画)。集成方需同步外部挂载状态时传此选项覆盖默认行为 */
   onClose?: () => void
+  /** 内置主题:'light'(默认,中性浅色)/ 'dark'(深色紫调,方舟专题设计稿色板;亦可祖先覆盖 --cs-* 完全自定义) */
+  theme?: 'light' | 'dark'
   /** ChatDialog 区块显隐(chatdialog-component-split):键=false 关闭整块(含 slot);默认全开。键:header/focus/body/queued/approval/conflict/footer/debug/skill */
   sections?: Record<string, boolean>
 }

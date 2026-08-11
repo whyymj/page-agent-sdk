@@ -98,6 +98,8 @@ const props = withDefaults(defineProps<{
   onFocusChipClick?: (focus: Focus) => void
   /** 区块显隐控制(键=SectionKey,false 关闭;默认 undefined=全开,向后兼容) */
   sections?: Partial<Record<SectionKey, boolean>>
+  /** 内置主题:'light'(默认,中性浅色)/ 'dark'(深色紫调,方舟专题设计稿色板) */
+  csTheme?: 'light' | 'dark'
 }>(), {
   title: 'AI 助手',
   placeholder: '输入消息,Enter 发送...',
@@ -151,7 +153,7 @@ const drawerWidthStyle = computed(() => {
 
 <template>
   <div v-if="drawer" class="chat-mask" @click="emit('close')"></div>
-  <div class="chat-dialog" :class="{ collapsed: !isExpanded && !drawer, drawer }" :style="drawerWidthStyle ? { width: drawerWidthStyle, maxWidth: drawerWidthStyle } : null">
+  <div class="chat-dialog" :class="{ collapsed: !isExpanded && !drawer, drawer, 'cs-theme-dark': csTheme === 'dark' }" :style="drawerWidthStyle ? { width: drawerWidthStyle, maxWidth: drawerWidthStyle } : null">
     <!-- 头部 -->
     <template v-if="renderSection('header')">
       <slot name="header" :chat="ctx">
@@ -215,7 +217,7 @@ const drawerWidthStyle = computed(() => {
     <!-- 调试抽屉 -->
     <template v-if="renderSection('debug')">
       <slot name="debug" :chat="ctx">
-        <DebugDrawer v-model:visible="debugVisible" :logs="debugLogs" :get-info="getInfo" :info-tick="infoTick" :get-skill-content="getSkillContent" />
+        <DebugDrawer v-model:visible="debugVisible" :logs="debugLogs" :get-info="getInfo" :info-tick="infoTick" :get-skill-content="getSkillContent" :cs-theme="csTheme" />
       </slot>
     </template>
 
@@ -314,4 +316,62 @@ const drawerWidthStyle = computed(() => {
 .chat-mask.cs-leaving { opacity: 0; }
 /* 抽屉模式隐藏(sdk.hide()):不卸载,保留 agent/历史/生成进程;opacity+visibility 保留 transition */
 .chat-dialog.cs-hidden, .chat-mask.cs-hidden { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.2s ease, visibility 0s 0.2s; }
+
+/* ===== 内置深色主题(dialog.theme:'dark',色板取自方舟专题设计稿 Figma 471:6389)=====
+   集成方亦可在祖先覆盖 --cs-* 自定义;本块只设变量 + 外框,子组件经变量自动跟随 */
+.chat-dialog.cs-theme-dark {
+  --cs-primary: #7063e7;
+  --cs-primary-rgb: 112, 99, 231;
+  --cs-accent: #9993ff;
+  --cs-bg: #222222;
+  --cs-bg-text: #ffffff;
+  --cs-bg-muted: #999999;
+  --cs-bubble-ai: #353535;
+  --cs-bubble-user: #7063e7;
+  --cs-radius: 6px;
+  --cs-radius-bubble: 9px;
+  --cs-header-bg: #353535;
+  --cs-surface: #353535;          /* 下拉菜单/弹层面板 */
+  --cs-surface-text: #ffffff;
+  --cs-surface-border: rgba(255, 255, 255, 0.12);
+  --cs-action-bg: #444444;        /* 头部 pill 按钮/图标按钮底 */
+  --cs-action-hover: #555555;
+  --cs-action-text: #9993ff;
+  --cs-surface-hover: rgba(90, 90, 90, 0.5);
+  --cs-hist-active-bg: #7063e7;   /* 历史列表当前项:整行主色(设计稿 04) */
+  --cs-hist-active-border: none;
+  --cs-hist-active-text: #ffffff;
+  --cs-typing-dot: #7063e7;
+  --cs-reason-bg: #2c2c2c;
+  --cs-reason-border: #3a3a3a;
+  --cs-reason-head: #ffffff;
+  --cs-reason-text: #999999;
+  --cs-reason-toggle: #9993ff;
+  --cs-step-bg: #2c2c2c;
+  --cs-step-border: #3a3a3a;
+  --cs-step-text: #ffffff;
+  --cs-step-meta: #666666;
+  --cs-ok: #00c562; --cs-ok-rgb: 0, 197, 98;
+  --cs-warn: #f0a020; --cs-warn-rgb: 240, 160, 32;
+  --cs-err: #f04848; --cs-err-rgb: 240, 72, 72;
+  --cs-sub-bg: rgba(112, 99, 231, 0.12);
+  --cs-sub-border: #7063e7;
+  --cs-sub-text: #9993ff;
+  --cs-md-border: #5a5a5a;
+  --cs-md-th-bg: #444444;
+  --cs-md-code-bg: rgba(153, 147, 255, 0.12);
+  --cs-md-code-text: #9993ff;
+  --cs-input-bg: rgba(18, 18, 18, 0.4);
+  --cs-input-border: rgba(115, 114, 255, 0.5);
+  --cs-input-radius: 12px;
+  --cs-send-radius: 18px;
+  --cs-send-grad: linear-gradient(97.7deg, #5e54ff 0%, #95a6ff 100%);
+  --cs-avatar-grad: linear-gradient(135deg, #92a2fe 0%, #645bff 100%);
+  --cs-avatar-size: 28px;
+  --cs-avatar-radius: 14px;
+  /* 外框:1px #353535 边 + 底部紫色微光渐变(设计稿 05 容器) */
+  border: 1px solid #353535;
+  background: linear-gradient(180deg, rgba(34, 34, 34, 0.2) 1.4%, rgba(79, 63, 233, 0.16) 100%), #222222;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
 </style>

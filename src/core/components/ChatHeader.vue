@@ -136,7 +136,7 @@ function handleOpenSession(id: string): void {
 .chat-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 16px;
-  background: var(--cs-primary);
+  background: var(--cs-header-bg, var(--cs-primary));
   color: #fff; cursor: pointer; user-select: none;
   flex-shrink: 0;
   position: relative; z-index: 16;
@@ -153,18 +153,18 @@ function handleOpenSession(id: string): void {
 .action-btn {
   display: flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; border: none; border-radius: 6px;
-  background: rgba(255, 255, 255, 0.15); color: #fff; cursor: pointer;
+  background: var(--cs-action-bg, rgba(255, 255, 255, 0.15)); color: var(--cs-action-text, #fff); cursor: pointer;
   transition: background 0.2s;
 }
-.action-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.3); }
+.action-btn:hover:not(:disabled) { background: var(--cs-action-hover, rgba(255, 255, 255, 0.3)); }
 .action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .more-btn { position: relative; }
-.more-btn.active { background: rgba(255, 255, 255, 0.45); }
+.more-btn.active { background: var(--cs-action-hover, rgba(255, 255, 255, 0.45)); }
 .more-menu {
   position: absolute; top: calc(100% + 6px); right: 0; z-index: 20;
   min-width: 168px; padding: 4px;
-  background: #fff; color: #1f2937;
-  border: 1px solid rgba(0, 0, 0, 0.12); border-radius: 8px;
+  background: var(--cs-surface, #fff); color: var(--cs-surface-text, #1f2937);
+  border: 1px solid var(--cs-surface-border, rgba(0, 0, 0, 0.12)); border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
 }
 .more-item {
@@ -172,7 +172,7 @@ function handleOpenSession(id: string): void {
   padding: 8px 10px; border: none; background: none;
   font: inherit; font-size: 13px; color: inherit; cursor: pointer; border-radius: 6px; text-align: left;
 }
-.more-item:hover:not(:disabled) { background: rgba(0, 0, 0, 0.06); }
+.more-item:hover:not(:disabled) { background: var(--cs-surface-hover, rgba(0, 0, 0, 0.06)); }
 .more-item:disabled { opacity: 0.4; cursor: not-allowed; }
 .more-item svg { opacity: 0.7; flex-shrink: 0; }
 .more-item-badge { margin-left: auto; background: var(--cs-primary, #1f4d3a); color: #fff; font-size: 10px; padding: 1px 6px; border-radius: 999px; }
@@ -181,13 +181,13 @@ function handleOpenSession(id: string): void {
 .cs-history-menu {
   position: absolute; top: calc(100% + 6px); right: 0; z-index: 20;
   min-width: 220px; max-height: 320px; overflow-y: auto; padding: 4px;
-  background: #fff; color: #1f2937;
-  border: 1px solid rgba(0, 0, 0, 0.12); border-radius: 8px;
+  background: var(--cs-surface, #fff); color: var(--cs-surface-text, #1f2937);
+  border: 1px solid var(--cs-surface-border, rgba(0, 0, 0, 0.12)); border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
 }
 .hist-item { padding: 8px 10px; border-radius: 6px; cursor: pointer; }
-.hist-item:hover { background: rgba(0, 0, 0, 0.06); }
-.hist-item.active { background: rgba(var(--cs-primary-rgb, 31, 77, 58), 0.15); border-left: 2px solid var(--cs-primary, #1f4d3a); }
+.hist-item:hover { background: var(--cs-surface-hover, rgba(0, 0, 0, 0.06)); }
+.hist-item.active { background: var(--cs-hist-active-bg, rgba(var(--cs-primary-rgb, 31, 77, 58), 0.15)); border-left: var(--cs-hist-active-border, 2px solid var(--cs-primary, #1f4d3a)); color: var(--cs-hist-active-text, inherit); }
 .hist-title { font-size: 13px; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hist-meta { display: flex; justify-content: space-between; align-items: center; font-size: 11px; opacity: 0.6; }
 .hist-del { background: none; border: none; cursor: pointer; font-size: 13px; opacity: 0.6; padding: 0 4px; }

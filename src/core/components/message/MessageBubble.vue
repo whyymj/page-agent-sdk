@@ -16,8 +16,9 @@ defineProps<{
 <template>
   <div class="message-bubble" :class="[role, { typing: isPendingAssistant }]">
     <template v-if="isPendingAssistant">
-      <template v-if="showTyping"><span class="dot"></span><span class="dot"></span><span class="dot"></span></template>
-      <span v-else class="typing-text">思考中…</span>
+      <!-- 设计稿「思考中」态:8px 主色圆角方点 + 文案;showTyping 时方点呼吸脉冲 -->
+      <span class="typing-dot" :class="{ pulse: showTyping }"></span>
+      <span class="typing-text">思考中...</span>
     </template>
     <template v-else>
       <MessageContent v-if="role === 'assistant'" :content="content" />
@@ -29,20 +30,18 @@ defineProps<{
 
 <style scoped>
 .message-bubble {
-  padding: 9px 13px; border-radius: 12px; font-size: 12px; line-height: 1.7;
+  padding: 9px 13px; border-radius: var(--cs-radius-bubble, 12px); font-size: 12px; line-height: 1.7;
   overflow-wrap: anywhere; word-break: break-word; white-space: pre-wrap;
 }
 /* role 变体用自身 class(非依赖祖先 .message-row.role),组件自包含 */
-.message-bubble.assistant { background: #f3f4f6; color: #1f2937; border-bottom-left-radius: 4px; white-space: normal; overflow-wrap: anywhere; }
-.message-bubble.user { background: var(--cs-primary); color: #fff; border-bottom-right-radius: 4px; }
+.message-bubble.assistant { background: var(--cs-bubble-ai, #f3f4f6); color: var(--cs-bg-text, #1f2937); border-bottom-left-radius: 4px; white-space: normal; overflow-wrap: anywhere; }
+.message-bubble.user { background: var(--cs-bubble-user, var(--cs-primary, #1f4d3a)); color: #fff; border-bottom-right-radius: 4px; }
 
-.typing { display: flex; gap: 4px; padding: 12px 16px; }
-.typing .dot { width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; animation: cs-bounce 1.4s infinite ease-in-out; }
-.typing .dot:nth-child(2) { animation-delay: 0.2s; }
-.typing .dot:nth-child(3) { animation-delay: 0.4s; }
-/* 改名 cs-bounce 避免与全局/其他组件 bounce 命名冲突(scoped 下 @keyframes 仍可能泄漏,显式前缀更稳) */
-@keyframes cs-bounce { 0%, 80%, 100% { transform: translateY(0); } 40% { transform: translateY(-6px); } }
-.typing-text { font-size: 13px; color: #9ca3af; }
+.typing { display: flex; align-items: center; gap: 6px; padding: 4px 2px; }
+.typing-dot { width: 8px; height: 8px; border-radius: 3px; background: var(--cs-typing-dot, var(--cs-primary, #1f4d3a)); flex-shrink: 0; }
+.typing-dot.pulse { animation: cs-dot-pulse 1.2s infinite ease-in-out; }
+@keyframes cs-dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.typing-text { font-size: 13px; color: var(--cs-bg-text, #6b7280); }
 
 .stream-cursor { display: inline-block; width: 7px; height: 14px; margin-left: 2px; vertical-align: text-bottom; background: var(--cs-primary); animation: cs-blink 1s steps(2) infinite; }
 @keyframes cs-blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }

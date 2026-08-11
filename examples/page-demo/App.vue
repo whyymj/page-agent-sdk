@@ -119,6 +119,7 @@ onMounted(() => {
     dialog: {
       title: '页面构建 Agent',
       placeholder: '试试:加一个"提交"按钮 / 主题改成 dark / 删掉列表 …',
+      theme: 'dark', // 内置深色主题(方舟专题设计稿色板;--cs-* 变量驱动)
     },
   })
   agent.mount()

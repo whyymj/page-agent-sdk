@@ -380,6 +380,7 @@ function statusLabel(s: ToolStep['status']): string {
           :get-info="getInspect"
           :info-tick="sdk?.infoTick"
           :get-skill-content="getSkillContent"
+          cs-theme="dark"
         />
       </div>
     </section>

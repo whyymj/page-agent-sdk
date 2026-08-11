@@ -89,9 +89,9 @@ const { state, stop } = ctx.chat
 .focus-chip-x:hover { opacity: 1; background: rgba(var(--cs-err-rgb, 220, 38, 38), 0.15); color: var(--cs-err, #dc2626); }
 .chat-input.has-focus-chip { padding-top: 30px; }
 .chat-input {
-  width: 100%; resize: vertical; border: 1px solid rgba(var(--cs-primary-rgb, 31, 77, 58), 0.2); border-radius: 8px;
+  width: 100%; resize: vertical; border: 1px solid var(--cs-input-border, rgba(var(--cs-primary-rgb, 31, 77, 58), 0.2)); border-radius: var(--cs-input-radius, 8px);
   padding: 9px 12px 38px 12px; font-size: 13px; font-family: inherit; line-height: 1.5; color: var(--cs-bg-text, inherit);
-  background: transparent; outline: none; transition: border-color 0.2s; min-height: 38px; max-height: 50vh; overflow-y: auto;
+  background: var(--cs-input-bg, transparent); outline: none; transition: border-color 0.2s; min-height: 38px; max-height: 50vh; overflow-y: auto;
   overflow-wrap: anywhere; word-break: break-word;
 }
 .chat-input::placeholder { color: var(--cs-bg-muted, #9ca3af); opacity: 0.7; }
@@ -100,8 +100,8 @@ const { state, stop } = ctx.chat
 .send-hint { font-size: 10px; color: var(--cs-bg-muted, #9ca3af); opacity: 0.6; pointer-events: none; white-space: nowrap; }
 .send-btn {
   display: flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px; border: none; border-radius: 50%;
-  background: var(--cs-primary); color: #fff; cursor: pointer;
+  width: 28px; height: 28px; border: none; border-radius: var(--cs-send-radius, 50%);
+  background: var(--cs-send-grad, var(--cs-primary)); color: #fff; cursor: pointer;
   transition: opacity 0.2s, transform 0.1s; flex-shrink: 0;
 }
 .send-btn:hover:not(:disabled) { opacity: 0.9; transform: scale(1.05); }
@@ -110,6 +110,6 @@ const { state, stop } = ctx.chat
 .send-btn.stop-btn { background: #9ca3af; }
 .send-btn.stop-btn:hover:not(:disabled) { background: #6b7280; transform: none; }
 
-.undo-foot-btn { flex-shrink: 0; align-self: center; padding: 4px 10px; border: 1px solid #e5e7eb; border-radius: 14px; background: #f9fafb; color: #6b7280; font-size: 11px; cursor: pointer; transition: all 0.2s; }
+.undo-foot-btn { flex-shrink: 0; align-self: center; padding: 4px 10px; border: 1px solid var(--cs-surface-border, #e5e7eb); border-radius: 14px; background: var(--cs-surface, #f9fafb); color: var(--cs-bg-muted, #6b7280); font-size: 11px; cursor: pointer; transition: all 0.2s; }
 .undo-foot-btn:hover { border-color: var(--cs-primary); color: var(--cs-primary); background: #f0f7f3; }
 </style>

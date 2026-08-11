@@ -71,6 +71,7 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
           getUserSkillNames: core.skillsController ? () => core.listUserSkills() : undefined,  // ChatDialog 列出用户创建的 skill 名(刷新面板)
           onGetSkill: core.skillsController ? (name: string) => core.getUserSkill(name) : undefined,  // ChatDialog 编辑 skill 时读取详情
           drawer: dialogCfg.drawer === true,
+          csTheme: dialogCfg.theme === 'dark' ? 'dark' : 'light',
           drawerWidth: dialogCfg.drawerWidth,
           drawerHidden: dialogCfg.drawerHidden === true,
           inputRows: dialogCfg.inputRows,

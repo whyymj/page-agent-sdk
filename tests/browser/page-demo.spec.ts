@@ -209,6 +209,21 @@ test.describe('page-demo: read → write → read', () => {
   })
 
   /**
+   * 内置深色主题(dialog.theme:'dark',方舟专题设计稿色板):
+   * 断言根节点挂 cs-theme-dark + 背景基色 #222 + 用户气泡/输入框经 --cs-* 变量生效。
+   * 边界:不传 theme 的 demo(其余 spec)仍为默认浅色(.chat-dialog 无该类)。
+   */
+  test('dialog.theme:dark → 内置深色主题生效(cs-theme-dark + #222 底 + 紫调输入框边框)', async ({ page }) => {
+    const dialog = page.locator('.chat-dialog')
+    await expect(dialog).toHaveClass(/cs-theme-dark/)
+    const bg = await dialog.evaluate((el) => getComputedStyle(el).backgroundColor)
+    expect(bg, '深色底 #222222').toBe('rgb(34, 34, 34)')
+    const input = page.locator('.chat-input')
+    const border = await input.evaluate((el) => getComputedStyle(el).borderTopColor)
+    expect(border, '输入框紫调边框 rgba(115,114,255,.5)').toBe('rgba(115, 114, 255, 0.5)')
+  })
+
+  /**
    * 两步拾取(focus-context):点组件 → 选中边框 + 加入聊天按钮 → 点按钮 → 聚焦 chip。
    * 验证 page-demo 扁平 v-if 渲染 + PickOverlay 浮层 + setFocus 端到端(纯前端交互,不需 mock LLM)。
    */
