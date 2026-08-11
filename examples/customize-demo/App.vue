@@ -214,7 +214,9 @@ function formatTime(ts: number): string {
 }
 
 // ⑦ 调试抽屉(复用内置 DebugDrawer:7 类日志/Agent信息/上下文构成;纯 props 驱动,headless 直接传 sdk 数据)
-const debugLogs = computed(() => sdk.value?.debugLogs.value ?? [])
+// slice() 给出新数组引用:debugLogs 是 shallowRef(push 后 triggerRef 触发重算),直传 .value 引用恒不变,
+// DebugDrawer 的 logs prop 不更新 → 生成期间日志列表冻结。新引用才能传播(与 mountChatDialog 同款修复)。
+const debugLogs = computed(() => (sdk.value?.debugLogs.value ?? []).slice())
 function getInspect() { return sdk.value!.inspect() }
 async function getSkillContent(name: string): Promise<string | null> {
   return sdk.value?.getUserSkill(name)?.content ?? null

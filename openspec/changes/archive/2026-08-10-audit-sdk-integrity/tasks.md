@@ -45,8 +45,8 @@
 - [x] 更新 `openspec/changes/README.md` 索引(本 change 状态 + chatdialog-component-split 状态修正)
 - [x] CLAUDE.md 三池/四池等确认的文档漂移修正(P3 直接改,属文档不属代码)
 - [x] commit develop(audit-report 初版 + CLAUDE.md 三处漂移修正,`d89b45b` 已推 gitee)
-- [ ] 二审定稿后补 commit(audit-report §十一 二审复核段)+ **停下询问用户是否立 fix change**
-- [ ] 归档本 change
+- [x] 二审定稿后补 commit(audit-report §十一 二审复核段)—— 随 `1cbcb96` 在 git;**P1 清零口径更正留痕**:编号 P1-1..27 全部修复,但组 6 注计入总数的未编号项「DebugDrawer 日志列表生成期间不刷新」无 fix 批次覆盖 → 登记 deferred.md「P1 残留」段(一行修复方案已给出)
+- [x] 归档本 change(2026-08-11 → `archive/2026-08-10-audit-sdk-integrity/`)
 
 ## §7 二审复核待定项(2026-08-10,后面再订)
 
@@ -59,19 +59,19 @@
 - [x] **Q4** N1 **并入 fix-main-sub-isolation**(与 H19/P1-13 同根,per-caller/per-round 基线刷新一次设计)
 - [x] **Q5** 五维(CA/SE/VM/RE/CO)**等下轮审计**(本轮 P0/P1 已饱和;CA 可能出 P1 记录在案)
 
-### 7.2 二审遗漏(报告 §11.4,待并入主表定级)
-- [ ] **N1** 同轮/并发多写乐观锁连环冲突(P2,窄触发;读码已核实)—— 并入主表 P2 或随 Q4 升级处理
-- [ ] **N2** 审计覆盖面缺口(write/draft/eval 是否产 audit 条目)—— 补一次审计事件完备性核实(P3)
-- [ ] **N3** 配置非法值无防御(contextPreset:'unknown'/maxToolRounds:-1/maxParallelTools:0 等)—— P3
-- [ ] **N4** reactive 大 bind 深度代理开销未量化 —— profiling 后定级(P2 待量化)
-- [ ] **N5** wrap-up `pendingFormatRetry` 绕 rounds 预算,实际上界 > 文档 maxIterations —— P3
+### 7.2 二审遗漏(报告 §11.4,已处置)
+- [x] **N1** 同轮/并发多写乐观锁连环冲突 —— 随 Q4 并入 fix-main-sub-isolation,**2.40.0 已修**
+- [x] **N2** 审计覆盖面缺口 —— P3,deferred.md「P3 备查」标注(未来专项价值)
+- [x] **N3** 配置非法值无防御 —— P3,deferred.md「P3 备查」标注(CO 维度种子)
+- [x] **N4** reactive 大 bind 深度代理开销未量化 —— P2,已登记 deferred.md「补充项」(待 profiling 定级)
+- [x] **N5** wrap-up `pendingFormatRetry` 绕 rounds 预算 —— P3,留报告 §四 备查(无死循环,预算语义问题)
 
 ### 7.3 拆分/定级调整建议(报告 §11.2/§11.3)
 - [x] P0 修复「排除 use_<id>」与 P1-16(spawn 自授)绑定同修 —— 已随 Q1/Q2 拍板,入 fix-authorization-surface(2026-08-11)
 - [x] fix-subagent-tooling 主题与 P1-21/22 归属 —— 随 Q2 定:改名 fix-authorization-surface,P1-21/22 归此
 - [x] fix-hang-and-feedback 是否先 design —— 随 Q3 定:先出统一超时/可见性 design
 - [x] S1 沙箱逃逸维持 P2,**已在报告 §11.3 补「外发兜底链」论证**(这条已做,留痕)
-- [ ] P2→deferred.md 登记时标注「触发概率/复现条件」(防 deferred 成冷宫)
+- [x] P2→deferred.md 登记时标注「触发概率/复现条件」—— 2026-08-11 完成:deferred.md「audit-sdk-integrity P2 登记」段,按 11 域分组 + 逐项触发概率/复现条件 + ⏸/🔁/✅ 状态标记(防冷宫)
 
 ### 7.4 新增审查方向(报告 §11.5,五维盲区)
 - [ ] **CA 并发原子性**(maxParallelTools>1 / 同轮连续写 / abort in-flight 取消 / patches 原子回滚边界)
@@ -102,4 +102,4 @@
 
 ### 8.4 待办(随后续 fix change / 发布)
 - [x] **已发布 v2.38.1**(2026-08-11):发布门禁全绿 → squash develop→master(`47c6cec`)推 Gitee+GitHub → npm publish → esm.sh 可达 + 导出齐全。上述无疑问修复随此版落地
-- [x] Q1-Q5 已拍板(2026-08-11,§7.1);fix-authorization-surface(P0-1+P1-15/16/18/21/22)**已实施并发布 v2.38.2**;fix-hang-and-feedback(组1 P1-1..7)**已实施并发布 v2.39.0**;fix-main-sub-isolation(组3 P1-13/14/17 + N1)**已实施并发布 v2.40.0**(立项复查修正 N1:原场景不可复现 → 防御加固);待立:fix-data-integrity 剩余项(P1-8/9/11/19/25/26)
+- [x] Q1-Q5 已拍板(2026-08-11,§7.1);fix-authorization-surface(P0-1+P1-15/16/18/21/22)**已实施并发布 v2.38.2**;fix-hang-and-feedback(组1 P1-1..7)**已实施并发布 v2.39.0**;fix-main-sub-isolation(组3 P1-13/14/17 + N1)**已实施并发布 v2.40.0**(立项复查修正 N1:原场景不可复现 → 防御加固);fix-data-integrity(剩余 P1-8/9/11/19/25/26)**已实施并发布 v2.41.0** → **审计 P0×1 + P1×27 全部清零**。剩余:P2×64→deferred.md 登记(带触发条件)+ 本 change 归档

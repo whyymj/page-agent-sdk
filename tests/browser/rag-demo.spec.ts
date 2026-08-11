@@ -48,11 +48,13 @@ test.describe('rag-demo: memory 异步注入链路', () => {
     expect(preview).toContain('¥99/月')
     expect(preview).toContain('## 产品 FAQ')
 
-    // 2. 捕获发往 LLM 的请求体:augmentPrompt 注入的 memory 文本会出现在 system message 里。
+    // 2. 捕获发往 LLM 的请求体:augmentPrompt 注入的 memory 文本会出现在 system 提示里。
+    //    rag-demo 走 Anthropic 协议(/v1/messages),system 提示在请求体 system 字段(非 messages),
+    //    故断言 stringify 整个请求体;兼容 OpenAI 协议(chat/completions)端点一并捕获。
     //    用 page.on('request')(与 route 正交,顺序无关)而非额外 route(会被 mockLlm 抢先 fulfill)。
     const requestBodies: any[] = []
     page.on('request', (req) => {
-      if (req.method() === 'POST' && req.url().includes('chat/completions')) {
+      if (req.method() === 'POST' && (req.url().includes('/v1/messages') || req.url().includes('chat/completions'))) {
         try {
           const body = req.postData()
           if (body) requestBodies.push(JSON.parse(body))
@@ -65,9 +67,10 @@ test.describe('rag-demo: memory 异步注入链路', () => {
     await clickSend(page)
     await waitForAgentIdle(page)
 
-    // 断言 B(核心:memory 真注入了发给 LLM 的 prompt):首轮请求体 messages 整体序列化后含 FAQ 关键词
+    // 断言 B(核心:memory 真注入了发给 LLM 的 prompt):首轮请求体整体序列化后含 FAQ 关键词
+    // (Anthropic 协议 system 提示在 system 字段;stringify 整个 body 兼容两种协议)
     expect(requestBodies.length, '应至少发出 1 轮 LLM 请求').toBeGreaterThanOrEqual(1)
-    const firstReqJson = JSON.stringify(requestBodies[0].messages || [])
+    const firstReqJson = JSON.stringify(requestBodies[0] || {})
     expect(firstReqJson, 'systemPrompt 应含 memory 注入的 FAQ 价格').toContain('¥99/月')
     expect(firstReqJson, 'systemPrompt 应含 memory 注入的 FAQ 标题').toContain('## 产品 FAQ')
     // 同时确认 demo 自身 systemPrompt(业务身份段)也在
@@ -79,10 +82,11 @@ test.describe('rag-demo: memory 异步注入链路', () => {
     await waitMemoryReady(page)
     await waitPreviewContains(page, '¥99/月')
 
-    // 捕获切换后首次 LLM 请求(切换前不发起对话,确保捕获到的是 product memory)
+    // 捕获切换后首次 LLM 请求(切换前不发起对话,确保捕获到的是 product memory);
+    // Anthropic 协议(/v1/messages)+ OpenAI 协议(chat/completions)端点均捕获
     const requestBodies: any[] = []
     page.on('request', (req) => {
-      if (req.method() === 'POST' && req.url().includes('chat/completions')) {
+      if (req.method() === 'POST' && (req.url().includes('/v1/messages') || req.url().includes('chat/completions'))) {
         try {
           const body = req.postData()
           if (body) requestBodies.push(JSON.parse(body))
@@ -108,7 +112,7 @@ test.describe('rag-demo: memory 异步注入链路', () => {
     await waitForAgentIdle(page)
 
     expect(requestBodies.length, '切换后应至少发出 1 轮 LLM 请求').toBeGreaterThanOrEqual(1)
-    const firstReqJson = JSON.stringify(requestBodies[0].messages || [])
+    const firstReqJson = JSON.stringify(requestBodies[0] || {})
     expect(firstReqJson, 'systemPrompt 应含切换后的 product memory').toContain('PageAgent Pro')
     expect(firstReqJson).toContain('产品规格 v2')
     // 旧 faq 内容应已不在(同一段 memory 被替换,而非追加)

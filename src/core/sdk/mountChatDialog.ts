@@ -41,7 +41,11 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
           },
           title: dialogCfg.title,
           placeholder: dialogCfg.placeholder,
-          debugLogs: debugLogsRef.value,
+          // slice() 每次 Wrapper 重渲染(createAgent push 后 triggerRef 触发)给出新数组引用 →
+          // ChatDialog/ChatHeader/DebugDrawer 的 prop 变化 → 生成期间日志列表/徽标实时刷新。
+          // 直传 debugLogsRef.value 则引用恒不变,子组件不重渲染,抽屉日志冻结在打开时刻(审计 P1 残留修复)。
+          // MAX_DEBUG_LOGS=300,拷贝成本可忽略。
+          debugLogs: debugLogsRef.value.slice(),
           initialMessages: core.messages,
           getInfo: () => core.getInfo(),
           onUndo: core.checkpoint ? () => core.checkpoint!.restore() : undefined,

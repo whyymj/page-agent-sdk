@@ -101,7 +101,7 @@ test.describe('customize-demo: headless 自建对话框 + 低代码 + 聚焦', (
     await expect(page.locator('.my-dialog__body .msg--user').first()).toContainText('第一条消息', { timeout: 10000 })
   })
 
-  test('调试抽屉(DebugDrawer 复用):🛠 打开 → Agent 信息 tab + 日志区', async ({ page }) => {
+  test('调试抽屉(DebugDrawer 复用):🛠 打开 → Agent 信息 tab + 日志区(生成期间实时刷新)', async ({ page }) => {
     // 初始隐藏
     await expect(page.locator('.debug-drawer')).toHaveCount(0)
     // 点 🛠 → DebugDrawer 显示(内置组件复用,纯 props 驱动)
@@ -109,6 +109,17 @@ test.describe('customize-demo: headless 自建对话框 + 低代码 + 聚焦', (
     await expect(page.locator('.debug-drawer')).toBeVisible({ timeout: 5000 })
     // Agent 信息 tab 在(getInfo 注入 sdk.inspect)
     await expect(page.locator('.debug-drawer')).toContainText('Agent 信息')
+    // 生成期间日志列表实时刷新(审计 P1 残留修复:headless 传 .slice() 新引用;
+    // 修前 computed 返回同引用不传播,抽屉冻结在打开时刻)
+    await mockLlm(page, [{ text: '收到。' }])
+    const before = await page.locator('.debug-drawer .log-item').count()
+    await page.fill('.my-dialog__footer textarea', '你好')
+    // 抽屉为 fixed 覆盖层,打开时坐标点击落在遮罩上;dispatchEvent 直接派发 click 到按钮
+    // (真实用户会先关抽屉;此处验的是抽屉打开期间的响应式刷新)
+    await page.locator('.my-dialog__send').dispatchEvent('click')
+    await expect(page.locator('.my-dialog__body .msg--assistant').last()).toContainText('收到', { timeout: 30000 })
+    const after = await page.locator('.debug-drawer .log-item').count()
+    expect(after, '抽屉保持打开,生成期间新增日志应实时出现').toBeGreaterThan(before)
     // 注:关闭由 DebugDrawer 内置关闭按钮(抽屉覆盖 header,🛠 被遮),非本测试重点
   })
 })

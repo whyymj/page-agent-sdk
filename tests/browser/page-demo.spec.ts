@@ -185,6 +185,30 @@ test.describe('page-demo: read → write → read', () => {
   })
 
   /**
+   * DebugDrawer 日志生成期间实时刷新(审计 P1 残留修复):
+   * 修前:mountChatDialog 传 debugLogsRef.value 同引用 prop,createAgent push 后 triggerRef 只触发
+   * Wrapper 重渲染,子组件 prop 引用不变 → 抽屉打开期间日志列表冻结。修复:slice() 新引用。
+   * 断言:抽屉保持打开,发消息走完 ReAct → .log-item 数量增加。
+   */
+  test('DebugDrawer:生成期间抽屉保持打开,日志列表实时刷新', async ({ page }) => {
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'read', arguments: { jsonPath: 'title' } }] },
+      { text: '读取完成。' },
+    ])
+    // 打开调试抽屉(更多菜单 → 调试 / 日志)
+    await page.click('.more-btn')
+    await page.click('.more-item[title="日志 / 执行流程 / Agent 信息"]')
+    await expect(page.locator('.debug-drawer')).toBeVisible({ timeout: 5000 })
+    const before = await page.locator('.debug-drawer .log-item').count()
+    // 抽屉保持打开,发消息走完一轮 ReAct(read → 文本)
+    await fillInput(page, '读一下标题')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    const after = await page.locator('.debug-drawer .log-item').count()
+    expect(after, '生成期间新增 llm_request/tool 日志应实时出现').toBeGreaterThan(before)
+  })
+
+  /**
    * 两步拾取(focus-context):点组件 → 选中边框 + 加入聊天按钮 → 点按钮 → 聚焦 chip。
    * 验证 page-demo 扁平 v-if 渲染 + PickOverlay 浮层 + setFocus 端到端(纯前端交互,不需 mock LLM)。
    */

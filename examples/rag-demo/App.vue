@@ -4,6 +4,8 @@
  * - memory 传异步函数,首次对话前后台加载知识库文档
  * - 演示切换知识库(setMemory 换异步函数)+ 强制刷新(refreshMemory)
  * - 演示同步函数 source 读运行时变量
+ * - LLM 走 Anthropic 原生协议(provider:'anthropic',动态 import @langchain/anthropic),
+ *   网关为 modelverse(api.modelverse.cn),模型 qwen3.8-max
  *
  * 知识库文档为内联 mock(无真实 fetch 依赖),实际使用时替换为 fetch('/kb/xxx.md')。
  */
@@ -48,10 +50,21 @@ function loadKb(name: keyof typeof KB): () => Promise<string> {
 onMounted(() => {
   agent = createChatSdk({
     id: 'rag-demo',
+    // Anthropic 协议(modelverse 网关):provider:'anthropic' 动态加载 @langchain/anthropic,
+    // SDK 在 baseUrl 后拼 /v1/messages 发 Claude 原生协议请求。
+    // 凭据走 .env(VITE_ANTHROPIC_*,不进代码/仓库;模板见 .env.example)
     llm: {
-      apiKey: import.meta.env.VITE_AI_API_KEY,
-      baseUrl: import.meta.env.VITE_AI_BASE_URL,
-      model: import.meta.env.VITE_AI_MODEL,
+      provider: 'anthropic',
+      apiKey: import.meta.env.VITE_ANTHROPIC_API_KEY,
+      // baseUrl 必须是绝对 URL(@anthropic-ai/sdk buildURL 直接 new URL(baseURL+path),相对路径抛 Invalid URL)。
+      // dev 走 vite 同源代理(vite.config.ts server.proxy:/llm → https://api.modelverse.cn):
+      // modelverse preflight 拒绝 SDK 自动附加的 x-stainless-* 遥测头,浏览器直连被 CORS 挡;
+      // 生产环境直连经 VITE_ANTHROPIC_BASE_URL 配 https://api.modelverse.cn/
+      baseUrl: import.meta.env.VITE_ANTHROPIC_BASE_URL || `${location.origin}/llm`,
+      model: import.meta.env.VITE_ANTHROPIC_MODEL || 'deepseek-v4-flash',
+      // 低于 MIN_CONTEXT_WINDOW(200K)启动即 throw,故显式声明窗口与最大输出
+      contextWindow: 200000,
+      maxOutputTokens: 8192,
     },
     systemPrompt:
       '你是知识库问答助手。只依据 memory 中的资料作答,资料未覆盖就说「知识库中未提及」。回答时引用资料来源段落。',

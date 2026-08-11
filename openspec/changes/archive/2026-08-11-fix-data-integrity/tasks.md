@@ -46,3 +46,7 @@
 
 ## §8 收尾
 - [x] commit develop + 停下询问用户是否发布(minor 2.41.0)
+
+## §9 发布记录(2026-08-11)
+- **v2.41.0 已发布**:门禁全绿(selftest 1748 / e2e 495 / browser 40 / exports 14 / types / types-alignment / size 5 / src 真错 0 / headless 纯净 / pack 22)→ master `9ca717c` squash 推 Gitee+GitHub → `npm publish` → npm view 2.41.0 + 临时安装 149 导出(renderMarkdownHtml/markedToHtml/HLJS_BLOCK_MAX_CHARS ✓)→ esm.sh 200(658KB,新导出齐全)。
+- **审计 P1 清零**:P0-1(2.38.2)+ P1-1..7(2.39.0)+ P1-12/20/23/24/27(2.38.1)+ P1-15/16/18/21/22(2.38.2)+ P1-13/14/17(2.40.0)+ P1-8/9/11/19/25/26(2.41.0)= P0×1 + P1×27 全部落地。

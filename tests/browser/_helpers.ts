@@ -1,8 +1,12 @@
 /**
  * 浏览器 E2E 测试共享:mock LLM(网络拦截 SSE)+ DOM 交互工具
  *
- * 原理:page.route() 拦截 LLM API 端点,按脚本返回 OpenAI 兼容 SSE 流,
+ * 原理:page.route() 拦截 LLM API 端点,按脚本返回 SSE 流,
  * 使 agent ReAct 循环确定性走完(read → write → read → done),不依赖真 LLM。
+ *
+ * 双协议:同时拦截 OpenAI 兼容端点(**\/chat/completions**)与 Anthropic Messages API
+ * (**\/v1/messages**,provider:'anthropic' 走此端点),按端点各自返回对应格式 SSE。
+ * 两条 route 共享同一 script/calls 计数(单 demo 只用一种协议,不会交叉消费)。
  */
 import type { Page, Route } from '@playwright/test'
 
@@ -22,36 +26,42 @@ export type MockResponse = ToolCallResponse | TextResponse
  * 拦截 LLM API 端点,按 script 顺序返回 mock 响应。
  * 超出 script 长度后返回空文本 stop(防止死循环)。
  *
+ * 同时注册两条 route:OpenAI 兼容(**\/chat/completions)与 Anthropic Messages API
+ * (**\/v1/messages);demo 用哪种 provider 就走哪条,另一条不会命中。
+ *
  * @param page Playwright Page
  * @param script LLM 响应脚本(按 ReAct 轮次顺序)
  * @returns callCount 跟踪器(用于断言调用了几轮)
  */
 export async function mockLlm(page: Page, script: MockResponse[], delays?: number[]): Promise<{ calls: () => number }> {
   let calls = 0
-  await page.route('**/chat/completions**', async (route: Route) => {
+  // 两条 route 共用的处理逻辑,仅 SSE 序列化器不同(OpenAI chunk 格式 vs Anthropic event 格式)
+  const makeHandler = (build: (resp: MockResponse, idx: number) => string) => async (route: Route) => {
     // SDK 内部 LLM 调用(autoTitle 会话标题生成,首轮完成后异步触发)非 agent 主 ReAct 链:
     // 识别其特征 system 提示后返回固定标题,不消费 script 项,保主链 mock 顺序确定(queue/nested 等精确依赖 script 顺序的 spec 不被错位)
+    // (anthropic 格式下该提示在 body 的 system 字段,includes 同样命中)
     const body = route.request().postData() || ''
     if (body.includes('生成一个简短的中文标题')) {
       return route.fulfill({
         status: 200,
         contentType: 'text/event-stream',
         headers: { 'cache-control': 'no-cache', 'connection': 'keep-alive' },
-        body: toSse({ text: '测试会话标题' }, -1),
+        body: build({ text: '测试会话标题' }, -1),
       })
     }
     const idx = calls++
     const delay = delays?.[idx] ?? 0
     if (delay > 0) await new Promise((r) => setTimeout(r, delay))
     const resp = script[idx] ?? { text: '完成' }
-    const sse = toSse(resp, idx)
     route.fulfill({
       status: 200,
       contentType: 'text/event-stream',
       headers: { 'cache-control': 'no-cache', 'connection': 'keep-alive' },
-      body: sse,
+      body: build(resp, idx),
     })
-  })
+  }
+  await page.route('**/chat/completions**', makeHandler(toSse))
+  await page.route('**/v1/messages**', makeHandler(toAnthropicSse))
   return { calls: () => calls }
 }
 
@@ -116,6 +126,66 @@ function sseChunk(id: string, created: number, model: string, choice: Record<str
     id, object: 'chat.completion.chunk', created, model,
     choices: [{ index: 0, ...choice }],
   })
+}
+
+/**
+ * 把一个 mock 响应转成 Anthropic Messages API SSE 流(event:/data: 事件序列)。
+ * 事件链:message_start → content_block(start/delta/stop)→ message_delta → message_stop。
+ * tool_calls 用 tool_use content_block(input_json_delta 填参数),文本用 text content_block(text_delta)。
+ * 注意 system 提示不在 messages 里 —— Anthropic 协议请求体单独用 system 字段承载(断言时 stringify 整个 body)。
+ */
+function toAnthropicSse(resp: MockResponse, idx: number): string {
+  const events: string[] = []
+  events.push(anthEvent('message_start', {
+    type: 'message_start',
+    message: {
+      id: `msg_mock_${idx}`, type: 'message', role: 'assistant', model: 'mock',
+      content: [], stop_reason: null, stop_sequence: null,
+      usage: { input_tokens: 10, output_tokens: 0 },
+    },
+  }))
+  if ('tool_calls' in resp) {
+    resp.tool_calls.forEach((tc, i) => {
+      events.push(anthEvent('content_block_start', {
+        type: 'content_block_start', index: i,
+        content_block: { type: 'tool_use', id: `toolu_${idx}_${i}`, name: tc.name, input: {} },
+      }))
+      events.push(anthEvent('content_block_delta', {
+        type: 'content_block_delta', index: i,
+        delta: { type: 'input_json_delta', partial_json: JSON.stringify(tc.arguments) },
+      }))
+      events.push(anthEvent('content_block_stop', { type: 'content_block_stop', index: i }))
+    })
+  } else {
+    // 文本响应:content_block(text)+ 分片 text_delta(与 toSse 同样切两段,验证流式拼接)
+    const text = resp.text
+    const mid = Math.ceil(text.length / 2)
+    events.push(anthEvent('content_block_start', {
+      type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' },
+    }))
+    if (mid > 0) {
+      events.push(anthEvent('content_block_delta', {
+        type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: text.slice(0, mid) },
+      }))
+      if (text.length > mid) {
+        events.push(anthEvent('content_block_delta', {
+          type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: text.slice(mid) },
+        }))
+      }
+    }
+    events.push(anthEvent('content_block_stop', { type: 'content_block_stop', index: 0 }))
+  }
+  events.push(anthEvent('message_delta', {
+    type: 'message_delta',
+    delta: { stop_reason: 'tool_calls' in resp ? 'tool_use' : 'end_turn', stop_sequence: null },
+    usage: { output_tokens: 5 },
+  }))
+  events.push(anthEvent('message_stop', { type: 'message_stop' }))
+  return events.join('\n\n') + '\n\n'
+}
+
+function anthEvent(event: string, data: unknown): string {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}`
 }
 
 // ===== DOM 交互工具(绕过 ref 失效问题,用选择器定位) =====
