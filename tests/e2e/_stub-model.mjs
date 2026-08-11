@@ -46,6 +46,8 @@ export class StubChatModel extends BaseChatModel {
   /** stream 路径(createAgent 用):yield ChatGenerationChunk,基类 stream 会 yield chunk.message 给聚合 */
   async *_streamResponseChunks(_messages, _opts, _runm) {
     const resp = this._next()
+    // delayMs:响应前延迟(测子 agent 超时 race 等时序场景,fix-main-sub-isolation)
+    if (resp.delayMs) await new Promise((r) => setTimeout(r, resp.delayMs))
     if (resp.throw) {
       // throw:string 自动构造 Error;默认 status:400(4xx 非 retryable,防 withRetry 把普通 Error 当网络错误重试 ——
       //   retry.ts isRetryable 对 status undefined 的 Error 返 true,会重试致错误恢复/batch 测语义错乱)

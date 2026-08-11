@@ -1,10 +1,12 @@
 # 活跃 Changes 优先级索引
 
+> **fix-main-sub-isolation(已实施,2026-08-11,待发布)**:审计组 3 三项 + N1(Q4 并入)。① per-scope 乐观锁基线(P1-13:baselines Map + activeScope,子 read/write 不污染主基线,父过期写冲突承诺对进程内 agent 间恢复)+ N1 防御加固(立项复查:原场景不可复现,写成功即刷基线 + 解析→检查同步无间隙;契约注释 + 回归测试锁定「同 scope 连续写不冲突」);② spawn_agents allSettled(P1-14:逐任务结算,聚合 ✓/✗,单失败不拖垮整批);③ 子 usage 回传 core.usage(P1-17a:normalizeUsage 纯函数共用)+ 子执行超时(P1-17b:subagent.timeoutMs opt-in,链式 abort)。selftest 1722 / e2e 482。见 `2026-08-11-fix-main-sub-isolation/`。
+
+> **2026-08-11 发布 2.39.0**:`fix-hang-and-feedback` 实施完成并归档 —— 审计组 1 七项(P1-1..7,挂起与反馈)。三契约:**超时默认值表**(无响应方 approval/humanConfirm 30s 自动拒 + `APPROVAL_AUTO_REJECTED` / MCP 握手 15s 降级 / skills fetch 30s / LLM 流停滞 90s 看门狗 `streamStallMs`)+ **可见性**(兜底收口必留痕)+ **abort 收口**(activeControllers 注册表;send/batch 接 signal 可中断;unmount/switchSession/resetSession 先断流;stop() 清排队记 debugLogs)。D-1/D-2 拍板落地。见 `archive/2026-08-11-fix-hang-and-feedback/`。
+
 > **2026-08-11 发布 2.38.2**:`fix-authorization-surface` 实施完成并归档 —— 审计 P0-1(子 agent allowedTools 装配断层:rag/html 能力包 vfs 工具恒不可见)+ P1-15/16/18/21/22(子栈继承 approval/permissions + approval_request 直通转发 / spawn 自授收紧 + 装配期源头 filter / writablePaths guard 补根写拦截 / focus strict 兑现 + eval_script 拦截 / permissions 根 scope 校验 / 子 offload 桥接主 vfs)。Q1-Q5 拍板落地。见 `archive/2026-08-11-fix-authorization-surface/`。
 
-> **fix-hang-and-feedback(已实施,2026-08-11,待发布)**:审计组 1 七项(P1-1..7,挂起与反馈)。三契约:超时默认值表(无响应方 approval 30s 自动拒 / MCP 15s / skills 30s / 流停滞 90s)+ 可见性事件 + abort 收口(activeControllers + send/batch signal + unmount/switchSession 断流)。D-1/D-2 拍板落地。selftest 1709 / e2e 469。见 `2026-08-11-fix-hang-and-feedback/`。
-
-> **audit-sdk-integrity(进行中)**:SDK 完整性审计 —— 产出 `2026-08-10-audit-sdk-integrity/audit-report.md`(**P0×1 + P1×27** + P2×64 + P3×33,H1-H28 全落结论;§十一 二审复核)。**P0 已修(2.38.2)**;无疑问 P1 已修(2.38.1);组 1 design 已出(评审中)。待立:fix-main-sub-isolation(组3 + N1 per-caller 基线)/ fix-data-integrity 剩余项;P2→deferred.md 登记(带触发条件)。见 `2026-08-10-audit-sdk-integrity/`。
+> **audit-sdk-integrity(进行中)**:SDK 完整性审计 —— 产出 `2026-08-10-audit-sdk-integrity/audit-report.md`(**P0×1 + P1×27** + P2×64 + P3×33,H1-H28 全落结论;§十一 二审复核)。**P0 已修(2.38.2)**;无疑问 P1 已修(2.38.1);组 1 七项已修(**2.39.0**);组 3 三项+N1 已修(**fix-main-sub-isolation,待发布**)。待立:fix-data-integrity 剩余项(P1-8/9/11/19/25/26);P2→deferred.md 登记(带触发条件)。见 `2026-08-10-audit-sdk-integrity/`。
 
 > **2026-08-10 发布 2.37.0**:`add-capability-packs` 实施完成并归档(专用子 agent 工厂 `createRagSubagent`/`createHtmlSubagent` + 子 agent 架构扩展 `allowedTools`/`middleware`/`summarization` + `sdk.vfsWrite` + `rag-search`/`html-builder` skill + `rag-subagent-demo`/`html-subagent-demo` + augmentPrompt 委派引导)。见 `archive/2026-08-10-add-capability-packs/`。
 

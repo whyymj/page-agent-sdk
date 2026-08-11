@@ -102,4 +102,4 @@
 
 ### 8.4 待办(随后续 fix change / 发布)
 - [x] **已发布 v2.38.1**(2026-08-11):发布门禁全绿 → squash develop→master(`47c6cec`)推 Gitee+GitHub → npm publish → esm.sh 可达 + 导出齐全。上述无疑问修复随此版落地
-- [x] Q1-Q5 已拍板(2026-08-11,§7.1);fix-authorization-surface(P0-1+P1-15/16/18/21/22)**已实施并发布 v2.38.2**;待立:fix-hang-and-feedback(先 design)/ fix-main-sub-isolation(含 N1)
+- [x] Q1-Q5 已拍板(2026-08-11,§7.1);fix-authorization-surface(P0-1+P1-15/16/18/21/22)**已实施并发布 v2.38.2**;fix-hang-and-feedback(组1 P1-1..7)**已实施并发布 v2.39.0**;fix-main-sub-isolation(组3 P1-13/14/17 + N1)**已实施待发布**(立项复查修正 N1:原场景不可复现 → 防御加固);待立:fix-data-integrity 剩余项(P1-8/9/11/19/25/26)

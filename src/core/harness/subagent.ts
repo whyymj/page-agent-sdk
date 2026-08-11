@@ -20,13 +20,14 @@ import { createAgent } from './createAgent'
 import { createSkillsMiddleware, type SkillSpec } from './skills'
 import type { Middleware } from './middleware'
 import { runPool } from '../utils/pool'
-import type { StreamEvent } from '../types'
+import type { StreamEvent, TokenUsage } from '../types'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { resolveModelCaps, MIN_CONTEXT_WINDOW } from '../utils/modelCaps'
 import { createFocusMiddleware } from './focus'
 import { createSummarizationMiddleware, type SummarizationOptions } from './summarization'
 import type { Focus, VfsFile } from './state'
 import type { ZodType } from 'zod'
+import { normalizeUsage } from '../utils/contentParts'
 
 /** 子 agent 的工具调用进度(只转发 tool_call/tool_result,不含文本/思考) */
 type SubProgress = Extract<StreamEvent, { type: 'tool_call' | 'tool_result' }>
@@ -153,6 +154,14 @@ export interface SubagentOptions {
   guardMiddleware?: Middleware[]
   /** 主 vfs files getter(fix-authorization-surface P1-15:子 offload 大结果桥接进主 vfs 共享池,子 vfs_* 回读不 404)。不传=无桥接 */
   getVfsFiles?: () => Record<string, VfsFile>
+  /** 进入数据 scope(fix-main-sub-isolation P1-13:子 agent 委派期间 autoLock 基线归属切到子 scope,防子 read 污染主基线)。返回恢复函数;不传=无隔离(零回归) */
+  enterDataScope?: (scopeId: string) => () => void
+  /** 退出数据 scope(委派结束清子 scope 基线条目) */
+  exitDataScope?: (scopeId: string) => void
+  /** 子 agent LLM usage 回传(P1-17a:createChatSdk 累加进 core.usage;子栈无 sdk-events,经 sub-usage 中间件提取)。不传=不回传 */
+  onUsage?: (u: TokenUsage) => void
+  /** 单个子 agent 执行超时 ms(P1-17b:opt-in 默认关;超时 abort 子流 + 错误回灌 recoverable,主 LLM 可重试/拆分) */
+  timeoutMs?: number
 }
 
 /** 判定 llm 是模型实例(BaseChatModel)还是配置对象(SubagentLlmConfig) */
@@ -253,6 +262,21 @@ export function wrapWithPathGuard(t: StructuredToolInterface, prefixes: string[]
   }) as StructuredToolInterface
 }
 
+/** 包一层 scope proxy:invoke 期间切 dataOps activeScope 到 scopeId,finally 恢复(嵌套安全)。P1-13 */
+export function wrapWithScope(t: StructuredToolInterface, scopeId: string, enter: (id: string) => () => void): StructuredToolInterface {
+  return new Proxy(t, {
+    get(target, prop, receiver) {
+      if (prop === 'invoke') {
+        return async (args: unknown) => {
+          const exit = enter(scopeId)
+          try { return await target.invoke(args) } finally { exit() }
+        }
+      }
+      return Reflect.get(target, prop, receiver)
+    },
+  }) as StructuredToolInterface
+}
+
 /**
  * 构造并跑一个子 agent,返回最终文本结论。
  * 过程隔离:独立 state/messages;signal 继承(主停则子停);
@@ -283,6 +307,13 @@ async function runSubagent(
       .filter((t) => SUB_WRITE_TOOLS.includes(t.name) && !isReservedFrameworkTool(t.name))
       .map((t) => wrapWithPathGuard(t, opts.writablePaths!))
     childTools = [...childTools, ...guardedWrites]
+  }
+  // per-scope 乐观锁基线(P1-13):dataOps 工具(带 __dataOpsScoped marker,含 path guard Proxy 透传)包一层 scope proxy ——
+  // invoke 期间 activeScope 切到本次委派的 scopeId,子 read/write 只动子 scope 基线,主基线不被污染。
+  // 修原:主×子共享 lastReadHash 闭包变量,子 read 刷新主基线 → 父过期写静默放行覆盖外部修改
+  const scopeId = `sub-${depth}-${Math.random().toString(36).slice(2, 10)}`
+  if (opts.enterDataScope) {
+    childTools = childTools.map((t) => ((t as unknown as { __dataOpsScoped?: boolean }).__dataOpsScoped ? wrapWithScope(t, scopeId, opts.enterDataScope!) : t))
   }
   // 递归物理切断:depth+1 >= maxDepth 时子 agent 不装本中间件 → 无 spawn 工具
   const childMiddleware = depth + 1 < maxDepth ? [createSubagentMiddleware({ ...opts, depth: depth + 1 })] : []
@@ -320,6 +351,10 @@ async function runSubagent(
           : { contextWindow: subCaps.contextWindow },
       )
     : undefined
+  // P1-17a:子 LLM usage 回传(子栈无 sdk-events 中间件 → sub-usage afterModel 提取,onUsage 由 createChatSdk 累加进 core.usage;不外发 usage 事件)
+  const usageMw: Middleware | undefined = opts.onUsage
+    ? { name: 'sub-usage', afterModel: (res) => { const u = normalizeUsage(res.message); if (u) opts.onUsage!(u) } }
+    : undefined
   const child = createAgent({
     // 模型能力透传(显式声明优先,驱动子 agent offload 阈值/压缩触发,修原 16K 误算 silent bug)
     contextWindow: subCaps.contextWindow,
@@ -347,6 +382,7 @@ async function runSubagent(
       ...(vfsBridgeMw ? [vfsBridgeMw] : []),
       ...childMiddleware,
       ...(childFocusMw ? [childFocusMw] : []),
+      ...(usageMw ? [usageMw] : []),
       // P1-16(fix-authorization-surface):子栈继承主 permissions/approval(序同主栈:permissions 外层自动拒 → approval 内层人工确认)。
       // 修原「委派路径整体绕过把关」:配 approval:{tools:['write']} 的集成方,子 agent 写同样需用户确认
       ...(opts.guardMiddleware ?? []),
@@ -357,13 +393,33 @@ async function runSubagent(
     debug: opts.debug,
   })
   if (opts.debug) console.log(`[subagent] 启动子 agent(depth=${depth},工具 ${childTools.length} 个)`)
-  return child.stream([{ role: 'user', content: task.prompt, timestamp: Date.now() }], (e) => {
+  // 子流 AbortController 链(父 signal abort → 子 abort;超时独立 abort 子;fix-hang-and-feedback abort 收口同源)
+  const childAc = new AbortController()
+  const onParentAbort = () => childAc.abort()
+  signal?.addEventListener('abort', onParentAbort, { once: true })
+  // 收尾:解绑父 signal 监听 + 清子 scope 基线条目(P1-13)
+  const cleanup = () => { signal?.removeEventListener('abort', onParentAbort); opts.exitDataScope?.(scopeId) }
+  const streamP = child.stream([{ role: 'user', content: task.prompt, timestamp: Date.now() }], (e) => {
     // P1-16:approval_request 直通转发回主循环 handler(ApprovalBar 渲染/收口)—— 不包裹为进度事件,
     // 否则子栈继承的 approval 挂起永无人响应(原 forward 只转发 tool_call/tool_result)
     if (e.type === 'approval_request') { emitToMain?.(e); return }
     // 只转发工具调用进度到主 UI(文本/思考不转发:避免噪音 + 严守主上下文隔离)
     if (forward && (e.type === 'tool_call' || e.type === 'tool_result')) forward(e)
-  }, signal)
+  }, childAc.signal)
+  if (!opts.timeoutMs || opts.timeoutMs <= 0) {
+    try { return await streamP } finally { cleanup() }
+  }
+  // P1-17b:子执行超时(opt-in)—— race 超时 abort 子流并抛错(spawn 工具 catch → recoverable 回灌,主 LLM 可重试/拆小子任务)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeoutP = new Promise<never>((_, rej) => {
+    timer = setTimeout(() => {
+      childAc.abort()
+      rej(new Error(`子 agent 执行超时(${opts.timeoutMs}ms),已中止。可简化子任务或拆更小的子任务重试`))
+    }, opts.timeoutMs)
+  })
+  // 超时收口后 streamP 的 abort rejection 无人 await → 吞掉防 unhandled(同 stallTimeout 模式;正常路径 race 直接消费 streamP)
+  streamP.catch(() => {})
+  try { return await Promise.race([streamP, timeoutP]) } finally { clearTimeout(timer); cleanup() }
 }
 
 export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
@@ -433,7 +489,9 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
   const spawnMany = tool(
     async ({ tasks }) => {
       // 并发池(maxParallel):子 agent 间并行,结果按原顺序聚合;signal 继承
-      const results = await runPool(
+      // P1-14(allSettled 语义):逐任务 try/catch 结算,失败不 throw —— 修原 Promise.all 整体 reject:
+      // 一个子失败 → 已成功兄弟结果全丢 + 主 LLM 只见一条错误。现各自结算,聚合文本 ✓/✗ 逐条,主 LLM 决策如何处理
+      const results = await runPool<{ prompt: string; role?: string }, { ok: true; text: string } | { ok: false; error: string } | undefined>(
         tasks,
         maxParallel,
         async (t, i) => {
@@ -446,15 +504,24 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
           try {
             const r = await runSubagent(t, opts, currentSignal, makeForward(taskId, label), onLog, currentEmit)
             opts.tracker?.finish(taskId, 'done', r ?? '(未完成)')
-            return r
+            return { ok: true as const, text: r ?? '(未完成)' }
           } catch (e) {
-            opts.tracker?.finish(taskId, 'error', String((e as Error)?.message ?? e))
-            throw e
+            const msg = String((e as Error)?.message ?? e)
+            opts.tracker?.finish(taskId, 'error', msg)
+            return { ok: false as const, error: msg }
           }
         },
         currentSignal,
       )
-      return results.map((r, i) => `【子任务 ${i + 1}】\n${r ?? '(未完成)'}`).join('\n\n')
+      return results
+        .map((r, i) =>
+          r === undefined
+            ? `【子任务 ${i + 1}】(未完成:已中止/未启动)`
+            : r.ok
+              ? `【子任务 ${i + 1}】✓\n${r.text}`
+              : `【子任务 ${i + 1}】✗ 失败:${r.error}`,
+        )
+        .join('\n\n')
     },
     {
       name: 'spawn_agents',
@@ -528,6 +595,14 @@ export interface SubagentsMiddlewareOptions {
   guardMiddleware?: Middleware[]
   /** 主 vfs files getter(fix-authorization-surface P1-15 子 offload 桥接)。configToSubOpts 透传 */
   getVfsFiles?: () => Record<string, VfsFile>
+  /** 进入数据 scope(fix-main-sub-isolation P1-13)。configToSubOpts 透传 */
+  enterDataScope?: (scopeId: string) => () => void
+  /** 退出数据 scope(P1-13)。configToSubOpts 透传 */
+  exitDataScope?: (scopeId: string) => void
+  /** 子 usage 回传(P1-17a)。configToSubOpts 透传 */
+  onUsage?: (u: TokenUsage) => void
+  /** 子执行超时 ms(P1-17b,opt-in)。configToSubOpts 透传 */
+  timeoutMs?: number
 }
 
 /** 合法工具名校验(生成 use_<id>) */
@@ -558,6 +633,11 @@ function configToSubOpts(config: SubagentConfig, main: SubagentsMiddlewareOption
     // fix-authorization-surface:透传把关中间件(P1-16)+ vfs 桥接(P1-15)
     ...(main.guardMiddleware?.length ? { guardMiddleware: main.guardMiddleware } : {}),
     ...(main.getVfsFiles ? { getVfsFiles: main.getVfsFiles } : {}),
+    // fix-main-sub-isolation:per-scope 基线(P1-13)+ 子 usage 回传(P1-17a)+ 子执行超时(P1-17b)
+    ...(main.enterDataScope ? { enterDataScope: main.enterDataScope } : {}),
+    ...(main.exitDataScope ? { exitDataScope: main.exitDataScope } : {}),
+    ...(main.onUsage ? { onUsage: main.onUsage } : {}),
+    ...(main.timeoutMs !== undefined ? { timeoutMs: main.timeoutMs } : {}),
   }
 }
 

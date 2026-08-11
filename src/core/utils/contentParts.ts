@@ -5,8 +5,10 @@
  * - `extractTextDelta`:文本 delta(OpenAI string content / Anthropic parts 数组 `{type:'text',text}`)
  * - `extractReasoningDelta`:推理 delta(DeepSeek `additional_kwargs.reasoning_content` / Anthropic parts `{type:'thinking',thinking}`)
  * - `extractUsage`:token 用量(OpenAI `additional_kwargs.usage` / Anthropic `response_metadata.usage`)
+ * - `normalizeUsage`:原始 usage → TokenUsage 归一(camelCase 兼容;fix-main-sub-isolation:sdk-events 与子栈 sub-usage 共用)
  */
 import type { AIMessageChunk, BaseMessage } from '@langchain/core/messages'
+import type { TokenUsage } from '../types'
 
 /** 从流式 chunk 提取文本 delta(兼容 OpenAI/DeepSeek string content 与 Anthropic parts 数组) */
 export function extractTextDelta(chunk: AIMessageChunk): string {
@@ -51,5 +53,20 @@ export function extractReasoningDelta(chunk: AIMessageChunk): string {
  */
 export function extractUsage(message: BaseMessage): any {
   const m = message as any
-  return m?.additional_kwargs?.usage ?? m?.response_metadata?.usage ?? m?.response_metadata?.token_usage ?? undefined
+  return m?.additional_kwargs?.usage ?? m?.response_metadata?.usage ?? m?.response_metadata?.token_usage ?? m?.response_metadata?.tokenUsage ?? undefined
+}
+
+/**
+ * 原始 usage 对象 → 归一 TokenUsage(fix-main-sub-isolation P1-17a:sdk-events afterModel 与子栈 sub-usage 中间件共用,消重)。
+ * 兼容 snake_case(prompt_tokens)与 camelCase(promptTokens);total 缺省取 prompt+completion;全 0/无效 → null。
+ */
+export function normalizeUsage(message: BaseMessage): TokenUsage | null {
+  const u = extractUsage(message)
+  if (!u || typeof u !== 'object') return null
+  const rec = u as Record<string, unknown>
+  const p = Number(rec.prompt_tokens ?? rec.promptTokens ?? 0) || 0
+  const c = Number(rec.completion_tokens ?? rec.completionTokens ?? 0) || 0
+  const t = Number(rec.total_tokens ?? rec.totalTokens ?? (p + c)) || 0
+  if (!p && !c && !t) return null
+  return { prompt_tokens: p, completion_tokens: c, total_tokens: t }
 }

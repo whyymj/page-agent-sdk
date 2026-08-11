@@ -22,6 +22,7 @@ import { run as runHeadlessSubpath } from './e2e/headless-subpath.mjs'
 import { run as runCapabilityPacks } from './e2e/capability-packs.mjs'
 import { run as runAuthorizationSurface } from './e2e/authorization-surface.mjs'
 import { run as runHangFeedback } from './e2e/hang-feedback.mjs'
+import { run as runMainSubIsolation } from './e2e/main-sub-isolation.mjs'
 
 const modules = [
   ['systemprompt', runSystemprompt],
@@ -45,6 +46,7 @@ const modules = [
   ['capability-packs', runCapabilityPacks],
   ['authorization-surface', runAuthorizationSurface],
   ['hang-feedback', runHangFeedback],
+  ['main-sub-isolation', runMainSubIsolation],
 ]
 
 let totalPass = 0, totalFail = 0

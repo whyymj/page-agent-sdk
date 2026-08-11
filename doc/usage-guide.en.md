@@ -173,7 +173,7 @@ createChatSdk({
   verify: { check?, maxAttempts?, adversarial? },  // check omitted → createWriteBackCheck
 
   // subagents
-  subagent: { allowedTools?, systemPrompt?, temperature?, llm?, maxDepth?, maxParallel? },
+  subagent: { allowedTools?, systemPrompt?, temperature?, llm?, maxDepth?, maxParallel?, timeoutMs? },
   subagents: [{ id, description, ... }],  // pre-declared → generates use_<id> tool
 
   // context
@@ -402,9 +402,9 @@ sdk.hook((e) => {
 
 #### Optimistic lock under concurrent tools (`maxParallelTools > 1`)
 
-`autoLock` (default `true`) makes `write` verify the optimistic-lock hash automatically: it reuses **the whole-bind hash from the LLM's most recent `read`** (an internal shared `lastReadHash`) for whole-snapshot comparison, so integrators don't pass `expectedHash` by hand. In a serial single-tool flow this is equivalent to "write based on the value I just read".
+`autoLock` (default `true`) makes `write` verify the optimistic-lock hash automatically: it reuses **the whole-bind hash from the LLM's most recent `read`** (an internal baseline, caller-scoped since 2.40 — a subagent's read/write uses its own scope baseline and never pollutes the main agent's) for whole-snapshot comparison, so integrators don't pass `expectedHash` by hand. In a serial single-tool flow this is equivalent to "write based on the value I just read".
 
-**Under concurrent tools, `autoLock` degrades to "whole-snapshot semantics".** When `maxParallelTools > 1`, multiple `read`s in the same round **concurrently write the same shared `lastReadHash`** with nondeterministic completion order, and a subsequent `write` compares against "**the whole hash of whichever `read` finished last**" — "is this write using the hash from *my own* read?" is **not reproducible** across tools. This doesn't break the safety boundary (it's still whole-snapshot validation; conflicts are still caught), but you lose the "each write corresponds precisely to its own read" semantics.
+**Under concurrent tools, `autoLock` degrades to "whole-snapshot semantics".** When `maxParallelTools > 1`, multiple `read`s in the same round **concurrently write the same baseline (main scope)** with nondeterministic completion order, and a subsequent `write` compares against "**the whole hash of whichever `read` finished last**" — "is this write using the hash from *my own* read?" is **not reproducible** across tools. This doesn't break the safety boundary (it's still whole-snapshot validation; conflicts are still caught), but you lose the "each write corresponds precisely to its own read" semantics. (Consecutive *writes* in the same scope are unaffected: each successful write refreshes the baseline, so an agent's own consecutive writes never conflict with each other.)
 
 **When you need precise optimistic locking under concurrency: have the LLM pass `expectedHash` explicitly.** Take the `hash` returned by its own `read` and pass it back in `write`:
 
@@ -621,6 +621,13 @@ Delegation shares the same authorization/interception surface as the main agent 
 - **spawn self-grant limits**: spawn_agent's `tools` param cannot grant write tools (write access only via `writablePaths`, path-guarded); `patches` containing an item without jsonPath (acts on root) → PATH_OUT_OF_SCOPE.
 - **Child offload bridges main vfs**: a subagent's offloaded large results land in the main vfs shared pool — readable via vfs_read from both sides (no 404).
 - **Capability-pack allowedTools now work**: the vfs tools of `createHtmlSubagent`/`createRagSubagent` (middleware-injected) are now resolved at assembly (2.37 assembly gap fixed).
+
+#### Main×sub isolation: baseline scoping, per-task settlement, usage & timeout (2.40+)
+
+- **Per-scope optimistic-lock baseline**: main and subagents share one dataOps controller; the autoLock baseline is now keyed by caller scope — a subagent's read/write only touches its own scope's baseline. Parent reads → delegates → external change happens → parent's stale write now conflicts as promised (previously the child's read refreshed the shared baseline, silently letting the stale write overwrite the external change).
+- **spawn_agents settles per task (allSettled)**: one failing subtask no longer rejects the whole batch (losing successful siblings' results) — each task settles independently; the aggregated result marks each `【Subtask N】✓/✗` (failures carry the error summary) and the main LLM decides how to proceed.
+- **Child tokens counted**: subagent LLM usage accumulates into `sdk.usage` (automation `tokenBudget` accounting is complete). No extra `usage` events are emitted for child rounds.
+- **Child execution timeout (opt-in)**: `subagent: { timeoutMs }` — per-subagent timeout; on expiry the child stream is aborted and a recoverable error is fed back to the main LLM (retry / split into smaller subtasks). Default off (long-running subagents such as html-builder are not killed by accident).
 
 ### 6.2 Custom tools
 

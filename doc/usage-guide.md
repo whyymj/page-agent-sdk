@@ -453,9 +453,9 @@ sdk.hook((e) => {
 
 #### 乐观锁与并发工具(`maxParallelTools > 1`)
 
-`autoLock`(默认 `true`)让 `write` 自动比对乐观锁 hash:它复用 **LLM 最近一次 `read` 返回的整体 bind hash**(内部共享的 `lastReadHash`)做整体快照比对,集成方无需手传 `expectedHash`。单工具串行场景下这等价于"基于我自己刚 read 的值写入"。
+`autoLock`(默认 `true`)让 `write` 自动比对乐观锁 hash:它复用 **LLM 最近一次 `read` 返回的整体 bind hash**(内部基线,2.40+ 按 caller scope 隔离 —— 子 agent 的 read/write 用独立基线,不污染主 agent)做整体快照比对,集成方无需手传 `expectedHash`。单工具串行场景下这等价于"基于我自己刚 read 的值写入"。
 
-**并发工具下,`autoLock` 退化为"整体快照语义"。** 当 `maxParallelTools > 1` 时,同一轮的多个 `read` 会**并发写同一个共享 `lastReadHash`**,完成顺序不确定,后续 `write` 比对的是"**最后完成的那个 `read` 的整体 hash**"——跨工具维度"我这个 write 用的是我自己那次 read 的 hash 吗"**不可重现**。这不破坏安全边界(仍是整体快照校验,冲突仍能被捕获),但失去了"每个 write 精确对应它自己的 read"的语义。
+**并发工具下,`autoLock` 退化为"整体快照语义"。** 当 `maxParallelTools > 1` 时,同一轮的多个 `read` 会**并发写同一基线(主 scope)**,完成顺序不确定,后续 `write` 比对的是"**最后完成的那个 `read` 的整体 hash**"——跨工具维度"我这个 write 用的是我自己那次 read 的 hash 吗"**不可重现**。这不破坏安全边界(仍是整体快照校验,冲突仍能被捕获),但失去了"每个 write 精确对应它自己的 read"的语义。(同 scope 连续**写**不受此影响:每次写成功即刷新基线,agent 自己连续写自己永不互相冲突。)
 
 **并发场景需要精确乐观锁时:让 LLM 显式传 `expectedHash`。** 取它自己那次 `read` 返回值里的 `hash`,在 `write` 里回传:
 
@@ -1008,6 +1008,7 @@ createChatSdk({
     allowedTools: ['myResearchTool'],  // 子 agent 可用的额外工具(默认仅只读主数据 + fetch)
     maxDepth: 1,    // 递归深度(默认 1:主可 spawn,子不可再 spawn)
     maxParallel: 4, // spawn_agents 并发上限(默认 4)
+    // timeoutMs: 300000, // 单个子 agent 执行超时(2.40+,opt-in 默认关;超时 abort 子流,错误回灌主 LLM 可重试/拆分)
     // enabled: false  // 关闭子 agent
   },
   maxParallelTools: 1,  // 同轮工具并发(默认 1 串行;与 subagent.maxParallel 不同)
@@ -1019,6 +1020,9 @@ createChatSdk({
 - **只读默认**:子 agent 默认只用只读工具(window 只读 + fetch),不直接改页面;写回交主 agent。经 `allowedTools` 放开额外工具。
 - **signal 继承**:主对话停止 → 子 agent 也停。
 - **进度展示**:子 agent 跑时,对话框里 `spawn_agents` 步骤下方**实时嵌套显示**每个子 agent 正在调用的工具(如 `[子任务1] get_source ✅`)。子过程**只进 UI、不进主上下文**。
+- **乐观锁基线隔离(2.40+)**:子 agent 的 read/write 使用**独立的 autoLock 基线**(per-scope),子 read 不再刷新主的基线 —— 父委派前 read、期间数据被外部改过、委派回来再写 → 照常触发冲突(修前:子 read 掩盖外部修改 → 父过期写静默覆盖)。
+- **spawn_agents 逐项结算(2.40+)**:单个子任务失败不再拖垮整批 —— 各子任务独立成功/失败,聚合结果按 `【子任务 N】✓/✗` 逐条标注,失败带错误摘要,由主 LLM 决策如何处理。
+- **子 token 计入用量(2.40+)**:子 agent 的 LLM 消耗累加进 `sdk.usage`(automation `tokenBudget` 口径完整)。
 
 **自定义子 agent**(4 层级,从简到繁):
 - ① **配置级**:`subagent: { allowedTools, maxDepth, maxParallel, enabled }` —— 放开子 agent 可用工具、控制递归/并发

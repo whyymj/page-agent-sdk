@@ -37,4 +37,5 @@
 - [x] e2e:headless send 征询自动拒 / unmount 断流 / send(signal) abort / MCP 黑洞降级
 - [x] browser:human-confirm 既有回归(+ 可选短 streamStallMs 停滞模拟)
 - [x] 门禁全套 + 计数同步 + 文档(CLADE.md/README 中英文/usage-guide 中英文)
-- [ ] commit develop;询问用户是否发布
+- [x] commit develop(`e5e7605` 实施 + `15a8f55` 索引);用户批准发布
+- [x] **已发布 v2.39.0**(2026-08-11):门禁全绿(selftest 1709 / e2e 469 / browser 40 / exports 14 / types / types-alignment / size 5 / src 真错 0)→ squash develop→master(`a58eaa4`)推 Gitee+GitHub → npm publish → esm.sh 可达(640KB)+ 导出齐全。本 change 归档

@@ -76,6 +76,7 @@ import { indexSummarize } from '../composables/contextIndex'
 import { extractVfsRefs, gcVfsLargeResults } from '../utils/vfsGc'
 import { DEFAULT_STREAM_STALL_MS } from '../utils/stallTimeout'
 import { createSerialRunner } from '../utils/serialRunner'
+import { normalizeUsage } from '../utils/contentParts'
 import type { AgentMessage, StreamHandler, AgentInfo, SdkEvent, SdkEventHandler, TokenUsage, BatchResult, BatchProgress } from '../types'
 import type { ToolCallContext } from '../harness/middleware'
 
@@ -252,7 +253,7 @@ export interface ChatSdkOptions {
     agentCompression?: boolean // 压缩 agent 自主决策(默认 false;opt-in,开 + summaryLlm 可用 → decide 驱动压缩,失败降级静态;requires summarization)
   }
   /** 子 agent 委派(spawn_agent/spawn_agents);默认开启,{ enabled: false } 关闭 */
-  subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | BaseChatModel; maxDepth?: number; maxParallel?: number }
+  subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | BaseChatModel; maxDepth?: number; maxParallel?: number; timeoutMs?: number }
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[]
   /** 自检:agent 返回前跑 check,不通过则 feedback 回灌自纠(默认关闭)。需 capabilities.verify:true 开启;check 必填(期三起可省略,默认用 createWriteBackCheck) */
@@ -736,18 +737,13 @@ function createSdkEventMiddleware(emit: SdkEventHandler, messages: AgentMessage[
       return result
     },
     afterModel: (res) => {
-      // 从 LLM 响应消息提取 usage(OpenAI/DeepSeek 在 additional_kwargs.usage;部分 provider 在 response_metadata.token_usage/usage)
-      const ak = (res.message as any).additional_kwargs || {}
-      const rm = (res.message as any).response_metadata || {}
-      const u: any = ak.usage || rm.usage || rm.token_usage || rm.tokenUsage
-      if (u && typeof u === 'object') {
-        const p = Number(u.prompt_tokens ?? u.promptTokens ?? 0) || 0
-        const c = Number(u.completion_tokens ?? u.completionTokens ?? 0) || 0
-        const t = Number(u.total_tokens ?? u.totalTokens ?? (p + c)) || 0
-        const roundUsage: TokenUsage = { prompt_tokens: p, completion_tokens: c, total_tokens: t }
-        usage.prompt_tokens = (usage.prompt_tokens ?? 0) + p
-        usage.completion_tokens = (usage.completion_tokens ?? 0) + c
-        usage.total_tokens = (usage.total_tokens ?? 0) + t
+      // 从 LLM 响应消息提取 usage 归一(normalizeUsage:OpenAI/DeepSeek additional_kwargs.usage + Anthropic response_metadata.usage + camelCase 兼容;
+      // fix-main-sub-isolation P1-17a:与子栈 sub-usage 中间件共用同一归一函数)
+      const roundUsage = normalizeUsage(res.message)
+      if (roundUsage) {
+        usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (roundUsage.prompt_tokens ?? 0)
+        usage.completion_tokens = (usage.completion_tokens ?? 0) + (roundUsage.completion_tokens ?? 0)
+        usage.total_tokens = (usage.total_tokens ?? 0) + (roundUsage.total_tokens ?? 0)
         roundCounter++
         emit({ type: 'usage', round: roundCounter, usage: roundUsage, cumulative: { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, total_tokens: usage.total_tokens } })
       }
@@ -1099,6 +1095,11 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           // fix-authorization-surface:子栈把关中间件(P1-16)+ 子 offload 桥接主 vfs 池(P1-15)
           guardMiddleware: childGuards.length ? childGuards : undefined,
           getVfsFiles: useVfs ? () => vfsStore.files : undefined,
+          // fix-main-sub-isolation:per-scope 乐观锁基线(P1-13,子 read/write 不污染主基线)+ 子 usage 回传(P1-17a)+ 子执行超时(P1-17b,opt-in)
+          enterDataScope: dataOpsController?.enterScope ? (id) => dataOpsController.enterScope!(id) : undefined,
+          exitDataScope: dataOpsController?.exitScope ? (id) => dataOpsController.exitScope!(id) : undefined,
+          onUsage: (u) => { usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0); usage.completion_tokens = (usage.completion_tokens ?? 0) + (u.completion_tokens ?? 0); usage.total_tokens = (usage.total_tokens ?? 0) + (u.total_tokens ?? 0) },
+          timeoutMs: subOpts?.timeoutMs,
         })
 
   // 预声明子 agent(subagents:[] → 每个 use_<id> 委派工具;与上面 spawn 中间件共存)
@@ -1106,7 +1107,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 注:subagents:[](空数组)也创建 controller,支持「初始无子 agent,运行时动态 add」场景(不依赖 length 判定)
   // capabilities.subagent 关闭时不创建(与 spawn 中间件一致)
   const subagentsMw = useSubagent && options.subagents !== undefined
-    ? createSubagentsMiddleware(options.subagents, { llm: options.llm, allTools: () => core.agent?.allTools ?? allTools, debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null, tracker: subagentTracker, guardMiddleware: childGuards.length ? childGuards : undefined, getVfsFiles: useVfs ? () => vfsStore.files : undefined })
+    ? createSubagentsMiddleware(options.subagents, { llm: options.llm, allTools: () => core.agent?.allTools ?? allTools, debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null, tracker: subagentTracker, guardMiddleware: childGuards.length ? childGuards : undefined, getVfsFiles: useVfs ? () => vfsStore.files : undefined, enterDataScope: dataOpsController?.enterScope ? (id) => dataOpsController.enterScope!(id) : undefined, exitDataScope: dataOpsController?.exitScope ? (id) => dataOpsController.exitScope!(id) : undefined, onUsage: (u) => { usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0); usage.completion_tokens = (usage.completion_tokens ?? 0) + (u.completion_tokens ?? 0); usage.total_tokens = (usage.total_tokens ?? 0) + (u.total_tokens ?? 0) }, timeoutMs: options.subagent?.timeoutMs })
     : undefined
   const subagentsController = subagentsMw ? (subagentsMw as any).controller as import('../harness/subagent').SubagentsController : null
 

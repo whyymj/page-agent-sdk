@@ -21,7 +21,7 @@ export { createProxyLlm } from './llm/proxyLlm'
 export type { ProxyLlmMode, ProxyLlmOptions } from './llm/proxyLlm'
 export { constructLlmFromConfig, constructOpenLlmSync } from './llm/constructLlm'
 export type { ConstructOpts } from './llm/constructLlm'
-export { extractTextDelta, extractReasoningDelta, extractUsage } from './utils/contentParts'
+export { extractTextDelta, extractReasoningDelta, extractUsage, normalizeUsage } from './utils/contentParts'
 // SDK 命令式入口(headless:不注入 mountChatDialog → 不含 UI)
 import { _createChatSdk } from './sdk/createChatSdk'
 import type { ChatSdkOptions, ChatSdk } from './sdk/createChatSdk'

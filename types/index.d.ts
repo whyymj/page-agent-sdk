@@ -29,6 +29,8 @@ export declare function extractTextDelta(chunk: import('@langchain/core/messages
 export declare function extractReasoningDelta(chunk: import('@langchain/core/messages').AIMessageChunk): string;
 /** 从响应消息提取 token usage(OpenAI additional_kwargs.usage + Anthropic response_metadata.usage) */
 export declare function extractUsage(message: import('@langchain/core/messages').BaseMessage): any;
+/** 原始 usage → 归一 TokenUsage(camelCase 兼容;fix-main-sub-isolation:sdk-events 与子栈 sub-usage 共用);全 0/无效返 null */
+export declare function normalizeUsage(message: import('@langchain/core/messages').BaseMessage): TokenUsage | null;
 
 export interface ToolStep {
   name: string;
@@ -780,7 +782,7 @@ export interface ChatSdkOptions {
   maxOutputTokens?: number;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
   capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; tracing?: boolean; todoDeps?: boolean; automation?: boolean; workingMemory?: boolean; focus?: boolean; skillHostScript?: boolean; contextInspector?: boolean; agentCompression?: boolean };
-  subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number };
+  subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number; timeoutMs?: number };
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[];
   /** 自检:agent 返回前跑 check,不通过则 feedback 回灌自纠(默认关闭;需 capabilities.verify:true)。check 省略时默认 createWriteBackCheck 写后读回验证 */

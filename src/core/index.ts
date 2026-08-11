@@ -11,7 +11,7 @@ export { createProxyLlm } from './llm/proxyLlm'
 export type { ProxyLlmMode, ProxyLlmOptions } from './llm/proxyLlm'
 export { constructLlmFromConfig, constructOpenLlmSync } from './llm/constructLlm'
 export type { ConstructOpts } from './llm/constructLlm'
-export { extractTextDelta, extractReasoningDelta, extractUsage } from './utils/contentParts'
+export { extractTextDelta, extractReasoningDelta, extractUsage, normalizeUsage } from './utils/contentParts'
 // SDK 命令式入口(主入口:注入 mountChatDialog → 含 UI;headless 子路径 index.headless.ts 不注入 → 不含 UI)
 import { _createChatSdk } from './sdk/createChatSdk'
 import { mountChatDialog } from './sdk/mountChatDialog'
