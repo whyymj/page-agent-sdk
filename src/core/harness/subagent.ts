@@ -25,7 +25,7 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { resolveModelCaps, MIN_CONTEXT_WINDOW } from '../utils/modelCaps'
 import { createFocusMiddleware } from './focus'
 import { createSummarizationMiddleware, type SummarizationOptions } from './summarization'
-import type { Focus } from './state'
+import type { Focus, VfsFile } from './state'
 import type { ZodType } from 'zod'
 
 /** 子 agent 的工具调用进度(只转发 tool_call/tool_result,不含文本/思考) */
@@ -149,6 +149,10 @@ export interface SubagentOptions {
   summarization?: boolean | SummarizationOptions
   /** 观察层 tracker(createChatSdk 注入共享实例;记录委派 active/history)。不传=不记录(零回归) */
   tracker?: SubagentTracker
+  /** 子栈继承的把关中间件(主 permissions/approval 同实例;fix-authorization-surface P1-16)。序同主栈:permissions 外层 → approval 内层。不传=无 guard(零回归) */
+  guardMiddleware?: Middleware[]
+  /** 主 vfs files getter(fix-authorization-surface P1-15:子 offload 大结果桥接进主 vfs 共享池,子 vfs_* 回读不 404)。不传=无桥接 */
+  getVfsFiles?: () => Record<string, VfsFile>
 }
 
 /** 判定 llm 是模型实例(BaseChatModel)还是配置对象(SubagentLlmConfig) */
@@ -169,6 +173,39 @@ const DEFAULT_MAX_DEPTH = 1
 const DEFAULT_MAX_PARALLEL = 4
 const DEFAULT_CHILD_ROUNDS = 6
 const SPAWN_TOOL_NAMES = ['spawn_agent', 'spawn_agents']
+
+/**
+ * 框架/会话级保留工具:子 agent 工具池禁入(装配期源头 filter,fix-authorization-surface Q1)。
+ * 防 spawn 自授激活 depth 链(use_*)、反向操作主会话状态(focus/checkpoint/humanConfirm/skills/planning)。
+ * 运行期防御需每个执行点都查,装配期 filter = 物理不进池,无执行点可漏。
+ */
+const FRAMEWORK_TOOL_NAMES = [
+  'load_skill',                   // 主 skills 中间件工具(子 agent 有自己的 skills)
+  'write_todos', 'update_todo',   // 主 planning(子 agent 规划经自己的 todos middleware 装)
+  'restore_last_checkpoint',      // 会话级回滚,子 agent 不可操作
+  'request_human_confirmation',   // 子栈无 humanConfirm 中间件 → 调用即永挂
+  'set_focus', 'add_focus', 'remove_focus', 'clear_focus',  // 会话级焦点状态,子继承不突变
+]
+
+/** 保留前缀 use_* = 预声明委派工具命名空间(集成方自定义工具避免用 use_ 前缀) */
+export function isReservedFrameworkTool(name: string): boolean {
+  return SPAWN_TOOL_NAMES.includes(name) || FRAMEWORK_TOOL_NAMES.includes(name) || name.startsWith('use_')
+}
+
+/**
+ * 子 agent 工具池构建(纯函数,导出供测;fix-authorization-surface P0-1/Q1):
+ * 主合并池按白名单筛只读子集 + 排除框架/保留工具 + extraTools 直加(集成方显式,不过滤)。
+ */
+export function buildChildTools(
+  pool: StructuredToolInterface[],
+  allow: Set<string>,
+  extraTools: StructuredToolInterface[] = [],
+): StructuredToolInterface[] {
+  return [
+    ...pool.filter((t) => allow.has(t.name) && !isReservedFrameworkTool(t.name)),
+    ...extraTools,
+  ]
+}
 
 /** 子 agent 可获得写权限的工具(经 writablePaths path guard 包装后) */
 const SUB_WRITE_TOOLS = ['write', 'set_data', 'edit_data', 'delete_data', 'draft_commit']
@@ -192,6 +229,11 @@ export function isPathWritable(jsonPath: string, prefixes: string[]): boolean {
 export function wrapWithPathGuard(t: StructuredToolInterface, prefixes: string[]): StructuredToolInterface {
   const orig = t.invoke.bind(t)
   const guarded = async (args: any) => {
+    // P1-18(fix-authorization-surface):patches 含无 jsonPath 项 = 作用于根 → 拒绝。
+    // 修原 extractWritePaths 只收集有 path 项 → 混合批量「收集到的合法即整体放行」的越界口子
+    if (Array.isArray(args?.patches) && args.patches.some((p: any) => !p || typeof p.jsonPath !== 'string' || !p.jsonPath)) {
+      return `PATH_OUT_OF_SCOPE:patches 含无 jsonPath 项(作用于根),子 agent 仅可写 ${prefixes.join(', ')} 范围内子路径。请为每个 patch 指定 jsonPath。`
+    }
     const paths = extractWritePaths(args)
     if (!paths.length) {
       return `PATH_OUT_OF_SCOPE:子 agent 仅可增量 patch(writablePaths: ${prefixes.join(', ')}),不能整体替换(无 jsonPath)。用 write({patch:{jsonPath,...}}) 增量改。`
@@ -222,6 +264,8 @@ async function runSubagent(
   signal?: AbortSignal,
   forward?: (e: SubProgress) => void,
   onLog?: (entry: any) => void,
+  /** 主循环 stream handler(approval_request 直通转发;子栈继承的 approval 发确认请求 → ApprovalBar,fix-authorization-surface P1-16) */
+  emitToMain?: (e: StreamEvent) => void,
 ): Promise<string> {
   const depth = opts.depth ?? 0
   const maxDepth = opts.maxDepth ?? DEFAULT_MAX_DEPTH
@@ -230,16 +274,13 @@ async function runSubagent(
   // P1-4:allTools 支持 getter —— 子 agent spawn 时取主 agent 最新工具集(运行时 setTools/addTool 动态加的工具对子 agent 可见,不再用装配期快照)
   const getAllTools: () => StructuredToolInterface[] = () =>
     typeof opts.allTools === 'function' ? opts.allTools() : opts.allTools
-  // 子 agent 工具:主 allTools 按白名单筛只读子集 + extraTools(预声明子 agent 的专属工具,不经筛选)
-  let childTools = [
-    ...getAllTools().filter((t) => allow.has(t.name) && !SPAWN_TOOL_NAMES.includes(t.name)),
-    ...(opts.extraTools ?? []),
-  ]
+  // 子 agent 工具:主合并池按白名单筛只读子集 + 排除框架/保留工具(装配期源头 filter)+ extraTools(预声明子 agent 的专属工具,不经筛选)
+  let childTools = buildChildTools(getAllTools(), allow, opts.extraTools ?? [])
   // writablePaths(子 agent 写权限):写工具包 path guard 后加入(越界 PATH_OUT_OF_SCOPE;整体 set 禁)
   if (opts.writablePaths?.length) {
     childTools = childTools.filter((t) => !SUB_WRITE_TOOLS.includes(t.name)) // 移除可能的原版写工具(防重复)
     const guardedWrites = getAllTools()
-      .filter((t) => SUB_WRITE_TOOLS.includes(t.name) && !SPAWN_TOOL_NAMES.includes(t.name))
+      .filter((t) => SUB_WRITE_TOOLS.includes(t.name) && !isReservedFrameworkTool(t.name))
       .map((t) => wrapWithPathGuard(t, opts.writablePaths!))
     childTools = [...childTools, ...guardedWrites]
   }
@@ -249,6 +290,11 @@ async function runSubagent(
   const inheritedFocuses = opts.getFocuses?.() ?? []
   const childFocusMw = inheritedFocuses.length
     ? createFocusMiddleware({ getSchema: opts.getSchema ?? (() => null), initialFocuses: inheritedFocuses })
+    : undefined
+  // P1-15(fix-authorization-surface):vfs 桥接 —— 子 state.files 指向主 vfsStore.files,
+  // 子 offload 大结果直落主共享池(子 vfs_* 回读不 404,主 agent 亦可读)
+  const vfsBridgeMw: Middleware | undefined = opts.getVfsFiles
+    ? { name: 'vfs-bridge', beforeAgent: () => ({ files: opts.getVfsFiles!() }) }
     : undefined
   // harden-context-resilience M3:从 llm 提取 model 名查表得 contextWindow/maxOutputTokens
   // (BaseChatModel 实例无 contextWindow 字段;不传则 createAgent 把实例 model 误判默认 gpt-3.5→16K,offload/压缩阈值全错算)
@@ -298,8 +344,12 @@ async function runSubagent(
     middleware: [
       ...(opts.skills?.length ? [createSkillsMiddleware(opts.skills)] : []),
       ...(summarizationMw ? [summarizationMw] : []),
+      ...(vfsBridgeMw ? [vfsBridgeMw] : []),
       ...childMiddleware,
       ...(childFocusMw ? [childFocusMw] : []),
+      // P1-16(fix-authorization-surface):子栈继承主 permissions/approval(序同主栈:permissions 外层自动拒 → approval 内层人工确认)。
+      // 修原「委派路径整体绕过把关」:配 approval:{tools:['write']} 的集成方,子 agent 写同样需用户确认
+      ...(opts.guardMiddleware ?? []),
       ...(opts.middleware ?? []),
     ],
     maxToolRounds: opts.maxToolRounds ?? DEFAULT_CHILD_ROUNDS,
@@ -308,6 +358,9 @@ async function runSubagent(
   })
   if (opts.debug) console.log(`[subagent] 启动子 agent(depth=${depth},工具 ${childTools.length} 个)`)
   return child.stream([{ role: 'user', content: task.prompt, timestamp: Date.now() }], (e) => {
+    // P1-16:approval_request 直通转发回主循环 handler(ApprovalBar 渲染/收口)—— 不包裹为进度事件,
+    // 否则子栈继承的 approval 挂起永无人响应(原 forward 只转发 tool_call/tool_result)
+    if (e.type === 'approval_request') { emitToMain?.(e); return }
     // 只转发工具调用进度到主 UI(文本/思考不转发:避免噪音 + 严守主上下文隔离)
     if (forward && (e.type === 'tool_call' || e.type === 'tool_result')) forward(e)
   }, signal)
@@ -342,8 +395,11 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
 
   const spawnOne = tool(
     async ({ prompt, role, tools, writablePaths, model }) => {
-      const subOpts = tools?.length || writablePaths?.length
-        ? { ...opts, ...(tools?.length ? { allowedTools: tools } : {}), ...(writablePaths?.length ? { writablePaths } : {}) }
+      // P1-16(fix-authorization-surface):spawn 自授 tools 剥离写工具 —— 写权限只能经 writablePaths(path guard)获得;
+      // 框架/保留工具(use_*/spawn/load_skill 等)由 buildChildTools 装配期兜底排除
+      const granted = (tools ?? []).filter((t) => !SUB_WRITE_TOOLS.includes(t))
+      const subOpts = granted.length || writablePaths?.length
+        ? { ...opts, ...(granted.length ? { allowedTools: granted } : {}), ...(writablePaths?.length ? { writablePaths } : {}) }
         : opts
       const taskId = `sub-${Math.random().toString(36).slice(2, 8)}`
       const label = role?.trim() || '子任务'
@@ -352,7 +408,7 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
       const startedAt = Date.now()
       opts.tracker?.start(taskId, prompt, label, startedAt)
       try {
-        const result = await runSubagent({ prompt, role, model }, subOpts, currentSignal, makeForward(taskId, label), onLog)
+        const result = await runSubagent({ prompt, role, model }, subOpts, currentSignal, makeForward(taskId, label), onLog, currentEmit)
         opts.tracker?.finish(taskId, 'done', result)
         return result
       } catch (e) {
@@ -367,7 +423,7 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
       schema: z.object({
         prompt: z.string().describe('子任务描述(子 agent 的唯一输入)'),
         role: z.string().optional().describe('子 agent 身份(如"你是代码审查专家")'),
-        tools: z.array(z.string()).optional().describe('子 agent 可用工具名白名单(默认只读主数据 + fetch)'),
+        tools: z.array(z.string()).optional().describe('子 agent 可用工具名白名单(默认只读主数据 + fetch)。写工具不可自授——写权限用 writablePaths;委派/框架类工具系统保留不可授'),
         writablePaths: z.array(z.string()).optional().describe('子 agent 可写路径前缀(给写权限;越界 PATH_OUT_OF_SCOPE;如 ["components"] 允许写 components.* )'),
         model: z.string().optional().describe('覆盖模型(默认同主)'),
       }),
@@ -388,7 +444,7 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
           const startedAt = Date.now()
           opts.tracker?.start(taskId, t.prompt, label, startedAt)
           try {
-            const r = await runSubagent(t, opts, currentSignal, makeForward(taskId, label), onLog)
+            const r = await runSubagent(t, opts, currentSignal, makeForward(taskId, label), onLog, currentEmit)
             opts.tracker?.finish(taskId, 'done', r ?? '(未完成)')
             return r
           } catch (e) {
@@ -468,6 +524,10 @@ export interface SubagentsMiddlewareOptions {
   debug?: boolean
   /** 观察层 tracker(同 SubagentOptions.tracker;createChatSdk 注入共享实例,两类委派统一观察) */
   tracker?: SubagentTracker
+  /** 子栈继承的把关中间件(主 permissions/approval 同实例;fix-authorization-surface P1-16)。configToSubOpts 透传 */
+  guardMiddleware?: Middleware[]
+  /** 主 vfs files getter(fix-authorization-surface P1-15 子 offload 桥接)。configToSubOpts 透传 */
+  getVfsFiles?: () => Record<string, VfsFile>
 }
 
 /** 合法工具名校验(生成 use_<id>) */
@@ -495,6 +555,9 @@ function configToSubOpts(config: SubagentConfig, main: SubagentsMiddlewareOption
     ...(main.getSchema ? { getSchema: main.getSchema } : {}),
     // 观察层:透传 tracker(递归子 agent 的 spawn 也记录到主 tracker)
     ...(main.tracker ? { tracker: main.tracker } : {}),
+    // fix-authorization-surface:透传把关中间件(P1-16)+ vfs 桥接(P1-15)
+    ...(main.guardMiddleware?.length ? { guardMiddleware: main.guardMiddleware } : {}),
+    ...(main.getVfsFiles ? { getVfsFiles: main.getVfsFiles } : {}),
   }
 }
 
@@ -572,7 +635,7 @@ export function createSubagentsMiddleware(
             const startedAt = Date.now()
             tracker?.start(observeId, task, s.id, startedAt)
             try {
-              const result = await runSubagent({ prompt: task }, opts, currentSignal, forward, onLog)
+              const result = await runSubagent({ prompt: task }, opts, currentSignal, forward, onLog, currentEmit)
               tracker?.finish(observeId, 'done', result)
               return result
             } catch (e) {

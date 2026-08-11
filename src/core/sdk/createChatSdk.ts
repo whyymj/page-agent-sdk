@@ -1062,12 +1062,19 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const subOpts = options.subagent
   // 子 agent 工具:allowedTools(从主池按名选)
   const subAllowed = subOpts?.allowedTools ?? []
+  // fix-authorization-surface P1-16:permissions/approval 提升具名 const,同实例注入子栈(childGuards)。
+  // 修原「委派路径整体绕过把关」—— 子 agent 写操作同样过主 permissions 自动拒 + approval 人工确认
+  const permissionsMw = options.permissions?.length ? createPermissionsMiddleware(options.permissions) : undefined
+  const approvalMw = options.approval && (options.approval.tools !== undefined || !!options.approval.confirm)
+    ? createApprovalMiddleware(options.approval)
+    : undefined
+  const childGuards: Middleware[] = [...(permissionsMw ? [permissionsMw] : []), ...(approvalMw ? [approvalMw] : [])]  // 序同主栈:permissions 外层 → approval 内层
   const subagentMw =
     !useSubagent || subOpts?.enabled === false
       ? undefined
       : createSubagentMiddleware({
           llm: subOpts?.llm ?? options.llm,
-          allTools: () => allTools, // P1-4:getter —— setTools/addTool/MCP 动态加的工具对子 agent 立即可见(不用装配期快照)
+          allTools: () => core.agent?.allTools ?? allTools, // P0-1(getter→合并池):含中间件工具(vfs 等);原指向局部 rebuildExtraTools 池致能力包 allowedTools 恒落空
           allowedTools: subAllowed.length ? subAllowed : undefined,
           // 子 agent 独立配置(自定义身份/温度/上下文上限/技能)
           systemPrompt: subOpts?.systemPrompt,
@@ -1081,6 +1088,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           getFocuses: () => focusMw.getFocuses(),
           getSchema: () => liveData()?.schema ?? null,
           tracker: subagentTracker,
+          // fix-authorization-surface:子栈把关中间件(P1-16)+ 子 offload 桥接主 vfs 池(P1-15)
+          guardMiddleware: childGuards.length ? childGuards : undefined,
+          getVfsFiles: useVfs ? () => vfsStore.files : undefined,
         })
 
   // 预声明子 agent(subagents:[] → 每个 use_<id> 委派工具;与上面 spawn 中间件共存)
@@ -1088,7 +1098,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 注:subagents:[](空数组)也创建 controller,支持「初始无子 agent,运行时动态 add」场景(不依赖 length 判定)
   // capabilities.subagent 关闭时不创建(与 spawn 中间件一致)
   const subagentsMw = useSubagent && options.subagents !== undefined
-    ? createSubagentsMiddleware(options.subagents, { llm: options.llm, allTools: () => allTools, debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null, tracker: subagentTracker })
+    ? createSubagentsMiddleware(options.subagents, { llm: options.llm, allTools: () => core.agent?.allTools ?? allTools, debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null, tracker: subagentTracker, guardMiddleware: childGuards.length ? childGuards : undefined, getVfsFiles: useVfs ? () => vfsStore.files : undefined })
     : undefined
   const subagentsController = subagentsMw ? (subagentsMw as any).controller as import('../harness/subagent').SubagentsController : null
 
@@ -1257,15 +1267,13 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(useFocus ? [focusMw] : []), // workingMemory 后:上下文聚焦(目标/视野/范围三层收敛 pin 段;同 mission 跨压缩保留)
     ...(resourcesPinMw ? [resourcesPinMw] : []), // focus 后:受保护资源清单 pin(每轮注入 ⟦frozen⟧/⟦res⟧ 占位符语义;资源清单天然跨压缩)
     ...(useMemory ? [memoryMw] : []),
-    ...(options.permissions?.length ? [createPermissionsMiddleware(options.permissions)] : []),
+    ...(permissionsMw ? [permissionsMw] : []),
     // 会话级 checkpoint:auto 模式每轮 beforeModel 首次自动存(回滚到上次正常时);顺序无关(仅 beforeAgent/beforeModel 副作用)
     ...(useCheckpoint && checkpointAuto && checkpointMgr ? [createCheckpointMiddleware(checkpointMgr)] : []),
     // 人工确认(主动侧):拦截 request_human_confirmation,发 approval_request;装在 approval 白名单之前(更外层,先收口,避免双重确认)
     ...(useHumanConfirm ? [createHumanConfirmMiddleware()] : []),
-    // 人工确认(被动侧):白名单工具调用前确认(wrapToolCall 洋葱,此处更内层)
-    ...(options.approval && (options.approval.tools !== undefined || !!options.approval.confirm)
-      ? [createApprovalMiddleware(options.approval)]
-      : []),
+    // 人工确认(被动侧):白名单工具调用前确认(wrapToolCall 洋葱,此处更内层;实例同 childGuards 注入子栈,fix-authorization-surface)
+    ...(approvalMw ? [approvalMw] : []),
     ...(verifyMw ? [verifyMw] : []), // permissions 之后(beforeReturn 正序,verify 在用户自定义中间件前)
     ...(subagentMw ? [subagentMw] : []),
     ...(subagentsMw ? [subagentsMw] : []),

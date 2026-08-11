@@ -52,12 +52,12 @@
 
 > 二审已写入 `audit-report.md` §十一(11.1-11.6)。以下为悬而未决、待用户拍板的清单,不催——回来时打开本节即知有哪些事。定稿前不勾。
 
-### 7.1 ❓ 5 个拍板疑问(见报告 §11.6)
-- [ ] **Q1** P0 修复排除 `use_<id>` 用装配期源头 filter(推荐)还是运行期防御?
-- [ ] **Q2** fix-subagent-tooling 改名 `fix-authorization-surface`?(P1-21/22 focus 绕过归此还是挪 fix-data-integrity)
-- [ ] **Q3** fix-hang-and-feedback(组1,7 项)是否先出统一超时/可见性 design,再逐项落地?
-- [ ] **Q4** N1(同轮多写连环冲突)归 fix-main-sub-isolation(与 H19/P1-13 同根合并设计 per-caller 基线)还是单列?
-- [ ] **Q5** 新增 CA/SE/VM/RE/CO 五维审查:本轮 fix 验证时顺带(CA 可能有 P1)还是等下轮审计?
+### 7.1 ✅ 5 个拍板疑问(2026-08-11 用户批准按二审推荐全部拍板;见报告 §11.6)
+- [x] **Q1** P0 修复排除 `use_<id>` 用**装配期源头 filter**(推荐采纳;非运行期防御)
+- [x] **Q2** fix-subagent-tooling **改名 `fix-authorization-surface`**;P1-21/22(focus 绕过)归此(授权与拦截面完整性,二审倾向采纳)
+- [x] **Q3** fix-hang-and-feedback(组1,7 项)**先出统一超时/可见性 design**,再逐项落地(推荐采纳)
+- [x] **Q4** N1 **并入 fix-main-sub-isolation**(与 H19/P1-13 同根,per-caller/per-round 基线刷新一次设计)
+- [x] **Q5** 五维(CA/SE/VM/RE/CO)**等下轮审计**(本轮 P0/P1 已饱和;CA 可能出 P1 记录在案)
 
 ### 7.2 二审遗漏(报告 §11.4,待并入主表定级)
 - [ ] **N1** 同轮/并发多写乐观锁连环冲突(P2,窄触发;读码已核实)—— 并入主表 P2 或随 Q4 升级处理
@@ -66,11 +66,11 @@
 - [ ] **N4** reactive 大 bind 深度代理开销未量化 —— profiling 后定级(P2 待量化)
 - [ ] **N5** wrap-up `pendingFormatRetry` 绕 rounds 预算,实际上界 > 文档 maxIterations —— P3
 
-### 7.3 拆分/定级调整建议(报告 §11.2/§11.3,待落实)
-- [ ] P0 修复「排除 use_<id>」与 P1-16(spawn 自授)绑定同修(同一攻击面)
-- [ ] fix-subagent-tooling 主题与 P1-21/22 归属(随 Q2)
-- [ ] fix-hang-and-feedback 是否先 design(随 Q3)
-- [ ] S1 沙箱逃逸维持 P2,**已在报告 §11.3 补「外发兜底链」论证**(这条已做,留痕)
+### 7.3 拆分/定级调整建议(报告 §11.2/§11.3)
+- [x] P0 修复「排除 use_<id>」与 P1-16(spawn 自授)绑定同修 —— 已随 Q1/Q2 拍板,入 fix-authorization-surface(2026-08-11)
+- [x] fix-subagent-tooling 主题与 P1-21/22 归属 —— 随 Q2 定:改名 fix-authorization-surface,P1-21/22 归此
+- [x] fix-hang-and-feedback 是否先 design —— 随 Q3 定:先出统一超时/可见性 design
+- [x] S1 沙箱逃逸维持 P2,**已在报告 §11.3 补「外发兜底链」论证**(这条已做,留痕)
 - [ ] P2→deferred.md 登记时标注「触发概率/复现条件」(防 deferred 成冷宫)
 
 ### 7.4 新增审查方向(报告 §11.5,五维盲区)
@@ -101,5 +101,5 @@
 - [x] 计数同步:CLAUDE.md/README 中英文 1658→1669、451→453(zh-CN 陈旧 1550/387 一并校正)
 
 ### 8.4 待办(随后续 fix change / 发布)
-- [ ] 上述修复归入对应 fix change(fix-data-integrity / 组5/6)或单独发布;commit 前**停下询问用户是否发布**
-- [ ] Q1-Q5 关联项(fix-subagent-tooling / fix-hang-and-feedback / fix-main-sub-isolation / 五维)待用户定向
+- [x] **已发布 v2.38.1**(2026-08-11):发布门禁全绿 → squash develop→master(`47c6cec`)推 Gitee+GitHub → npm publish → esm.sh 可达 + 导出齐全。上述无疑问修复随此版落地
+- [x] Q1-Q5 已拍板(2026-08-11,§7.1):fix-authorization-surface 已立(P0-1+P1-15/16/18/21/22);fix-hang-and-feedback(先 design)/ fix-main-sub-isolation(含 N1)随后

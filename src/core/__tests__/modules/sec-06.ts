@@ -74,6 +74,25 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(r.content === 'ok', 'H1: permissions write patch 未命中 deny 的 path → allow')
 
     r = await mw.wrapToolCall!({ id: '8', name: 'write', args: { value: { secret: 'x' } }, state: createState() }, next)
-    assert(r.content === 'ok', 'H1: permissions write 整体 set(无 patch/patches)→ scope 空,不校验(schema 白名单兜底)')
+    assert(r.content === 'ok', 'permissions write 整体 set(无 jsonPath)→ 按根 scope 校验,具体路径规则(secret)不误伤')
+
+    // fix-authorization-surface(P1-21/22 同型):全局 deny 拦整体写 + eval_script/draft_commit 纳入写校验
+    const mwGlobal = createPermissionsMiddleware([
+      { operations: ['write'], scopes: ['**'], mode: 'deny' },
+    ])
+    r = await mwGlobal.wrapToolCall!({ id: '9', name: 'write', args: { value: { a: 1 } }, state: createState() }, next)
+    assert(/权限拒绝/.test(r.content) && r.status === 'error', 'P1-22 同型: permissions 整体写(无 jsonPath)按根 scope 校验 → 全局 deny 命中(原:空 scopes 跳过被绕过)')
+    r = await mwGlobal.wrapToolCall!({ id: '10', name: 'set_data', args: { value: { a: 1 } }, state: createState() }, next)
+    assert(r.status === 'error', 'P1-22 同型: permissions set_data 整体写 → 根 scope 命中全局 deny')
+    r = await mwGlobal.wrapToolCall!({ id: '11', name: 'draft_commit', args: { draftId: 'd1' }, state: createState() }, next)
+    assert(r.status === 'error', 'permissions draft_commit(整体写)纳入写校验 → 全局 deny 命中')
+    r = await mwGlobal.wrapToolCall!({ id: '12', name: 'eval_script', args: { script: 'return data', mode: 'transform' }, state: createState() }, next)
+    assert(r.status === 'error', 'P1-21 同型: permissions eval_script transform(整体)→ 根 scope 命中全局 deny')
+    r = await mwGlobal.wrapToolCall!({ id: '13', name: 'eval_script', args: { script: 'return data', mode: 'transform', jsonPath: 'secret' }, state: createState() }, next)
+    assert(r.status === 'error', 'P1-21 同型: permissions eval_script transform jsonPath 命中 deny')
+    r = await mwGlobal.wrapToolCall!({ id: '14', name: 'eval_script', args: { script: 'return 1', mode: 'query' }, state: createState() }, next)
+    assert(r.content === 'ok', 'permissions eval_script query(只读)→ 不参与写校验')
+    r = await mw.wrapToolCall!({ id: '15', name: 'eval_script', args: { script: 'return data', mode: 'transform', jsonPath: 'theme' }, state: createState() }, next)
+    assert(r.content === 'ok', 'permissions eval_script transform jsonPath 未命中 deny → allow')
   }
 }

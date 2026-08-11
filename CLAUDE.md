@@ -32,8 +32,8 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,1669 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑 tests/e2e-integration.mjs,用构建产物 dist,453 项;覆盖各 API/配置项/功能模块/简单与复杂场景:默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置,含 toolMode simple/advanced/minimal) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件,含 filterByToolMode/extractSchemaHint) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 乐观锁冲突人工介入(pendingConflict/resolveConflict) / read/write 高层工具 + 拦截器 / data bind 字段直连 + schema .describe() 自动注入 + input/output 拦截器 / headless 子路径(/headless 纯核心:导出范围/降级 warn/ui:false 走通/bundle 纯净+体积) / 错误场景)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,1699 项断言)
+npm run test:e2e      # 集成层 e2e(node 跑 tests/e2e-integration.mjs,用构建产物 dist,461 项;覆盖各 API/配置项/功能模块/简单与复杂场景:默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置,含 toolMode simple/advanced/minimal) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件,含 filterByToolMode/extractSchemaHint) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 乐观锁冲突人工介入(pendingConflict/resolveConflict) / read/write 高层工具 + 拦截器 / data bind 字段直连 + schema .describe() 自动注入 + input/output 拦截器 / headless 子路径(/headless 纯核心:导出范围/降级 warn/ui:false 走通/bundle 纯净+体积) / 错误场景)
 npm run test:browser  # 浏览器 E2E(Playwright + mock LLM,跑 tests/browser/*.spec.ts;自动启 dev server,拦截 LLM API 返回确定性 SSE 响应;覆盖 page-demo read→write→read / human-confirm-demo 两层确认 / complex-demo 列组件+edit patch+子路径读+mission+深嵌套+配置面板+actions(save_draft/publish)+get_dom;不依赖真 LLM,可进 CI)
 ```
 
@@ -159,7 +159,7 @@ skills/                         # 分发给使用者的 Agent Skill(integrate/re
 
 ### 上下文聚焦 Focus(focus-context · multi-focus)
 - 多组件页面精修:聚焦后 agent 的**目标/视野/范围三层收敛**到焦点组件子树(会话级焦点 `Focus[]` 数组,可同时聚焦多个;`Focus = { path, label? }`,path=jsonPath 锚点如 `components.3`),避免改到别处
-- **三层收敛**:① 目标提示(augmentPrompt 注入「## 当前精修目标」列出所有焦点);② 视野收敛(每个焦点注入 `getSchemaAtPath(schema, path)` 子树 schema);③ 范围收紧 **strict**(wrapToolCall 对写工具拦截,`jsonPath` **不在任一焦点子树** → `PATH_DENIED` 越界回灌 LLM 自纠;读工具不限)
+- **三层收敛**:① 目标提示(augmentPrompt 注入「## 当前精修目标」列出所有焦点);② 视野收敛(每个焦点注入 `getSchemaAtPath(schema, path)` 子树 schema);③ 范围收紧 **strict**(wrapToolCall 对写工具拦截,`jsonPath` **不在任一焦点子树** → `PATH_DENIED` 越界回灌 LLM 自纠;**无 jsonPath 整体写 = 越界拒绝**;`eval_script` 仅 transform 参与拦截,query 只读放行;读工具不限**;vfs_write/vfs_edit 不拦**——工作区文件路径非数据 scope,fix-authorization-surface)
 - **pin 段天然跨压缩**:focus 在中间件 state(不在 messages)→ augmentPrompt 每轮注入 → `compressInput` 不碰(同 mission/workingMemory)
 - **API(兼容旧 + 多焦点新增)**:`setFocus(focus)` 替换全部 / `addFocus(focus)` 累积(去重 by path)/ `removeFocus(path)` 移除单个 / `clearFocus()` 清空 / `getFocus()` 返首个(兼容)/ `getFocuses()` 全量数组。`setFocus`/`addFocus` 校验 path 类型合法(`getSchemaAtPath` 命中;类型校验非数据存在性 —— 数组索引 `components.5` 类型合法);非法 `{ok:false,error}` 不抛。前缀边界:`components.10` 不误匹配 `components.1`(用 `.` 分隔判)
 - **agent 工具**(`toolMode:'advanced'`):`set_focus`(替换)/`add_focus`(累积)/`remove_focus`(移除单个)/`clear_focus`(清空);usageHints 引导多焦点用法
@@ -175,6 +175,7 @@ skills/                         # 分发给使用者的 Agent Skill(integrate/re
 - `spawn_agent`/`spawn_agents`(subagent 中间件,默认开启):委派独立子 agent 跑子任务,只把最终结论返回主上下文(省 token)
 - 预声明子 agent:`subagents: [{ id, description, ... }]` 自动生成 `use_<id>` 委派工具(Claude Code 风格)
 - `maxDepth`(默认 1)递归物理切断;子 agent 只读工具子集,排除 spawn 防递归
+- **授权与拦截面(fix-authorization-surface 2.38+)**:① **P0 装配断层修复**:传给子 agent 中间件的 `allTools` getter 指向 **agent 合并池**(`core.agent?.allTools`,含中间件工具)—— 修原局部池致 rag/html 能力包 `allowedTools` 的 vfs 工具恒不可见;② **装配期源头 filter**(`buildChildTools`/`isReservedFrameworkTool` 纯函数):子池一律排除框架/保留工具(`spawn_*`/`use_*` 保留前缀/`load_skill`/`write_todos`/`update_todo`/`restore_last_checkpoint`/`request_human_confirmation`/`*_focus`),防 spawn 自授激活 depth 链;`extraTools`(集成方显式)不过滤;③ **spawn 自授收紧**:`tools` 参数剥离写工具(写权限只能经 `writablePaths` path guard 获得);`patches` 含无 jsonPath 项(根写)→ PATH_OUT_OF_SCOPE(P1-18);④ **子栈继承主 permissions/approval 实例**(`guardMiddleware`),子的 approval_request 直通转发回主循环 handler(ApprovalBar 收口)—— 委派不再绕过人工确认/权限规则;⑤ **vfs-bridge**(`getVfsFiles`):子 offload 大结果直落主 vfs 共享池,子 vfs_* 回读不 404(P1-15)
 - **子 agent 针对性配置扩展(2.37+ add-capability-packs)**:`SubagentConfig` 加三可选字段 —— `allowedTools`(从主 allTools 额外拿工具名,追加默认只读白名单,如 `vfs_grep`/`vfs_write`)、`middleware`(子 agent 自定义中间件,如 `createTodosMiddleware` 给规划能力)、`summarization`(跨轮压缩;`true`=索引摘要零 LLM,或 `SummarizationOptions` 自配含 llmInvoke 升级)。`configToSubOpts` 透传 → `runSubagent` 装(skills 后 / focus 后追加)。不传 = 现状固定配置子 agent(零回归)
 - **`sdk.vfsWrite(path, content)`(2.37+)**:集成方异步注入 vfs 文件(RAG 文档池 / HTML 代码);字符串直存,对象 JSON.stringify;归 userFiles 池;与 `vfs_write` 工具一致语义(集成方侧命令式入口)。解「RAG agent 启动后动态补文档」
 - **能力包(专用子 agent 工厂,2.37+ opt-in 可组合/拆分)**:
@@ -237,14 +238,14 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test            # tsx 跑 src/core/__tests__/selftest.ts(runner),1669 项断言
+npm test            # tsx 跑 src/core/__tests__/selftest.ts(runner),1699 项断言
 ```
 **按模块拆分**:测试代码在 `src/core/__tests__/modules/sec-NN.ts`(53 个模块),各导出 `run(ctx)` 返回 void,由 `selftest.ts` runner 依次调用并汇总计数。共享 `TestCtx`(assert/invoke/byName)在 `modules/_ctx.ts`。覆盖核心逻辑:dataOps(范围/schema/祖先读/序列化/动态注册 controller)/ vfs / 中间件(todos/skills/memory/permissions/summarization/retry/pool/subagent/mcp extractText/verify beforeReturn+createWriteBackCheck/approval/checkpoint/usageHints/压缩注入快照/preserve 工具结果)/ 存储配额淘汰降级 / selectBuiltinTools / proxyLlm(代理/直连两模式)。**改任何核心模块后必跑**。tsx 跑源码(不经构建),快但触不到 createChatSdk 顶层 API 作用域。新增功能时按「新增功能测试同步约定」在对应模块追加用例或新建模块并在 runner 注册。
 
 #### 2. 集成层 e2e(改 createChatSdk 顶层 API 后必跑)
 ```bash
 npm run build       # 先构建(e2e 用 dist 产物)
-npm run test:e2e    # node 跑 tests/e2e-integration.mjs(runner),453 项断言
+npm run test:e2e    # node 跑 tests/e2e-integration.mjs(runner),461 项断言
 ```
 **按模块拆分**:测试代码在 `tests/e2e/<module>.mjs`,各导出 `run()` 返回 `{pass,fail}`,由 `tests/e2e-integration.mjs` runner 汇总。模块:
 - `systemprompt.mjs`(默认/自定义/能力概述/拼接)、`dynamic-register.mjs`(add·remove·list + inspect 同步 + dataOps 关闭 no-op)
@@ -320,7 +321,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers|reliableWriteRules" /tmp/sdk.mj
 | 构建配置(vite/external) | — | ✅(用 dist) | — | plain.html(CDN) | — |
 
 #### 发布前必跑顺序
-`npm run build` → `npm test`(1669 全过) → `npm run test:e2e`(453 全过) → `npm run test:browser`(浏览器 E2E 全过) → `npm run test:exports`(types 与 src 导出对齐) → `npm run test:types`(tsconfig.test.json 只查对外 types/index.d.ts 类型对齐 + tests/types.test-d.ts;src 全量类型卫生用 `npx tsc -p tsconfig.json` 单独诊断,**非发布门禁** —— 勿把全量 tsc 报错当门禁阻塞;但 **src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空,test/examples 的 unused-import 噪声豁免) → `npm run test:size`(dist 体积不超阈值) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
+`npm run build` → `npm test`(1699 全过) → `npm run test:e2e`(461 全过) → `npm run test:browser`(浏览器 E2E 全过) → `npm run test:exports`(types 与 src 导出对齐) → `npm run test:types`(tsconfig.test.json 只查对外 types/index.d.ts 类型对齐 + tests/types.test-d.ts;src 全量类型卫生用 `npx tsc -p tsconfig.json` 单独诊断,**非发布门禁** —— 勿把全量 tsc 报错当门禁阻塞;但 **src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空,test/examples 的 unused-import 噪声豁免) → `npm run test:size`(dist 体积不超阈值) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
 
 #### 新增功能测试同步约定(强制)
 
@@ -343,7 +344,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers|reliableWriteRules" /tmp/sdk.mj
 
 **最低要求**:每个新功能至少 1 条断言,覆盖「能正常工作」+「边界/错误场景」(如非法入参被拒、关闭开关后 no-op、未开启时抛错等)至少 1 条。
 
-**计数同步**:补测试后同步更新本文件「测试流程」小节的断言计数(1669/453)与 README 中英文计数,以及下方测试矩阵的「改动范围」行(若引入新模块)。
+**计数同步**:补测试后同步更新本文件「测试流程」小节的断言计数(1699/461)与 README 中英文计数,以及下方测试矩阵的「改动范围」行(若引入新模块)。
 
 **自检命令**:提交前跑 `npm test && npm run build && npm run test:e2e`,三者全绿方可提交。
 
@@ -430,7 +431,7 @@ createChatSdk({
    - `CLAUDE.md`:开发约定/架构要点(本项目内部指引,不外发)
    - 中英文**必须同步**,新增能力两侧都补;语言切换链接保持双向
 3. **bump 版本**:`npm version patch|minor|major --no-git-tag-version`(semver;新增 API 用 minor,破坏性用 major,修复用 patch)
-4. **构建+自测**:按「### 测试流程」末尾「发布前必跑顺序」执行(`npm run build` → `npm test` 1669 全过 → `npm run test:e2e` 453 全过 → `npm run test:exports` 导出对齐 → `npm run test:types` 类型正确 → `npm run test:size` 体积不超阈值 → `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记)
+4. **构建+自测**:按「### 测试流程」末尾「发布前必跑顺序」执行(`npm run build` → `npm test` 1699 全过 → `npm run test:e2e` 461 全过 → `npm run test:exports` 导出对齐 → `npm run test:types` 类型正确 → `npm run test:size` 体积不超阈值 → `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记)
 5. **提交**:`git add -A && git commit -m "feat/fix/docs: ..."`
 6. **发布(总结到 master + 推双远程)**:`git checkout master` → `./scripts/publish-github.sh "release x.x.x: 一句话总结"` —— 自动在 master 上 `merge --squash develop` 总结成一个发布 commit,再 fast-forward 推 Gitee + GitHub(两边 master 历史一致,零冲突;个人笔记 `doc/待确认问题.md` 不进)。完成后切回 develop 继续开发
 7. **发 npm**:`npm publish`(`publishConfig.registry` 已锁官方 npm,不受本机默认私有源影响)

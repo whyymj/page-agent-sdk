@@ -612,6 +612,16 @@ const history = sdk.subagentHistory            // equivalent to sdk.inspect().su
 - Concurrency-safe: pre-declared use_<id> uses a unique observeId (event taskId stays `use_${id}`)
 - Follows the `subagent` capability; build your own tracker: `import { createSubagentTracker } from 'page-agent-sdk'` (historyLimit default 20)
 
+#### Subagent authorization surface: delegation never bypasses guardrails (fix-authorization-surface)
+
+Delegation shares the same authorization/interception surface as the main agent — no extra configuration needed:
+
+- **Child stack inherits main `permissions`/`approval`**: with `approval:{tools:['write']}`, a subagent's write (including spawn self-granted writablePaths) triggers the same confirmation (ApprovalBar renders normally; approve/reject settles immediately). permissions deny rules apply to children too.
+- **Framework tools never enter the child pool (assembly-time filter)**: `use_*`/`spawn_*`/`load_skill`/`write_todos`/checkpoint/focus-mutation tools are excluded regardless of `allowedTools` or spawn's `tools` param — the LLM cannot self-grant delegation tools to activate the recursion chain.
+- **spawn self-grant limits**: spawn_agent's `tools` param cannot grant write tools (write access only via `writablePaths`, path-guarded); `patches` containing an item without jsonPath (acts on root) → PATH_OUT_OF_SCOPE.
+- **Child offload bridges main vfs**: a subagent's offloaded large results land in the main vfs shared pool — readable via vfs_read from both sides (no 404).
+- **Capability-pack allowedTools now work**: the vfs tools of `createHtmlSubagent`/`createRagSubagent` (middleware-injected) are now resolved at assembly (2.37 assembly gap fixed).
+
 ### 6.2 Custom tools
 
 ```ts

@@ -74,9 +74,33 @@ export async function run(ctx: TestCtx): Promise<void> {
     )
     assert(topField.status === 'error', 'focus 写非焦点顶层字段(title)→ 拒绝')
 
-    // 整体写(无 jsonPath)→ 不拦(schema 白名单兜底,与 permissions 一致)
+    // 整体写(无 jsonPath)→ PATH_DENIED(P1-22 fix-authorization-surface:strict 下整体写无法校验子树归属 = 越界)
     const whole = await mw.wrapToolCall!({ name: 'write', args: { value: { title: 'x' } } } as any, callNext)
-    assert(whole.status === 'done', 'focus 整体写(无 jsonPath)→ 不拦(schema 白名单兜底)')
+    assert(whole.status === 'error' && whole.content.includes('PATH_DENIED'), 'focus 整体写(无 jsonPath)→ PATH_DENIED(P1-22)')
+    const wholeSet = await mw.wrapToolCall!({ name: 'set_data', args: { value: { title: 'x' } } } as any, callNext)
+    assert(wholeSet.status === 'error', 'focus set_data 整体写 → PATH_DENIED(P1-22)')
+    const wholeDraft = await mw.wrapToolCall!({ name: 'draft_commit', args: { draftId: 'd1' } } as any, callNext)
+    assert(wholeDraft.status === 'error', 'focus draft_commit(整体写)→ PATH_DENIED(P1-22)')
+    const mergeNoPath = await mw.wrapToolCall!({ name: 'edit_data', args: { op: 'merge', value: { title: 'x' } } } as any, callNext)
+    assert(mergeNoPath.status === 'error', 'focus edit_data merge 无 jsonPath(改根)→ PATH_DENIED(P1-22)')
+
+    // eval_script(P1-21):transform 整体(无 jsonPath)→ 拒;transform 子树内 → 放行;子树外 → 拒;query 只读 → 放行
+    const evalWhole = await mw.wrapToolCall!({ name: 'eval_script', args: { script: 'return data', mode: 'transform' } } as any, callNext)
+    assert(evalWhole.status === 'error' && evalWhole.content.includes('PATH_DENIED'), 'focus eval_script transform 整体(无 jsonPath)→ PATH_DENIED(P1-21)')
+    const evalUnder = await mw.wrapToolCall!({ name: 'eval_script', args: { script: 'return data', mode: 'transform', jsonPath: 'components.1.props' } } as any, callNext)
+    assert(evalUnder.status === 'done', 'focus eval_script transform 焦点子树内(jsonPath)→ 放行(P1-21)')
+    const evalOutside = await mw.wrapToolCall!({ name: 'eval_script', args: { script: 'return data', mode: 'transform', jsonPath: 'components.0' } } as any, callNext)
+    assert(evalOutside.status === 'error', 'focus eval_script transform 焦点外 → PATH_DENIED(P1-21)')
+    const evalQuery = await mw.wrapToolCall!({ name: 'eval_script', args: { script: 'return data.title', mode: 'query' } } as any, callNext)
+    assert(evalQuery.status === 'done', 'focus eval_script query(只读)→ 放行(P1-21)')
+    const evalDefaultMode = await mw.wrapToolCall!({ name: 'eval_script', args: { script: 'return 1' } } as any, callNext)
+    assert(evalDefaultMode.status === 'done', 'focus eval_script 缺省 mode(query)→ 放行')
+
+    // vfs 工具移出拦截面(P1-21/22 附带):vfs path 是工作区文件路径非数据 jsonPath,聚焦下不再误拦
+    const vfsW = await mw.wrapToolCall!({ name: 'vfs_write', args: { path: 'html/my-comp.vue', content: '<template/>' } } as any, callNext)
+    assert(vfsW.status === 'done', 'focus vfs_write(工作区文件)→ 不拦(vfs path 非数据 scope)')
+    const vfsE = await mw.wrapToolCall!({ name: 'vfs_edit', args: { path: 'html/my-comp.vue', oldString: 'a', newString: 'b' } } as any, callNext)
+    assert(vfsE.status === 'done', 'focus vfs_edit(工作区文件)→ 不拦')
 
     // 读工具不限制(用户仍需看全量上下文)
     const readOutside = await mw.wrapToolCall!({ name: 'read', args: { jsonPath: 'components.0' } } as any, callNext)

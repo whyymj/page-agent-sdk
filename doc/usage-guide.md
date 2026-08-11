@@ -663,6 +663,16 @@ const history = sdk.subagentHistory            // 等价 sdk.inspect().subagent.
 - 并发安全:预声明 use_<id> 用唯一 observeId(事件 taskId 保持 `use_${id}` 不变)
 - 随 `subagent` 能力开;自建 tracker:`import { createSubagentTracker } from 'page-agent-sdk'`(historyLimit 默认 20)
 
+#### 子 agent 授权面:委派不绕过把关(fix-authorization-surface)
+
+委派路径与主 agent 共享同一套授权/拦截面,无需额外配置:
+
+- **子栈继承主 `permissions`/`approval`**:配了 `approval:{tools:['write']}` 后,子 agent(含 spawn 自授 writablePaths 的写)调 write 同样弹确认(ApprovalBar 正常渲染,允许/拒绝即时收口);permissions deny 规则对子同样生效
+- **框架工具子池禁入(装配期 filter)**:`use_*`/`spawn_*`/`load_skill`/`write_todos`/`checkpoint`/`focus` 操作等不因 `allowedTools` 或 spawn `tools` 参数进入子 agent —— LLM 无法自授委派工具激活递归链
+- **spawn 自授限制**:spawn_agent 的 `tools` 参数不可授予写工具(写权限只能经 `writablePaths`,受 path guard 约束);`patches` 含无 jsonPath 项(作用于根)→ PATH_OUT_OF_SCOPE
+- **子 offload 桥接主 vfs**:子 agent 大结果外存直落主 vfs 共享池,子/主都能 vfs_read 回读(不 404)
+- **能力包 allowedTools 生效**:`createHtmlSubagent`/`createRagSubagent` 的 vfs 工具(经中间件注入)现在能被装配解析(2.37 的装配断层已修)
+
 ### 6.2 自定义工具
 
 给 Agent 加任意能力(API 调用、计算、宿主页面操作……):

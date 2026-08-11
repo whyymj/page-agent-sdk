@@ -4,7 +4,7 @@
  * 对齐 Deep Agents 的 permissions/enforce.ts。本期默认不启用(主数据全开放无审批),
  * 保留 createChatSdk({ permissions }) 收紧口子。
  *
- * 仅对主数据/vfs 工具生效:按工具的 `jsonPath` 参数作为 scope(整体操作未传 jsonPath 时不校验,由 schema 白名单兜底),匹配 glob 规则。
+ * 仅对主数据/vfs 工具生效:按工具的 `jsonPath` 参数作为 scope(整体操作未传 jsonPath 时按根 scope '' 校验),匹配 glob 规则。
  */
 import type { Middleware, ToolCallContext, ToolExecResult } from './middleware'
 
@@ -17,7 +17,7 @@ export interface PermissionRule {
   mode: 'allow' | 'deny'
 }
 
-const WRITE_TOOLS = new Set(['set_data', 'edit_data', 'delete_data', 'write', 'vfs_write', 'vfs_edit'])
+const WRITE_TOOLS = new Set(['set_data', 'edit_data', 'delete_data', 'write', 'vfs_write', 'vfs_edit', 'draft_commit', 'eval_script'])
 const READ_TOOLS = new Set([
   'get_data',
   'describe_data',
@@ -63,7 +63,7 @@ function decideAccess(rules: PermissionRule[], op: PermissionOp, scope: string):
 /**
  * 提取一次工具调用涉及的所有 scope(点号路径)。
  * 兼容 `write` 高层工具的嵌套结构:jsonPath 可能在 `patch.jsonPath` 或 `patches[].jsonPath`(批量逐条独立判断)。
- * 整体操作(write({value}) 整体 set / set_data 无 jsonPath)返回空数组 → 不校验,由 schema 白名单兜底(与历史行为一致)。
+ * 整体操作(write({value}) 整体 set / set_data / draft_commit 无 jsonPath)返回空数组 → wrapToolCall 按根 scope '' 校验(fix-authorization-surface,修原「空 scopes 跳过」绕过口子)。
  */
 function extractScopes(args: unknown): string[] {
   const a = (args ?? {}) as Record<string, any>
@@ -83,13 +83,18 @@ export function createPermissionsMiddleware(rules: PermissionRule[]): Middleware
   return {
     name: 'permissions',
     wrapToolCall: async (ctx: ToolCallContext, next: (ctx: ToolCallContext) => Promise<ToolExecResult>) => {
-      const op: PermissionOp | null = WRITE_TOOLS.has(ctx.name)
+      let op: PermissionOp | null = WRITE_TOOLS.has(ctx.name)
         ? 'write'
         : READ_TOOLS.has(ctx.name)
           ? 'read'
           : null
+      // fix-authorization-surface(P1-21 同型):eval_script 仅 transform 是写操作;query 只读不参与校验
+      if (ctx.name === 'eval_script' && (ctx.args as Record<string, any> | undefined)?.mode !== 'transform') op = null
       // write 的 jsonPath 嵌在 patch/patches,需展开逐条校验(任一 deny 则整体拒绝)
-      const scopes = extractScopes(ctx.args)
+      let scopes = extractScopes(ctx.args)
+      // fix-authorization-surface(P1-22 同型):无 jsonPath 的写(整体 set/draft_commit/eval transform 整体)按根 scope '' 校验。
+      // 原实现「空 scopes 跳过」= deny 规则可被整体写绕过;现仅匹配 '' 的规则(如 '**')拦整体写,具体路径规则不误伤
+      if (op === 'write' && !scopes.length) scopes = ['']
       if (op && scopes.length) {
         for (const scope of scopes) {
           if (decideAccess(rules, op, scope) === 'deny') {

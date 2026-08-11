@@ -20,6 +20,7 @@ import { run as runResources } from './e2e/resources.mjs'
 import { run as runAgentCompression } from './e2e/agent-compression.mjs'
 import { run as runHeadlessSubpath } from './e2e/headless-subpath.mjs'
 import { run as runCapabilityPacks } from './e2e/capability-packs.mjs'
+import { run as runAuthorizationSurface } from './e2e/authorization-surface.mjs'
 
 const modules = [
   ['systemprompt', runSystemprompt],
@@ -41,6 +42,7 @@ const modules = [
   ['agent-compression', runAgentCompression],
   ['headless-subpath', runHeadlessSubpath],
   ['capability-packs', runCapabilityPacks],
+  ['authorization-surface', runAuthorizationSurface],
 ]
 
 let totalPass = 0, totalFail = 0

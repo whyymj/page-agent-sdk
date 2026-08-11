@@ -1,5 +1,7 @@
 # 活跃 Changes 优先级索引
 
+> **fix-authorization-surface(进行中,2026-08-11 立)**:审计 P0-1 + P1-15/16/18/21/22 修复(授权与拦截面完整性)。Q1-Q5 已拍板(审计 tasks §7.1):装配期源头 filter / 本 change 含 focus 绕过 / hang 批次先 design / N1 并 main-sub-isolation / 五维下轮。见 `2026-08-11-fix-authorization-surface/`。
+
 > **2026-08-10 发布 2.37.0**:`add-capability-packs` 实施完成并归档(专用子 agent 工厂 `createRagSubagent`/`createHtmlSubagent` + 子 agent 架构扩展 `allowedTools`/`middleware`/`summarization` + `sdk.vfsWrite` + `rag-search`/`html-builder` skill + `rag-subagent-demo`/`html-subagent-demo` + augmentPrompt 委派引导)。见 `archive/2026-08-10-add-capability-packs/`。
 
 > **2026-08-10 发布 2.38.0**:`add-subagent-observability` 实施完成并归档(子 agent 观察层:`createSubagentTracker` + `inspect().subagent.{active,history}` + `sdk.getActiveSubagents()`/`sdk.subagentHistory` + DebugDrawer「🤖 子 agent」tab;纯观察层不改生命周期/事件链)。见 `archive/2026-08-10-add-subagent-observability/`。

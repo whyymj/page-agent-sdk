@@ -22,20 +22,25 @@ import type { ZodType } from 'zod'
 import { getSchemaAtPath } from '../tools/schemaUtils'
 import { extractSchemaHint } from '../presets'
 
-/** 写工具集合(聚焦时其 jsonPath 必须在任一 focus 子树内;读工具不限制,用户仍需看全量上下文) */
+/**
+ * 写工具集合(聚焦时其 jsonPath 必须在任一 focus 子树内;读工具不限制,用户仍需看全量上下文)。
+ * fix-authorization-surface(P1-21/22):
+ *  - 增 draft_commit(整体写 bind,同 set_data 语义);增 eval_script(transform 模式,wrapToolCall 内单独判 mode)
+ *  - 移除 vfs_write/vfs_edit:vfs path 是工作区文件路径(如 html/x.vue)非数据 jsonPath,
+ *    与焦点前缀比较恒不匹配 → 聚焦下误拦合法 vfs 写(html 子 agent 代码文件);vfs 工作区不属焦点数据范围
+ */
 const WRITE_TOOLS = new Set([
   'set_data',
   'edit_data',
   'delete_data',
   'write',
-  'vfs_write',
-  'vfs_edit',
+  'draft_commit',
 ])
 
 /**
  * 提取一次工具调用涉及的所有 jsonPath scope(点号路径)。
  * 兼容 write 高层工具的嵌套:jsonPath 可能在 `patch.jsonPath` / `patches[].jsonPath`(批量逐条独立判断)。
- * 整体操作(write({value}) / set_data 无 jsonPath)返回空数组 → 不校验(由 schema 白名单兜底,与 permissions 一致)。
+ * 整体操作(write({value}) / set_data / draft_commit 无 jsonPath)返回空数组 → 由 wrapToolCall 按「整体写 = 越界」拒绝(P1-22)。
  */
 function extractScopes(args: unknown): string[] {
   const a = (args ?? {}) as Record<string, any>
@@ -124,15 +129,30 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
       next: (ctx: ToolCallContext) => Promise<ToolExecResult>,
     ) => {
       // 范围收紧(strict):聚焦时写工具的 jsonPath 必须在【任一】焦点子树内,全不在才 PATH_DENIED 回灌 LLM 自纠
-      if (focuses.length && WRITE_TOOLS.has(ctx.name)) {
-        const scopes = extractScopes(ctx.args)
-        for (const scope of scopes) {
-          if (!focuses.some((f) => isUnderFocus(scope, f.path))) {
-            const labels = focuses.map((f) => (f.label ? `${f.path}(${f.label})` : f.path)).join(', ')
-            return {
-              content: `PATH_DENIED · 聚焦越界:当前聚焦 [${labels}],不可操作「${scope}」。请先 remove_focus / clear_focus 或换焦点后重试。`,
-              status: 'error' as const,
-            }
+      if (focuses.length) {
+        const labels = focuses.map((f) => (f.label ? `${f.path}(${f.label})` : f.path)).join(', ')
+        const deny = (scope: string): ToolExecResult => ({
+          content: `PATH_DENIED · 聚焦越界:当前聚焦 [${labels}],不可操作「${scope}」。请先 remove_focus / clear_focus 或换焦点后重试。`,
+          status: 'error' as const,
+        })
+        // P1-21(fix-authorization-surface):eval_script transform 可改写任意路径/整体数据(原不在 WRITE_TOOLS → 绕过)。
+        // query 模式只读放行;transform 无 jsonPath = 整体/patches 增量(必无 jsonPath)= 越界
+        if (ctx.name === 'eval_script') {
+          if ((ctx.args as Record<string, any> | undefined)?.mode !== 'transform') return next(ctx)
+          const scopes = extractScopes(ctx.args)
+          if (!scopes.length) return deny('(整体数据)')
+          for (const scope of scopes) {
+            if (!focuses.some((f) => isUnderFocus(scope, f.path))) return deny(scope)
+          }
+          return next(ctx)
+        }
+        if (WRITE_TOOLS.has(ctx.name)) {
+          const scopes = extractScopes(ctx.args)
+          // P1-22(fix-authorization-surface):无 jsonPath 整体写(write({value})/set_data/draft_commit/edit 无 path merge-append)
+          // 原「空 scopes 放行」与 strict 承诺冲突 —— 整体写无法校验子树归属 = 越界
+          if (!scopes.length) return deny('(整体数据)')
+          for (const scope of scopes) {
+            if (!focuses.some((f) => isUnderFocus(scope, f.path))) return deny(scope)
           }
         }
       }
