@@ -24,7 +24,7 @@ import {
   applyPatchToClone, restoreLive, restoreInPlace, diffObjects,
   type EditOp,
 } from './jsonUtils'
-import { getSchemaTopKeys, isPathAllowed, getSchemaAtPath, projectBySchemaDeep, projectBySchema, describeSchemaNode } from './schemaUtils'
+import { getSchemaTopKeys, isPathAllowed, getSchemaAtPath, projectBySchemaDeep, describeSchemaNode } from './schemaUtils'
 import type { VfsStore } from '../backends/vfs'
 import type { ResourceProtectSpec, ProtectedCtx } from './resources'
 import { ResourceStore, renderReadPlaceholders, enforceSet, enforcePatches, matchProtectedEither, normalizePath } from './resources'
@@ -392,8 +392,8 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         return toolError({ code: 'PATH_DENIED', message: `get_data @ "${jp}" 不在 schema 声明字段内(仅 schema 声明的 key 可读)`, hint: '主数据仅暴露 schema 声明的字段;若需操作该字段,集成方需在 schema 中声明它' })
       }
       let val = jp ? getByPath(bindRef, jp) : bindRef
-      // 整体读时按 schema 顶层 key 投影(隐藏未声明字段)
-      if (!jp) val = projectBySchema(val, allowKeys)
+      // 整体读按 schema 深投影(递归隐藏未声明字段;fix-data-integrity P1-19:原浅投影仅顶层 key,嵌套未声明字段泄露)
+      if (!jp && allowKeys) val = projectBySchemaDeep(val, schema)
       // 受保护路径占位符替换(结构化读;精确值不入 LLM 消息流)
       if (protectedCtx) val = renderReadPlaceholders({ jp, resolved: val, resourcesByPath: protectedCtx.resourcesByPath, resourceStore: protectedCtx.resourceStore })
       const h = hashValue(bindRef)
@@ -583,7 +583,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (bindRef == null || typeof bindRef !== 'object') {
         return toolError({ code: 'NOT_OBJECT', message: `主数据不是对象/数组,无法查询(当前为 ${bindRef === undefined ? 'undefined' : typeof bindRef})`, hint: 'query 仅适用于对象/数组;叶子用 get_data 读' })
       }
-      const queryTarget = allowKeys ? projectBySchema(bindRef, allowKeys) : bindRef
+      const queryTarget = allowKeys ? projectBySchemaDeep(bindRef, schema) : bindRef
       let nodes
       try { nodes = jpEval(queryTarget, expr) } catch (e) {
         return toolError({ code: 'JSONPATH_SYNTAX', message: `JSONPath 解析错误: ${(e as Error).message}`, hint: '语法子集:$ .key [n] ["key"] [*] [?(filter)] ..key ..*;filter:@.field op literal,&&/||/();对象根需先点出数组字段再过滤,如 $.components[?(@.x>1)]', details: { expr } })
@@ -608,7 +608,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     async ({ query, mode, fuzzyThreshold, matchKey, limit }) => {
       if (bindRef == null) return toolError({ code: 'EMPTY', message: '主数据为空,无可搜索内容' })
       try {
-        const searchTarget = allowKeys ? projectBySchema(bindRef, allowKeys) : bindRef
+        const searchTarget = allowKeys ? projectBySchemaDeep(bindRef, schema) : bindRef
         const hits = searchJson(searchTarget, query, { mode: mode as SearchMode, fuzzyThreshold, matchKey, limit: limit ?? 50 })
         return safeStringify({ matched: hits.length, results: hits })
       } catch (e) {
@@ -640,7 +640,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         source = getByPath(bindRef, jp)
         if (allowKeys) { const ss = getSchemaAtPath(schema, jp); if (ss) source = projectBySchemaDeep(source, ss) }
       } else {
-        source = allowKeys ? projectBySchema(bindRef, allowKeys) : bindRef
+        source = allowKeys ? projectBySchemaDeep(bindRef, schema) : bindRef
       }
       const data = deepClone(source)
       const timeout = jp && JSON.stringify(data).length > 100000 ? 8000 : 3000  // 子树较大时延长超时(默认 3s,>100KB 延至 8s)
@@ -724,7 +724,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           const jp = jpRaw || ''
           if (!isPathAllowed(jp, schema, allowKeys)) return `- ${jp || '(根)'}: [PATH_DENIED: 不在 schema 声明字段内]`
           let target = jp ? getByPath(bindRef, jp) : bindRef
-          if (!jp) target = projectBySchema(target, allowKeys)
+          if (!jp && allowKeys) target = projectBySchemaDeep(target, schema)
           else if (allowKeys) { const ss = getSchemaAtPath(schema, jp); if (ss) target = projectBySchemaDeep(target, ss) }
           let resolved = target
           if (protectedCtx) resolved = renderReadPlaceholders({ jp, resolved, resourcesByPath: protectedCtx.resourcesByPath, resourceStore: protectedCtx.resourceStore })
@@ -742,8 +742,8 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         return toolError({ code: 'PATH_DENIED', message: `read @ "${jp}" 不在 schema 声明字段内`, hint: '主数据仅暴露 schema 声明的字段;若需操作该字段,集成方需在 schema 中声明它' })
       }
       let target = jp ? getByPath(bindRef, jp) : bindRef
-      // 投影隐藏未声明字段:整体读按顶层白名单;子路径读按该位置的子 schema 递归投影(防 child 不可见字段泄露)
-      if (!jp) target = projectBySchema(target, allowKeys)
+      // 投影隐藏未声明字段:统一深投影口径(fix-data-integrity P1-19:整体读也递归投影,与子路径读一致,防嵌套未声明字段泄露)
+      if (!jp && allowKeys) target = projectBySchemaDeep(target, schema)
       else if (allowKeys) {
         const subSchema = getSchemaAtPath(schema, jp)
         if (subSchema) target = projectBySchemaDeep(target, subSchema)
@@ -950,8 +950,8 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         base = entry.value
         label = `快照 #${entry.id}`
       }
-      // 当前主数据按白名单投影(与快照/against 对比口径一致,隐藏未声明字段)
-      const cur = allowKeys ? projectBySchema(bindRef, allowKeys) : bindRef
+      // 当前主数据按白名单深投影(与快照/against 对比口径一致,递归隐藏未声明字段;P1-19)
+      const cur = allowKeys ? projectBySchemaDeep(bindRef, schema) : bindRef
       const diffs = diffObjects(base, deepClone(cur))
       if (!diffs.length) return `无差异:当前主数据与 ${label} 完全相同。`
       return `差异(当前 vs ${label},共 ${diffs.length} 处):\n${diffs.map((d) => `  ${d.path}: ${safeStringify(d.from)} → ${safeStringify(d.to)}`).join('\n')}`

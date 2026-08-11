@@ -32,8 +32,8 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,1722 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑 tests/e2e-integration.mjs,用构建产物 dist,482 项;覆盖各 API/配置项/功能模块/简单与复杂场景:默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置,含 toolMode simple/advanced/minimal) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件,含 filterByToolMode/extractSchemaHint) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 乐观锁冲突人工介入(pendingConflict/resolveConflict) / read/write 高层工具 + 拦截器 / data bind 字段直连 + schema .describe() 自动注入 + input/output 拦截器 / headless 子路径(/headless 纯核心:导出范围/降级 warn/ui:false 走通/bundle 纯净+体积) / 错误场景)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,1748 项断言)
+npm run test:e2e      # 集成层 e2e(node 跑 tests/e2e-integration.mjs,用构建产物 dist,495 项;覆盖各 API/配置项/功能模块/简单与复杂场景:默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置,含 toolMode simple/advanced/minimal) / 自定义 tools/middleware/skills/memory 注入 / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件,含 filterByToolMode/extractSchemaHint) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 乐观锁冲突人工介入(pendingConflict/resolveConflict) / read/write 高层工具 + 拦截器 / data bind 字段直连 + schema .describe() 自动注入 + input/output 拦截器 / headless 子路径(/headless 纯核心:导出范围/降级 warn/ui:false 走通/bundle 纯净+体积) / 会话完整性(resetSession 无 storage 完整重置/冲突挂起中清空收口/shareContext 双实例 core 级串行) / 错误场景)
 npm run test:browser  # 浏览器 E2E(Playwright + mock LLM,跑 tests/browser/*.spec.ts;自动启 dev server,拦截 LLM API 返回确定性 SSE 响应;覆盖 page-demo read→write→read / human-confirm-demo 两层确认 / complex-demo 列组件+edit patch+子路径读+mission+深嵌套+配置面板+actions(save_draft/publish)+get_dom;不依赖真 LLM,可进 CI)
 ```
 
@@ -84,7 +84,7 @@ skills/                         # 分发给使用者的 Agent Skill(integrate/re
 - 快照回退:`set/edit/delete` 前自动存快照(per-path 栈);`restore_data` 一键回退
 - **乐观锁(`expectedHash`)+ 冲突人工介入**:`get_data` 返回值附 `hash=xxx`;`set/edit/delete` 传 `expectedHash` 启用乐观锁——若属性在 agent get 之后被外部代码/其他 agent/用户手动改过(hash 不匹配)则触发冲突。集成方传 `createChatSdk({ ... })` 时默认开启人工介入:工具挂起,`sdk.pendingConflict`(响应式 ref)置为冲突信息,内置 ChatDialog 渲染冲突条让用户三选一 → `sdk.resolveConflict('keep_external'|'overwrite'|'restore')` 收口,工具继续。headless 集成方可 watch `pendingConflict` 自建 UI。不传 `expectedHash` → 向后兼容直接写(不校验)。`DataOpsOptions.onConflict` 可独立用于 `createDataOps`(不接 ChatDialog 时自行处理)。**per-scope 基线(fix-main-sub-isolation 2.40+)**:autoLock 基线(`baselines` Map)按 caller scope 隔离 —— 主×子共享 dataOps controller 闭包,子 agent 委派期间 dataOps 工具(带 `__dataOpsScoped` marker)经 scope proxy 切 `activeScope`,子 read/write 只动子 scope 基线,**子 read 不再污染主基线**(修原:子 read 刷新共享基线 → 父过期写静默放行覆盖外部修改);委派结束清子 scope 条目。`DataOpsController.enterScope(id)→恢复函数`(嵌套安全)/`exitScope(id)`;setData/替换 bind 清全部 scope。N1 契约:autoLock effHash 在拦截器后、冲突检查时刻解析,解析→检查→提交同步无 await → 同 scope 连续写永不互相冲突(写成功即刷基线)
 - **高层读写工具 `read`/`write`(2.2+)**:合并 list/describe/get 与 set/edit/delete + 自动乐观锁(`autoLock` 默认 true,用 LLM 最后 read 的 hash)+ 自动快照。`read({jsonPath?, fields?, depth?})` 列出/读取(支持 `fields` 字段裁剪 + `depth` 深度截断减体积);`write({value?, patch?, patches?, del?})` 四意图(整体 set 直传 object / 单 patch 增量 / **批量 `patches` 原子应用多 patch 任一失败回滚** / 删除)。降低 LLM 认知负担。`eval_script` transform 支持返回 `{patches:[...]}` 增量模式(避免大对象整体重传)
-- **schema 形状自动白名单(2.4+)**:`data.schema` 为 `ZodObject` 时,顶层声明的 key 自动作为可读写白名单 —— `read` 整体读按 schema 投影隐藏未声明字段,**子路径读也按该位置的子 schema 递归投影**(如 `read components.0` 按 elements schema 隐藏 child 未声明字段);`write`/`edit`/`delete` 的 `jsonPath` **逐段校验**必须在 schema 声明内否则 `PATH_DENIED`;整体 set / set_data / eval transform 自动转 **merge 语义**(只更新声明字段,未声明字段保留防误删);**`interceptors.write` 补充的未声明字段与显式传入同样被白名单挡下不写回 bind**(2.15 安全收紧:2.15.0 曾把「补充字段写回」当修复,实为白名单绕过口子,sec-21 有断言;拦截器改声明字段值仍生效)。非 ZodObject(discriminatedUnion/record/lazy)全开放向后兼容。零新增配置,集成方用 `z.pick` 子集 schema 即生效
+- **schema 形状自动白名单(2.4+)**:`data.schema` 为 `ZodObject` 时,顶层声明的 key 自动作为可读写白名单 —— **读路径统一深投影(fix-data-integrity 2.41+)**:`read` 整体/get_data 整体/query/search/eval 根/diff 与子路径读一律按 schema **递归**投影隐藏未声明字段(修前根级读仅顶层浅投影,声明 key 内深层未声明字段如 `config.apiKey` 整体读泄露 —— 白名单护城河唯一破口;`projectBySchemaDeep` 单一口径);`write`/`edit`/`delete` 的 `jsonPath` **逐段校验**必须在 schema 声明内否则 `PATH_DENIED`;整体 set / set_data / eval transform 自动转 **merge 语义**(只更新声明字段,未声明字段保留防误删);**`interceptors.write` 补充的未声明字段与显式传入同样被白名单挡下不写回 bind**(2.15 安全收紧:2.15.0 曾把「补充字段写回」当修复,实为白名单绕过口子,sec-21 有断言;拦截器改声明字段值仍生效)。非 ZodObject(discriminatedUnion/record/lazy)全开放向后兼容。零新增配置,集成方用 `z.pick` 子集 schema 即生效
 - **isPathAllowed 逐段校验:ZodArray 严格判 + discriminatedUnion 降级(2.17.1 bug 修)**:`isPathAllowed`/`getSchemaAtPath` 遍历 jsonPath 时,ZodArray 用 `_def.type==='array'` 字符串相等严格识别(防误判);遇 `discriminatedUnion`/`ZodUnion` 静态无 bind 不知具体 option → **降级开放**(`isPathAllowed` 返 true / `getSchemaAtPath` 返 null,后续段交 `schema.safeParse` 兜底校验)。修 pre-existing bug:旧 `_def.type` 真值判断把 union 误当 array,致 `components.N.props.X`(穿过 union 选项的嵌套 object 子字段)深层路径误 `PATH_DENIED`,complex-demo 嵌套 schema 下 evolve patches 增量改单字段几乎废掉(只能退化 merge 整体)
 - **read/write/eval 增强(evolve 2.17+)**:`read` 增 `jsonPaths`(多路径一次读,非法路径单项标错不整批失败)+ `offset`/`limit`(仅数组目标分页,返回切片 + total/hasMore,默认 limit=50 上限 200);`write` 增 `dryRun`(四意图预检:走完整校验链 schema+白名单+patch 应用到 clone,但**不落盘/入快照/写 bind**,乐观锁冲突照常检测返回 VERSION_CONFLICT 不挂起);`eval_script` 增 `jsonPath`(子树模式:仅 clone/执行子树降大 JSON 成本,子树>100KB 超时自适应延至 8s;transform 返回值作为子树新值 set 到子路径 + 整体校验)
 - **分块写 draft_write/draft_commit(Phase 2,opt-in)**:几百 K JSON 逼近 LLM `max_tokens` 单次 write 装不下 → 分块构建(类 git add→commit)。`draft_write({draftId, chunk, mode})` mode:start 新建/append 追加(拼 JSON 片段到 vfs drafts 池);`draft_commit({draftId})` 合并+`JSON.parse`(失败 JSON_INVALID)+ schema 校验(失败 SCHEMA_INVALID,草稿保留可修后重试)+ 原子写 bind + 快照(成功清草稿)。draft_commit 走乐观锁(`expectedHash`/`autoLock`;draft 跨多轮累积期间 bind 被外部改过 → 触发冲突人工介入,不静默覆盖,A1)。**复用 `commitSetToBind` 纯函数**(抽自 write(set) 的校验+快照+merge+audit 链,与 set_data/writeSlot 共用,单一真相源)。`capabilities.draftWrite` 默认关(opt-in;需 dataOps+vfs;toolMode advanced 暴露,simple/minimal 隐藏)。小改仍用 write/patch,draft 只在大 JSON 从零生成。**分块构建是多轮**(draft_write×N + draft_commit + read 确认),默认 `maxToolRounds=10` 可能触顶被截断,大 JSON 场景建议集成方调到 20-30(A5)。其余加固项(A4 子路径 hash / A2 快照字节 / A3 惰性 hash / B1 中间校验 / B2 池淘汰显式化 / C1 多草稿合并 / C2 eval 子树 patches)评估推后,见 `openspec/changes/archive/2026-08-04-harden-large-json-write/`。新增导出 `commitSetToBind`
@@ -105,6 +105,7 @@ skills/                         # 分发给使用者的 Agent Skill(integrate/re
 - **压缩后不丢关键信息(内置保障)**:① `summarization` 压缩时自动注入当前主数据 description 快照进摘要 system 消息(`getRegisteredData` 由 createChatSdk 内部注入,防 LLM 基于过时记忆操作已卸载的动态组件);② `contextOptions.preserveLastToolResults`(默认 `['describe_data','read']`)跨轮摘要时保留这些工具的 result 摘要片段(防字段描述被摘要掉,设 `[]` 关);③ `set`/`edit`/`delete` 成功返回附「当前可操作 path 列表」(超 8 项或过长只报数量);④ 导出 `systemPromptHelpers.reliableWriteRules`(改前先 get、动态先 list、字段以 describe 为准、写错看校验错误重试、优先 edit 增量)建议拼进 systemPrompt
 - **双摘要协同(2.4+)**:`summarization`(compressInput,上下文窗口压缩,不改 messages 原数组)与 `trimMemoryMessages`(afterRound,内存 OOM 裁剪,splice 进 messages)独立运行。为防 `groupRounds` 跳过头部 system 导致 trimMemoryMessages 累积的【更早对话摘要】被 summarization 静默丢失,`compress` 现提取头部旧摘要正文并入新摘要的【更早累积摘要】段。配置建议:`maxMemoryRounds >= summaryThresholdRounds`(否则 trimMemoryMessages 先裁,summarization 永不触发)
 - **跨轮召回纳入工具结果 + trim 异步 LLM 增强(recall-and-trim-llm)**:① 关键词召回(`recallRounds`)匹配串纳入 `steps.result`(`plainSummary` 截断 120 字),跨轮工具结果可被关键词命中(解「之前 read 出来的 X 搜不到」);② trim(`trimMemoryMessagesImpl`)触发后**同步模板占位 + 异步 LLM 增强**:若 `enableLLMSummary`(默认 true,conservative 关)+ `summaryLlmInvoke`,fire-and-forget 用 LLM 重摘要 older 轮次替换模板(照 `titleLlmInvoke` 模式),`messages.indexOf(summaryMsg)` 竞态守卫(未被动过才替换),失败/无 invoke 保留模板(优雅降级)。`trimMemoryMessagesImpl` 返回值增 `older`/`prevSeg`(纯函数不变);新增纯函数 `composeTrimSummary`。afterRound 保持同步 void 契约
+- **压缩 LLM 摘要异步化(fix-data-integrity 2.41+)**:`compress` 的 LLM 摘要不再同步 await(修前阻塞首 token ≤15s,恰大 JSON 长流程场景)—— **模板先行 + 后台前缀缓存**:触发时立即用索引摘要返回(零阻塞),fire-and-forget 后台 LLM 摘要入前缀缓存(`{coveredCount, text}`;older 恒从首轮起单调扩 → coveredCount 单调可比);后续压缩命中:全覆盖直接用(`llm_summary(cached)`)/ 部分覆盖 = LLM 前缀 + 新增尾部索引增量(`llm_summary(prefix)+index_tail`;indexSummarize 绝对轮号 slice 不错位);失败不污染缓存下次重试。token 成本不增(每次触发仍一次后台 LLM)。**agentCompression 的 decide(≤6s)维持同步**(opt-in 默认关;结果直接决定本次切分参数,异步化需「用旧决策」语义,推后)
 - **上下文持久化韧性(context-persist-resilience)**:① **mission/workingMemory 跨刷新持久化**:`SessionSnapshot` 增 `mission?`/`workingMemory?` 字段(`SnapshotKind`/`SNAPSHOT_KINDS` 同步增),`persistRuntime` 存 / `applySnapshot` 读(useMission/useWorkingMemory 门 + 非空守卫);workingMemory 补 `restore(wm)` 写回闭包(mission 复用 setMission);**switchSession 切走前补 persist**(防 setMission/积累后未发消息即切会话丢)。② **trim 收口**:`trimMemoryMessages` 删 older 前 emit `context_trimmed` 事件(dropped 完整原文 + `vfsResults` 被删轮引用的 vfs 大结果原文 + summary,集成方可归档),删后**可达性 GC**(`extractVfsRefs` 扫剩余 messages 提 `large_results/` 引用 → `gcVfsLargeResults` 删不可达;纯函数 `utils/vfsGc.ts`);GC 触发三处:trim 后 / clear(resetSession 已 `vfsStore.clear`)/ 加载(applySnapshot 兜底清历史孤儿);只删不可达(被引用留),LRU 硬上限(被引用总量超 `large_results` 池默认 4MB)仍淘汰。**澄清**:vfs 在 storage 开时**已持久化**(persist 钩子 + hydrate 恢复,非「刷新即丢」—— context-history-resilience B3 修正)
 - 纯内存上限:vfs `maxBytes`(默认 8MB,四池分池 LRU 淘汰,见上「vfs 四池分池」);对话历史 `maxMemoryRounds`(默认 30)超限压缩为摘要 system 消息
 
@@ -112,12 +113,13 @@ skills/                         # 分发给使用者的 Agent Skill(integrate/re
 - **默认关闭,赋值开启**:`storage: 'indexed'|'session'|'local'|'memory'` 或配置对象
 - 三层命名空间:`DB → agentId → sessionId`;`options.id` 必传稳定值(多 agent 隔离)
 - 可注入后端(Idb/WebStorage/Memory),不可用自动降级内存;配额/LRU 淘汰;`switchSession` 切上下文
-- `shareContext: true` 同 `id` 多实例复用同一 `AgentCore`(同页多对话框视图)
+- `shareContext: true` 同 `id` 多实例复用同一 `AgentCore`(同页多对话框视图)。**串行闸与在途流注册表 core 级(fix-data-integrity 2.41+)**:`runSerial`/`activeControllers` 建在 core(修前实例级私有 → 双实例并发 send/switchSession 写同一 messages 裸奔),send/batch/switchSession/stream 全经 core 级串行闸;**shareContext 下生命周期收口(unmount/switchSession/resetSession/release)中止共享 core 的全部在途流**(含其他实例发起的 —— 共享状态不允许孤儿流续写;非 shareContext 行为不变)
 
 ### 对话鲁棒性
 - 模型调用自动重试(`harness/retry.ts`):网络/429/5xx 指数退避(默认 `maxRetries`=2);4xx 与 abort 不重试
 - 停止生成(abort):signal 穿透到 `llm.stream`;abort 时保留已生成 partial
-- **挂起有界收口(fix-hang-and-feedback)**:统一三契约 —— ①**超时默认值表**:无响应方路径(send/batch)approval/humanConfirm **30s 自动拒**(`approval.timeoutMs` 覆盖,Infinity 留口)+ emit `APPROVAL_AUTO_REJECTED`;MCP 握手 **15s**(`mcp[].timeoutMs`)黑洞端点降级跳过不瘫 mount;skills 远程 fetch **30s**;LLM 流停滞看门狗 `streamStallMs` 默认 **90s**(chunk 间隔含等首个;`withStallTimeout` 纯函数;`StreamStalledError` status=408 不进重试;0 关)②**可见性**:兜底收口必留痕(结构化 error / warn / debugLogs)③**abort 收口**:实例级 activeControllers 注册表 —— `send`/`batch` 接 `signal`(P1-4 可中断);`unmount`/`switchSession`/`resetSession` 先 abort 全部在途流再收口(approval/conflict 随 signal 自动拒,无幽灵流);stop() 清排队经 `onQueuedCleared` 记 debugLogs(D-1 拍板保持清空语义)。**UI 交互确认默认仍无限等用户**(有响应方不超时,D-2 拍板)
+- **挂起有界收口(fix-hang-and-feedback)**:统一三契约 —— ①**超时默认值表**:无响应方路径(send/batch)approval/humanConfirm **30s 自动拒**(`approval.timeoutMs` 覆盖,Infinity 留口)+ emit `APPROVAL_AUTO_REJECTED`;MCP 握手 **15s**(`mcp[].timeoutMs`)黑洞端点降级跳过不瘫 mount;skills 远程 fetch **30s**;LLM 流停滞看门狗 `streamStallMs` 默认 **90s**(chunk 间隔含等首个;`withStallTimeout` 纯函数;`StreamStalledError` status=408 不进重试;0 关)②**可见性**:兜底收口必留痕(结构化 error / warn / debugLogs)③**abort 收口**:activeControllers 注册表(**core 级**,fix-data-integrity 上移)—— `send`/`batch` 接 `signal`(P1-4 可中断);`unmount`/`switchSession`/`resetSession` 先 abort 全部在途流再收口(approval/conflict 随 signal 自动拒,无幽灵流);stop() 清排队经 `onQueuedCleared` 记 debugLogs(D-1 拍板保持清空语义)。**UI 交互确认默认仍无限等用户**(有响应方不超时,D-2 拍板)
+- **resetSession 收口统一(fix-data-integrity 2.41+)**:`sdk.resetSession()`(同步,公开 API;UI ChatHeader「清空对话」同路径)= abort 全部在途流 + **收口挂起冲突**(keep_external,修前唯一不收口的生命周期路径)+ 重置全部内存态(messages/vfs/todos/memory/mission/workingMemory/focus/checkpoint/debugLogs)+ 新 sessionId + emit session_restored。**storage 关(默认)不再早退**(修前 `!store` return → mission/focus/todos 泄漏进新对话);store 相关(createSession)才按 store 门控
 - 自定义中间件外接:`createChatSdk({ middleware: [...] })` 拼到内置栈末尾;`Middleware` 类型已导出
 - **onEvent 事件回调**:`createChatSdk({ onEvent })` 订阅常用时机(`data_change`/`message_update`/`tool_call`/`tool_result`/`text`/`round_start`/`done`/`usage`/`session_restored`/`error`),供外部联动替代轮询;`approval_request` 不外发;流式事件仅 stream 模式(UI 默认 stream;`send` 走 invoke 无流式事件,但 window/message/error 仍发)。内部由 `sdk-events` 中间件 + `core.stream` 包装实现
 - **sdk.hook() 实例方法**:`sdk.hook(handler) => () => void` —— 运行时动态订阅(可多个监听器、可取消),与构造时 `onEvent` 互补;`AgentCore.listeners` 集合,`shareContext` 时多实例共享;`sdk-events` 中间件始终装载(无监听器时 emit 为 no-op)
@@ -240,14 +242,14 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test            # tsx 跑 src/core/__tests__/selftest.ts(runner),1722 项断言
+npm test            # tsx 跑 src/core/__tests__/selftest.ts(runner),1748 项断言
 ```
 **按模块拆分**:测试代码在 `src/core/__tests__/modules/sec-NN.ts`(53 个模块),各导出 `run(ctx)` 返回 void,由 `selftest.ts` runner 依次调用并汇总计数。共享 `TestCtx`(assert/invoke/byName)在 `modules/_ctx.ts`。覆盖核心逻辑:dataOps(范围/schema/祖先读/序列化/动态注册 controller)/ vfs / 中间件(todos/skills/memory/permissions/summarization/retry/pool/subagent/mcp extractText/verify beforeReturn+createWriteBackCheck/approval/checkpoint/usageHints/压缩注入快照/preserve 工具结果)/ 存储配额淘汰降级 / selectBuiltinTools / proxyLlm(代理/直连两模式)。**改任何核心模块后必跑**。tsx 跑源码(不经构建),快但触不到 createChatSdk 顶层 API 作用域。新增功能时按「新增功能测试同步约定」在对应模块追加用例或新建模块并在 runner 注册。
 
 #### 2. 集成层 e2e(改 createChatSdk 顶层 API 后必跑)
 ```bash
 npm run build       # 先构建(e2e 用 dist 产物)
-npm run test:e2e    # node 跑 tests/e2e-integration.mjs(runner),482 项断言
+npm run test:e2e    # node 跑 tests/e2e-integration.mjs(runner),495 项断言
 ```
 **按模块拆分**:测试代码在 `tests/e2e/<module>.mjs`,各导出 `run()` 返回 `{pass,fail}`,由 `tests/e2e-integration.mjs` runner 汇总。模块:
 - `systemprompt.mjs`(默认/自定义/能力概述/拼接)、`dynamic-register.mjs`(add·remove·list + inspect 同步 + dataOps 关闭 no-op)
@@ -323,7 +325,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers|reliableWriteRules" /tmp/sdk.mj
 | 构建配置(vite/external) | — | ✅(用 dist) | — | plain.html(CDN) | — |
 
 #### 发布前必跑顺序
-`npm run build` → `npm test`(1722 全过) → `npm run test:e2e`(482 全过) → `npm run test:browser`(浏览器 E2E 全过) → `npm run test:exports`(types 与 src 导出对齐) → `npm run test:types`(tsconfig.test.json 只查对外 types/index.d.ts 类型对齐 + tests/types.test-d.ts;src 全量类型卫生用 `npx tsc -p tsconfig.json` 单独诊断,**非发布门禁** —— 勿把全量 tsc 报错当门禁阻塞;但 **src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空,test/examples 的 unused-import 噪声豁免) → `npm run test:size`(dist 体积不超阈值) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
+`npm run build` → `npm test`(1748 全过) → `npm run test:e2e`(495 全过) → `npm run test:browser`(浏览器 E2E 全过) → `npm run test:exports`(types 与 src 导出对齐) → `npm run test:types`(tsconfig.test.json 只查对外 types/index.d.ts 类型对齐 + tests/types.test-d.ts;src 全量类型卫生用 `npx tsc -p tsconfig.json` 单独诊断,**非发布门禁** —— 勿把全量 tsc 报错当门禁阻塞;但 **src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空,test/examples 的 unused-import 噪声豁免) → `npm run test:size`(dist 体积不超阈值) → `npm pack --dry-run`(核对 files 不含 `.env`/`src`/`examples`/笔记) → 版本号递增 → `npm publish` → CDN 可达性验证(上节 5)
 
 #### 新增功能测试同步约定(强制)
 
@@ -346,7 +348,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers|reliableWriteRules" /tmp/sdk.mj
 
 **最低要求**:每个新功能至少 1 条断言,覆盖「能正常工作」+「边界/错误场景」(如非法入参被拒、关闭开关后 no-op、未开启时抛错等)至少 1 条。
 
-**计数同步**:补测试后同步更新本文件「测试流程」小节的断言计数(1722/482)与 README 中英文计数,以及下方测试矩阵的「改动范围」行(若引入新模块)。
+**计数同步**:补测试后同步更新本文件「测试流程」小节的断言计数(1748/495)与 README 中英文计数,以及下方测试矩阵的「改动范围」行(若引入新模块)。
 
 **自检命令**:提交前跑 `npm test && npm run build && npm run test:e2e`,三者全绿方可提交。
 
@@ -380,6 +382,8 @@ createChatSdk({
 **预设**(`presets`):`pageBuilder` / `researcher` / `minimal`,spread 进 `createChatSdk`。
 
 **UI 模块可复用**:`ChatDialog` / `MessageContent` / `CodePreview` + `useChat` 均从入口导出。`inspect()` 的 `AgentInfo` 含 `mcp.servers`、每个工具 `source`、`contextPreset`(2.16+ 当前生效的预设名)。框架无关集成见 `demo/plain.html`。
+
+**markdown 渲染性能(fix-data-integrity 2.41+)**:流式回复每 delta 全文重算 marked+hljs+DOMPurify 是 O(n²),巨内容冻结主线程 —— `useMarkdown` 两层防护:①**尾随节流**:大内容(>2K 字符)≤ 每 100ms 渲染一次 + 尾沿保证流结束渲染最终态(小内容直渲,打字机体验不变);②**hljs 尺寸闸**:单代码块 > `HLJS_BLOCK_MAX_CHARS`(20K)跳高亮转义直出(hljs 是单帧大头;marked/DOMPurify 线性保留,**sanitize 永不跳过**)。MessageContent 的 DOM 增强改由 html 变更驱动。导出纯函数 `renderMarkdownHtml`/`markedToHtml`/`HLJS_BLOCK_MAX_CHARS`(仅主包,含 marked/hljs 依赖)。
 
 ## 编码规范
 - `<script setup lang="ts">`,Composition API;注释用中文,只解释非显而易见处
@@ -433,7 +437,7 @@ createChatSdk({
    - `CLAUDE.md`:开发约定/架构要点(本项目内部指引,不外发)
    - 中英文**必须同步**,新增能力两侧都补;语言切换链接保持双向
 3. **bump 版本**:`npm version patch|minor|major --no-git-tag-version`(semver;新增 API 用 minor,破坏性用 major,修复用 patch)
-4. **构建+自测**:按「### 测试流程」末尾「发布前必跑顺序」执行(`npm run build` → `npm test` 1722 全过 → `npm run test:e2e` 482 全过 → `npm run test:exports` 导出对齐 → `npm run test:types` 类型正确 → `npm run test:size` 体积不超阈值 → `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记)
+4. **构建+自测**:按「### 测试流程」末尾「发布前必跑顺序」执行(`npm run build` → `npm test` 1748 全过 → `npm run test:e2e` 495 全过 → `npm run test:exports` 导出对齐 → `npm run test:types` 类型正确 → `npm run test:size` 体积不超阈值 → `npm pack --dry-run` 核对不含 `.env`/`src`/`examples`/笔记)
 5. **提交**:`git add -A && git commit -m "feat/fix/docs: ..."`
 6. **发布(总结到 master + 推双远程)**:`git checkout master` → `./scripts/publish-github.sh "release x.x.x: 一句话总结"` —— 自动在 master 上 `merge --squash develop` 总结成一个发布 commit,再 fast-forward 推 Gitee + GitHub(两边 master 历史一致,零冲突;个人笔记 `doc/待确认问题.md` 不进)。完成后切回 develop 继续开发
 7. **发 npm**:`npm publish`(`publishConfig.registry` 已锁官方 npm,不受本机默认私有源影响)

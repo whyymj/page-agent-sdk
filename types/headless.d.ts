@@ -869,6 +869,12 @@ export interface ChatSdk {
   show(): void;
   send(message: string, options?: { mission?: Partial<Mission>; interceptors?: { input?: (input: unknown) => unknown; output?: (json: unknown) => unknown }; maxAutoRetries?: number; /** 中断信号(fix-hang-and-feedback P1-4) */ signal?: AbortSignal }): Promise<string>;
   switchSession(sessionId?: string): Promise<string>;
+  /**
+   * 新建/清空会话(同步;「清空对话」编程式入口):中止在途流 + 收口挂起冲突(keep_external)
+   * + 重置全部内存态(messages/vfs/todos/memory/mission/workingMemory/focus/checkpoint/debugLogs)+ 换新 sessionId + emit session_restored。
+   * storage 开启时同步新建持久会话;未开启时仅重置内存态(P1-8 修复后不再早退泄漏)。
+   */
+  resetSession(): void;
   /** 列出当前 agent 的所有历史会话(供「历史列表」UI;storage 未开启 → []) */
   listSessions(): Promise<SessionMeta[]>;
   /** 历史会话列表(响应式;switchSession/deleteSession/onClear/init 后自动 refresh;直接消费无需手动 listSessions/refresh/hook) */

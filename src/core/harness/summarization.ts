@@ -12,6 +12,8 @@
  * agentCompression(agent-driven-compression):opts.decideInvoke 存在(开 + summaryLlm 可用)时,
  * compressInput 先 shouldTriggerCompression gate(避免每条消息都 decide 烧 LLM,design §1 HIGH)→
  * decide(inspect_context 工具循环)→ compress(messages, decision);decide 失败/null → 静态压缩(零阻塞)。
+ * 注(fix-data-integrity P1-25):compress 内的 LLM 摘要已异步化(模板先行 + 后台前缀缓存,不阻塞首 token);
+ * decide 本身仍同步(≤6s,opt-in 默认关;其结果直接决定本次切分参数,异步化需「用旧决策」语义,推后评估)。
  *
  * controller(harden-context-resilience):setContextWindow 供 createChatSdk setLlm 后集中回灌新窗口,
  * compress 读 ctxManager.config 共享引用,下轮即按新阈值触发(无需重建中间件)。

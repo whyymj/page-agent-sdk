@@ -6,6 +6,8 @@
  * 2. 摘要压缩：超出窗口的旧轮次压缩为摘要系统消息
  *    - 默认用"索引摘要"（零 LLM 成本，复用每轮 userQuery/assistantPreview）
  *    - 可选 LLM 摘要（enableLLMSummary）生成更连贯的段落
+ *    - P1-25（fix-data-integrity）：LLM 摘要异步化 —— 压缩时立即用索引模板/前缀缓存返回（零阻塞首 token），
+ *      后台 fire-and-forget 跑 LLM 摘要入前缀缓存，后续压缩前缀命中（LLM 前缀 + 新增尾部索引增量）
  * 3. 关键词召回：从旧轮次中按当前问题检索相关历史，注入"相关历史"段
  * 4. 单轮 ReAct 内的工具结果裁剪由 createAgent 侧的 trimContextIfNeededImpl 处理（本模块不负责）
  *
@@ -76,6 +78,29 @@ export const DEFAULT_CONTEXT_OPTIONS: ContextManagerOptions = {
 
 export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
   const config: ContextManagerOptions = { ...DEFAULT_CONTEXT_OPTIONS, ...opts }
+
+  // P1-25(fix-data-integrity):LLM 摘要异步化 —— 「模板先行 + 后台替换」(照 trim-llm 模式)。
+  // compress 触发 llm 模式时立即用索引摘要返回(零阻塞首 token),fire-and-forget 后台 LLM 摘要入前缀缓存。
+  // older 恒从 messages 首轮起(groupRounds 全量;压缩不改 state.messages)→ older 单调前缀扩展 → coveredCount 单调可比:
+  // 后续压缩命中缓存时,LLM 前缀 + 新增尾部索引增量拼接。fire-and-forget 只写闭包缓存(不触 messages/store),
+  // unmount 后完成也无副作用(随闭包 GC),无需竞态守卫。trimMemoryMessages(OOM splice)致 rounds 错位时缓存不命中,
+  // 自然回退模板 + 重新 fire(最多摘要质量降级,无正确性影响)。
+  let llmCache: { coveredCount: number; text: string } | null = null
+  let llmInFlight = false  // 防同轮重复 fire(重试/双触发)
+
+  /** 后台 LLM 摘要:完成时按 coveredCount 单调守卫更新缓存;失败不更新(下次触发重试) */
+  function fireBackgroundLlmSummary(n: number, idxText: string): void {
+    if (llmInFlight || !config.llmInvoke) return
+    llmInFlight = true
+    void config.llmInvoke(idxText)
+      .then((t) => {
+        if (typeof t === 'string' && t && (!llmCache || llmCache.coveredCount <= n)) {
+          llmCache = { coveredCount: n, text: t }
+        }
+      })
+      .catch(() => { /* 保留索引模板;下次压缩触发时重试 */ })
+      .finally(() => { llmInFlight = false })
+  }
 
   /**
    * 压缩跨轮历史，返回注入摘要后的消息列表与统计。
@@ -167,12 +192,24 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
     let summaryText: string
     let strategy: string
     if (summaryMode === 'llm' && config.llmInvoke) {
-      try {
-        summaryText = await config.llmInvoke(indexSummarize(older, preserveArg))
-        strategy = strategyPrefix + 'llm_summary'
-      } catch {
-        summaryText = indexSummarize(older, preserveArg)
-        strategy = strategyPrefix + 'index_summary(llm_fallback)'
+      // P1-25:llm 摘要异步化 —— 立即返回(缓存命中/前缀拼接/索引模板),后台 fire LLM 增强,不阻塞首 token。
+      // 原实现同步 await llmInvoke(≤summaryTimeoutMs 15s)阻塞首轮模型调用,恰在大 JSON 长流程(>0.5×window)场景触发
+      const idxText = indexSummarize(older, preserveArg)
+      const n = older.length
+      if (llmCache && llmCache.coveredCount >= n) {
+        // 全覆盖缓存(窗口回缩/同参重压等罕见情形):直接用 LLM 摘要
+        summaryText = llmCache.text
+        strategy = strategyPrefix + 'llm_summary(cached)'
+      } else if (llmCache && llmCache.coveredCount > 0) {
+        // 前缀缓存:LLM 摘要覆盖前 coveredCount 轮 + 新增尾部用索引增量(indexSummarize 用绝对轮号,slice 不错位)
+        summaryText = llmCache.text + '\n' + indexSummarize(older.slice(llmCache.coveredCount), preserveArg)
+        strategy = strategyPrefix + 'llm_summary(prefix)+index_tail'
+        fireBackgroundLlmSummary(n, idxText)
+      } else {
+        // 首次触发:纯索引模板零阻塞,后台 LLM 完成后下次压缩起前缀命中
+        summaryText = idxText
+        strategy = strategyPrefix + 'index_summary(llm_background)'
+        fireBackgroundLlmSummary(n, idxText)
       }
     } else {
       summaryText = indexSummarize(older, preserveArg)

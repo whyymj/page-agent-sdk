@@ -34,4 +34,5 @@
 - [x] CLAUDE.md:子 agent 段(allSettled/usage/timeout/基线隔离)+ 数据槽乐观锁段补 per-scope
 - [x] README/README.zh-CN 计数;usage-guide 子 agent 段(如涉配置)
 - [x] 门禁全套(build/test/e2e/browser/exports/types/types-alignment/size/src 真错)+ pack
-- [ ] commit develop;询问用户是否发布
+- [x] commit develop(`99a803e` 实施 + `87a7388` bump);用户批准发布
+- [x] **已发布 v2.40.0**(2026-08-11):门禁全绿(selftest 1722 / e2e 482 / browser 40 / exports 14 / types / types-alignment / size 5 / src 真错 0)→ squash develop→master(`5fe9b6b`)推 Gitee+GitHub → npm publish → esm.sh 可达(642KB)+ 导出齐全(146,含 normalizeUsage)。本 change 归档

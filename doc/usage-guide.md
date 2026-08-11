@@ -171,7 +171,7 @@ createChatSdk({
   id: 'my-app',                 // agent 实例 id(强烈建议传稳定值;多 agent 共存隔离 + 刷新恢复)
   systemPrompt: '...',          // Agent 身份与业务流程指令(可选:不传用内置默认——JSON 操作助手 + reliableWriteRules;传了则完全覆盖。默认 appendReliableWriteRules:true 自动用 '---' 分隔线追加 reliableWriteRules,设 false 关闭)
   // ⚠️ 工具用法(read/write/get/set/patch/autoLock/snapshot 等)由 usageHints 中间件按 toolMode 自动注入,无需在此声明;systemPrompt 只写「业务知识」:身份、可改字段含义、业务流程、技能引用
-  shareContext: false,          // true:同 id 的多个实例共享同一 Agent(同页多对话框 = 同一 agent)
+  shareContext: false,          // true:同 id 的多个实例共享同一 Agent(同页多对话框 = 同一 agent);串行闸 core 级 —— 跨实例 send/switchSession 串行,生命周期收口(unmount/switch/reset)中止共享 core 全部在途流(2.41.0+)
 
   /* ===== 能力注入 ===== */
   data: { schema, bind, description? },  // 单主对象:bind 直连 reactive/普通对象(工具直接读写 bind);schema 字段 .describe() 自动注入 systemPrompt「可操作数据」段
@@ -834,7 +834,10 @@ await agent.mount()
 
 await agent.switchSession()              // 新建会话
 await agent.switchSession('session-xyz') // 切到指定会话(不存在则以该 id 新建)
+agent.resetSession()                     // 清空当前会话(同步):重置全部内存态 + 新会话
 ```
+
+**清空会话 `resetSession()`(2.41.0+,同步)**:与 UI「清空对话」同语义 —— 中止在途流 + 收口挂起冲突(按「保留外部」)+ 重置 messages/vfs/todos/memory/mission/workingMemory/focus/checkpoint/debugLogs + 换新 sessionId + emit `session_restored`。**storage 未开启时同样完整重置内存态**(2.41.0 修复:此前无 storage 会早退,mission/focus/todos 泄漏进新对话);开启 storage 时同步新建持久会话。headless 集成方的「新建对话」按钮用它。
 
 **自动恢复**:`session.autoResume`(默认 true)刷新后自动恢复该 agent 最近会话。
 
@@ -858,7 +861,7 @@ createChatSdk({ maxRetries: 0 })   // 关闭自动重试
 所有「等外部/等人」的挂起点都有超时兜底与中断通道,不会永久挂死:
 
 - **无 UI 场景的确认请求自动拒**:`send`/`batch` 路径(无 ApprovalBar 响应方)触发人工确认时,**30s 无响应自动拒绝** + error 事件留痕,LLM 收到拒绝继续/收口(不再永挂)。`approval.timeoutMs` 可覆盖(传 `Infinity` = 无限等,给自建确认通道的集成方)
-- **send/batch 可中断**:`send(msg, { signal })` / `batch(tasks, onProgress, signal)` 接 AbortSignal;`unmount()` / `switchSession()` 也会自动中止在途流(无幽灵流烧 token)
+- **send/batch 可中断**:`send(msg, { signal })` / `batch(tasks, onProgress, signal)` 接 AbortSignal;`unmount()` / `switchSession()` / `resetSession()` 也会自动中止在途流(无幽灵流烧 token)
 - **MCP 握手超时**:默认 15s(`mcp[].timeoutMs` 可调),黑洞端点降级跳过,不阻塞 SDK 启动
 - **LLM 流停滞看门狗**:chunk 间隔(含等首个)超 `streamStallMs`(默认 90s,0 关)→ 自动中断报错,防 loading 永转
 
@@ -866,7 +869,7 @@ createChatSdk({ maxRetries: 0 })   // 关闭自动重试
 
 长会话不会撑爆内存:
 
-- **上下文压缩**:`summarization` 中间件自动滑动窗口 + 摘要 + 关键词召回(默认开启)。摘要默认用 LLM(低温 0.3、限输出 1024)把旧轮次改写为连贯段落,失败/超时自动回退零成本索引摘要。
+- **上下文压缩**:`summarization` 中间件自动滑动窗口 + 摘要 + 关键词召回(默认开启)。摘要默认用 LLM(低温 0.3、限输出 1024)把旧轮次改写为连贯段落,失败/超时自动回退零成本索引摘要。**LLM 摘要异步化(2.41.0+)**:压缩触发时先用索引摘要即时返回(**不阻塞首 token**;修前同步等 LLM ≤15s),后台补跑 LLM 摘要入前缀缓存,后续轮次命中缓存(LLM 前缀 + 新增尾部索引增量)——体感零延迟、摘要质量不降。
 - **压缩预设**(`contextPreset`,默认 `auto`):普通场景选档即可,特殊情况用 `contextOptions` 细参覆盖个别字段。
   - `auto`:自适应,LLM 摘要 + 召回 Top-3,触发阈值 0.5、窗口 0.4
   - `conservative`:大模型/省成本,阈值 0.7、窗口 0.5,召回 Top-2,关 LLM 摘要用索引摘要
@@ -1981,7 +1984,7 @@ A: ① 用 `write` 的 `patch` 增量改而非整体重传 `value`;② 调大 `m
 A: 用 `capabilities: { dataOps: false, fetch: false, planning: false, skills: false, vfs: false, ... }` 关掉对应内置工具/中间件(默认全开)。`dataOps:false` → 不装 dataOps 工具集(纯调研场景);`fetch:false` → 不装 `fetch_document`。⚠️ vfs 关 → 大结果外存退化为截断;summarization 关 → 长会话不压缩。
 
 **Q: 多个 Agent 同页共存会串数据吗?**
-A: 不会。给每个传不同的 `id` 即隔离。若想让多个对话框共享**同一个** Agent,用 `shareContext: true`(同 `id`)。
+A: 不会。给每个传不同的 `id` 即隔离。若想让多个对话框共享**同一个** Agent,用 `shareContext: true`(同 `id`)。共享实例间有 core 级串行闸:send/switchSession 跨实例排队串行;任一实例的生命周期收口(unmount/switchSession/resetSession)会中止共享 core 的全部在途流(共享状态不允许孤儿流续写)。
 
 **Q: 隐私模式 / 存储满了会崩吗?**
 A: 不会。自动降级内存,数据不丢(可能不再持久化),并触发 `degraded` 事件。

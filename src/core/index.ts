@@ -127,6 +127,8 @@ export { default as ChatDialog } from './components/ChatDialog.vue'
 export { default as MessageContent } from './components/MessageContent.vue'
 export { default as CodePreview } from './components/CodePreview.vue'
 export { default as SkillPanel } from './components/SkillPanel.vue'
+// markdown 渲染纯函数(P1-26:抽离可单测;依赖 marked/hljs/dompurify,仅主包导出,headless 子路径不含)
+export { renderMarkdownHtml, markedToHtml, HLJS_BLOCK_MAX_CHARS } from './composables/useMarkdown'
 // chatdialog-component-split:ChatDialog 拆出的原子组件(可拼装/可替换,经 ChatDialog 具名 slot 替换,或 L2 自建根组件 provide ctx 后自由拼装)
 export { default as ChatHeader } from './components/ChatHeader.vue'
 export { default as ChatInput } from './components/ChatInput.vue'

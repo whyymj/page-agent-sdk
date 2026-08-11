@@ -188,7 +188,7 @@ createChatSdk({
   // persistence
   storage: 'indexed',              // 'indexed'|'session'|'local'|'memory'|config|false (default off)
   session: { id?, autoResume?, title? },
-  shareContext: false,             // same id instances share one agent
+  shareContext: false,             // same id instances share one agent; core-level serial gate — cross-instance send/switchSession serialized, lifecycle convergence (unmount/switch/reset) aborts ALL in-flight streams of the shared core (2.41.0+)
 
   // robustness
   maxRetries: 2,                   // model call retries (network/429/5xx)
@@ -695,6 +695,8 @@ defineSkill({
 
 `storage: 'indexed'` (or `'session'`/`'local'`/`'memory'`) — persists dialog/workspace/todos/memory; `id` isolates multiple agents; `switchSession(id?)` switches; `shareContext:true` lets same-id instances share one agent.
 
+**Clear session `resetSession()` (2.41.0+, sync)** — same semantics as the UI "clear conversation": aborts in-flight streams + resolves any pending conflict (as "keep external") + resets messages/vfs/todos/memory/mission/workingMemory/focus/checkpoint/debugLogs + fresh sessionId + emits `session_restored`. **Fully resets in-memory state even when storage is off** (fixed in 2.41.0: previously it early-returned without storage, leaking mission/focus/todos into the new conversation); with storage on it also creates a new persisted session. Use it for a headless "new chat" button.
+
 ### 6.7 Robustness
 
 - Auto-retry model calls (network/429/5xx, exponential backoff, `maxRetries` default 2)
@@ -702,13 +704,13 @@ defineSkill({
 - Retry on error (UI)
 - **Bounded hangs (fix-hang-and-feedback)** — every "wait for human / external IO" point has a timeout + interrupt path:
   - Approval requests on `send`/`batch` (no UI responder) **auto-reject after 30s** with an error event (override via `approval.timeoutMs`; `Infinity` = wait forever for integrators with their own confirmation channel)
-  - `send(msg, { signal })` / `batch(tasks, onProgress, signal)` accept an AbortSignal; `unmount()` / `switchSession()` abort in-flight streams (no ghost streams)
+  - `send(msg, { signal })` / `batch(tasks, onProgress, signal)` accept an AbortSignal; `unmount()` / `switchSession()` / `resetSession()` abort in-flight streams (no ghost streams)
   - MCP handshake timeout: default 15s (`mcp[].timeoutMs`); black-hole endpoints degrade gracefully instead of hanging init
   - LLM stream stall watchdog: no chunk for `streamStallMs` (default 90s; 0 = off) → abort with error (no infinite loading)
 
 ### 6.8 Context & memory caps
 
-- 4-layer adaptive compression (`contextPreset`: auto/conservative/aggressive/complex)
+- 4-layer adaptive compression (`contextPreset`: auto/conservative/aggressive/complex). **LLM summary is async (2.41.0+)**: compression returns immediately with an index summary (**no first-token block**; previously it awaited the LLM ≤15s), while an LLM summary runs in the background into a prefix cache; later rounds reuse it (LLM prefix + fresh index tail).
 - vfs `maxBytes` (default 8MB; 2.16.0+ three independent pools) LRU evict; dialog `maxMemoryRounds` (default 30) trim
 
 #### complex preset + vfs JSON-aware tools (2.16.0+)
@@ -1319,7 +1321,7 @@ A: Use `apiKey` (not `openAIApiKey`), `model` (not `modelName`); `baseUrl` goes 
 A: Both work for DeepSeek (OpenAI-compatible). `https://api.deepseek.com` or `https://api.deepseek.com/v1` are both fine.
 
 **Q: Multi-agent on one page?**
-A: Give each `createChatSdk` a distinct `id`; they isolate by id. Same `id` + `shareContext:true` → share one agent (multiple dialog views).
+A: Give each `createChatSdk` a distinct `id`; they isolate by id. Same `id` + `shareContext:true` → share one agent (multiple dialog views). Shared instances are coordinated by a core-level serial gate: send/switchSession queue across instances; any instance's lifecycle convergence (unmount/switchSession/resetSession) aborts ALL in-flight streams of the shared core (shared state allows no orphan streams).
 
 **Q: Persistence not resuming after refresh?**
 A: `id` must be a stable value (not omitted — random id can't resume). `storage` must be enabled (default off).

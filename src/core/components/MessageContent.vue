@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUpdated, nextTick, watch } from 'vue'
+import { ref, onMounted, nextTick, watch } from 'vue'
 import { useMarkdown, type CodeBlock } from '../composables/useMarkdown'
 import CodePreview from './CodePreview.vue'
 import { copyText } from '../utils/clipboard'
@@ -93,8 +93,9 @@ async function enhanceCodeBlocks() {
 }
 
 onMounted(enhanceCodeBlocks)
-onUpdated(enhanceCodeBlocks)
-watch(() => props.content, enhanceCodeBlocks)
+// P1-26:DOM 增强由 html 实际变更驱动(useMarkdown 节流后 html 变更频率 << content delta 频率);
+// 原 onUpdated + watch(content) 双驱动随每 delta 全量 querySelector,巨内容时叠加卡顿
+watch(html, enhanceCodeBlocks)
 </script>
 
 <template>

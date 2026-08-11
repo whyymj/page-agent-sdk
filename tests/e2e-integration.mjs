@@ -23,6 +23,7 @@ import { run as runCapabilityPacks } from './e2e/capability-packs.mjs'
 import { run as runAuthorizationSurface } from './e2e/authorization-surface.mjs'
 import { run as runHangFeedback } from './e2e/hang-feedback.mjs'
 import { run as runMainSubIsolation } from './e2e/main-sub-isolation.mjs'
+import { run as runSessionIntegrity } from './e2e/session-integrity.mjs'
 
 const modules = [
   ['systemprompt', runSystemprompt],
@@ -47,6 +48,7 @@ const modules = [
   ['authorization-surface', runAuthorizationSurface],
   ['hang-feedback', runHangFeedback],
   ['main-sub-isolation', runMainSubIsolation],
+  ['session-integrity', runSessionIntegrity],
 ]
 
 let totalPass = 0, totalFail = 0

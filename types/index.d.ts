@@ -404,6 +404,12 @@ export declare const MessageContent: DefineComponent<any>;
 export declare const CodePreview: DefineComponent<any>;
 export declare const SkillPanel: DefineComponent<any>;
 export declare function useChat(opts?: any): any;
+/** 单代码块超过此字符数跳过 hljs 高亮(转义直出),防巨代码块单帧卡顿(P1-26 尺寸闸) */
+export declare const HLJS_BLOCK_MAX_CHARS: number;
+/** markdown → 未净化 HTML(marked + 代码块渲染,含 hljs 尺寸闸;**不含** DOMPurify;⚠️ 勿直接 v-html)。P1-26 抽离可单测 */
+export declare function markedToHtml(text: string): string;
+/** markdown → 净化 HTML(marked + 代码块渲染 + DOMPurify;含 hljs 尺寸闸;sanitize 恒走)。仅主包(headless 子路径不含) */
+export declare function renderMarkdownHtml(text: string): string;
 
 // ===== 框架无关 SDK(页面内 Agent)=====
 export interface LLMConfig {
@@ -879,6 +885,12 @@ export interface ChatSdk {
   show(): void;
   send(message: string, options?: { mission?: Partial<Mission>; interceptors?: { input?: (input: unknown) => unknown; output?: (json: unknown) => unknown }; maxAutoRetries?: number; /** 中断信号(fix-hang-and-feedback P1-4) */ signal?: AbortSignal }): Promise<string>;
   switchSession(sessionId?: string): Promise<string>;
+  /**
+   * 新建/清空会话(同步;「清空对话」编程式入口,与 UI ChatHeader 清空同语义):
+   * 中止在途流 + 收口挂起冲突(keep_external)+ 重置全部内存态(messages/vfs/todos/memory/mission/workingMemory/focus/checkpoint/debugLogs)
+   * + 换新 sessionId + emit session_restored。storage 开启时同步新建持久会话;未开启时仅重置内存态(P1-8 修复后不再早退泄漏)。
+   */
+  resetSession(): void;
   /** 列出当前 agent 的所有历史会话(供「历史列表」UI;storage 未开启 → []) */
   listSessions(): Promise<SessionMeta[]>;
   /** 历史会话列表(响应式;switchSession/deleteSession/onClear/init 后自动 refresh;直接消费无需手动 listSessions/refresh/hook) */

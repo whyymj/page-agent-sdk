@@ -376,6 +376,12 @@ export interface ChatSdk {
   readonly infoTick: Ref<number>
   /** 切换到指定会话(载入其上下文);不传 id 则新建。返回新会话 id。storage 未开启时抛错 */
   switchSession(sessionId?: string): Promise<string>
+  /**
+   * 新建/清空会话(同步;「清空对话」编程式入口,与 UI ChatHeader 清空同语义):
+   * 中止在途流 + 收口挂起冲突(keep_external)+ 重置全部内存态(messages/vfs/todos/memory/mission/workingMemory/focus/checkpoint/debugLogs)
+   * + 换新 sessionId + emit session_restored。storage 开启时同步新建持久会话;未开启时仅重置内存态(P1-8 修复后不再早退泄漏)。
+   */
+  resetSession(): void
   /** 列出当前 agent 的所有历史会话(供「历史列表」UI;storage 未开启 → []) */
   listSessions(): Promise<import('../backends/storage').SessionMeta[]>
   /** 历史会话列表(响应式;switchSession/deleteSession/onClear/init 后自动 refresh;直接消费无需手动 listSessions/refresh) */
@@ -613,8 +619,12 @@ export interface AgentCore {
   getUserSkill(name: string): { name: string; description: string; content: string } | undefined
   /** 实例 unmount 时调;引用计数归零才真销毁(store.dispose + 移出注册表) */
   release(): void
-  /** 中止全部在途流(fix-hang-and-feedback 契约 C;由 _createChatSdk 注入实例;resetSession 等 core 内部收口路径调用) */
-  abortAllActive?: () => void
+  /** 串行闸(P1-11 fix-data-integrity:建在 core 级,shareContext 多实例共享同一链;send/batch/switchSession/stream 一律经此串行,防共享 state 并发竞态) */
+  runSerial: <T>(fn: () => Promise<T>) => Promise<T>
+  /** 登记在途流(P1-11:core 级注册表;建内部 controller + 联动外部 signal;返回 controller 与注销函数) */
+  trackActive(outer?: AbortSignal): { controller: AbortController; untrack: () => void }
+  /** 中止全部在途流(P1-11:core 级注册表;unmount/switchSession/resetSession/release 收口路径调用) */
+  abortAllActive(): void
   /** 冲突解决:用户点「保留外部」/「强制覆盖」/「回退」→ 收口挂起的 conflict,工具继续 */
   resolveConflict(action: ConflictResolution['action']): void
   /** 检视 agent 详情(inspect() 与 debug 窗口消费) */
@@ -1330,6 +1340,29 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     sessionsRef.value = (await store.listSessions(agentId)).sort((a, b) => b.lastAccessed - a.lastAccessed)
   }
 
+  // ===== P1-11(fix-data-integrity):串行闸 + 在途流注册表建在 core 级 =====
+  // shareContext 同 id 多实例共享一个 core = 共享 messages/sessionId/bind —— 屏障必须 core 级,
+  // 原实例级私有闸致双实例并发 send/switchSession 写同一 messages(H11 证实);且 core.abortAllActive
+  // 原由 _createChatSdk 覆盖赋值,后创建实例顶掉先创建实例的注册表(失联)。
+  // 语义变化留痕:shareContext 下生命周期收口(unmount/switchSession/resetSession)中止共享 core 的全部在途流
+  // (含其他实例发起的)—— 共享状态不允许孤儿流继续写(推翻 2.39.0「一个实例 unmount 不中断另一实例的生成」注释)。
+  const runSerial = createSerialRunner()
+  const activeControllers = new Set<AbortController>()
+  /** 登记在途流:建内部 controller + 联动外部 signal;返回 controller 与注销函数 */
+  function trackActive(outer?: AbortSignal): { controller: AbortController; untrack: () => void } {
+    const controller = new AbortController()
+    if (outer) {
+      if (outer.aborted) controller.abort()
+      else outer.addEventListener('abort', () => controller.abort(), { once: true })
+    }
+    activeControllers.add(controller)
+    return { controller, untrack: () => activeControllers.delete(controller) }
+  }
+  function abortAllActive(): void {
+    for (const c of activeControllers) c.abort()
+    activeControllers.clear()
+  }
+
   const core: AgentCore = {
     agentId,
     store,
@@ -1357,6 +1390,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     liveData,
     usage,
     emit,
+    runSerial,
+    trackActive,
+    abortAllActive,
 
     /** 卸载 skill 附带工具(setSkills 替换整个列表清全部 / invalidateSkillCache 指定 skill;skill-external-scripts §5) */
     unloadSkillTools(name?: string) {
@@ -1600,13 +1636,16 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       return target
     },
 
-    /** 新建/清空会话:重置内存态(vfs/todos/memory/mission/workingMemory/checkpoint/debugLogs)+ 新 sessionId + emit session_restored。
+    /** 新建/清空会话:重置内存态(messages/vfs/todos/memory/mission/workingMemory/focus/checkpoint/debugLogs)+ 新 sessionId + emit session_restored。
+     *  fix-data-integrity P1-8:删「!store 早退」—— 内存态重置无条件执行(storage 关时清空对话不再泄漏 mission/focus/todos 等进新对话),
+     *  仅 store 相关(createSession)按 store 门控。P1-9:入口 abort + 收口挂起冲突(与 switchSession/unmount 对齐;keep_external 不写入,无跨会话写风险)。
      *  收编进 core(主流程审查 P0-4):onClear 闭包原在 createChatSdk 作用域赋值 buildCore 局部 lastTitle/titleLLMDone → 运行期 ReferenceError;
      *  共享状态变更一律 AgentCore 方法(mount Wrapper 只传引用不写逻辑,1.3.1 教训机制化)。 */
     resetSession: () => {
-      if (!store) return
-      core.abortAllActive?.() // 契约 C(fix-hang-and-feedback):清空会话先中止在途流(防幽灵流写进新会话)
+      abortAllActive() // 契约 C(fix-hang-and-feedback):清空会话先中止在途流(防幽灵流写进新会话)
+      conflictMgr.resolve('keep_external') // P1-9:收口挂起冲突(唯一不收口的生命周期路径补齐;keep_external 语义放弃本次写,无跨会话写窗口)
       core.sessionId = makeId()
+      messages.splice(0, messages.length) // 自包含清空(与 switchSession 对齐;UI useChat.clearMessages 再 splice 为 no-op)
       vfsStore.clear?.()
       todosMw.reset([])
       if (!options.memory) memoryMw.reset('')
@@ -1615,9 +1654,11 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       focusMw.reset()
       if (checkpointMgr) checkpointMgr.importStack([])
       if (core.agent) core.agent.debugLogs.value = []
-      void store.createSession(core.agentId, options.session?.title, core.sessionId)
+      if (store) {
+        void store.createSession(core.agentId, options.session?.title, core.sessionId)
+      }
       emit({ type: 'session_restored', sessionId: core.sessionId, rounds: 0 })
-      void refreshSessions()
+      void refreshSessions() // 内部守卫:storage 未开启 no-op
       lastTitle = undefined; titleLLMDone = false
     },
 
@@ -1634,12 +1675,15 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         if (signal.aborted) abortConflict()
         else signal.addEventListener('abort', abortConflict, { once: true })
       }
-      return core.agent.stream(msgs, wrappedHandler, signal)
+      // P1-11:在途流登记移入 core 级注册表(此处统一;UI fetchStream = core.stream 也首次纳入,unmount/switch/reset 的 abort 可触达)
+      const { controller, untrack } = trackActive(signal)
+      return core.agent.stream(msgs, wrappedHandler, controller.signal).finally(untrack)
     },
 
     release(): void {
       core.refCount--
       if (core.refCount <= 0) {
+        abortAllActive() // P1-11:dispose 前先断全部在途流(防流在途关 store/MCP 资源;原 H11「release 关资源时流在途」)
         if (store) {
           vfsStore.flush?.()
           void store.flush()
@@ -2183,7 +2227,7 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
       core,
       dialogCfg,
       streaming,
-      runSerial,
+      runSerial: core.runSerial,  // P1-11:core 级串行闸(UI 会话按钮与 API 层同链)
       hide,
       unmount,
       onDialogUnmounted: () => {
@@ -2204,7 +2248,8 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
   function unmount(): void {
     // 契约 C(fix-hang-and-feedback P1-3):先中止全部在途流 —— 幽灵流停烧 token/停写 bind;
     // 挂起的 approval/humanConfirm 随 signal 自动拒收口(原:永挂,shareContext 复用污染下次 mount)
-    abortAllActive()
+    // P1-11:注册表为 core 级 —— shareContext 时中止共享 core 的全部在途流(含其他实例发起的;共享状态不允许孤儿流继续写)
+    core.abortAllActive()
     // 收口挂起的冲突(按「保留外部」),防 unmount 后旧 conflict Promise 永久挂起泄漏
     core.resolveConflict('keep_external')
     if (flushHandler && typeof window !== 'undefined') window.removeEventListener('pagehide', flushHandler)
@@ -2230,29 +2275,8 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
     dialogController?.show()
   }
 
-  // P1-2(arch-review):实例级操作串行化 —— 并发 send/switchSession/batch 排队执行,防共享闭包 state 竞态
-  // (单实例同一时刻只服务一个会话:一个操作完整跑完下一个才开始;「一个会话操作 data 时,其他会话等它结束」)
-  const runSerial = createSerialRunner()
-
-  // ===== 契约 C(fix-hang-and-feedback):在途流控制器注册表 =====
-  // unmount/switchSession/resetSession 收口前先 abort 全部在途流(幽灵流停烧 + approval/conflict 随 signal 自动收口)。
-  // 实例级(非 core 级):shareContext 多实例各管各的流,一个实例 unmount 不中断另一实例的生成。
-  const activeControllers = new Set<AbortController>()
-  /** 登记在途流:建内部 controller + 联动外部 signal;返回 controller 与注销函数 */
-  function trackActive(outer?: AbortSignal): { controller: AbortController; untrack: () => void } {
-    const controller = new AbortController()
-    if (outer) {
-      if (outer.aborted) controller.abort()
-      else outer.addEventListener('abort', () => controller.abort(), { once: true })
-    }
-    activeControllers.add(controller)
-    return { controller, untrack: () => activeControllers.delete(controller) }
-  }
-  function abortAllActive(): void {
-    for (const c of activeControllers) c.abort()
-    activeControllers.clear()
-  }
-  core.abortAllActive = abortAllActive  // 供 core 内部收口路径调用(resetSession)
+  // P1-11(fix-data-integrity):串行闸 + 在途流注册表上移 core 级(buildCore 内)—— shareContext 多实例共享同一闸/注册表,
+  // 双实例并发 send/switchSession 写同一 messages 的裸奔修复(H11);本层包装只做委托,不再持实例级私有闸。
 
   return {
     mount,
@@ -2260,19 +2284,21 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
     hide,
     show,
     // P1-4(fix-hang-and-feedback):send/batch 接外部 signal(可中断);内部 controller 登记进注册表供 unmount/switchSession 收口
-    send: (msg, opts) => runSerial(async () => {
-      const { controller, untrack } = trackActive(opts?.signal)
+    send: (msg, opts) => core.runSerial(async () => {
+      const { controller, untrack } = core.trackActive(opts?.signal)
       try { return await core.send(msg, { ...opts, signal: controller.signal }) } finally { untrack() }
     }),
     /** 批处理(automation):逐任务跑 agent,每任务前 checkpoint,任务间错误隔离(单任务失败不中断整批);详见 ChatSdk.batch */
-    batch: (tasks, onProgress, signal) => runSerial(async () => {
-      const { controller, untrack } = trackActive(signal)
+    batch: (tasks, onProgress, signal) => core.runSerial(async () => {
+      const { controller, untrack } = core.trackActive(signal)
       try { return await core.batch(tasks, onProgress, controller.signal) } finally { untrack() }
     }),
-    switchSession: (...args: Parameters<typeof core.switchSession>) => runSerial(async () => {
-      abortAllActive() // P1-10 同根:切会话先中止在途流(防旧流写进新会话);approval/conflict 随 signal/既有逻辑收口
+    switchSession: (...args: Parameters<typeof core.switchSession>) => core.runSerial(async () => {
+      core.abortAllActive() // P1-10 同根:切会话先中止在途流(防旧流写进新会话);approval/conflict 随 signal/既有逻辑收口
       return core.switchSession(...args)
     }),
+    /** 新建/清空会话(P1-8/9 修复:storage 关也完整重置内存态 + 收口冲突);同步,委托 core.resetSession */
+    resetSession: () => core.resetSession(),
     /** 历史会话列表(响应式;switchSession/deleteSession/onClear/init 后自动 refresh;直接消费无需手动 listSessions/refresh/hook) */
     sessions: core.sessions,
     /** 列出当前 agent 的所有历史会话(主动查;一般用响应式 sessions 替代;storage 未开启 → []) */
@@ -2289,11 +2315,8 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
     },
     /** 当前会话 id(switchSession/onClear 后实时反映;供历史列表高亮当前项) */
     get sessionId(): string { return core.sessionId },
-    // 契约 C:stream 同样登记(UI useChat 的 controller 经此纳入 unmount 收口;外部 signal 联动)
-    stream: (msgs, onEvent, signal) => {
-      const { controller, untrack } = trackActive(signal)
-      return core.stream(msgs, onEvent, controller.signal).finally(untrack)
-    },
+    // 契约 C + P1-11:在途流登记在 core.stream 内统一做(core 级注册表;UI fetchStream 同路径纳入),此处直接委托
+    stream: (msgs, onEvent, signal) => core.stream(msgs, onEvent, signal),
     /** 显式持久化当前轮(headless sdk.stream 不自动落盘,需手动调;storage 未开启 → no-op) */
     afterRound: core.afterRound,
     /** 调试日志(供 DebugDrawer 等;switchSession/onClear 清空) */
