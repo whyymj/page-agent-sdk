@@ -104,4 +104,17 @@ export async function run(ctx: TestCtx): Promise<void> {
     mws.restore({ locatedPaths: Array.from({ length: 15 }, (_, i) => `p${i}`), lastHashes: {} } as any)
     assert(mws.getWorkingMemory()!.locatedPaths.length === 10, '✓ restore 超限截断(快照 >10 只留 10)')
   }
+
+  // ✓ audit-five-dimensions VM-P1:restore 缺字段(locatedPaths/lastHashes/整体 undefined)不抛,降级空(防会话恢复中断)
+  {
+    const mwd = createWorkingMemoryMiddleware()
+    let threw = false
+    try {
+      mwd.restore({ lastHashes: { a: '1' } } as any)  // 缺 locatedPaths(原:wm.locatedPaths.slice 抛 TypeError 中断 applySnapshot)
+      mwd.restore({ locatedPaths: ['x'] } as any)      // 缺 lastHashes
+      mwd.restore({} as any)                            // 都缺
+      mwd.restore(undefined as any)                     // 整个 undefined
+    } catch { threw = true }
+    assert(!threw, '✓ VM-P1: restore 缺字段不抛 TypeError(降级空,不中断 applySnapshot 会话恢复)')
+  }
 }

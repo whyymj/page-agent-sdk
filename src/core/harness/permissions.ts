@@ -30,7 +30,14 @@ const READ_TOOLS = new Set([
   'vfs_grep',
 ])
 
-/** 简易 glob → RegExp(* 匹配非 /,** 匹配任意) */
+/**
+ * 简易 glob → RegExp(对齐 scope 段分隔符 '.'):
+ * - 单星 `*` → `[^.]*`(匹配单段,不跨 `.`;`components.*` 只匹配 components 直属一层)
+ * - 双星 `**` → `.*`(匹配任意,跨段)
+ * scope 字符串以 `.` 为段分隔(extractScopes 把 jsonPath 当 scope,如 `components.0.text`),
+ * 故单星按 `.` 隔(非 `/`)—— 否则 deny 规则对深层路径失效(集成方写 `deny:['secrets.*']` 以为禁子项,
+ * 实际深层全放行 = 假安全)。audit-five-dimensions SE-P1
+ */
 function globToRegex(pattern: string): RegExp {
   let r = ''
   for (let i = 0; i < pattern.length; i++) {
@@ -40,7 +47,7 @@ function globToRegex(pattern: string): RegExp {
         r += '.*'
         i++
       } else {
-        r += '[^/]*'
+        r += '[^.]*'
       }
     } else if ('.+?^${}()|[]\\'.includes(c)) {
       r += '\\' + c

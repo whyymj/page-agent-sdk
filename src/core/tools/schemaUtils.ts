@@ -5,6 +5,7 @@
  * 后续新函数归宿:expose-schema-constraints 的 describeSchemaNode(zod 约束结构化提取)
  * 落入本文件,复用 unwrapSchema。
  */
+import { z } from 'zod'
 import type { ZodType } from 'zod'
 
 /**
@@ -33,6 +34,7 @@ export function isPathAllowed(jsonPath: string, schema: ZodType | null, allowKey
   if (!jsonPath) return true   // 整体路径由调用方按 set-merge 语义处理
   let s: any = unwrapSchema(schema)
   for (const seg of jsonPath.split('.')) {
+    if (seg.startsWith('__pg')) return false  // __pg* 框架内部字段(code-as-data-asset),agent 不可写;框架 afterWrite 直改 bindRef 绕此
     if (!s) return false
     s = unwrapSchema(s)
     if (s && s.shape && typeof s.shape === 'object') {
@@ -111,7 +113,7 @@ export function projectBySchemaDeep(obj: unknown, schema: ZodType | null): unkno
   const shape = typeof s.shape === 'function' ? s.shape() : s.shape
   const out: Record<string, unknown> = {}
   for (const k of Object.keys(obj as Record<string, unknown>)) {
-    if (k in shape) {
+    if (k in shape && !k.startsWith('__pg')) {
       const childVal = (obj as Record<string, unknown>)[k]
       out[k] = projectBySchemaDeep(childVal, shape[k])
     }
@@ -336,6 +338,34 @@ function renderSchemaFieldShallow(key: string, schemaRaw: any): string {
  * 渲染 schema 顶层字段浅概览(分层模式用):只 key + type + 一句描述,**不带**约束(min/max/enum)、**不递归** shape。
  * 供 extractSchemaHint 大 schema(>阈值)分层注入 systemPrompt,体积降一个数量级(深层约束交 schema_data 按需查)。
  */
+/**
+ * 给 schema 的 writablePaths 数组元素 extend `__pgId`(code-as-data-asset):让 __pgId 进 schema shape →
+ * safeParse 不剥离(否则 zod strip 模式吞 __pgId)+ projectBySchemaDeep 见(__pg* 投影过滤单独挡)+ isPathAllowed 见白名单(__pg* 写单独拒)。
+ * 集成商原 schema 不动(只框架内部用 extendedSchema)。仅支持顶层 writablePath(如 'components');嵌套('a.b')或 element 非 z.object → fallback。
+ * ⚠ 重建 array 丢失原 min/max/length 约束(组件数组通常无;有约束的场景后续增强)。纯函数,可单测。
+ */
+export function extendSchemaWithPgId(rootSchema: ZodType, writablePaths: string[]): { schema: ZodType; fallback: string[] } {
+  const fallback: string[] = []
+  const rootObj = unwrapSchema(rootSchema)
+  if (!rootObj?.shape) return { schema: rootSchema, fallback: [...writablePaths] }  // 非 ZodObject,全 fallback(不 extend)
+  const oldShape = typeof rootObj.shape === 'function' ? rootObj.shape() : rootObj.shape
+  const newShape: Record<string, ZodType> = { ...oldShape }
+  for (const wp of writablePaths) {
+    if (wp.includes('.')) { fallback.push(wp); continue }      // 嵌套路径暂不支持(简化;createHtmlSubagent writablePaths 通常顶层)
+    const arrSchema = newShape[wp]
+    if (!arrSchema) { fallback.push(wp); continue }
+    const arr = unwrapSchema(arrSchema)
+    const elemObj = arr?.element ? unwrapSchema(arr.element) : null
+    if (elemObj?.shape) {
+      const newElem = (elemObj as any).extend({ __pgId: z.string().optional() })
+      newShape[wp] = z.array(newElem)
+    } else {
+      fallback.push(wp)                                        // element 非 object(union/discriminated/record 等)
+    }
+  }
+  return { schema: z.object(newShape as any), fallback }
+}
+
 export function renderSchemaShallow(schemaRaw: any): string {
   if (!schemaRaw) return ''
   try {

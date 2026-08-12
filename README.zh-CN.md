@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-1796%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-1801%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -215,7 +215,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `verify` | `{check?,maxAttempts?,adversarial?}` | 需 `capabilities.verify:true`；`check` 省略用 `createWriteBackCheck`（读回根对象自动取 `data.bind`，适配 `sdk.setData` 运行时替换） |
 | **子 agent** | `subagent` | `{allowedTools?,systemPrompt?,temperature?,llm?,maxDepth?·1,maxParallel?·4}` | 运行时自由委派（`spawn_agent`/`spawn_agents`） |
 | | `subagents` | `SubagentConfig[]` | 预声明命名子 agent → 每个生成 `use_<id>` 委派工具 |
-| **能力包** (2.37+) | `subagents` | `createRagSubagent({retriever?,loader?,useVfs?})` / `createHtmlSubagent({writablePaths,codeVfsPrefix?,codeKind?,formatCheck?})` | 专用子 agent 工厂 —— **RAG**:多源检索(语义 `search_docs` / 异步 `load_doc` / vfs / fetch),只读,独立上下文;**HTML**:代码组件生成(代码→vfs + data `codeRef`,规划 `write_todos` + 限定写;`codeKind:'sfc'|'html'` 两种形态,html = v-html 注入片段;`formatCheck` 默认开 = `validate_code` 自检工具 + verify beforeReturn 门禁回灌自纠,校验器纯函数 `validateHtmlFormat` 亦导出)。可组合/拆分,opt-in,随 `rag-search`/`html-builder` skill 分发。另 `sdk.vfsWrite(path,content)` 异步注入文档。见 [doc/usage-guide.md](doc/usage-guide.md#能力包) |
+| **能力包** (2.37+) | `subagents` | `createRagSubagent({retriever?,loader?,useVfs?})` / `createHtmlSubagent({writablePaths,codeVfsPrefix?,codeKind?,formatCheck?})` | 专用子 agent 工厂 —— **RAG**:多源检索(语义 `search_docs` / 异步 `load_doc` / vfs / fetch),只读,独立上下文;**HTML**:代码组件生成 —— **代码作为 data 资产**(代码存 `data.<writablePath>[i].code`,随 data json 持久化;vfs 作编辑工作副本)。框架自动 checkout(data.code→vfs 按 `__pgId`)/ commit(vfs→data.code,直改 bind,不进快照栈),主 agent 透明(主 scope read 见 `<code Nkb>` 摘要)。新建走 `write`;修改走 `vfs_edit` 工作副本。`codeKind:'sfc'|'html'`(html = v-html 注入片段);`formatCheck` 默认开 = `validate_code` 自检 + verify beforeReturn 门禁回灌自纠;`validateHtmlFormat` 导出。**Breaking(3.0)**:去 `onComplete`/`codeRef`/`codeSnapshots` —— 迁移 `codeRef`→`code` 字段,去 `onComplete`/镜像。可组合/拆分,opt-in,随 `rag-search`/`html-builder` skill 分发。另 `sdk.vfsWrite(path,content)` 异步注入文档。见 [doc/usage-guide.md](doc/usage-guide.md#能力包) |
 | **子 agent 观察层** (2.38+) | — | `inspect().subagent.{active,history}` / `sdk.{getActiveSubagents,subagentHistory}` | active/history 运行态 + DebugDrawer「🤖 子 agent」tab(随 `subagent` 能力开,会话级不持久化) |
 | **上下文** | `contextPreset` | `'auto' \| 'conservative' \| 'aggressive' \| 'complex'` · 默认 `auto` | 压缩预设档位（`complex` 面向多步 / 大 JSON / 长流程编排任务） |
 | | `contextOptions` | `Partial<ContextManagerOptions> \| false` | 细参覆盖（`false` 关压缩）。含 `preserveLastToolResults`（默认 `['describe_data','describe_data']`——压缩摘要里保留字段说明） |
@@ -472,8 +472,8 @@ function switchTo(i: number) {
 ## 自测
 
 ```bash
-npm test            # 1796 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 509 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm test            # 1801 项断言（tsx 源码级，不依赖 LLM）
+npm run test:e2e    # 519 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试

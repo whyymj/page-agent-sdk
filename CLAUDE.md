@@ -30,9 +30,9 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,1796 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,509 项;tests/e2e/<module>.mjs 按模块拆分)
-npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,44 项;tests/browser/<demo>.spec.ts)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,1849 项断言)
+npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,519 项;tests/e2e/<module>.mjs 按模块拆分)
+npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,45 项;tests/browser/<demo>.spec.ts)
 ```
 
 ## 环境配置
@@ -76,6 +76,7 @@ skills/                         # 分发给使用者的 Agent Skill(入 npm 包 
 - **乐观锁契约**:`get_data`/`read` 附 `hash=xxx`;写传 `expectedHash` 或 `write` `autoLock`(默认开);hash 不匹配 → 挂起 `sdk.pendingConflict` → `resolveConflict('keep_external'|'overwrite'|'restore')`;**per-scope 基线**(子不污染主);**同 scope 连续写永不互相冲突**
 - **高层 read/write**:`read` 多路径/裁剪/分页;`write` 四意图(set/patch/**patches 原子任一失败回滚**/del)+ `dryRun`;快照 per-path 栈 + `restore_data` + `history_data`;`eval_script` Worker 沙箱;`draft_*` opt-in(大 JSON 建议 maxToolRounds 20-30)
 - **toolMode**:`simple`(默认 7)/`advanced`(14)/`minimal`(2);**interceptors 仅守高层 read/write**(advanced 绕过);受保护资源 freeze/verbatim(占位符只在读写边界替换,bind 恒持原值);**vfs 四池** LRU + 大结果外存
+- **code-as-data-asset 扩展(3.0,createHtmlSubagent 单模式触发)**:`__pgId` 无感注入(schema extend → safeParse 不剥离 + read 投影隐藏 `__pg*` + 写 `isPathAllowed` 拒 `__pg*` 段,框架 afterWrite 独占补);**主 scope read 大文本摘要**(标记字段如 `code` → `<code Nkb>`,子 scope 完整);**两条 data 写路径** —— ① LLM write 工具(经完整契约:schema/乐观锁/快照栈/path guard)② 框架钩子(afterAgent commit 直改 bind,快路径,仅 code 字段豁免 write 契约,不进快照栈 + `recomputeBaseline` 防主 agent autoLock 误冲突)。详见子 agent 段「能力包」
 
 ### 记忆与上下文管理(详见 architecture.md §⑥⑮ + context-management.md)
 - `summarization`(compressInput 不改原数组)与 `trimMemoryMessages`(OOM 裁剪)独立;`maxMemoryRounds >= summaryThresholdRounds`
@@ -91,7 +92,7 @@ skills/                         # 分发给使用者的 Agent Skill(入 npm 包 
 ### 子 agent 与并行编排(详见 architecture.md §⑨⑮)
 - `spawn_agent`/`spawn_agents`(默认开)只返回最终结论(省 token);预声明 `subagents:[{id, description, …}]` 生成 `use_<id>`;`maxDepth`(默认 1)物理切断
 - **授权面**:装配期 filter 排除框架/保留工具;spawn 自授剥离写工具(写权限仅经 `writablePaths`);子栈继承主 permissions/approval(approval_request 直通主循环);子 offload 直落主 vfs 共享池
-- **能力包**:`createRagSubagent({retriever?, loader?, useVfs?})`(只读检索)/ `createHtmlSubagent({writablePaths, codeVfsPrefix?, codeKind?, formatCheck?})`(代码→vfs,data 存 codeRef;`codeKind:'sfc'` 默认/`'html'`=v-html 片段:无 html/head/body/DOCTYPE、禁 script;`formatCheck` 默认开 = `validate_code` 自检工具 + verify beforeReturn 门禁,校验器 `validateHtmlFormat` 已导出,自纠上限 `maxVerifyAttempts:2`)
+- **能力包**:`createRagSubagent({retriever?, loader?, useVfs?})`(只读检索)/ `createHtmlSubagent({writablePaths, codeVfsPrefix?, codeKind?, formatCheck?})`(**3.0 单模式 breaking**:代码作 `data.code` 资产(进服务端 DB),vfs 作工作副本,框架 beforeAgent checkout(data.code→vfs by `__pgId`)/ afterAgent commit(vfs→data.code 增量,直改 bind 不进快照栈)自动搬运,主 agent 透明(主 scope read 见 `<code Nkb>` 摘要);`__pgId` 无感注入(schema 不声明/read 投影隐藏 `__pg*`/agent 写不进/persist 透明);去 `onComplete`/`codeRef`/`codeSnapshots`;`codeKind:'sfc'` 默认/`'html'`=v-html 片段:无 html/head/body/DOCTYPE、禁 script;`formatCheck` 默认开 = `validate_code` 自检 + verify beforeReturn 门禁,校验器 `validateHtmlFormat` 已导出,自纠上限 `maxVerifyAttempts:2`)
 - **主×子协同**:per-scope 基线 / allSettled 逐任务结算 / 子 usage 回传 `sdk.usage` / `subagent.timeoutMs` opt-in;观察层 `inspect().subagent.{active,history}` + DebugDrawer tab
 
 ### 其他能力(详见 architecture.md §⑩⑪⑮)
@@ -126,19 +127,19 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test    # tsx 跑 src/core/__tests__/selftest.ts,1796 项断言
+npm test    # tsx 跑 src/core/__tests__/selftest.ts,1849 项断言
 ```
 按模块拆分:`src/core/__tests__/modules/sec-NN.ts`(54+ 个模块)各导出 `run(ctx)`,runner 汇总;共享 `TestCtx` 在 `modules/_ctx.ts`。tsx 跑源码(不经构建),触不到 createChatSdk 顶层 API 作用域。**改任何核心模块后必跑**。
 
 #### 2. 集成层 e2e(改 createChatSdk 顶层 API 后必跑)
 ```bash
-npm run build && npm run test:e2e    # node 跑 dist 产物,509 项
+npm run build && npm run test:e2e    # node 跑 dist 产物,519 项
 ```
 模块在 `tests/e2e/<module>.mjs`(systemprompt/dynamic-register/inspect/subagents/events/storage/exports/data-slots/presets/boundary/custom-injection/conflict/automation/llm-provider/focus/resources/agent-compression/headless-subpath/capability-packs/authorization-surface/hang-feedback/main-sub-isolation/session-integrity),共享 stub 在 `tests/e2e/_helpers.mjs`(StubChatModel 在 `_stub-model.mjs`,响应队列驱动真 ReAct)。覆盖顶层 return 对象作用域。**改 createChatSdk 返回对象、AgentCore 接口、动态注册 API、默认提示词、新增导出/配置项后必跑**。
 
 #### 2.5 浏览器 E2E(改 UI/ChatDialog/dataOps 后必跑)
 ```bash
-npm run test:browser  # 44 项;也可 /browser-test 斜杠命令
+npm run test:browser  # 45 项;也可 /browser-test 斜杠命令
 ```
 **原理**:`tests/browser/_helpers.ts` 的 `mockLlm()` 用 `page.route()` 拦截 LLM API 端点,按脚本返回 SSE 流,使 agent ReAct 循环确定性走完,不依赖真 LLM。**双协议**:同时拦截 OpenAI 兼容(`**/chat/completions`)与 Anthropic Messages API(`**/v1/messages`),各返对应格式 SSE,共享 script 计数。spec 按 demo 拆分(page-demo 7 / complex-demo 12+ / nested 3 / error-recovery 2 / rag 2 / queue 3 / customize 7 / xss 2 / human-confirm 2 / html-page 2)。写新测试模板见 `.claude/skills/browser-e2e-testing/SKILL.md`。
 
@@ -165,7 +166,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(1796/509/44)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(1849/519/45)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判)→ `npm run test:size` → `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证
@@ -230,7 +231,7 @@ createChatSdk({
 > ⚠️ **发布触发约定**:不要在修 bug / 加功能后自动发布。每次 `git commit` 后**停下来询问用户「是否发布」**,由用户决定。仅在用户明确说「发布」/「publish」/「推上去」等时执行。
 
 1. **develop 开发**:新功能/修 bug 在 `develop`(在 master 先 checkout);改 `src/` → 同步 `types/index.d.ts`(手动维护)→ `src/core/index.ts` 导出
-2. **更新中英文文档**(同步勿漏单边):`README.md`(英)/`README.zh-CN.md`(中)/`doc/README.md`+`doc/README.en.md`/`doc/usage-guide.md`+`.en`/`CLAUDE.md`(内部)
+2. **更新中英文文档**(同步勿漏单边):`README.md`(英)/`README.zh-CN.md`(中)/`doc/README.md`+`doc/README.en.md`/`doc/usage-guide.md`+`.en`/`CLAUDE.md`(内部);**核对 `openspec/deferred.md`**(已实施归档的 change 从暂缓表移除/标 ✅,新增 deferred 残项登记,避免索引陈旧失真)
 3. **bump**:`npm version patch|minor|major --no-git-tag-version`(新 API minor/破坏 major/修复 patch;**package-lock.json 一并 commit**)
 4. **门禁**:按「发布前必跑顺序」全绿
 5. **提交**:`git add -A && git commit -m "feat/fix/docs: ..."`

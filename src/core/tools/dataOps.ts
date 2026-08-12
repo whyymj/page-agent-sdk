@@ -24,7 +24,7 @@ import {
   applyPatchToClone, restoreLive, restoreInPlace, diffObjects,
   type EditOp,
 } from './jsonUtils'
-import { getSchemaTopKeys, isPathAllowed, getSchemaAtPath, projectBySchemaDeep, describeSchemaNode } from './schemaUtils'
+import { getSchemaTopKeys, isPathAllowed, getSchemaAtPath, projectBySchemaDeep, describeSchemaNode, extendSchemaWithPgId } from './schemaUtils'
 import type { VfsStore } from '../backends/vfs'
 import type { ResourceProtectSpec, ProtectedCtx } from './resources'
 import { ResourceStore, renderReadPlaceholders, enforceSet, enforcePatches, matchProtectedEither, normalizePath } from './resources'
@@ -78,6 +78,22 @@ export interface DataOpsOptions {
   interceptors?: DataInterceptors
   /** vfs store(提供则装配 draft_write/draft_commit 分块写工具;由 createChatSdk 经 capabilities.draftWrite 控制)。draft 写 drafts/{draftId}.json(drafts 池) */
   vfsStore?: VfsStore
+  /**
+   * 大文本字段摘要(code-as-data-asset):read 返回时,**仅主 scope** 下对"父对象是数组元素 + 名为标记字段 + 长度≥阈值"的 string
+   * 摘要为 `<field Nkb>` 占位(如 `<code 2.3KB>`),防代码正文灌主 agent 上下文;子 scope 完整返回(子 agent 改 code 需全文)。
+   * 深拷贝后改,bind 原值不变。每项 `'arrayPath.field'`(如 `'components.code'`),匹配 = 字段名 + 长度≥阈值
+   * 双重过滤(标记驱动:阈值挡短字段,字段名挡集成商业务长文本如 description;arrayPath 作声明意图)。由 createChatSdk 装配期从 htmlSubagent writablePaths 推断填充。
+   */
+  largeTextPaths?: string[]
+  /** 大文本摘要的字符数阈值,默认 200(短于此长度的标记字段原样返回保信息,如空 code 或几十字符的短代码) */
+  largeTextThreshold?: number
+  /**
+   * __pgId 注入路径(code-as-data-asset):createChatSdk 装配期从 htmlSubagent writablePaths 填。
+   * 触发三联动:① 装配期 extendSchemaWithPgId 给 schema 对应数组元素加 `__pgId:z.string().optional()`(safeParse 不剥离)
+   * ② projectBySchemaDeep 过滤 `__pg*`(read 隐藏 __pgId)③ write 成功后 supplementPgId 补 __pgId(框架独占,绕 isPathAllowed)。
+   * agent 写 __pgId 被 isPathAllowed 自然拒(__pg* 前缀段)。集成商原 schema 不动(框架内部用 extendedSchema)。
+   */
+  pgIdPaths?: string[]
 }
 
 export interface DataSnapshotEntry {
@@ -101,6 +117,12 @@ export interface DataOpsController {
   enterScope?(id: string): () => void
   /** 删除 scope 的基线条目(委派结束清理) */
   exitScope?(id: string): void
+  /**
+   * 框架直改 bind 后(如 codeAsset afterAgent commit 把 vfs 工作副本回写 data.code,绕 write 工具)重算指定 scope 的乐观锁基线。
+   * 不传 scope = 主 scope(MAIN_SCOPE)。防基线过期致后续 autoLock 误冲突(主 agent read 建基线 → 子 commit 改 bind → 主 write autoLock hash 不匹配)。
+   * code-as-data-asset commit 用。
+   */
+  recomputeBaseline?(scope?: string): void
   /** 受保护资源清单快照(供 resourcesPin 中间件每轮 augmentPrompt 注入「受保护资源」段;freeze 无 handle,verbatim 有) */
   getResourcesSnapshot?(): { path: string; mode: 'freeze' | 'verbatim'; handle?: string }[]
   /** 资源池操作(经 controller 同闭包;有 vfsStore 时可用) */
@@ -250,8 +272,90 @@ export function applyPatchesToBind(args: {
 }
 
 /** 基于单主对象配置构建数据操作工具集 */
+/** 格式化字符数为字节串(B/KB/MB;read 大文本摘要占位用,如 `2.3KB`) */
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n}B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`
+  return `${(n / (1024 * 1024)).toFixed(1)}MB`
+}
+
+/** 大文本字段摘要标记:每项 `'arrayPath.field'`(如 `'components.code`);arrayPath 作声明意图,实际匹配按 field + 父是数组元素 */
+export interface LargeTextSpec { arrayPath: string; field: string }
+
+/**
+ * read 大文本字段摘要(code-as-data-asset):**仅主 scope**(isMain)对"名为标记字段 + 长度≥阈值"的 string
+ * 替换为 `<field Nkb>` 占位(如 `<code 2.3KB>`),防代码正文灌主 agent 上下文。双重过滤挡误伤:
+ * ① 字段名 ∈ specs.field(集成商业务长文本如 description 不在标记集 → 不受影响)② 长度≥阈值(短 code 原样保信息)。
+ * 标记驱动,read 整体 / 子路径(components.0)均生效。深拷贝后改,bind 原值不动;isMain=false(子 scope)原样返回 —— 子 agent 改 code 需全文。纯函数,可单测。
+ */
+export function summarizeLargeText<T>(val: T, isMain: boolean, specs: LargeTextSpec[], threshold: number): T {
+  if (!isMain || !specs.length || val == null || typeof val !== 'object') return val
+  const fieldSet = new Set(specs.map((s) => s.field))
+  const out = deepClone(val) as any
+  ;(function walk(node: any) {
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item)
+    } else if (node && typeof node === 'object') {
+      for (const k of Object.keys(node)) {
+        const v = node[k]
+        if (typeof v === 'string' && fieldSet.has(k) && v.length >= threshold) {
+          node[k] = `<${k} ${formatBytes(v.length)}>`       // 标记字段名 + 大文本 → 占位(标记驱动;read 整体/子路径 components.0 均生效)
+        } else {
+          walk(v)                                           // 非标记字段 → 继续递归
+        }
+      }
+    }
+  })(out)
+  return out as T
+}
+
+/** 生成稳定唯一 __pgId(c_ + 随机 + 计数防同毫秒冲突);code-as-data-asset 组件映射键(vfs 文件名 / commit 反查) */
+let __pgIdCounter = 0
+export function genPgId(): string {
+  __pgIdCounter++
+  return 'c_' + Math.random().toString(36).slice(2, 8) + __pgIdCounter.toString(36)
+}
+
+/**
+ * 补 __pgId(code-as-data-asset):扫 bind 的 writablePaths 数组,对没 __pgId 的对象元素生成 id(幂等:已有保持)。
+ * 框架 afterWrite 钩子调(不经 schema 校验 / isPathAllowed,框架独占);read 因 __pgId 不在 schema → projectBySchemaDeep 自然隐藏。
+ * agent 写 __pgId 被 isPathAllowed 自然拒(__pgId 不在 schema 白名单 → PATH_DENIED)。纯函数可单测;
+ * writablePath 在 bind 非数组(或元素非对象)→ 跳过(fallback 降级,不抛错)。
+ */
+export function supplementPgId(bind: any, writablePaths: string[]): void {
+  if (!bind || typeof bind !== 'object') return
+  for (const wp of writablePaths) {
+    const arr = getByPath(bind, wp)
+    if (Array.isArray(arr)) {
+      for (const item of arr) {
+        if (item && typeof item === 'object' && !('__pgId' in item)) {
+          item.__pgId = genPgId()
+        }
+      }
+    }
+  }
+}
+
+/** 就地删除 __pg* 内部字段(深;code-as-data-asset):write 返回值脱敏,防 __pgId 泄露给 agent。
+ * read 投影已挡(projectBySchemaDeep 过滤 __pg*),但 write return 是显式 safeStringify(r.clone/r.data)字符串 ——
+ * extend schema 后 safeParse 不剥离 __pgId,clone/data 可能含(load 回来的 __pgId),需 write return 单独挡。 */
+function redactPgInPlace(obj: any): void {
+  ;(function walk(n: any) {
+    if (Array.isArray(n)) n.forEach(walk)
+    else if (n && typeof n === 'object') {
+      for (const k of Object.keys(n)) {
+        if (k.startsWith('__pg')) delete n[k]
+        else walk(n[k])
+      }
+    }
+  })(obj)
+}
+
 export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): StructuredToolInterface[] {
-  let schema: ZodType = config.schema
+  // code-as-data-asset:pgIdPaths 触发 schema extend(加 __pgId → safeParse 不剥离)+ afterWrite(supplementPgId 补 __pgId)
+  const pgIdPaths = opts.pgIdPaths ?? []
+  const internalAfterWrite = pgIdPaths.length ? (b: any) => supplementPgId(b, pgIdPaths) : undefined
+  let schema: ZodType = pgIdPaths.length ? extendSchemaWithPgId(config.schema, pgIdPaths).schema : config.schema
   let bindRef: any = config.bind
   let description: string = config.description ?? '主数据对象'
   let allowKeys: string[] | null = getSchemaTopKeys(schema)
@@ -277,6 +381,9 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   const maxSnapshots = opts.maxSnapshots ?? 20
   // 并发工具(maxParallelTools>1)下 autoLock 退化为"整体快照语义":多个 read 并发写基线(完成顺序不定),
   // 后续 write 比对"最后完成的 read 的整体 bind hash";单线程下单工具原子,但跨工具的"哪个 read 的 hash 被 autoLock 用"不可重现。
+  // ⚠️ 并发写不互锁(audit-five-dimensions CA-P1):同轮并发两个写工具都在 await handleConflict 让出前同步取旧基线 → 均通过乐观锁 →
+  //    各自 commitSetToBind 串行写入 → 后写覆盖前写,前写静默丢失,无 VERSION_CONFLICT 回灌 LLM。默认 maxParallelTools=1(串行)规避;
+  //    开 maxParallelTools>1 时写应显式传 expectedHash,中期根因修复 = commitSetToBind 入口 final hash 校验。
   // 并发场景下若需精确乐观锁,LLM 应显式传 expectedHash(取自它自己那次 read 的返回值)。harden-optimistic-lock
   // per-scope 基线(fix-main-sub-isolation P1-13):主×子 agent 共享本闭包,基线按 caller scope 隔离 ——
   //   子 agent 委派期间 enterDataScope 切 activeScope,子 read/write 只动子 scope 基线,主基线不被污染
@@ -287,6 +394,12 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   const getBaseline = (): string | undefined => baselines.get(activeScope)
   const setBaseline = (h: string | undefined): void => { if (h === undefined) baselines.delete(activeScope); else baselines.set(activeScope, h) }
   const autoLock = opts.autoLock !== false
+  // 大文本字段摘要(code-as-data-asset):主 scope read 返回时,数组元素里的标记字段(如 code)摘要为 <field Nkb>,
+  // 防代码正文灌主 agent 上下文。specs 由 createChatSdk 装配期从 htmlSubagent writablePaths 推断填充。
+  const largeTextThreshold = opts.largeTextThreshold ?? 200
+  const largeTextSpecs: LargeTextSpec[] = (opts.largeTextPaths ?? [])
+    .map((p) => { const idx = p.lastIndexOf('.'); return idx > 0 ? { arrayPath: p.slice(0, idx), field: p.slice(idx + 1) } : null })
+    .filter((x): x is LargeTextSpec => x !== null)
   // 脏标记:checkpoint 增量用(主数据写后置 true,save consumeDataDirty 检查;未脏则复用上次 clone 省深拷贝)。
   //   ⚠ 所有改 bindRef 的写路径必须调 markDataDirty(漏标 → checkpoint restore 静默还原旧值,比性能问题严重)。
   //   写点清单(新增写路径务必同步 + 补 consumeDataDirty 测试):commitSetToBind(onWrite)/edit/delete/restore/
@@ -296,13 +409,15 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
 
   const controller: DataOpsController = {
     get: () => ({ schema, bind: bindRef, description }),
-    set: (c) => { schema = c.schema; bindRef = c.bind; description = c.description ?? '主数据对象'; allowKeys = getSchemaTopKeys(schema); snapshots.length = 0; baselines.clear(); loadResources(c.resources); resourceStore?.clear(); markDataDirty() },
+    set: (c) => { schema = pgIdPaths.length ? extendSchemaWithPgId(c.schema, pgIdPaths).schema : c.schema; bindRef = c.bind; description = c.description ?? '主数据对象'; allowKeys = getSchemaTopKeys(schema); snapshots.length = 0; baselines.clear(); loadResources(c.resources); resourceStore?.clear(); markDataDirty() },
     update: (b) => { bindRef = b; snapshots.length = 0; baselines.clear(); markDataDirty() },
     markDataDirty,
     consumeDataDirty: () => { const d = _dataDirty; _dataDirty = false; return d },
     // per-scope 基线(P1-13):子 agent 委派经 subagent scope proxy 调入;嵌套安全(恢复上一层 scope)
     enterScope: (id) => { const prev = activeScope; activeScope = id; return () => { activeScope = prev } },
     exitScope: (id) => { baselines.delete(id) },
+    // code-as-data-asset:框架 commit 直改 bind 后重算基线(默认主 scope),防后续 autoLock 误冲突
+    recomputeBaseline: (scope) => { baselines.set(scope ?? MAIN_SCOPE, hashValue(bindRef)) },
     getResourcesSnapshot: () => {
       const out: { path: string; mode: 'freeze' | 'verbatim'; handle?: string }[] = []
       for (const [path, spec] of resourcesByPath) {
@@ -731,6 +846,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           if (opts.interceptors?.read) { try { resolved = opts.interceptors.read(resolved) } catch (e) { return `- ${jp}: [READ_INTERCEPT: ${(e as Error).message}]` } }
           if (fields && fields.length) resolved = projectFields(resolved, fields)
           if (depth !== undefined && depth !== null) resolved = limitDepth(resolved, depth)
+          resolved = summarizeLargeText(resolved, activeScope === MAIN_SCOPE, largeTextSpecs, largeTextThreshold)
           if (resolved === undefined) return `- ${jp} = (undefined)`
           return `- ${jp} = ${safeStringify(resolved)}`
         })
@@ -757,6 +873,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       }
       if (fields && fields.length) resolved = projectFields(resolved, fields)
       if (depth !== undefined && depth !== null) resolved = limitDepth(resolved, depth)
+      resolved = summarizeLargeText(resolved, activeScope === MAIN_SCOPE, largeTextSpecs, largeTextThreshold)
       const desc = !jsonPath ? `主数据说明: ${description}\n格式: 写入值需为 JSON,且通过声明的 schema 校验(校验失败时 write 会返回结构化错误)。字段约束(类型/min/max/enum/必填/默认)见 systemPrompt「可操作数据」段,或用 schema_data({ jsonPath }) 按需查。\n\n` : ''
       const proj = fields && fields.length ? `(字段裁剪:${fields.join(',')})` : ''
       const dlim = depth !== undefined && depth !== null ? `(深度≤${depth})` : ''
@@ -865,6 +982,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         const ok = deleteByPath(bindRef, patch.jsonPath)
         markDataDirty()
         audit({ op: 'delete', detail: patch.jsonPath, timestamp: Date.now() })
+        if (internalAfterWrite) { internalAfterWrite(bindRef); markDataDirty() }
         setBaseline(hashValue(bindRef))
         return ok ? `已删除主数据 @ ${patch.jsonPath}` : `主数据 @ ${patch.jsonPath} 不存在(无需删除)`
       }
@@ -882,8 +1000,10 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         if (!r.ok) return r.error
         if (dryRun) return `dryRun(edit): ${r.applied.length} 个 patch 预检通过(schema 校验 OK)。预览结果:${safeStringify(r.clone, 600)}。未实际写入、未入快照。`
         audit({ op: 'edit', detail: `${r.applied.length} 个 patch${r.applied.length > 1 ? '(批量)' : ''}`, value: r.applied.map((a) => `${a.op}@${a.jp}`), timestamp: Date.now() })
+        if (internalAfterWrite) { internalAfterWrite(bindRef); markDataDirty() }
         setBaseline(hashValue(bindRef))
-        return `已 write(edit) 主数据(${r.applied.length} 个 patch)。当前值:${safeStringify(bindRef, 600)} (新 hash=${hashValue(bindRef)})`
+        redactPgInPlace(r.clone)
+        return `已 write(edit) 主数据(${r.applied.length} 个 patch)。当前值:${safeStringify(r.clone, 600)} (新 hash=${hashValue(bindRef)})`
       }
 
       // set 整体(commitSetToBind 纯函数:校验+快照+merge+audit,与 set_data/draft_commit 共用)
@@ -894,8 +1014,11 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit, dryRun, onWrite: markDataDirty, protectedCtx })
       if (!r.ok) return r.error
       if (dryRun) return `dryRun(set): schema 校验通过。预览新值:${safeStringify(r.data, 600)}。未实际写入、未入快照。`
-      setBaseline(r.hash)
-      return `已 write(set) 主数据 = ${safeStringify(r.data, 600)} (新 hash=${r.hash})${allowKeys ? '(白名单模式:仅更新 schema 声明字段,未声明字段保留)' : ''}`
+      if (internalAfterWrite) { internalAfterWrite(bindRef); markDataDirty() }
+      const __postHash = hashValue(bindRef)
+      setBaseline(__postHash)
+      redactPgInPlace(r.data)
+      return `已 write(set) 主数据 = ${safeStringify(r.data, 600)} (新 hash=${__postHash})${allowKeys ? '(白名单模式:仅更新 schema 声明字段,未声明字段保留)' : ''}`
     },
     {
       name: 'write',

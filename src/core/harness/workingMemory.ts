@@ -105,9 +105,13 @@ export function createWorkingMemoryMiddleware(): Middleware & {
     /** 从快照恢复(刷新/切会话加载):把持久化的 locatedPaths/lastHashes 写回闭包(context-persist-resilience 功能A) */
     restore: (wm) => {
       locatedPaths.length = 0
-      locatedPaths.push(...wm.locatedPaths.slice(0, MAX_ENTRIES)) // 复带上限防御(旧/异常快照超限)
+      // 字段守卫(audit-five-dimensions VM-P1):wm.locatedPaths/lastHashes 可能缺失
+      // (未来版本写显式空标记 {}/持久化损坏/跨版本迁移 partial object/WebStorage JSON.parse 失败回退),
+      // 缺字段直接 .slice 会抛 TypeError 中断整个 applySnapshot → 会话恢复失败(messages/vfs/todos 也未灌入)。
+      // Array/Object 守卫降级为空,单 kind 失败不阻塞其余灌入
+      if (Array.isArray(wm?.locatedPaths)) locatedPaths.push(...wm.locatedPaths.slice(0, MAX_ENTRIES))
       for (const k of Object.keys(lastHashes)) delete lastHashes[k]
-      Object.assign(lastHashes, wm.lastHashes)
+      if (wm?.lastHashes && typeof wm.lastHashes === 'object') Object.assign(lastHashes, wm.lastHashes)
     },
   }
   return mw

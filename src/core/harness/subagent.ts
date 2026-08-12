@@ -583,6 +583,12 @@ export interface SubagentConfig {
   summarization?: boolean | SummarizationOptions
   /** beforeReturn 自纠上限(默认 0 = 关闭);>0 时返回前跑中间件 beforeReturn 钩子(如 verify 格式门禁),feedback 回灌自纠防死循环。配 verify 类中间件时必开 */
   maxVerifyAttempts?: number
+  /**
+   * 框架内部标记(code-as-data-asset):createHtmlSubagent 单模式设;createChatSdk 装配识别 →
+   * 注入 checkout/commit 钩子(beforeAgent data.code→vfs / afterAgent vfs→data.code 增量回写)+
+   * dataOps 传 pgIdPaths + largeTextPaths + 强制 vfs。下划线前缀 = 框架内部,不进公开 API。
+   */
+  _codeAsset?: { writablePaths: string[]; codeVfsPrefix: string; ext: 'vue' | 'html' }
 }
 
 export interface SubagentsMiddlewareOptions {

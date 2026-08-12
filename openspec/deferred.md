@@ -134,18 +134,22 @@ SDK 定位是**框架无关的轻量页面 JSON 操作 Agent**(自研 Deep Agent
 
 ---
 
-## 2026-08-08 审查暂缓项(主流程/上下文审查清理)
+## 2026-08-08 审查暂缓项(✅ 已全部落地归档;2026-08-11 核对)
 
-> 2026-08-08 对 `openspec/changes/` 全量核实(4 路并行 agent 对照 `src/` 代码逐项判定),13 个 change 分类后,以下 4 个为**大工程 / 耦合 / 有疑问**(`focus-context` / `harden-large-json-write` 已完成发布归档),暂缓推进。每项 `proposal.md`/`design.md`/`tasks.md` 保留作底稿,重启时按正常 OpenSpec 流程(先修现状核实 + apply)。
+> 2026-08-08 全量核实后暂缓的 4 个 change,**现已全部实施归档**,原暂缓评估失效(留痕)。每项底稿见 `archive/`:
 
-| change | 暂缓理由 | 工作量 | 重启触发 |
+| change | 状态 | 归档位置 | 备注 |
 |---|---|---|---|
-| `placeholder-protected-read-write` | **0% 大工程**(freeze/verbatim 强制层 + vfs 第四池 + 4 新工具 + SDK API),从零实施;且与 harden A4 协同 | 大 | 精确值保护诉求真实出现(freeze 防幻觉 / verbatim 防压缩丢字场景) |
-| `agent-driven-compression` | **0%(40 项)**,中-大工程;核心难点在 summaryLlm 两段式工具循环(绑工具 → 决策 → 回灌)+ browser mock 扩展两段式 SSE | 中-大 | 压缩质量成痛点(当前索引/LLM 摘要够用);前置 context-inspector 已就绪可随时启动 |
-| `chatdialog-component-split` | **0%(46 项)**,2-3 天纯 UI 重构;无功能价值(可拼装原子组件库需求未出现) | 大 | 集成方真实要求自建 ChatDialog 子组件 / 多套皮肤换肤 |
-| `context-history-resilience` | proposal 待讨论(本会话新建),6 个待决策点未收敛(尤其「持久化模型:对话文本 vs 工具结果」根因决策) | 待定 | 待决策讨论收敛后定 tasks/design |
+| `placeholder-protected-read-write` | ✅ 已实施 | `archive/2026-08-04-placeholder-protected-read-write/` | freeze/verbatim 强制层 + vfs 第四池;随 `precise-value-protection` skill 分发 |
+| `agent-driven-compression` | ✅ 已实施 | `archive/2026-08-04-agent-driven-compression/` | `agentCompression` opt-in capability + decide(6s 超时降级静态) |
+| `chatdialog-component-split` | ✅ 核心已实施 / ⏸ demo 残项 | `archive/2026-08-03-chatdialog-component-split/` | chatContext + message 7 原子 + 8 区块 + sections/slot 双机制全落地;**§9 拼装示例 demo deferred**(见下) |
+| `context-history-resilience` | ✅ 已归档 | `archive/2026-08-07-context-history-resilience/` | P1+A 收口(recall-and-trim-llm + context-persist-resilience);B 类决策 #2 维持「对话文本」模型 |
 
-**说明**:`harden-large-json-write` A1/A5 已发布 + 推后项永久推后,change 已归档(见 `archive/`);`context-history-resilience` 是本会话审查产出的新 proposal(长对话上下文韧性),非旧规划。
+### ⏸ chatdialog-component-split §9 拼装示例 demo(唯一残项 deferred)
+
+- **现状**:核心拆分(§1-8/10)已实施并随日常发布上线(`src/core/composables/chatContext.ts` + `components/{ChatHeader,MessageList,QueuedBar,ApprovalBar,ConflictBar,ChatInput,FocusBar}.vue` + `message/*`);仅 `examples/custom-dialog-demo`(sections 关区块 + slot 替换 + L2 自建根组件)+ 配套 `tests/browser/custom-dialog.spec.ts` 未做。
+- **暂缓理由**:纯 UI 拼装示例,无功能价值(可拼装原子组件库的集成方需求未出现);核心能力(chatContext 导出 + 8 区块 + slot/sections)已就绪,集成方可按 `doc/usage-guide.md` 自行拼装。
+- **重启触发**:集成方真实要求自建 ChatDialog 子组件 / 多套皮肤换肤,或需要官方拼装参考。重启时底稿齐全(`archive/2026-08-03-chatdialog-component-split/tasks.md` §9)。
 
 ---
 

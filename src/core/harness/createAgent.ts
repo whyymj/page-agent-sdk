@@ -261,7 +261,7 @@ export function createAgent(options: CreateAgentOptions) {
     systemPrompt,
     tools: extraTools = [],
     middleware: middlewares = [],
-    maxToolRounds = DEFAULT_MAX_TOOL_ROUNDS,
+    maxToolRounds: initMaxToolRounds,
     maxIterations: userMaxIterations,
     maxRetries = 2,
     retryDelayMs = 500,
@@ -274,6 +274,16 @@ export function createAgent(options: CreateAgentOptions) {
     onLlmChange,
     debug = false,
   } = options
+
+  // 装配期配置校验(audit-five-dimensions CO-P1 / CA-P1)
+  let maxToolRounds = initMaxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS
+  if (!Number.isFinite(maxToolRounds) || maxToolRounds < 1) {
+    console.warn(`[page-agent-sdk] maxToolRounds=${maxToolRounds} 非法(须 ≥1 正整数),已 clamp 到 1(0/负数致主循环 while 不进 → agent 不调 LLM 静默返回兜底文案)`)
+    maxToolRounds = 1
+  }
+  if (maxParallelTools > 1) {
+    console.warn(`[page-agent-sdk] maxParallelTools=${maxParallelTools}:并发工具下 dataOps 写工具不互锁(同轮并发两写都在 await handleConflict 让出前取旧基线 → 均通过乐观锁 → 后写覆盖前写,无 VERSION_CONFLICT 回灌);如需精确乐观锁保持 maxParallelTools=1 或写时显式传 expectedHash`)
+  }
 
   // 模型能力:声明优先 > model 名查表 > 缺省。
   // maxTokens 缺省 = maxOutputTokens(DeepSeek 8192 等,避免固定 16384 被截断);

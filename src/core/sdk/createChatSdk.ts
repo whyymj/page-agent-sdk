@@ -45,6 +45,7 @@ import { createContextInspectorMiddleware } from '../harness/contextInspector'
 import { connectMcp, type McpServerConfig } from '../mcp/client'
 import { createSummarizationMiddleware } from '../harness/summarization'
 import { buildDataPrompt, buildSystemPrompt } from './promptBuilder'
+import { createCodeAssetMiddleware } from './codeAssetMiddleware'
 import { isChatModel, resolveLlm, deriveTitle } from './llmResolver'
 import { constructLlmFromConfig, constructOpenLlmSync } from '../llm/constructLlm'
 import { createConflictManager } from './conflictManager'
@@ -469,6 +470,8 @@ export interface ChatSdk {
   importData(json: any, opts?: { validate?: boolean; emit?: boolean }): { ok: boolean; error?: string }
   /** 往 vfs 异步注入/更新文件(RAG 文档池 / HTML 代码等);content 字符串直存,对象 JSON.stringify。storage 开则 persist。与 vfs_write 工具一致语义(集成方侧命令式入口) */
   vfsWrite(path: string, content: string | object): void
+  /** 只读读取 vfs 文件内容(集成方渲染层按 data.codeRef 取代码渲染 custom 组件;文件不存在返 undefined)。与 vfs_read 工具一致语义,命令式入口(不经工具调用/无工具开销) */
+  vfsRead(path: string): string | undefined
   /** 受保护资源(精确值保护):创建/注册资源 → 返 handle;需 data.resources + vfsStore,否则抛错 */
   createResource(path: string, value?: unknown): string
   getResource(pathOrHandle: string): { path: string; mode: string; value: unknown; handle: string } | undefined
@@ -864,6 +867,15 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ? { ...options.data, description: options.data.description ?? '主数据对象' }
     : undefined
 
+  // code-as-data-asset:检测 htmlSubagent 单模式(_codeAsset 标记)→ 提取 pgIdPaths(schema extend 加 __pgId + afterWrite 补)/ largeTextPaths(主 scope read 摘要挡代码灌主上下文)
+  // 装配期识别(集成商 createHtmlSubagent 时设标记;本工厂调用时 data 尚未传,故延迟到此处)
+  const codeAssetConfigs = (options.subagents ?? []).filter(
+    (s): s is SubagentConfig & { _codeAsset: NonNullable<SubagentConfig['_codeAsset']> } => !!s._codeAsset,
+  )
+  const hasCodeAsset = codeAssetConfigs.length > 0
+  const codeAssetPgIdPaths = codeAssetConfigs.flatMap((s) => s._codeAsset.writablePaths)
+  const codeAssetLargeTextPaths = codeAssetConfigs.flatMap((s) => s._codeAsset.writablePaths.map((wp) => `${wp}.code`))
+
   // 会话级 checkpoint(默认关;传 options.checkpoint 开启):每轮自动存 + 一键回滚到上次正常时
   const checkpointOpts = options.checkpoint
   const useCheckpoint = checkpointOpts !== undefined && checkpointOpts !== false
@@ -903,6 +915,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         autoLock: options.autoLock,
         interceptors: options.interceptors,
         vfsStore: (useDraft || !!finalDataConfig?.resources?.length) ? vfsStore : undefined,  // draft 工具 / 受保护资源(opt-in):vfsStore 提供 → createDataOps 装 draft_write/draft_commit + resource_*
+        // code-as-data-asset:htmlSubagent writablePaths → pgIdPaths(schema extend 加 __pgId:safeParse 不剥离 + afterWrite 补 __pgId)+ largeTextPaths(主 scope read code 摘要)
+        ...(codeAssetPgIdPaths.length ? { pgIdPaths: codeAssetPgIdPaths } : {}),
+        ...(codeAssetLargeTextPaths.length ? { largeTextPaths: codeAssetLargeTextPaths } : {}),
       })
     : []
   // toolMode 筛选:simple(默认)主推 read/write 但保留高级能力;advanced 全暴露;minimal 只 read/write
@@ -1047,7 +1062,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const useMission = caps.missionAnchor // mission 默认开(分层默认核心;长任务防跑偏)
   const useWorkingMemory = caps.workingMemory // workingMemory 默认开(pin 最近 path/hash,防压缩后丢定位)
   const useSkills = caps.skills
-  const useVfs = caps.vfs
+  // code-as-data-asset:htmlSubagent 单模式强依赖 vfs 工作副本 + vfs 工具(checkout/commit + 子 agent vfs_edit);集成商关了 vfs 也强制开(零感知)
+  const useVfs = caps.vfs || hasCodeAsset
   // vfs 是内置中间件,其工具(createVfsMiddleware 注入)标 builtin(否则 inspect().tools 里会落到 'user',语义错)
   if (useVfs) {
     for (const n of VFS_TOOL_NAMES) toolSources.set(n, 'builtin')
@@ -1118,8 +1134,23 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 支持运行时动态:经 controller.set/add/remove 重新生成委派工具 + 触发 rebind
   // 注:subagents:[](空数组)也创建 controller,支持「初始无子 agent,运行时动态 add」场景(不依赖 length 判定)
   // capabilities.subagent 关闭时不创建(与 spawn 中间件一致)
-  const subagentsMw = useSubagent && options.subagents !== undefined
-    ? createSubagentsMiddleware(options.subagents, { llm: options.llm, allTools: () => core.agent?.allTools ?? allTools, debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null, tracker: subagentTracker, guardMiddleware: childGuards.length ? childGuards : undefined, getVfsFiles: useVfs ? () => vfsStore.files : undefined, enterDataScope: dataOpsController?.enterScope ? (id) => dataOpsController.enterScope!(id) : undefined, exitDataScope: dataOpsController?.exitScope ? (id) => dataOpsController.exitScope!(id) : undefined, onUsage: (u) => { usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0); usage.completion_tokens = (usage.completion_tokens ?? 0) + (u.completion_tokens ?? 0); usage.total_tokens = (usage.total_tokens ?? 0) + (u.total_tokens ?? 0) }, timeoutMs: options.subagent?.timeoutMs })
+  //
+  // code-as-data-asset:给 codeAsset 子 agent config 追加 checkout/commit 钩子(本工厂调用时集成商尚未传 data,
+  //   故延迟到装配期;钩子闭包持 dataOpsController + vfsStore,经 config.middleware 透传到子 agent createAgent)
+  const subagentsForAssemble: SubagentConfig[] | undefined = options.subagents?.map((s) => {
+    if (!s._codeAsset) return s
+    const cc = s._codeAsset
+    const codeAssetMw = createCodeAssetMiddleware({
+      writablePaths: cc.writablePaths,
+      codeVfsPrefix: cc.codeVfsPrefix,
+      ext: cc.ext,
+      getController: () => dataOpsController,
+      vfsStore,
+    })
+    return { ...s, middleware: [...(s.middleware ?? []), codeAssetMw] }
+  })
+  const subagentsMw = useSubagent && subagentsForAssemble !== undefined
+    ? createSubagentsMiddleware(subagentsForAssemble, { llm: options.llm, allTools: () => core.agent?.allTools ?? allTools, debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null, tracker: subagentTracker, guardMiddleware: childGuards.length ? childGuards : undefined, getVfsFiles: useVfs ? () => vfsStore.files : undefined, enterDataScope: dataOpsController?.enterScope ? (id) => dataOpsController.enterScope!(id) : undefined, exitDataScope: dataOpsController?.exitScope ? (id) => dataOpsController.exitScope!(id) : undefined, onUsage: (u) => { usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0); usage.completion_tokens = (usage.completion_tokens ?? 0) + (u.completion_tokens ?? 0); usage.total_tokens = (usage.total_tokens ?? 0) + (u.total_tokens ?? 0) }, timeoutMs: options.subagent?.timeoutMs })
     : undefined
   const subagentsController = subagentsMw ? (subagentsMw as any).controller as import('../harness/subagent').SubagentsController : null
 
@@ -2436,6 +2467,8 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
       const text = typeof content === 'string' ? content : JSON.stringify(content)
       core.vfsStore.files[normalizeVfsPath(path)] = { content: text, updatedAt: Date.now() }
     },
+    /** 只读读取 vfs 文件内容(集成方渲染层按 data.codeRef 取代码渲染 custom 组件;不存在返 undefined)。与 vfs_read 工具一致语义,命令式入口(不经工具调用/无工具开销) */
+    vfsRead: (path) => core.vfsStore.files[normalizeVfsPath(path)]?.content,
     createResource: (path: string, value?: unknown) => {
       const c = core.dataOpsController
       if (!c?.createResource) throw new Error('[page-agent-sdk] createResource 不可用:需配 data.resources + vfsStore(capabilities.vfs 默认开)')

@@ -1,23 +1,23 @@
 <script setup lang="ts">
 /**
- * HTML 代码组件生成子 agent demo(createHtmlSubagent):
+ * HTML 代码组件生成子 agent demo(createHtmlSubagent 单模式 code-as-data-asset):
  *
- * - 主 data:components 数组(支持 type:'custom' 代码组件 + codeRef 引用 vfs 代码)
- * - createHtmlSubagent 配置代码生成子 agent(规划 + 代码→vfs + 限定写)
- * - 主 agent 调 use_html 委派 → 子 agent write_todos 规划 → vfs_write 代码(html/<name>.vue)+ write data{codeRef}
+ * - 主 data:components 数组(custom 代码组件 code 字段存 SFC 代码正文 = 资产源)
+ * - createHtmlSubagent 配置代码生成子 agent(规划 + 代码作为 data 资产 + vfs 工作副本 + 限定写)
+ * - 主 agent 调 use_html 委派 → 子 agent 新建 write components.N {code}(框架补 __pgId)/ 修改经 vfs_edit 工作副本(框架 checkout/commit)
  *
- * 关键:代码正文在 vfs(会话级),data 只存 codeRef 引用 → 主 data 精简、代码改 vfs_edit 不动 data。
- * 渲染层(集成方契约):遇 type:'custom' 读 data.codeRef → vfs 取 code → 渲染(本 demo 不渲染动态 SFC,
- *   聚焦展示「代码→vfs + data 引用」数据流;集成方渲染层自行实现)。
+ * 关键:代码作为 data 资产(进服务端 DB),vfs 作编辑工作副本(框架自动 checkout/commit,主 agent 透明)。
+ * 渲染层(集成方契约):遇 type:'custom' 读 data.code 渲染 SFC(本 demo 不渲染动态 SFC,聚焦展示「代码作为 data 资产」数据流)。
  */
-import { reactive, ref, onMounted, onUnmounted } from 'vue'
+import { reactive, computed, onMounted, onUnmounted } from 'vue'
 import { createChatSdk, createHtmlSubagent, type ChatSdk } from '../../src/core'
 import { z } from 'zod'
 import DevNav from '../_shared/DevNav.vue'
 
 let agent: ChatSdk | null = null
 
-// 主 data schema:components 数组,custom 类型代码组件(带 codeRef 引用 vfs 代码)
+// 主 data schema:components 数组,custom 类型代码组件(code 字段存 SFC 代码正文 = 资产)
+// __pgId 框架无感注入(schema 不声明);code 是资产,随 data json 持久化
 const pageSchema = z.object({
   title: z.string().describe('页面标题'),
   components: z
@@ -25,10 +25,7 @@ const pageSchema = z.object({
       z.object({
         type: z.string().describe('组件类型;custom = 纯代码组件'),
         name: z.string().optional().describe('组件名(如 countdown)'),
-        codeRef: z
-          .string()
-          .optional()
-          .describe('custom 组件的 vfs 代码引用,如 vfs://html/countdown.vue'),
+        code: z.string().optional().describe('custom 组件的 Vue SFC 代码正文(资产,随 data json 持久化)'),
         props: z.record(z.any()).optional().describe('组件 props'),
       }),
     )
@@ -36,8 +33,8 @@ const pageSchema = z.object({
 })
 const pageBind = reactive({ title: '代码组件演示页', components: [] as any[] })
 
-// vfs 代码文件(hook 捕获 HTML 子 agent 的 vfs_write;代码正文在这)
-const vfsFiles = ref<Record<string, string>>({})
+// 当前选中的代码组件(展示其 SFC 代码 = data.code 资产)
+const codeComp = computed(() => pageBind.components.find((c: any) => c.type === 'custom' && typeof c.code === 'string' && c.code.length > 0) ?? null)
 
 onMounted(() => {
   agent = createChatSdk({
@@ -48,23 +45,15 @@ onMounted(() => {
       model: import.meta.env.VITE_AI_MODEL,
     },
     systemPrompt:
-      '你是页面搭建助手。组件库覆盖不到的灵活需求(定制交互/特殊布局/一次性特效),委派 use_html 子 agent 生成代码组件(custom Vue SFC);已有组件用配置,不重造。',
+      '你是页面搭建助手。组件库覆盖不到的灵活需求(定制交互/特殊布局/一次性特效),委派 use_html 子 agent 生成代码组件(custom Vue SFC,代码作为 data 资产存 components[].code);已有组件用配置,不重造。',
     storage: 'memory',
-    data: { schema: pageSchema, bind: pageBind, description: '页面(components 支持 custom 代码组件)' },
-    // ★ 子 agent 是配置(SubagentConfig),塞 subagents;writablePaths 限定写 components 区
+    data: { schema: pageSchema, bind: pageBind, description: '页面(components 支持 custom 代码组件;code 字段是资产)' },
+    // ★ 单模式(code-as-data-asset):代码作 data.code 资产,vfs 作工作副本,框架自动 checkout/commit
     subagents: [createHtmlSubagent({ writablePaths: ['components'] })],
     dialog: {
-      title: 'HTML 代码组件生成',
+      title: 'HTML 代码组件生成(代码作 data 资产)',
       placeholder: '让 agent 写代码组件(如「写一个倒计时弹窗」「加个抽奖转盘」)…',
     },
-  })
-
-  // hook:捕获 HTML 子 agent 的 vfs_write(代码正文写 vfs)→ 可视化代码文件
-  agent.hook((e) => {
-    const ev = e as any
-    if (ev.type === 'subagent' && ev.kind === 'tool_call' && ev.name === 'vfs_write') {
-      vfsFiles.value[ev.args?.path] = ev.args?.content
-    }
   })
 
   agent.mount('#chat-root')
@@ -76,27 +65,24 @@ onUnmounted(() => agent?.unmount())
 <template>
   <DevNav />
   <div class="page">
-    <h1>HTML 代码组件生成子 agent(createHtmlSubagent)</h1>
+    <h1>HTML 代码组件生成子 agent(单模式:代码作 data 资产)</h1>
     <p>
-      组件库覆盖不到的需求,主 agent 调 <code>use_html</code> 委派子 agent:规划(<code>write_todos</code>)→ 代码写
-      <strong>vfs</strong>(<code>html/&lt;name&gt;.vue</code>)→ data 存 <code>codeRef</code> 引用。主 data 精简(代码不塞
-      data);代码改 <code>vfs_edit</code> 增量不动 data。
+      组件库覆盖不到的需求,主 agent 调 <code>use_html</code> 委派子 agent:规划(<code>write_todos</code>)→ 代码作为
+      <strong>data 资产</strong>存 <code>components[].code</code>(Vue SFC,进服务端 DB)。<strong>vfs 作工作副本</strong>(框架自动
+      checkout/commit,主 agent 透明);修改经 <code>vfs_edit</code> 增量改工作副本,框架回写 data.code。
     </p>
 
     <div class="cols">
       <div class="col">
         <h3>主 data:components({{ pageBind.components.length }})</h3>
-        <p class="hint">custom 组件只存 codeRef 引用,代码正文不在这</p>
+        <p class="hint">custom 组件 code 字段存 SFC 代码正文(资产);__pgId 框架无感注入(组件映射键)</p>
         <pre>{{ JSON.stringify(pageBind.components, null, 2) }}</pre>
       </div>
       <div class="col">
-        <h3>vfs 代码文件({{ Object.keys(vfsFiles).length }})</h3>
-        <p class="hint">HTML 子 agent vfs_write 的代码正文(会话级工作区)</p>
-        <div v-for="(content, path) in vfsFiles" :key="path" class="vfs-file">
-          <div class="vfs-path">📄 {{ path }}</div>
-          <pre>{{ content }}</pre>
-        </div>
-        <p v-if="!Object.keys(vfsFiles).length" class="empty">(尚未写代码;发消息如「写一个倒计时组件」触发 use_html)</p>
+        <h3>SFC 代码预览(data.code 资产)</h3>
+        <p class="hint">custom 组件的 Vue SFC 代码正文(资产源;集成方渲染层据此挂载渲染)</p>
+        <pre v-if="codeComp">{{ codeComp.code }}</pre>
+        <p v-else class="empty">(尚未生成代码;发消息如「写一个倒计时组件」触发 use_html)</p>
       </div>
     </div>
 
@@ -130,7 +116,7 @@ p code {
 }
 .cols {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 16px;
   margin-bottom: 16px;
 }
@@ -138,6 +124,7 @@ p code {
   background: var(--ark-panel);
   border-radius: 8px;
   padding: 12px;
+  min-width: 0;
 }
 .col h3 {
   font-size: 14px;
@@ -148,8 +135,7 @@ p code {
   color: var(--ark-muted);
   margin-bottom: 8px;
 }
-.col pre,
-.vfs-file pre {
+.col pre {
   margin: 0;
   padding: 10px;
   background: var(--ark-bg);
@@ -160,15 +146,6 @@ p code {
   max-height: 260px;
   overflow-y: auto;
   color: var(--ark-fg);
-}
-.vfs-file {
-  margin-bottom: 10px;
-}
-.vfs-path {
-  font-size: 12px;
-  color: var(--ark-accent);
-  margin-bottom: 4px;
-  font-family: monospace;
 }
 .empty {
   font-size: 12px;

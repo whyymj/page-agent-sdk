@@ -970,6 +970,8 @@ export interface ChatSdk {
   importData(json: any, opts?: { validate?: boolean; emit?: boolean }): { ok: boolean; error?: string };
   /** 往 vfs 异步注入/更新文件(RAG 文档池 / HTML 代码等);content 字符串直存,对象 JSON.stringify。与 vfs_write 工具一致语义(集成方侧命令式入口) */
   vfsWrite(path: string, content: string | object): void;
+  /** 只读读取 vfs 文件内容(集成方渲染层按 data.codeRef 取代码渲染 custom 组件;文件不存在返 undefined)。与 vfs_read 工具一致语义,命令式入口(不经工具调用/无工具开销) */
+  vfsRead(path: string): string | undefined;
   /** 创建/注册受保护资源(返回 handle);需配 data.resources + vfsStore,否则抛错 */
   createResource(path: string, value?: unknown): string;
   /** 取受保护资源真值(by path 或 handle);不存在返 undefined */
@@ -1407,6 +1409,8 @@ export interface CreateHtmlSubagentOptions {
   codeKind?: 'sfc' | 'html';
   /** 输出格式校验(validate_code 工具 + verify beforeReturn 门禁);默认 true */
   formatCheck?: boolean;
+  /** 子 agent 收口(afterAgent,verify 门禁通过后)一次性回调,传代码区全部文件 {path:content};集成方据此把代码同步进 data bind(响应式驱动渲染),无需 hook vfs 工具事件 */
+  onComplete?: (files: Record<string, string>) => void;
   [k: string]: any;
 }
 export declare function createRagSubagent(options: CreateRagSubagentOptions): SubagentConfig;

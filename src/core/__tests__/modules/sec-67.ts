@@ -75,8 +75,9 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert(hcfg.summarization === true, '✓ summarization 默认开(true,频繁改代码累积快)')
   assert(hcfg.temperature === 0.4, '✓ temperature 默认 0.4(代码生成低温)')
   assert(hcfg.maxToolRounds === 12, '✓ maxToolRounds 默认 12(中等任务)')
-  assert(hcfg.systemPrompt?.includes('html/'), '✓ systemPrompt 含 codeVfsPrefix(html/,代码→vfs 引导)')
-  assert(hcfg.systemPrompt?.includes('codeRef'), '✓ systemPrompt 含 codeRef(data 存引用约定)')
+  assert(hcfg.systemPrompt?.includes('html/'), '✓ systemPrompt 含 codeVfsPrefix(html/,工作副本引导)')
+  assert(!hcfg.systemPrompt?.includes('codeRef') && hcfg.systemPrompt?.includes('数据资产'), '✓ systemPrompt 单模式(砍 codeRef;代码作为 data.code 资产 + vfs 工作副本)')
+  assert((hcfg as any)._codeAsset?.writablePaths?.length === 1 && (hcfg as any)._codeAsset?.ext === 'vue', '✓ _codeAsset 标记设(createChatSdk 装配识别 → checkout/commit + pgIdPaths/largeTextPaths)')
   assert(hcfg.skills?.length === 1 && hcfg.skills[0].name === 'html-builder', '✓ 默认装 html-builder skill')
 
   // middleware 含 todos(getPlanPhase 是 createTodosMiddleware 特有)

@@ -1,5 +1,7 @@
 # 活跃 Changes 优先级索引
 
+> **2026-08-12 发布 3.0.0**(breaking major):`code-as-data-asset` 实施完成并归档 —— **createHtmlSubagent 改单模式**(代码作为 data 资产:`code` 字段进服务端 DB + vfs 作编辑工作副本 + 框架 beforeAgent checkout/afterAgent commit 自动搬运,主 agent 透明 + `__pgId` 无感注入 + 主 scope read 摘要)。**breaking**:去 `onComplete`/`codeRef`/`codeSnapshots`,集成方迁移 `codeRef`→`code` 字段。selftest 1849 / browser 端到端 3 passed。详见 [`archive/2026-08-12-code-as-data-asset/`](./archive/2026-08-12-code-as-data-asset/)。
+
 > **2026-08-11 发布 2.42.0**(minor):**内置深色主题 `dialog.theme:'dark'`**(方舟专题设计稿 Figma 471:6389/469:5947/469:5973 色板)。ChatDialog `.cs-theme-dark` 色板块(#222 紫微光外框 / #353535 气泡+工具栏 / #7063E7 用户气泡 / 状态点 #00C562·#F04848 / 紫边输入框+渐变发送钮 / 28px 渐变头像)+ DebugDrawer 同款内置主题(`csTheme` prop,ChatDialog 自动透传;--dd-* 全变量化)+ 「思考中」态设计稿化(8px 主色方点脉冲+文案)+ 历史下拉当前项整行主色。全部经 `--cs-*`/`--dd-*` 变量驱动,light 默认零回归,集成方可祖先覆盖自定义。browser 42 项。
 
 > **2026-08-11 发布 2.41.1**(patch):① **DebugDrawer 日志列表生成期间实时刷新**(审计组 6 未编号 P1 级残留真·清零:mountChatDialog/customize-demo 传 `.slice()` 新引用 + browser 断言 ×2,41 项);② **rag-demo anthropic 协议修复**(根因:@anthropic-ai/sdk buildURL `new URL(baseURL+path)` 相对 baseUrl 抛 Invalid URL → 改绝对路径;apiKey 移出代码进 `.env` VITE_ANTHROPIC_*;mockLlm 双协议拦截 chat/completions + /v1/messages);③ **CLAUDE.md 整理**(87KB→33KB:保留全部规则/契约/坑,删版本演进叙事)。
@@ -24,15 +26,17 @@
 
 > 2026-08-08 发布 **2.27.0**:`recall-and-trim-llm`(P1 召回 + trim LLM)+ `context-persist-resilience`(mission/workingMemory 持久化 + trim 收口 GC 归档)实施完成;`context-history-resilience` umbrella 归档(P1+A 收口;B 类决策 #2 维持「对话文本」模型;P2 其余 deferred)。已归档见 `archive/`。
 
+## 进行中
+
+> (暂无进行中 change;`code-as-data-asset` 已发布 3.0.0 归档)
+
+---
+
 ## 全景盘点(暂缓)
 
-> placeholder-protected-read-write、agent-driven-compression 已实施并归档(见 `archive/`),原「暂缓」记录过时,本表移除。
-
-| change | 类型 | 工作量 | 完成度 | 暂缓理由 |
-|---|---|---|---|---|
-| chatdialog-component-split | ChatDialog 原子化重构 | L | ⚠️ 索引失真待核 | 标「0/46 暂缓」但代码已实施(message/* + chatContext + 容器化,CLAUDE.md 按拆分后描述);「暂缓」或仅指拼装示例 demo 残项 —— audit-sdk-integrity A5 核实修正 |
-
-> 详见 [`deferred.md`](../deferred.md)(暂缓理由 + 重启触发)。
+> 2026-08-08 审查暂缓的 4 项(placeholder-protected / agent-driven-compression / chatdialog-component-split / context-history-resilience)**已全部实施归档**,详见 `deferred.md`「2026-08-08 审查暂缓项」段。
+>
+> 当前活跃暂缓项:**chatdialog-component-split §9 拼装示例 demo**(核心拆分已上线,仅示例 demo 未做,待集成方需求触发)—— 详见 [`deferred.md`](../deferred.md)。
 
 ## 写链串行约束(若重启)
 

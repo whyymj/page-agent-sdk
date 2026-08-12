@@ -1,7 +1,7 @@
 # Change: chatdialog-component-split(ChatDialog 拆分成可拼装/可替换的原子组件库)
 
 > 用户诉求(2026-08-03):「最好能将对话框拆分成 UI 组件,可以自己选择一部分功能自己拼装,又可以替换成自己实现的功能模块;如果当前组件需要重构,也可以直接设想规划一下」。
-> **状态**:proposal(未实施)。独立 change,一次性全拆 + 配示例 demo,不与其他 P0/P1 修复捆绑。
+> **状态**:✅ **已实施归档**(2026-08-11,audit-sdk-integrity A5 核实)。核心拆分(§1-8/10:chatContext 枢纽 + message 7 原子 + 8 区块组件 + sections/slot 双机制 + 导出/类型)已随日常发布上线;仅 §9「拼装示例 demo」deferred(待集成方自建 ChatDialog 需求触发,见 `openspec/deferred.md`)。
 
 ## Why
 

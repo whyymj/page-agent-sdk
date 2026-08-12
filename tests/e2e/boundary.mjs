@@ -94,5 +94,18 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:boundary] maxToolRounds 非法值(0/负)装配期 warn + clamp(audit CO-P1)')
+  {
+    const warns = []
+    const origWarn = console.warn
+    console.warn = (msg) => warns.push(String(msg))
+    const sdk = createChatSdk({ ui: false, id: 'e2e-mtr', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS, maxToolRounds: 0 })
+    await sdk.mount()
+    console.warn = origWarn
+    assert(warns.some((w) => /maxToolRounds=0 非法/.test(w)), 'CO-P1: maxToolRounds:0 装配期 warn(须 ≥1 正整数)')
+    assert(warns.some((w) => /clamp 到 1/.test(w)), 'CO-P1: maxToolRounds:0 → clamp 到 1(防 agent 不调 LLM 静默返回兜底文案)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

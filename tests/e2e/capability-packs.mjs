@@ -1,5 +1,6 @@
 // 能力包(createRagSubagent / createHtmlSubagent 专用子 agent)+ 子 agent 架构扩展(allowedTools/middleware/summarization/vfsWrite)
 import { setupEnv, createAssert, FAKE_LLM, createChatSdk } from './_helpers.mjs'
+import { z } from 'zod'
 import { createRagSubagent, createHtmlSubagent } from '../../dist/page-agent-sdk.js'
 import { readFileSync, existsSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
@@ -56,25 +57,37 @@ export async function run() {
     assert(!threw, 'sdk.vfsWrite(字符串)调用不抛')
     try { sdk.vfsWrite('docs/cfg.json', { theme: 'dark' }) } catch { threw = true }
     assert(!threw, 'sdk.vfsWrite(对象)调用不抛(JSON.stringify)')
-    // vfsWrite 不暴露 vfsStore;写入逻辑 = files[normalize(path)] = {content, updatedAt}(同 vfs_write,语义经 vfs_write 工具覆盖)
+    // vfsRead:只读读取 vfs 文件(集成方渲染层按 codeRef 取代码);写入后读回一致
+    assert(typeof sdk.vfsRead === 'function', 'sdk.vfsRead 为 function')
+    assert(sdk.vfsRead('docs/hero.md') === '组件文档内容', 'sdk.vfsRead 读回 vfsWrite 写入的字符串内容')
+    assert(sdk.vfsRead('docs/cfg.json') === '{"theme":"dark"}', 'sdk.vfsRead 读回 vfsWrite 对象 JSON.stringify 结果')
+    assert(sdk.vfsRead('docs/不存在.md') === undefined, 'sdk.vfsRead 不存在的路径返回 undefined')
+    // vfsWrite/vfsRead 不暴露 vfsStore;写入逻辑 = files[normalize(path)] = {content, updatedAt}(同 vfs_write,语义经 vfs_write 工具覆盖)
     sdk.unmount()
   }
 
-  console.log('[e2e:capability-packs] 两 skill 文件 + npm files')
+  console.log('[e2e:capability-packs] 三 skill 文件 + npm files')
   {
     const __dirname = dirname(fileURLToPath(import.meta.url))
     const root = resolve(__dirname, '../..')
     const ragSkill = resolve(root, 'skills/rag-search/SKILL.md')
     const htmlSkill = resolve(root, 'skills/html-builder/SKILL.md')
+    const htmlFragSkill = resolve(root, 'skills/html-fragment/SKILL.md')
     assert(existsSync(ragSkill), 'skills/rag-search/SKILL.md 存在')
     assert(existsSync(htmlSkill), 'skills/html-builder/SKILL.md 存在')
+    assert(existsSync(htmlFragSkill), 'skills/html-fragment/SKILL.md 存在')
     if (existsSync(ragSkill)) {
       assert(readFileSync(ragSkill, 'utf8').includes('name: rag-search'), 'rag-search SKILL.md frontmatter name')
     }
     if (existsSync(htmlSkill)) {
       const c = readFileSync(htmlSkill, 'utf8')
       assert(c.includes('name: html-builder'), 'html-builder SKILL.md frontmatter name')
-      assert(c.includes('codeRef'), 'html-builder SKILL.md 含 codeRef 存储约定')
+      assert(c.includes('代码资产模型'), 'html-builder SKILL.md 含 code 资产模型约定(单模式)')
+    }
+    if (existsSync(htmlFragSkill)) {
+      const c = readFileSync(htmlFragSkill, 'utf8')
+      assert(c.includes('name: html-fragment'), 'html-fragment SKILL.md frontmatter name')
+      assert(c.includes('v-html'), 'html-fragment SKILL.md 含 v-html 片段契约')
     }
     const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'))
     assert(JSON.stringify(pkg.files).includes('skills'), 'package.json files 含 skills/')
@@ -163,6 +176,29 @@ export async function run() {
     await sdk2.send('生成一个横幅')
     assert(llm2.calls === 4, `✓ formatCheck:false 对照:无门禁自纠(4 次调用,实际 ${llm2.calls})`)
     sdk2.unmount()
+  }
+
+  console.log('[e2e:capability-packs] createHtmlSubagent 单模式 commit(框架 afterAgent 自动 vfs→data.code,集成方无需 onComplete)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    // data 预置组件(含 __pgId,模拟 persisted);框架 checkout(data.code→vfs)→ 子 vfs_write 改工作副本 → afterAgent commit 回写 data.code
+    const llm = stubModel(
+      { toolCalls: [{ name: 'use_html', args: { task: '改横幅' } }] },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_banner.html', content: '<section>新横幅</section>' } }] },
+      { text: '已改' },
+      { text: '完成' },
+    )
+    const bind = { title: 't', components: [{ type: 'custom', name: 'banner', code: '<section>旧</section>', __pgId: 'c_banner' }] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-commit', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], codeKind: 'html', formatCheck: false })],
+    })
+    await sdk.mount()
+    await sdk.send('改横幅')
+    assert(bind.components[0].code === '<section>新横幅</section>', '✓ 单模式 commit:子 vfs_write 工作副本 → 框架 afterAgent 回写 data.code(直改 bind,无需 onComplete)')
+    sdk.unmount()
   }
 
   return { pass: ctx.pass, fail: ctx.fail }

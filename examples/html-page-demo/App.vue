@@ -1,11 +1,13 @@
 <script setup lang="ts">
 /**
- * HTML 页面生成 demo(createHtmlSubagent codeKind:'html'):
+ * HTML 页面生成 demo(createHtmlSubagent 单模式 code-as-data-asset):
  *
  * - 子 agent 生成 v-html 注入用的 HTML 片段(无 <html>/<head>/<body>/DOCTYPE 外围,片段禁 <script>)
- * - 代码正文写 vfs(html/<name>.html),data 只存 codeRef 引用
+ * - 代码作为 data 资产:components[].code 字段(进服务端 DB),UI 直接绑 data.code 响应式渲染(无需镜像字段)
+ * - vfs 作编辑工作副本:框架 beforeAgent checkout(data.code→vfs 按 __pgId)/ afterAgent commit(vfs→data.code 增量)自动搬运,主 agent 透明
  * - 格式校验链(formatCheck 默认开):validate_code 自检工具 + verify beforeReturn 门禁(回灌自纠)
- * - 本 demo hook 子 agent 的 vfs_write/vfs_edit 事件维护本地代码副本 → v-html 实时渲染预览
+ * - mock 服务端 persist:保存/加载按钮,演示 data json(含 code + __pgId)往返持久化(Git 模型类比:服务端 = remote repo)
+ * - 修改已有代码:主 agent read data 看 components,task 告知子 agent 改哪个;子 agent vfs_edit 增量改工作副本,框架自动回写 data.code
  */
 import { reactive, ref, computed, onMounted, onUnmounted } from 'vue'
 import { createChatSdk, createHtmlSubagent, type ChatSdk } from '../../src/core'
@@ -14,7 +16,8 @@ import DevNav from '../_shared/DevNav.vue'
 
 let agent: ChatSdk | null = null
 
-// 主 data schema:components 数组(custom 代码组件存 codeRef 引用 vfs 代码)
+// 主 data schema:components 数组(custom 代码组件 code 字段存代码正文 = 资产源)
+// __pgId 由框架无感注入(schema 不声明,装配期 extend);code 是资产,随 data json 持久化
 const pageSchema = z.object({
   title: z.string().describe('页面标题'),
   components: z
@@ -22,22 +25,47 @@ const pageSchema = z.object({
       z.object({
         type: z.string().describe('组件类型;custom = 代码组件'),
         name: z.string().optional().describe('组件名(如 landing)'),
-        codeRef: z.string().optional().describe('custom 组件的 vfs 代码引用,如 vfs://html/landing.html'),
+        code: z.string().optional().describe('custom 组件的 HTML 代码正文(资产,随 data json 持久化)'),
         props: z.record(z.any()).optional().describe('组件 props'),
       }),
     )
     .describe('页面组件列表'),
 })
-const pageBind = reactive({ title: 'HTML 页面生成演示', components: [] as any[] })
+const pageBind = reactive({
+  title: 'HTML 页面生成演示',
+  // 初始预置 hero 组件(含 __pgId,模拟从服务端 load 回来的 persisted data —— __pgId 是之前 write 时框架补的,跨会话稳定)。
+  // 演示「修改现有组件」场景:框架 checkout(hero.code→vfs by __pgId)→ 子 vfs_edit → commit(vfs→data.code)。
+  components: [
+    { type: 'custom', name: 'hero', code: '<section class="pg-hero"><h1>演示页</h1><p>初始内容,可让 agent 修改(改色 / 文案 / 布局)</p></section>', __pgId: 'c_hero' },
+  ] as any[],
+})
 
-// 本地代码副本(hook 子 agent vfs_write/vfs_edit 维护;预览渲染用)
-const codeFiles = ref<Record<string, string>>({})
-// validate_code 最近结果(✅/❌ 状态展示)
+// validate_code 最近结果(✅/❌ 状态展示;辅助,经 hook 取,非主数据流)
 const validateStatus = ref('')
 
-const previewPath = computed(() => Object.keys(codeFiles.value).find((p) => p.endsWith('.html')) ?? '')
-const previewHtml = computed(() => (previewPath.value ? codeFiles.value[previewPath.value] : ''))
-const previewSource = computed(() => (previewPath.value ? codeFiles.value[previewPath.value] : ''))
+// 预览绑 data.components[custom].code(代码作为 data 资产;框架 checkout/commit 透明搬运 vfs 工作副本;响应式 v-html 自动更新)
+// 取最后一个 custom 代码组件(最新生成/修改的优先预览)
+const previewComp = computed(() => [...pageBind.components].reverse().find((c: any) => c.type === 'custom' && typeof c.code === 'string' && c.code.length > 0) ?? null)
+const previewName = computed(() => previewComp.value?.name ?? '')
+const previewHtml = computed(() => (previewComp.value ? String(previewComp.value.code) : ''))
+const previewSource = computed(() => previewHtml.value)
+
+// mock 服务端 DB(本地内存):演示 data json(含 code + 框架注入的 __pgId)往返持久化
+const mockServerSnapshot = ref<{ title: string; components: unknown[] } | null>(null)
+const savedInfo = ref('')
+function saveToServer() {
+  // 深拷贝当前 data(含框架注入的 __pgId,作组件稳定映射键)
+  mockServerSnapshot.value = JSON.parse(JSON.stringify({ title: pageBind.title, components: pageBind.components }))
+  savedInfo.value = `已保存到 mock 服务端(${(pageBind.components as any[]).length} 组件)`
+}
+function loadFromServer() {
+  if (!mockServerSnapshot.value) return
+  const snap = mockServerSnapshot.value
+  pageBind.title = snap.title
+  pageBind.components = JSON.parse(JSON.stringify(snap.components)) as any[]
+  // __pgId 随 components 恢复(框架 load 后 checkout 映射稳定,跨会话/跨设备 id 不变)
+  savedInfo.value = `已从 mock 服务端加载(${snap.components.length} 组件)`
+}
 
 onMounted(() => {
   agent = createChatSdk({
@@ -48,29 +76,25 @@ onMounted(() => {
       model: import.meta.env.VITE_AI_MODEL,
     },
     systemPrompt:
-      '你是页面搭建助手。用户要定制页面/区块(专题页/落地页/活动区块)时,委派 use_html 子 agent 生成 HTML 片段代码(v-html 注入,代码存 vfs);生成后告知用户预览区已实时更新。',
+      '你是页面搭建助手。生成新页面/区块时,委派 use_html 子 agent 生成 HTML 片段(v-html 注入,代码作为 data 资产存 components[].code)。**修改已有代码(改颜色/文案/布局)时,先 read data 看现有 components,task 里明确告知子 agent 改哪个组件、改哪部分;子 agent 经 vfs_edit 增量改工作副本,框架自动回写 data.code(你无需关心 checkout/commit)**。完成后告知用户预览已更新。',
     storage: 'memory',
-    data: { schema: pageSchema, bind: pageBind, description: '页面(components 支持 custom 代码组件)' },
-    // ★ codeKind:'html':生成 v-html 注入的 HTML 片段(非 SFC);formatCheck 默认开(自检工具 + 门禁自纠)
-    subagents: [createHtmlSubagent({ writablePaths: ['components'], codeKind: 'html' })],
+    data: { schema: pageSchema, bind: pageBind, description: '页面(components 支持 custom 代码组件;code 字段是资产)' },
+    // ★ 单模式(code-as-data-asset):代码作 data.code 资产,vfs 作工作副本,框架自动 checkout/commit
+    //   去 onComplete(框架 afterAgent 自动 commit vfs→data.code);codeKind:'html'(v-html 片段)+ formatCheck 默认开
+    subagents: [createHtmlSubagent({
+      writablePaths: ['components'],
+      codeKind: 'html',
+    })],
     dialog: {
-      title: 'HTML 页面生成(v-html 注入)',
+      title: 'HTML 页面生成(代码作 data 资产)',
       placeholder: '让 agent 生成页面(如「生成一个产品落地页」)…',
     },
   })
 
-  // hook:捕获子 agent 的 vfs 写操作 + validate_code 结果
+  // hook 仅取 validate_code 校验状态(辅助展示;主预览数据流走 data bind,不经 hook)
   agent.hook((e) => {
     const ev = e as any
-    if (ev.type !== 'subagent') return
-    if (ev.kind === 'tool_call' && ev.name === 'vfs_write' && ev.args?.path) {
-      codeFiles.value[ev.args.path] = ev.args.content ?? ''
-    } else if (ev.kind === 'tool_call' && ev.name === 'vfs_edit' && ev.args?.path) {
-      const cur = codeFiles.value[ev.args.path]
-      if (cur && typeof ev.args.oldString === 'string') {
-        codeFiles.value[ev.args.path] = cur.replace(ev.args.oldString, ev.args.newString ?? '')
-      }
-    } else if (ev.kind === 'tool_result' && ev.name === 'validate_code') {
+    if (ev.type === 'subagent' && ev.kind === 'tool_result' && ev.name === 'validate_code') {
       validateStatus.value = String(ev.result ?? '')
     }
   })
@@ -89,11 +113,12 @@ function sendSuggestion(text: string) {
 <template>
   <DevNav />
   <div class="page">
-    <h1>HTML 页面生成子 agent(codeKind:'html' + v-html 注入)</h1>
+    <h1>HTML 页面生成子 agent(单模式:代码作 data 资产)</h1>
     <p>
       主 agent 调 <code>use_html</code> 委派子 agent 生成 <strong>HTML 片段</strong>(无
-      <code>&lt;html&gt;/&lt;head&gt;/&lt;body&gt;</code> 外围、禁 <code>&lt;script&gt;</code>),代码写 vfs,左侧预览区经
-      <strong>v-html</strong> 实时渲染。格式校验链:<code>validate_code</code> 自检工具 + verify 门禁(不通过回灌自纠)。
+      <code>&lt;html&gt;/&lt;head&gt;/&lt;body&gt;</code> 外围、禁 <code>&lt;script&gt;</code>)。代码作为 <strong>data 资产</strong>存
+      <code>components[].code</code>(进服务端 DB),<strong>vfs 作工作副本</strong>(框架自动 checkout/commit,主 agent 透明),左侧预览区经
+      <strong>v-html</strong> 实时渲染。格式校验链:<code>validate_code</code> 自检 + verify 门禁。
     </p>
     <div class="suggestions">
       <button v-for="s in SUGGESTIONS" :key="s" class="chip" @click="sendSuggestion(s)">{{ s }}</button>
@@ -101,23 +126,34 @@ function sendSuggestion(text: string) {
 
     <div class="cols">
       <div class="col preview-col">
-        <h3>实时预览(v-html 渲染)</h3>
+        <h3>实时预览(v-html 渲染 data.code)</h3>
         <p class="hint">
-          {{ previewPath ? `来源:${previewPath}` : '尚无代码;点上方建议或发消息触发 use_html' }}
+          {{ previewName ? `组件:${previewName}` : '尚无代码;点上方建议或发消息触发 use_html' }}
           <span v-if="validateStatus" class="validate" :class="validateStatus.includes('✅') ? 'ok' : 'bad'">
             {{ validateStatus.includes('✅') ? '✅ 格式校验通过' : '❌ 校验有问题(自纠中)' }}
           </span>
         </p>
         <div class="preview" v-html="previewHtml"></div>
         <details class="code-view" v-if="previewSource">
-          <summary>查看代码片段</summary>
+          <summary>查看代码片段(data.code)</summary>
           <pre>{{ previewSource }}</pre>
         </details>
       </div>
       <div class="col">
         <h3>主 data:components({{ pageBind.components.length }})</h3>
-        <p class="hint">custom 组件只存 codeRef 引用,代码正文在 vfs</p>
+        <p class="hint">custom 组件 code 字段存代码正文(资产);__pgId 框架无感注入(组件映射键)</p>
         <pre class="data-view">{{ JSON.stringify(pageBind.components, null, 2) }}</pre>
+
+        <div class="persist">
+          <h4>mock 服务端 persist(代码往返)</h4>
+          <p class="hint">演示 data json(含 code + __pgId)保存/加载:代码随 data 进 DB,加载后 id 稳定、子 agent 能增量改</p>
+          <div class="persist-btns">
+            <button class="chip" @click="saveToServer">💾 保存到服务端</button>
+            <button class="chip" :disabled="!mockServerSnapshot" @click="loadFromServer">📂 从服务端加载</button>
+          </div>
+          <p v-if="savedInfo" class="hint persist-info">{{ savedInfo }}</p>
+        </div>
+
         <section id="chat-root" class="chat-mount"></section>
       </div>
     </div>
@@ -163,13 +199,18 @@ p code {
   font-size: 13px;
   cursor: pointer;
 }
-.chip:hover {
+.chip:hover:not(:disabled) {
   border-color: var(--ark-accent);
   color: var(--ark-accent);
 }
+.chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 .cols {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* minmax(0,1fr):grid item 默认 min-width:auto,v-html 生成的宽内容(宽表/不换行长串)会撑爆 track 挤走右侧;minmax(0,..) 允许 track 收缩,宽内容改由 .preview overflow:auto 滚动 */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -177,6 +218,7 @@ p code {
   background: var(--ark-panel);
   border-radius: 8px;
   padding: 12px;
+  min-width: 0;  /* 配合 minmax(0,1fr):允许 grid item 收缩(防 v-html 宽内容撑开列宽) */
 }
 .col h3 {
   font-size: 14px;
@@ -225,6 +267,24 @@ p code {
   max-height: 200px;
   overflow-y: auto;
   color: var(--ark-fg);
+}
+.persist {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.12);
+}
+.persist h4 {
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.persist-btns {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.persist-info {
+  margin-top: 6px;
+  color: var(--ark-accent);
 }
 .chat-mount {
   margin-top: 12px;

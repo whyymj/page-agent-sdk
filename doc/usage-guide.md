@@ -632,7 +632,7 @@ const sdk = createChatSdk({
       loader: async (id) => fetch(`/api/docs/${id}`).then(r => r.json()),
       // useVfs 默认 true:子 agent 经 vfs_grep 搜 sdk.vfsWrite 注入的文档
     }),
-    // ② HTML 代码组件生成子 agent:规划 + 代码→vfs + 限定写
+    // ② HTML 代码组件生成子 agent:代码作 data 资产(code 字段)+ vfs 工作副本 + 框架自动 checkout/commit
     createHtmlSubagent({ writablePaths: ['components'] }),
   ],
 }).mount()
@@ -642,9 +642,13 @@ sdk.vfsWrite('docs/components/hero.md', 'Hero 组件用于首屏主视觉...')
 ```
 
 - **RAG**(检索型):`search_docs`(语义检索 retriever)/ `load_doc`(异步加载 loader)/ vfs 搜索 / `fetch_document`;只读;默认装 `rag-search` skill。`retriever`/`loader` 集成方注入(SDK 零数据源依赖,不绑向量库)。检索的大段文档**不污染主上下文**(只回结构化结论)
-- **HTML**(生成型):规划(`write_todos`/`update_todo`)+ **代码正文→vfs**(`html/<name>.<vue|html>`,会话级)+ data 存 `codeRef:'vfs://...'` 引用(主 data 精简、代码改 `vfs_edit` 局部不动 data)+ 限定写(`writablePaths` path guard)。默认开 `summarization`(频繁改代码累积快);按形态装 skill
+- **HTML**(生成型,3.0 单模式 breaking):规划(`write_todos`/`update_todo`)+ **代码作为 data 资产**(`data.<writablePath>[i].code` 字段,随 data json 持久化进服务端 DB;UI 直接绑 `data.code` 响应式渲染)+ **vfs 作编辑工作副本** + 限定写(`writablePaths` path guard)。**框架自动 checkout/commit**(主 agent 透明):beforeAgent 把 `data.code` 按 `__pgId` 检出到 vfs(`html/<__pgId>.<vue|html>`,覆盖式刷新)→ 子 agent 在 vfs 改 → afterAgent 增量回写改过的 vfs → `data.code`(直改 bind,不经 write,不进快照栈)。默认开 `summarization`(频繁改代码累积快);按形态装 skill
+  - **两条工作路径**:① 新建组件 → 子 agent `write({patch:{op:'set',jsonPath:'components.N',value:{name,code,props}}})`,code 直接进 data(框架补 `__pgId`,不经 vfs/checkout/commit);② 修改组件 → 框架 checkout → 子 `vfs_read`+`vfs_edit` 增量改工作副本 → 框架 commit 回写(`codeRef` 不再需要)
+  - **`__pgId` 框架无感注入**:集成商 schema 不声明;read 投影自动隐藏(`__pg*` 前缀);agent 写不进(path guard);persist 透明带(跨会话/跨设备稳定);vfs 文件名 = `codeVfsPrefix+__pgId+ext`
   - **`codeKind`**:`'sfc'`(默认,Vue SFC,装 `html-builder` skill)/ `'html'`(纯 HTML 片段,v-html 注入场景:无 `<html>/<head>/<body>/DOCTYPE` 外围、片段禁 `<script>`,装 `html-fragment` skill)
-  - **输出格式校验**(`formatCheck`,默认开):① `validate_code` 自检工具(子 agent 生成/修改后自主调用;标签配对闭合 + 片段契约,带行号报错)② verify beforeReturn 门禁(返回前确定性扫 vfs 代码文件,不通过回灌 feedback 自纠,`maxVerifyAttempts:2` 兜底防循环)。校验器为纯函数 `validateHtmlFormat`(已导出,集成方渲染层可复用做纵深防御);`formatCheck:false` 关闭整条校验链
+  - **输出格式校验**(`formatCheck`,默认开):① `validate_code` 自检工具(子 agent 生成/修改后自主调用;标签配对闭合 + 片段契约,带行号报错)② verify beforeReturn 门禁(返回前确定性扫 vfs 工作副本,不通过回灌 feedback 自纠,`maxVerifyAttempts:2` 兜底防循环)。校验器为纯函数 `validateHtmlFormat`(已导出,集成方渲染层可复用做纵深防御);`formatCheck:false` 关闭整条校验链
+  - **主 scope read 摘要**:主 agent read data 时,标记字段(`code`)摘要为 `<code Nkb>`(防代码正文灌主上下文);子 agent read 完整(改 code 需全文);集成方业务长文本不受影响
+  - **breaking 迁移(2.x → 3.0)**:① schema:`components[i]` 加 `code:z.string()`(替代 `codeRef`),去 `codeSnapshots` 镜像;② UI:绑 `data.components[i].code`(替代 `codeSnapshots[p]`);③ `createHtmlSubagent`:去 `onComplete`(框架 afterAgent 自动 commit);④ persist:整体 data json 发服务端(含 code + `__pgId`);⑤ 渲染层:遇 `type:'custom'` 读 `data.code` 渲染(不再 `codeRef`→vfs 取)
 - **底层:子 agent 架构扩展**:`SubagentConfig` 加 `allowedTools`(从主 allTools 拿 vfs/draft 工具)/ `middleware`(装规划中间件)/ `summarization`(跨轮压缩);`sdk.vfsWrite(path, content)` 异步注入 vfs。两包都基于这些扩展;集成方亦可直接用 `SubagentConfig` 三字段自配任意专用子 agent
 
 #### 子 agent 观察层:active/history 运行态(2.38+)
