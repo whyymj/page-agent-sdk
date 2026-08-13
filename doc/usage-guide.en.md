@@ -998,6 +998,8 @@ After focusing, three layers converge:
 - **View convergence**: only the focused component's subtree schema is shown (other components hidden)
 - **Scope tightening (strict)**: writing outside the subtree (e.g. `components.0`) → `PATH_DENIED` error fed back for self-correction; reads are not limited
 
+> **× code-as-data-asset hardening (sub-agent code refinement)**: with `createHtmlSubagent`, the sub-agent edits code via `vfs_edit` (not a data write), which `focus.ts`'s data-write guard doesn't cover. So `codeAssetMiddleware` adds a **vfs whitelist** before execution: a sub-agent (inheriting the main focus) may only `vfs_edit` the focused component's code file (judged by `__pgId` ownership) — out-of-scope → `PATH_DENIED`, so even a confused sub-agent can't touch another component's code. This is the hard-contract basis for "click a component → refine it by chat". Focusing an entire array / a non-code field is a passthrough (can't pin a specific component). **You can't create new components while focused** (the data write is blocked by focus.ts) — `clearFocus` first. Full example: `examples/html-page-demo` (click a component in the preview → 🎯 focus → refine by chat).
+
 **Three trigger methods**: ① `sdk.setFocus(path,{label?})` API (host click-pick or programmatic); ② agent tools `set_focus`/`clear_focus` (`toolMode:'advanced'` exposes them; simple/minimal use UI/host API); ③ built-in ChatDialog focus chip (✕ exit · ▾ edit path); hidden when `capabilities.focus:false`.
 
 **Host click-pick** (bind `data-path` on component roots, delegate clicks to `setFocus`):

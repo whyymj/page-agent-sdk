@@ -13,6 +13,7 @@ import type { Middleware } from '../harness/middleware'
 import type { VfsStore } from '../backends/vfs'
 import { normalize as normalizeVfsPath } from '../backends/vfs'
 import type { DataOpsController } from '../tools/dataOps'
+import type { Focus } from '../harness/state'
 import { getByPath } from '../tools/jsonUtils'
 
 /** state 上挂载的「本轮子 agent touch 过的 vfs 路径」(子 agent 私有 Set,经 applyUpdate 浅合并保留引用;并发 use_html 互不污染) */
@@ -59,13 +60,47 @@ function forEachCodeItem(
 }
 
 /**
+ * 把焦点 path 集合解析为它们命中的代码组件 __pgId 集合(focus vfs 守卫用)。
+ * 命中规则:组件索引路径(如 components.1)=== focus path,或 focus path 以「索引路径.」开头(焦点更细如 components.1.code);
+ * 与 write jsonPath / Focus.path 同点号风格(state.ts 注释:jsonPath 锚点如 components.3)。
+ * focus 整个数组(components)或非代码字段 → 返空集(等价全允许,放行不误拦 —— 无法精确到单个代码组件)。
+ */
+function focusPathsToPgIds(
+  bind: unknown,
+  writablePaths: string[],
+  focuses: Focus[],
+): Set<string> {
+  const allowed = new Set<string>()
+  if (!bind || typeof bind !== 'object') return allowed
+  for (const wp of writablePaths) {
+    const arr = getByPath(bind, wp)
+    if (!Array.isArray(arr)) continue
+    for (let i = 0; i < arr.length; i++) {
+      const item = arr[i]
+      if (!item || typeof item !== 'object') continue
+      const pgId = (item as Record<string, unknown>).__pgId
+      if (typeof pgId !== 'string') continue
+      const idxPath = `${wp}.${i}`
+      for (const f of focuses) {
+        if (f.path === idxPath || f.path.startsWith(idxPath + '.')) {
+          allowed.add(pgId)
+          break
+        }
+      }
+    }
+  }
+  return allowed
+}
+
+/**
  * 创建 code-as-data-asset checkout/commit 钩子中间件(createChatSdk 装配期识别 _codeAsset 标记后追加到子 agent config.middleware)。
  *
  * 控制流(design §2.1):
  * - **beforeAgent checkout**:扫 data writablePaths(有 __pgId + code 的项)→ 覆盖式写 vfsStore(`prefix+__pgId+ext`);
  *   初始化 state.__pgTouched(本轮私有 Set)。vfs 始终是 data 最新快照(design §1.2)。
- * - **wrapToolCall hook**:子 agent vfs_write/vfs_edit/vfs_rm 改 codeVfsPrefix 下文件 → 记 touched(增量 commit 只回写改过的,
- *   防全量回写覆盖未改组件的外部修改,design §6.1)。
+ * - **wrapToolCall hook**:① focus 感知 vfs 白名单(执行前):有焦点时 vfs 代码文件 __pgId 必须在焦点组件 __pgId 集内,越界 PATH_DENIED 回灌自纠
+ *   (补 focus.ts 缝隙:WRITE_TOOLS 刻意排除 vfs,但 code-as-data-asset 下子 agent 改代码必经 vfs)。
+ *   ② 子 agent vfs_write/vfs_edit/vfs_rm 改 codeVfsPrefix 下文件 → 记 touched(增量 commit 只回写改过的,防全量覆盖未改组件外部修改,design §6.1)。
  * - **afterAgent commit**(verify 门禁通过后跑):touched vfs → data.code(按 __pgId,直改 bind,不经 write → 不进快照栈、不经 schema 校验,
  *   design §2.3)+ 孤儿清理(data 没 __pgId 的 vfs 文件删,design §6.2)+ markDataDirty + recomputeBaseline(防主 agent autoLock 误冲突)。
  */
@@ -89,17 +124,39 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
       return { files: vfsStore.files, [TOUCHED]: new Set<string>() } as unknown as Partial<typeof state>
     },
     wrapToolCall: async (ctx, next) => {
-      const result = await next(ctx)
-      // hook vfs 改动 → 记 touched(只认 codeVfsPrefix 下:防误记 offload/drafts 等无关 vfs 写)
-      if (ctx.name === 'vfs_write' || ctx.name === 'vfs_edit' || ctx.name === 'vfs_rm') {
-        const rawPath = (ctx.args as { path?: unknown } | null)?.path
-        if (typeof rawPath === 'string') {
-          const p = normalizeVfsPath(rawPath)
-          if (p.startsWith(codeVfsPrefix)) {
-            const touched = (ctx.state as unknown as Record<string, unknown>)[TOUCHED] as Set<string> | undefined
-            if (touched) touched.add(p)
+      const isVfsCodeOp = ctx.name === 'vfs_write' || ctx.name === 'vfs_edit' || ctx.name === 'vfs_rm'
+      const rawPath = isVfsCodeOp ? (ctx.args as { path?: unknown } | null)?.path : undefined
+      const p = typeof rawPath === 'string' ? normalizeVfsPath(rawPath) : undefined
+      const isCodeFile = typeof p === 'string' && p.startsWith(codeVfsPrefix)
+
+      // ① focus 感知 vfs 白名单(执行前):有焦点时,代码文件 __pgId 必须在焦点组件 __pgId 集内。
+      //    补 focus.ts 缝隙:WRITE_TOOLS 刻意排除 vfs(path 非数据 jsonPath,与焦点前缀不可比),
+      //    但 code-as-data-asset 下子 agent 改代码必经 vfs → 此处按「焦点组件 __pgId」做文件归属判定。
+      //    空集 = focus 未精确到代码组件(整个数组/非代码字段)→ 放行,避免误拦。
+      if (isCodeFile) {
+        const focuses = ctx.state.focuses
+        if (focuses && focuses.length) {
+          const allowed = focusPathsToPgIds(getController()?.get?.().bind, writablePaths, focuses)
+          if (allowed.size) {
+            const vfsPgId = pgIdFromVfsPath(p!, codeVfsPrefix)
+            if (vfsPgId && !allowed.has(vfsPgId)) {
+              const focusFiles = [...allowed].map((x) => `${codeVfsPrefix}${x}.${ext}`).join(', ')
+              return {
+                content: `PATH_DENIED · vfs 越界:当前聚焦代码文件 [${focusFiles}],你要改的 "${p}" 不在其中。请只改焦点组件的代码文件;如需改其他组件,请让主 agent clear_focus / 换焦点后重试。`,
+                status: 'error' as const,
+              }
+            }
           }
         }
+      }
+
+      // ② 执行
+      const result = await next(ctx)
+
+      // ③ hook vfs 改动 → 记 touched(只认 codeVfsPrefix 下:防误记 offload/drafts 等无关 vfs 写)
+      if (isCodeFile) {
+        const touched = (ctx.state as unknown as Record<string, unknown>)[TOUCHED] as Set<string> | undefined
+        if (touched) touched.add(p!)
       }
       return result
     },

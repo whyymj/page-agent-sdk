@@ -527,8 +527,8 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 1801 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 521 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm test            # 1856 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 528 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test

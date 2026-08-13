@@ -32,7 +32,6 @@ const GROUPS: NavGroup[] = [
       { href: '/examples/human-confirm-demo/', label: '人工确认', match: (p: string) => p.startsWith('/examples/human-confirm-demo') },
       { href: '/examples/toolsets-demo/', label: '工具分离', match: (p: string) => p.startsWith('/examples/toolsets-demo') },
       { href: '/examples/html-page-demo/', label: 'HTML 页面', match: (p: string) => p.startsWith('/examples/html-page-demo') },
-      { href: '/examples/html-subagent-demo/', label: 'HTML 组件', match: (p: string) => p.startsWith('/examples/html-subagent-demo') },
     ],
   },
   {

@@ -231,5 +231,65 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:capability-packs] focus vfs 守卫(子 agent 继承主焦点 → 越界改非焦点组件代码 PATH_DENIED → 自纠改焦点组件)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    // 主 setFocus components.0(hero)→ 子继承焦点;队列模拟子 agent 先越界改 banner(被守卫 PATH_DENIED)再自纠改 hero
+    // [0]主委派 → [1]子 vfs_write c_banner(越界→PATH_DENIED)→ [2]子 vfs_write c_hero(放行)→ [3]子收口 → [4]主收口
+    const llm = stubModel(
+      { toolCalls: [{ name: 'use_html', args: { task: '把 hero 标题改成新标题' } }] },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_banner.html', content: '<section>越界新 banner</section>' } }] },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_hero.html', content: '<section>新 hero</section>' } }] },
+      { text: '已改 hero' },
+      { text: '完成' },
+    )
+    const bind = { title: 't', components: [
+      { type: 'custom', name: 'hero', code: '<section>旧 hero</section>', __pgId: 'c_hero' },
+      { type: 'custom', name: 'banner', code: '<section>旧 banner</section>', __pgId: 'c_banner' },
+    ] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-focusvfs', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], codeKind: 'html', formatCheck: false })],
+    })
+    await sdk.mount()
+    const fr = sdk.setFocus({ path: 'components.0', label: 'hero' })
+    assert(fr && fr.ok, '✓ sdk.setFocus(components.0) 聚焦成功(path 在 schema 内,子 agent 将继承)')
+    const reply = await sdk.send('把 hero 标题改成新标题')
+    assert(/完成/.test(reply), '✓ focus vfs 守卫:越界自纠后主流程正常收口')
+    assert(bind.components[0].code === '<section>新 hero</section>', '✓ focus vfs 守卫:焦点组件 hero 代码被改(放行 + commit)')
+    assert(bind.components[1].code === '<section>旧 banner</section>', '✓ focus vfs 守卫:非焦点组件 banner 越界改被 PATH_DENIED 拦(补 focus.ts 排除 vfs 的缝隙),code 保持原样')
+    assert(llm.calls === 5, `✓ focus vfs 守卫:子 agent 越界被拦后自纠(5 次 model 调用,实际 ${llm.calls})`)
+    sdk.unmount()
+  }
+
+  console.log('[e2e:capability-packs] focus vfs 守卫对照:无 focus → 子 agent 改任意组件代码放行(零回归)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    const llm = stubModel(
+      { toolCalls: [{ name: 'use_html', args: { task: '改 banner' } }] },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_banner.html', content: '<section>新 banner</section>' } }] },
+      { text: '已改 banner' },
+      { text: '完成' },
+    )
+    const bind = { title: 't', components: [
+      { type: 'custom', name: 'hero', code: '<section>旧 hero</section>', __pgId: 'c_hero' },
+      { type: 'custom', name: 'banner', code: '<section>旧 banner</section>', __pgId: 'c_banner' },
+    ] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-focusvfs-nofocus', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], codeKind: 'html', formatCheck: false })],
+    })
+    await sdk.mount()
+    // 不 setFocus → 子 agent 无焦点 → 守卫放行任意 vfs 代码文件(原行为零回归)
+    await sdk.send('改 banner')
+    assert(bind.components[1].code === '<section>新 banner</section>', '✓ 无 focus 对照:子 agent 改 banner 代码放行(守卫零回归,无焦点不拦)')
+    assert(llm.calls === 4, `✓ 无 focus 对照:正常收口(4 次 model 调用,实际 ${llm.calls})`)
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

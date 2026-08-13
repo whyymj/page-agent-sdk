@@ -7,9 +7,11 @@
  *  - verify 门禁扫 vfs 工作副本:仅修改场景 vfs 有 checkout 文件 → 标签问题回灌自纠
  *
  * mock LLM 脚本同时驱动主 agent 与子 agent(共用同一端点,按调用顺序消费):
- *  - test1 新建:use_html → write components.1(含 code)→ 收尾 → 预览渲染
+ *  - test1 新建:use_html → write components.2(追加;初始预置 hero+features)→ 收尾 → 预览自动切到新组件
  *  - test2 修改:use_html → vfs_write 覆盖坏代码(checkout 出的工作副本)→ 门禁回灌 → vfs_write 修正 → commit → 预览更新
  *  - test3 宽内容新建:write components.1(宽 code)→ 预览渲染,验证 grid minmax 收缩
+ *  - test4 多组件切换:demo 预置 hero+features,tab 切换预览(纯 UI,不触发 LLM)
+ *  - test5 点击聚焦精修:点 features tab → setFocus(components.1)→ 子 vfs_write features(焦点放行)→ 预览更新(focus vfs 守卫)
  */
 import { test, expect } from '@playwright/test'
 import { mockLlm, fillInput, clickSend, waitForAgentIdle, clearChat } from './_helpers'
@@ -27,7 +29,7 @@ test.describe('html-page-demo: HTML 页面生成(单模式 code-as-data-asset)',
       {
         tool_calls: [{
           name: 'write',
-          arguments: { patch: { op: 'set', jsonPath: 'components.1', value: { type: 'custom', name: 'welcome', code: '<section class="pg-welcome"><h1>欢迎来到演示</h1><p>这是 v-html 注入的片段</p></section>' } } },
+          arguments: { patch: { op: 'set', jsonPath: 'components.2', value: { type: 'custom', name: 'welcome', code: '<section class="pg-welcome"><h1>欢迎来到演示</h1><p>这是 v-html 注入的片段</p></section>' } } },
         }],
       },
       { text: '已生成 welcome 区块代码' },
@@ -80,7 +82,7 @@ test.describe('html-page-demo: HTML 页面生成(单模式 code-as-data-asset)',
     const wideContent = `<section><table><tr><td>${'A'.repeat(2000)}</td></tr></table><p>${'长串不换行'.repeat(300)}</p></section>`
     await mockLlm(page, [
       { tool_calls: [{ name: 'use_html', arguments: { task: '生成宽内容' } }] },
-      { tool_calls: [{ name: 'write', arguments: { patch: { op: 'set', jsonPath: 'components.1', value: { type: 'custom', name: 'wide', code: wideContent } } } }] },
+      { tool_calls: [{ name: 'write', arguments: { patch: { op: 'set', jsonPath: 'components.2', value: { type: 'custom', name: 'wide', code: wideContent } } } }] },
       { text: '已生成宽内容' },
       { text: '完成' },
     ])
@@ -95,5 +97,41 @@ test.describe('html-page-demo: HTML 页面生成(单模式 code-as-data-asset)',
     const previewCol = await page.locator('.preview-col').boundingBox()
     expect(chatBox && previewCol).toBeTruthy()
     expect(chatBox!.width).toBeGreaterThanOrEqual(previewCol!.width * 0.8)
+  })
+
+  test('多组件:tab 切换预览不同组件(demo 预置 hero + features)', async ({ page }) => {
+    await mockLlm(page, [{ text: '' }])  // 纯 UI 切换不发消息;mockLlm 防意外真实调用
+    const tabs = page.locator('.comp-tab')
+    await expect(tabs).toHaveCount(2)
+    // 默认选中第 0 个(hero),预览含 hero 内容
+    expect(await page.textContent('.preview')).toContain('演示页')
+    await tabs.nth(1).click()   // 切到 features
+    expect(await page.textContent('.preview')).toContain('核心特性')
+    await tabs.nth(0).click()   // 切回 hero
+    expect(await page.textContent('.preview')).toContain('演示页')
+  })
+
+  test('点击组件聚焦 → 对话精修该组件(focus vfs 守卫只放行焦点组件代码)', async ({ page }) => {
+    // 点 features tab → selectComp → setFocus(components.1);子 agent 继承焦点,精修只能改 features 代码(越界 PATH_DENIED)
+    const tracker = await mockLlm(page, [
+      { tool_calls: [{ name: 'use_html', arguments: { task: '把 features 组件标题改成"核心优势"' } }] },
+      { tool_calls: [{ name: 'vfs_write', arguments: { path: 'html/c_features.html', content: '<section class="pg-features" style="padding:16px;font-family:sans-serif"><h2 style="margin:0 0 12px">核心优势</h2><p>已聚焦精修</p></section>' } }] },
+      { text: '已改 features 标题' },
+      { text: 'features 已改好,预览已更新' },
+    ])
+    const tabs = page.locator('.comp-tab')
+    await tabs.nth(1).click()
+    // 🎯 聚焦标记可见 + hint 提示已聚焦
+    await expect(page.locator('.focus-mark')).toBeVisible()
+    await expect(page.locator('.preview-col .hint')).toContainText('已聚焦')
+
+    await fillInput(page, '把 features 标题改成核心优势')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+
+    // 预览显示精修后的 features(focus 守卫放行焦点组件;commit 回写 data.code → v-html 更新)
+    expect(await page.textContent('.preview')).toContain('核心优势')
+    expect(await page.textContent('.chat-dialog')).toContain('features 已改好')
+    expect(tracker.calls()).toBe(4)
   })
 })

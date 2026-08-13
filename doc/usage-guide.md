@@ -1560,6 +1560,8 @@ sdk.clearFocus() // 退出精修,恢复全量可操作范围
 - **视野收敛**:只看到该组件子树的 schema 描述(`getSchemaAtPath` 取子树,`extractSchemaHint` 渲染),不看其他组件
 - **范围收紧(strict)**:写该子树之外(如 `components.0`)→ `PATH_DENIED` 越界错误回灌,agent 自纠;读工具不限制(用户仍需看全量上下文)
 
+> **× code-as-data-asset 强化(子 agent 代码精修)**:用 `createHtmlSubagent` 时,子 agent 改代码走 `vfs_edit`(非数据写),`focus.ts` 的数据写拦截不覆盖 vfs,故 `codeAssetMiddleware` 在执行前补一道 **vfs 白名单**:子 agent(继承主焦点)只能 `vfs_edit` 焦点组件的代码文件(按 `__pgId` 归属判定),越界 `PATH_DENIED` —— 即使子 agent 误解也改不到别的组件代码。这是「点选组件 → 对话精修」的硬约束基础。焦点为整个数组 / 非代码字段时放行(无法精确到组件)。**聚焦模式下不能新建组件**(数据写被 focus.ts 拦),新建前先 `clearFocus`。完整示例见 `examples/html-page-demo`(预览区点选组件 → 🎯 聚焦 → 对话精修)。
+
 **三种触发方式**:
 
 | 方式 | 机制 |

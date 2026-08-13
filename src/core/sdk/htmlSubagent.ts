@@ -86,6 +86,10 @@ function htmlSystemPrompt(prefix: string, kind: 'sfc' | 'html'): string {
 - **修改已有组件**(改颜色/文案/布局等):必经 vfs —— vfs_read 看现状 → vfs_edit 增量改目标片段 → validate_code 自检;框架自动回写 data.code。勿直接 write data.code 改已有组件(绕过 vfs/verify,且无增量友好)
 - **新建组件**:write({ patch:{ op:'set', jsonPath:'components.N', value:{ name, code:<正文>, props } } }) —— code 作为字段值直接进 data,框架自动补 __pgId
 
+焦点精修(若继承到主 agent 焦点):
+- 上下文若提示「当前精修目标」(如 components.2(banner)),说明主 agent 聚焦了某组件 → 你**只能改该焦点组件**的代码文件(vfs 文件 ${prefix}<焦点组件 __pgId>.${ext});改其他组件的代码文件会被 PATH_DENIED 硬拦
+- 直接改焦点组件文件,不要尝试改其他组件(浪费轮次);聚焦模式下也不能新建组件(数据写被拦)—— 若 task 要新建,反馈主 agent 需先取消焦点
+
 代码形态规则:
 ${kindRules}
 
@@ -114,6 +118,10 @@ const HTML_BUILDER_SKILL_DOC = `# 纯代码组件生成规范
 ## 两条工作路径
 - 修改已有组件:必经 vfs(vfs_read → vfs_edit 增量改 → validate_code);勿直接 write data.code
 - 新建组件:write({patch:{op:'set',jsonPath:'components.N',value:{name,code,props}}}) —— code 直接进 data,框架补 __pgId
+
+## 焦点精修(继承主 agent 焦点时)
+- 上下文提示「当前精修目标」(如 components.2(banner))→ 只改该焦点组件的代码文件;改其他组件会被 PATH_DENIED 硬拦
+- 聚焦模式不能新建组件(数据写被拦),要新建先反馈主 agent 取消焦点
 
 ## 何时写代码组件
 - 组件库无对应类型(高度定制交互 / 一次性特效 / 特殊布局)→ 写 custom 代码组件
@@ -154,6 +162,10 @@ const HTML_FRAGMENT_SKILL_DOC = `# HTML 片段生成规范
 ## 两条工作路径
 - 修改已有组件:必经 vfs(vfs_read → vfs_edit 增量改 → validate_code);勿直接 write data.code
 - 新建组件:write({patch:{op:'set',jsonPath:'components.N',value:{name,code,props}}}) —— code 直接进 data,框架补 __pgId
+
+## 焦点精修(继承主 agent 焦点时)
+- 上下文提示「当前精修目标」(如 components.2(banner))→ 只改该焦点组件的代码文件;改其他组件会被 PATH_DENIED 硬拦
+- 聚焦模式不能新建组件(数据写被拦),要新建先反馈主 agent 取消焦点
 
 ## 输出契约(必须)
 - 输出经 v-html 注入宿主的 HTML 片段:不要 <!DOCTYPE>,不要 <html> / <head> / <body> 外围标签

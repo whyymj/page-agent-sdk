@@ -3,6 +3,7 @@
  * - 纯函数 pgIdFromVfsPath:正常提取 __pgId / 非 prefix / 无扩展名 / 空 id
  * - beforeAgent checkout:data.code → vfsStore(按 __pgId,覆盖式)+ 初始化 state.__pgTouched(本轮私有)+ 注入 vfsStore.files 引用
  * - wrapToolCall hook:vfs_edit/vfs_write/vfs_rm 改 codeVfsPrefix 下文件 → 记 touched;非 codeVfsPrefix 不记(offload/drafts 不误记);非 vfs 工具不记
+ * - wrapToolCall focus 守卫:有焦点(state.focuses)时 vfs 代码文件 __pgId 必须在焦点组件集内,越界 PATH_DENIED;focus 整个数组/无 focus → 放行(补 focus.ts 排除 vfs 缝隙)
  * - afterAgent commit:增量回写(只 touched 的)→ data.code 直改 bind;未 touched 的保持原样(不全量覆盖,防覆盖未改组件的外部修改)
  * - 孤儿清理:data 删组件(__pgId 没了)→ touched 的 vfs 文件删
  * - recomputeBaseline:commit 改 bind 后重算主 scope 基线 → 后续主 agent write autoLock 不误冲突
@@ -122,6 +123,39 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 主 agent 后续 write(autoLock 默认开):baseline 已重算 = 当前 → 不冲突
     const r = await invoke(t['write'], { patch: { op: 'set', jsonPath: 'title', value: 'T2' } })
     assert(!/VERSION_CONFLICT/.test(r) && bind.title === 'T2', '✓ recomputeBaseline:commit 后主 agent write autoLock 不误冲突(主 baseline 已重算)')
+  }
+
+  // ===== wrapToolCall focus 感知 vfs 白名单:有焦点时跨组件改代码 → PATH_DENIED(补 focus.ts 刻意排除 vfs 的缝隙)=====
+  // code-as-data-asset 下子 agent 改代码必经 vfs_edit;focus.ts WRITE_TOOLS 排除 vfs(vfs path 非数据 jsonPath),
+  // 故在此按「焦点组件 __pgId」做 vfs 文件归属判定 —— 子 agent 继承主焦点后,只能改焦点组件的代码文件
+  {
+    const bind: any = { title: 't', components: [{ __pgId: 'c_a', name: 'a', code: '<p/>' }, { __pgId: 'c_b', name: 'b', code: '<b/>' }] }
+    const { mw } = setup(bind)
+    // 模拟子 agent 继承主焦点:codeAsset mw 本身不装 focus,手动注入 state.focuses(等同 focus 中间件 beforeAgent 产物)
+    const baseSt = applyUpdate(createInitialState(), mw.beforeAgent!(createInitialState()) as any)
+
+    // ① focus components.0(只 c_a):vfs_edit 焦点 c_a → 放行;c_b → PATH_DENIED
+    const st = applyUpdate(baseSt, { focuses: [{ path: 'components.0', label: 'a' }] } as any)
+    const r1 = await mw.wrapToolCall!({ name: 'vfs_edit', args: { path: 'html/c_a.vue', oldString: 'x', newString: 'y' }, state: st } as any, mockNext)
+    assert(r1.status === 'done', '✓ focus 守卫:vfs_edit 焦点组件文件(c_a)→ 放行')
+    assert((st as any).__pgTouched.has('html/c_a.vue'), '✓ focus 守卫放行后仍记 touched(c_a)')
+    const r2 = await mw.wrapToolCall!({ name: 'vfs_edit', args: { path: 'html/c_b.vue', oldString: 'x', newString: 'y' }, state: st } as any, mockNext)
+    assert(r2.status === 'error' && /PATH_DENIED/.test(r2.content), '✓ focus 守卫:vfs_edit 非焦点组件文件(c_b)→ PATH_DENIED 回灌(补 focus.ts 刻意排除 vfs 的缝隙)')
+    assert(!(st as any).__pgTouched.has('html/c_b.vue'), '✓ focus 守卫拦截:不记 touched(未执行 next)')
+
+    // ② focus 更细 components.0.code → 前缀匹配仍命中 c_a 放行
+    const st2 = applyUpdate(baseSt, { focuses: [{ path: 'components.0.code' }] } as any)
+    const r3 = await mw.wrapToolCall!({ name: 'vfs_edit', args: { path: 'html/c_a.vue' }, state: st2 } as any, mockNext)
+    assert(r3.status === 'done', '✓ focus 更细(components.0.code)→ 前缀匹配命中 c_a 放行')
+
+    // ③ focus 整个数组 components → focusPathsToPgIds 不匹配 components.0/1 → 空集放行(无法精确到单个组件,不误拦)
+    const st3 = applyUpdate(baseSt, { focuses: [{ path: 'components' }] } as any)
+    const r4 = await mw.wrapToolCall!({ name: 'vfs_edit', args: { path: 'html/c_b.vue' }, state: st3 } as any, mockNext)
+    assert(r4.status === 'done', '✓ focus 整个 components 数组 → 空集放行(无法精确到单个组件,不误拦)')
+
+    // ④ 无 focus(baseSt 无 focuses)→ 全放行(原行为零回归)
+    const r5 = await mw.wrapToolCall!({ name: 'vfs_edit', args: { path: 'html/c_b.vue' }, state: baseSt } as any, mockNext)
+    assert(r5.status === 'done', '✓ 无 focus → 全放行(原行为零回归)')
   }
 
   // ===== 直改 bind 不进快照栈(design §2.3):afterAgent 仅 o.code=f.content + markDataDirty + recomputeBaseline,无 pushSnapshot =====
