@@ -98,7 +98,7 @@ const props = withDefaults(defineProps<{
   onFocusChipClick?: (focus: Focus) => void
   /** 区块显隐控制(键=SectionKey,false 关闭;默认 undefined=全开,向后兼容) */
   sections?: Partial<Record<SectionKey, boolean>>
-  /** 内置主题:'light'(默认,中性浅色)/ 'dark'(深色紫调,方舟专题设计稿色板) */
+  /** 内置主题:'dark'(默认,深色紫调,方舟专题设计稿色板)/ 'light'(中性浅色) */
   csTheme?: 'light' | 'dark'
 }>(), {
   title: 'AI 助手',

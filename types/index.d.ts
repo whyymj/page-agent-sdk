@@ -845,7 +845,7 @@ export interface DialogConfig {
   /** Input box rows (visible height); default 2 (2-row initial height, auto-expands up to max-height:100px). 1 = single row; >2 = taller. */
   inputRows?: number;
   onClose?: () => void;
-  /** Built-in theme: 'light' (default) / 'dark' (dark purple palette from the Ark design spec; also overridable via --cs-* on an ancestor). */
+  /** Built-in theme: 'dark' (default; dark purple palette from the Ark design spec) / 'light' (neutral light). Overridable via --cs-* on an ancestor. */
   theme?: 'light' | 'dark';
 }
 

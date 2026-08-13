@@ -44,8 +44,8 @@ test.describe('html-page-demo: HTML 页面生成(单模式 code-as-data-asset)',
     const preview = await page.textContent('.preview')
     expect(preview).toContain('欢迎来到演示')
     expect(preview).toContain('这是 v-html 注入的片段')
-    // 组件名标注 + 代码查看入口(单模式:来源是组件名,非 vfs 路径)
-    expect(await page.textContent('.preview-col .hint')).toContain('welcome')
+    // 组件切换栏含 welcome(新布局:组件名在 .comp-tab,不在 hint)
+    expect(await page.textContent('.comp-tabs')).toContain('welcome')
     expect(await page.locator('.code-view summary').count()).toBe(1)
     // 主 agent 收尾回复
     expect(await page.textContent('.chat-dialog')).toContain('已完成')
@@ -92,11 +92,11 @@ test.describe('html-page-demo: HTML 页面生成(单模式 code-as-data-asset)',
 
     // 预览渲染了宽内容
     expect(await page.textContent('.preview')).toContain('A')
-    // 右侧聊天框未被挤走:chat-mount 宽度 ≈ 左侧 preview-col(1:1 grid;修复前宽内容撑爆 track → chat 宽→0)
-    const chatBox = await page.locator('.chat-mount').boundingBox()
-    const previewCol = await page.locator('.preview-col').boundingBox()
-    expect(chatBox && previewCol).toBeTruthy()
-    expect(chatBox!.width).toBeGreaterThanOrEqual(previewCol!.width * 0.8)
+    // 右侧对话框栏未被挤走:.pane-right 宽度 ≈ 左侧 pane-left(1:1 flex;min-width:0 允许收缩,宽内容由 .preview overflow:auto 滚动)
+    const chatPane = await page.locator('.pane-right').boundingBox()
+    const previewPane = await page.locator('.pane-left').boundingBox()
+    expect(chatPane && previewPane).toBeTruthy()
+    expect(chatPane!.width).toBeGreaterThanOrEqual(previewPane!.width * 0.8)
   })
 
   test('多组件:tab 切换预览不同组件(demo 预置 hero + features)', async ({ page }) => {
@@ -123,7 +123,7 @@ test.describe('html-page-demo: HTML 页面生成(单模式 code-as-data-asset)',
     await tabs.nth(1).click()
     // 🎯 聚焦标记可见 + hint 提示已聚焦
     await expect(page.locator('.focus-mark')).toBeVisible()
-    await expect(page.locator('.preview-col .hint')).toContainText('已聚焦')
+    await expect(page.locator('.preview-meta')).toContainText('已聚焦')
 
     await fillInput(page, '把 features 标题改成核心优势')
     await clickSend(page)

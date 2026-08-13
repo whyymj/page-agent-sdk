@@ -83,7 +83,7 @@ function htmlSystemPrompt(prefix: string, kind: 'sfc' | 'html'): string {
 - __pgId 是框架管的内部字段(组件稳定映射键):read 看不到、write 写不进,你别碰
 
 两条工作路径:
-- **修改已有组件**(改颜色/文案/布局等):必经 vfs —— vfs_read 看现状 → vfs_edit 增量改目标片段 → validate_code 自检;框架自动回写 data.code。勿直接 write data.code 改已有组件(绕过 vfs/verify,且无增量友好)
+- **修改已有组件**(改颜色/文案/布局等):必经 vfs —— 上下文有「组件代码文件地图」(name → vfs 路径),按 name 找到对应文件直接 vfs_edit 增量改目标片段 → validate_code 自检;框架自动回写 data.code。勿直接 write data.code 改已有组件(绕过 vfs/verify,且无增量友好);文件未检出时先 vfs_write 创建
 - **新建组件**:write({ patch:{ op:'set', jsonPath:'components.N', value:{ name, code:<正文>, props } } }) —— code 作为字段值直接进 data,框架自动补 __pgId
 
 焦点精修(若继承到主 agent 焦点):
@@ -116,7 +116,7 @@ const HTML_BUILDER_SKILL_DOC = `# 纯代码组件生成规范
 - __pgId 框架管(read 看不到、write 写不进),别碰
 
 ## 两条工作路径
-- 修改已有组件:必经 vfs(vfs_read → vfs_edit 增量改 → validate_code);勿直接 write data.code
+- 修改已有组件:必经 vfs —— 按上下文「组件代码文件地图」(name → vfs 路径)定位文件,vfs_edit 增量改 → validate_code;勿直接 write data.code;文件未检出先 vfs_write 创建
 - 新建组件:write({patch:{op:'set',jsonPath:'components.N',value:{name,code,props}}}) —— code 直接进 data,框架补 __pgId
 
 ## 焦点精修(继承主 agent 焦点时)
@@ -160,7 +160,7 @@ const HTML_FRAGMENT_SKILL_DOC = `# HTML 片段生成规范
 - __pgId 框架管(read 看不到、write 写不进),别碰
 
 ## 两条工作路径
-- 修改已有组件:必经 vfs(vfs_read → vfs_edit 增量改 → validate_code);勿直接 write data.code
+- 修改已有组件:必经 vfs —— 按上下文「组件代码文件地图」(name → vfs 路径)定位文件,vfs_edit 增量改 → validate_code;勿直接 write data.code;文件未检出先 vfs_write 创建
 - 新建组件:write({patch:{op:'set',jsonPath:'components.N',value:{name,code,props}}}) —— code 直接进 data,框架补 __pgId
 
 ## 焦点精修(继承主 agent 焦点时)

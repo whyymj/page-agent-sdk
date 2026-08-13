@@ -9,6 +9,7 @@
  * - mock 服务端 persist:保存/加载按钮,演示 data json(含 code + __pgId)往返持久化(Git 模型类比:服务端 = remote repo)
  * - 修改已有代码:主 agent read data 看 components,task 告知子 agent 改哪个;子 agent vfs_edit 增量改工作副本,框架自动回写 data.code
  * - 多组件 + 焦点精修:点选预览区组件 → setFocus(components.<origIdx>) → 子 agent 继承焦点,只能改该组件代码(focus vfs 守卫硬约束,越界 PATH_DENIED);聚焦模式不能新建,新建前 clearFocus
+ * - 布局仿首页(page-demo):全屏左右双栏,左预览 / 右对话框,对话框默认 dark 主题(方舟专题色板)
  */
 import { reactive, ref, computed, watch, watchEffect, onMounted, onUnmounted } from 'vue'
 import { createChatSdk, createHtmlSubagent, type ChatSdk } from '../../src/core'
@@ -112,13 +113,14 @@ onMounted(() => {
       '你是页面搭建助手,管理多个纯代码组件(data.components 数组,每个 custom 组件有 name + code 字段)。\n' +
       '【新建/创意类请求】(如「生成一个落地页」「做个专题页」):先用简短文字给出 2~3 套方案(每套一两句风格/配色/结构要点),询问用户选哪一套。**选定前不要委派生成代码、不要写 components**。用户选定后委派 use_html 子 agent 生成该方案代码;若是多区块页面,task 里列清各组件(name + 要点),子 agent 逐个 write **追加**进 components(勿覆盖已有组件)。\n' +
       '【明确/修改类请求】(如「把 hero 标题改成 XXX」「主色调改橙色」):无需出方案,直接处理。先 read data 看现有 components,task 里明确告知子 agent 改哪个组件(按 name,如「改 hero 组件的标题」);子 agent 经 vfs_edit 增量改工作副本,框架自动回写 data.code。\n' +
-      '【焦点精修】若当前已聚焦某组件(用户在预览区点选了组件,你会看到精修目标提示),对话默认针对该焦点组件:task 里指明「只改 <焦点组件 name>」。子 agent 受焦点硬约束,只能改该组件的代码文件,改其他组件会被 PATH_DENIED 拦截。**聚焦模式下不能新建组件**(会被拦),新建前先让用户取消聚焦。\n' +
+      '【焦点精修】若当前已聚焦某个组件(用户在预览区点选了组件,你会看到精修目标提示),对话默认针对该焦点组件:task 里指明「只改 <焦点组件 name>」。子 agent 受焦点硬约束,只能改该组件的代码文件,改其他组件会被 PATH_DENIED 拦截。**聚焦模式下不能新建组件**(会被拦),新建前先让用户取消聚焦。\n' +
       '【方案切换】已生成某套方案后改选另一套:不重新罗列方案,直接依据之前的方案描述委派 use_html 重新生成目标方案代码并覆盖相应组件。生成前一句话复述「将生成方案N:<风格要点>」。\n' +
       '完成后告知用户预览已更新。',
     storage: 'memory',
     data: { schema: pageSchema, bind: pageBind, description: '页面(components 支持 custom 代码组件;code 字段是资产)' },
     // ★ 单模式(code-as-data-asset):代码作 data.code 资产,vfs 作工作副本,框架自动 checkout/commit
     //   去 onComplete(框架 afterAgent 自动 commit vfs→data.code);codeKind:'html'(v-html 片段)+ formatCheck 默认开
+    // dialog.theme 默认 dark(首页方舟专题色板),无需显式配置
     subagents: [createHtmlSubagent({
       writablePaths: ['components'],
       codeKind: 'html',
@@ -150,25 +152,18 @@ function sendSuggestion(text: string) {
 
 <template>
   <DevNav />
-  <div class="page">
-    <h1>HTML 页面生成子 agent(单模式:代码作 data 资产)</h1>
-    <p>
-      主 agent 调 <code>use_html</code> 委派子 agent 生成 <strong>HTML 片段</strong>(无
-      <code>&lt;html&gt;/&lt;head&gt;/&lt;body&gt;</code> 外围、禁 <code>&lt;script&gt;</code>)。代码作为 <strong>data 资产</strong>存
-      <code>components[].code</code>(进服务端 DB),<strong>vfs 作工作副本</strong>(框架自动 checkout/commit,主 agent 透明),左侧预览区经
-      <strong>v-html</strong> 实时渲染。格式校验链:<code>validate_code</code> 自检 + verify 门禁。
-    </p>
-    <p class="hint">
-      <strong>多组件 + 焦点精修</strong>:预览区点选某个组件即<strong>聚焦</strong>它(🎯),后续对话只精修该组件代码 ——
-      子 agent 受焦点硬约束,改其他组件会被 PATH_DENIED 拦(防误改)。聚焦模式下不能新建组件,新建前先「取消聚焦」。
-    </p>
-    <div class="suggestions">
-      <button v-for="s in SUGGESTIONS" :key="s" class="chip" @click="sendSuggestion(s)">{{ s }}</button>
-    </div>
-
-    <div class="cols">
-      <div class="col preview-col">
-        <h3>实时预览(v-html 渲染 data.code)</h3>
+  <div class="layout">
+    <!-- 左栏:预览(全屏高度,组件切换栏 + 大预览 + 折叠面板) -->
+    <aside class="pane pane-left">
+      <div class="pane-head">
+        <h1>HTML 页面生成(单模式:代码作 data 资产)</h1>
+        <p class="hint">
+          <code>use_html</code> 子 agent 生成 v-html 片段,代码作 <code>components[].code</code> 资产。
+          <strong>点选组件即聚焦</strong>(🎯),对话只精修该组件(focus vfs 守卫硬约束);聚焦模式不能新建,先「取消聚焦」。
+        </p>
+        <div class="suggestions">
+          <button v-for="s in SUGGESTIONS" :key="s" class="chip" @click="sendSuggestion(s)">{{ s }}</button>
+        </div>
         <!-- 多组件切换栏:点击 = 选中预览 + setFocus 精修(子 agent 继承焦点,只能改该组件代码,越界 PATH_DENIED) -->
         <div class="comp-tabs" v-if="customComps.length">
           <button v-for="(c, key) in customComps" :key="c.origIdx"
@@ -178,81 +173,98 @@ function sendSuggestion(text: string) {
             <span class="focus-mark" v-if="focusedOrigIdx === c.origIdx">🎯</span>
           </button>
         </div>
-        <p class="hint">
-          <template v-if="!customComps.length">尚无代码;点上方建议或发消息触发 use_html</template>
-          <template v-else>
-            组件:{{ previewName }}
-            <span v-if="focusedOrigIdx === selected?.origIdx" class="focus-info">(已聚焦 · 对话只精修该组件)</span>
-            <button v-if="focusedOrigIdx >= 0" class="link-btn" @click="clearCompFocus">取消聚焦</button>
-          </template>
+        <p class="hint preview-meta">
+          <span v-if="focusedOrigIdx === selected?.origIdx" class="focus-info">已聚焦 · 对话只精修该组件</span>
+          <button v-if="focusedOrigIdx >= 0" class="link-btn" @click="clearCompFocus">取消聚焦</button>
           <span v-if="validateStatus" class="validate" :class="validateStatus.includes('✅') ? 'ok' : 'bad'">
             {{ validateStatus.includes('✅') ? '✅ 格式校验通过' : '❌ 校验有问题(自纠中)' }}
           </span>
         </p>
-        <div class="preview" v-html="previewHtml"></div>
+      </div>
+      <!-- 大预览:v-html 渲染 data.code(撑满剩余高度) -->
+      <div class="preview" v-html="previewHtml"></div>
+      <div class="pane-foot">
         <details class="code-view" v-if="previewSource">
-          <summary>查看代码片段(data.code)</summary>
+          <summary>查看代码片段({{ previewName }} · data.code)</summary>
           <pre>{{ previewSource }}</pre>
         </details>
-      </div>
-      <div class="col">
-        <h3>主 data:components({{ pageBind.components.length }})</h3>
-        <p class="hint">custom 组件 code 字段存代码正文(资产);__pgId 框架无感注入(组件映射键)</p>
-        <pre class="data-view">{{ JSON.stringify(pageBind.components, null, 2) }}</pre>
-
+        <details class="data-view">
+          <summary>主 data:components({{ pageBind.components.length }})</summary>
+          <pre>{{ JSON.stringify(pageBind.components, null, 2) }}</pre>
+        </details>
         <div class="persist">
-          <h4>mock 服务端 persist(代码往返)</h4>
-          <p class="hint">演示 data json(含 code + __pgId)保存/加载:代码随 data 进 DB,加载后 id 稳定、子 agent 能增量改</p>
-          <div class="persist-btns">
-            <button class="chip" @click="saveToServer">💾 保存到服务端</button>
-            <button class="chip" :disabled="!mockServerSnapshot" @click="loadFromServer">📂 从服务端加载</button>
-          </div>
-          <p v-if="savedInfo" class="hint persist-info">{{ savedInfo }}</p>
+          <span class="hint">mock 服务端 persist:</span>
+          <button class="chip sm" @click="saveToServer">💾 保存</button>
+          <button class="chip sm" :disabled="!mockServerSnapshot" @click="loadFromServer">📂 加载</button>
+          <span v-if="savedInfo" class="hint persist-info">{{ savedInfo }}</span>
         </div>
-
-        <section id="chat-root" class="chat-mount"></section>
       </div>
-    </div>
+    </aside>
+    <!-- 右栏:对话框(默认 dark 主题,与首页统一) -->
+    <section id="chat-root" class="pane pane-right"></section>
   </div>
 </template>
 
 <style scoped>
-.page {
-  max-width: 1200px;
-  margin: 80px auto 0;
-  padding: 0 20px 40px;
+.layout {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  color: var(--ark-fg);
   font-family: system-ui, sans-serif;
-  color: var(--ark-fg);
 }
-h1 {
-  font-size: 24px;
-  margin-bottom: 12px;
+.pane-left {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  overflow: hidden;
 }
-p {
-  line-height: 1.6;
-  color: var(--ark-muted);
-  margin-bottom: 12px;
-}
-p code {
+.pane-right {
+  flex: 1;
+  min-width: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
   background: var(--ark-panel);
-  padding: 1px 6px;
+}
+/* 对话框撑满右栏(同首页 page-demo) */
+.pane-right > :deep(.chat-dialog) {
+  width: 100%;
+  height: 100%;
+}
+.pane-head {
+  flex-shrink: 0;
+}
+.pane-head h1 {
+  font-size: 18px;
+  margin: 0 0 6px;
+}
+.hint {
+  font-size: 12px;
+  color: var(--ark-muted);
+  line-height: 1.6;
+  margin-bottom: 8px;
+}
+.hint code {
+  background: var(--ark-panel);
+  padding: 1px 5px;
   border-radius: 4px;
-  font-size: 13px;
-  color: var(--ark-fg);
+  font-size: 11px;
 }
 .suggestions {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  margin-bottom: 16px;
+  margin-bottom: 8px;
 }
 .chip {
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: var(--ark-panel);
   color: var(--ark-fg);
   border-radius: 999px;
-  padding: 6px 14px;
-  font-size: 13px;
+  padding: 5px 12px;
+  font-size: 12px;
   cursor: pointer;
 }
 .chip:hover:not(:disabled) {
@@ -263,51 +275,15 @@ p code {
   opacity: 0.4;
   cursor: not-allowed;
 }
-.cols {
-  display: grid;
-  /* minmax(0,1fr):grid item 默认 min-width:auto,v-html 生成的宽内容(宽表/不换行长串)会撑爆 track 挤走右侧;minmax(0,..) 允许 track 收缩,宽内容改由 .preview overflow:auto 滚动 */
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
-}
-.col {
-  background: var(--ark-panel);
-  border-radius: 8px;
-  padding: 12px;
-  min-width: 0;  /* 配合 minmax(0,1fr):允许 grid item 收缩(防 v-html 宽内容撑开列宽) */
-}
-.col h3 {
-  font-size: 14px;
-  margin-bottom: 4px;
-}
-.hint {
-  font-size: 12px;
-  color: var(--ark-muted);
-  margin-bottom: 8px;
-}
-.validate {
-  margin-left: 8px;
-  font-size: 12px;
-}
-.validate.ok {
-  color: #4caf50;
-}
-.validate.bad {
-  color: #ff7043;
-}
-.preview {
-  min-height: 240px;
-  background: #fff;
-  border-radius: 6px;
-  padding: 0;
-  overflow: auto;
-  max-height: 520px;
+.chip.sm {
+  padding: 2px 10px;
+  font-size: 11px;
 }
 .comp-tabs {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 .comp-tab {
   border: 1px solid rgba(255, 255, 255, 0.16);
@@ -330,8 +306,10 @@ p code {
 .focus-mark {
   margin-left: 2px;
 }
+.preview-meta {
+  min-height: 18px;
+}
 .focus-info {
-  margin-left: 6px;
   color: var(--ark-accent);
 }
 .link-btn {
@@ -347,54 +325,64 @@ p code {
 .link-btn:hover {
   color: var(--ark-accent);
 }
-.code-view {
-  margin-top: 8px;
+.validate {
+  margin-left: 8px;
 }
-.code-view summary {
+.validate.ok {
+  color: #4caf50;
+}
+.validate.bad {
+  color: #ff7043;
+}
+/* 大预览:撑满左栏剩余高度 */
+.preview {
+  flex: 1;
+  min-height: 0;
+  margin: 10px 0;
+  background: #fff;
+  border-radius: 8px;
+  overflow: auto;
+}
+.pane-foot {
+  flex-shrink: 0;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.code-view,
+.data-view {
+  flex: 1;
+  min-width: 220px;
+}
+.code-view summary,
+.data-view summary {
   font-size: 12px;
   color: var(--ark-muted);
   cursor: pointer;
 }
 .code-view pre,
-.data-view {
-  margin: 8px 0 0;
-  padding: 10px;
+.data-view pre {
+  margin: 6px 0 0;
+  padding: 8px;
   background: var(--ark-bg);
   border-radius: 6px;
   font-size: 11px;
   line-height: 1.5;
   white-space: pre-wrap;
-  max-height: 200px;
+  max-height: 160px;
   overflow-y: auto;
   color: var(--ark-fg);
 }
 .persist {
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px dashed rgba(255, 255, 255, 0.12);
-}
-.persist h4 {
-  font-size: 13px;
-  margin-bottom: 4px;
-}
-.persist-btns {
   display: flex;
-  gap: 8px;
-  margin-top: 6px;
+  align-items: center;
+  gap: 6px;
+}
+.persist .hint {
+  margin: 0;
 }
 .persist-info {
-  margin-top: 6px;
   color: var(--ark-accent);
-}
-.chat-mount {
-  margin-top: 12px;
-  height: 480px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.chat-mount > :deep(.chat-dialog) {
-  width: 100%;
-  height: 100%;
 }
 </style>

@@ -291,5 +291,37 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:capability-packs] 组件代码文件地图(augmentPrompt 注入子 agent system prompt,修 __pgId 映射摩擦)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    // __pgId 映射摩擦:__pgId 随机生成且对 agent 隐藏 → 子 agent 拿 name 定位不到 vfs 文件。
+    // 修复:codeAssetMiddleware.augmentPrompt 每轮注入「组件代码文件地图」(name → vfs 路径)到子 agent system prompt
+    const llm = stubModel(
+      { toolCalls: [{ name: 'use_html', args: { task: '改 hero 标题' } }] },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_hero.html', content: '<section>新 hero</section>' } }] },
+      { text: '已改' },
+      { text: '完成' },
+    )
+    const bind = { title: 't', components: [
+      { type: 'custom', name: 'hero', code: '<section>旧 hero</section>', __pgId: 'c_hero' },
+      { type: 'custom', name: 'banner', code: '<section>旧 banner</section>', __pgId: 'c_banner' },
+    ] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-assetmap', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], codeKind: 'html', formatCheck: false })],
+    })
+    await sdk.mount()
+    await sdk.send('改 hero 标题')
+    const withMap = llm.systemPrompts.filter((s) => s.includes('组件代码文件地图'))
+    assert(withMap.length >= 1, '✓ 组件代码文件地图注入子 agent system prompt(augmentPrompt;子 agent 按 name 直接定位 vfs 文件)')
+    assert(withMap.some((s) => s.includes('hero → html/c_hero.html') && s.includes('banner → html/c_banner.html')), '✓ 地图含全部组件 name → vfs 路径(含预设 __pgId,无需猜随机 id)')
+    // 主 agent 不装 codeAsset 中间件 → 主 agent 的 LLM 调用不含地图(不污染主上下文;主 agent 不碰代码文件)
+    const mainOnly = llm.systemPrompts.filter((s) => s.includes('use_html') && !s.includes('vfs_write'))
+    assert(mainOnly.length >= 1 && mainOnly.every((s) => !s.includes('组件代码文件地图')), '✓ 主 agent system prompt 不含地图(只进子 agent 上下文)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

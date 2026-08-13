@@ -7,6 +7,7 @@ import MessageSteps from './MessageSteps.vue'
 import MessageBubble from './MessageBubble.vue'
 import MessageTime from './MessageTime.vue'
 import MessageActions from './MessageActions.vue'
+import AvatarIcon from './AvatarIcon.vue'
 
 const props = defineProps<{
   message: AgentMessage
@@ -46,7 +47,7 @@ const showCursor = computed(() => isAssistant.value && props.loading && props.is
 
 <template>
   <div class="message-row" :class="message.role" :data-msg-idx="index">
-    <div v-if="showAvatar" class="message-avatar">{{ message.role === 'user' ? '👤' : '🤖' }}</div>
+    <div v-if="showAvatar" class="message-avatar"><AvatarIcon :role="message.role" /></div>
     <div class="message-content">
       <MessageReasoning v-if="isAssistant" :text="reasoning" :expanded="reasoningExpanded" @toggle="$emit('toggle-reasoning')" />
       <MessageSteps v-if="isAssistant" :steps="steps" />
@@ -80,8 +81,8 @@ const showCursor = computed(() => isAssistant.value && props.loading && props.is
   width: var(--cs-avatar-size, 32px); height: var(--cs-avatar-size, 32px); border-radius: var(--cs-avatar-radius, 50%); background: var(--cs-avatar-bg, #f3f4f6);
   display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0;
 }
-.message-row.assistant .message-avatar { background: var(--cs-avatar-grad, var(--cs-avatar-bg, #f3f4f6)); }
-.message-row.user .message-avatar { background: var(--cs-avatar-user-bg, #ecf5ef); }
+.message-row.assistant .message-avatar { background: var(--cs-avatar-grad, var(--cs-avatar-bg, #f3f4f6)); color: var(--cs-avatar-fg, #fff); }
+.message-row.user .message-avatar { background: var(--cs-avatar-user-bg, #ecf5ef); color: var(--cs-avatar-user-fg, #3b5e4a); }
 .message-content { max-width: 80%; min-width: 0; }
 /* user 消息发送时焦点快照 chip(背景组件限制标注) */
 .msg-focuses { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; margin-bottom: 4px; }

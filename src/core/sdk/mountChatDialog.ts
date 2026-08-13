@@ -71,7 +71,7 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
           getUserSkillNames: core.skillsController ? () => core.listUserSkills() : undefined,  // ChatDialog 列出用户创建的 skill 名(刷新面板)
           onGetSkill: core.skillsController ? (name: string) => core.getUserSkill(name) : undefined,  // ChatDialog 编辑 skill 时读取详情
           drawer: dialogCfg.drawer === true,
-          csTheme: dialogCfg.theme === 'dark' ? 'dark' : 'light',
+          csTheme: dialogCfg.theme === 'light' ? 'light' : 'dark',  // 默认 dark(首页/方舟专题设计稿色板);显式 'light' 才用浅色
           drawerWidth: dialogCfg.drawerWidth,
           drawerHidden: dialogCfg.drawerHidden === true,
           inputRows: dialogCfg.inputRows,

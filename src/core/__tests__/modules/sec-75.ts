@@ -158,6 +158,25 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(r5.status === 'done', '✓ 无 focus → 全放行(原行为零回归)')
   }
 
+  // ===== augmentPrompt 组件代码文件地图(name → vfs 路径;修 __pgId 映射摩擦:随机 id 对 agent 隐藏,按 name 定位不到文件)=====
+  {
+    const bind: any = { title: 't', components: [{ __pgId: 'c_a', name: 'hero', code: '<p/>' }, { __pgId: 'c_b', name: 'banner', code: '<b/>' }] }
+    const { vfsStore, mw } = setup(bind)
+    mw.beforeAgent!(createInitialState())  // checkout → vfs 文件存在(c_a/c_b 均已检出)
+    const map = (mw as any).augmentPrompt!()
+    assert(typeof map === 'string' && map.includes('组件代码文件地图'), '✓ augmentPrompt:注入「组件代码文件地图」段')
+    assert(map.includes('hero → html/c_a.vue') && map.includes('banner → html/c_b.vue'), '✓ 地图含 name → vfs 路径映射(按 name 直接定位文件,无需猜随机 __pgId)')
+    assert(!map.includes('尚未检出'), '✓ 已 checkout 的组件不标「尚未检出」')
+    // 新组件(bind 有 __pgId 但 vfs 未检出)→ 标注「尚未检出,先 vfs_write 创建」
+    bind.components.push({ __pgId: 'c_new', name: 'fresh', code: '<i/>' })
+    const map2 = (mw as any).augmentPrompt!()
+    assert(map2.includes('fresh → html/c_new.vue(尚未检出,先 vfs_write 创建)'), '✓ 未检出组件标注「尚未检出,先 vfs_write 创建」(同轮新建组件再改场景)')
+    // 无代码组件 → undefined(不注入,零开销)
+    const { mw: mwEmpty } = setup({ title: 't', components: [] } as any)
+    assert((mwEmpty as any).augmentPrompt!() === undefined, '✓ 无代码组件 → 不注入地图(零开销)')
+    vfsStore.files['html/c_a.vue'] = { content: 'x', updatedAt: 0 }  // 还原(防后续用例依赖)
+  }
+
   // ===== 直改 bind 不进快照栈(design §2.3):afterAgent 仅 o.code=f.content + markDataDirty + recomputeBaseline,无 pushSnapshot =====
   // 代码事实保证(afterAgent 无 pushSnapshot 调用);逻辑层由上面「commit 回写 + recomputeBaseline」覆盖,快照栈私有不入断言
 }

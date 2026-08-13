@@ -98,6 +98,8 @@ function focusPathsToPgIds(
  * 控制流(design §2.1):
  * - **beforeAgent checkout**:扫 data writablePaths(有 __pgId + code 的项)→ 覆盖式写 vfsStore(`prefix+__pgId+ext`);
  *   初始化 state.__pgTouched(本轮私有 Set)。vfs 始终是 data 最新快照(design §1.2)。
+ * - **augmentPrompt 组件代码文件地图**(修 __pgId 映射摩擦:__pgId 随机且对 agent 隐藏,子 agent 拿 name 定位不到 vfs 文件):
+ *   每轮注入 name → vfs 路径映射表(标注是否已检出),按 name 直接改对应文件;主 agent 不装本中间件,地图只进子 agent 上下文。
  * - **wrapToolCall hook**:① focus 感知 vfs 白名单(执行前):有焦点时 vfs 代码文件 __pgId 必须在焦点组件 __pgId 集内,越界 PATH_DENIED 回灌自纠
  *   (补 focus.ts 缝隙:WRITE_TOOLS 刻意排除 vfs,但 code-as-data-asset 下子 agent 改代码必经 vfs)。
  *   ② 子 agent vfs_write/vfs_edit/vfs_rm 改 codeVfsPrefix 下文件 → 记 touched(增量 commit 只回写改过的,防全量覆盖未改组件外部修改,design §6.1)。
@@ -122,6 +124,21 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
       // ③ 注入 vfsStore.files 引用到 state.files(verify 门禁扫 state.files 见 code 工作副本;与 vfs-bridge 同引用,覆盖无副作用)
       //    __pgTouched 是框架内部 state 扩展(类 __pgId);TS 上以 Partial<typeof state> 表达,运行时浅合并保留 Set 引用
       return { files: vfsStore.files, [TOUCHED]: new Set<string>() } as unknown as Partial<typeof state>
+    },
+    // 组件代码文件地图(name → vfs 工作副本路径):修 __pgId 映射摩擦 —— __pgId 随机生成且对 agent 隐藏,
+    // 子 agent 拿 name 定位不到 vfs 文件(尤其新建组件随机 id)。每轮注入映射表,按 name 直接改对应文件。
+    // augmentPrompt 天然跨压缩(每轮重建);主 agent 不装本中间件 → 地图只进子 agent 上下文。
+    augmentPrompt: () => {
+      const bind = getController()?.get?.().bind
+      const lines: string[] = []
+      forEachCodeItem(bind, writablePaths, (o) => {
+        const name = typeof o.name === 'string' && o.name ? o.name : '(未命名)'
+        const vfsPath = `${codeVfsPrefix}${o.__pgId}.${ext}`
+        const checkedOut = !!vfsStore.files[vfsPath]
+        lines.push(`- ${name} → ${vfsPath}${checkedOut ? '' : '(尚未检出,先 vfs_write 创建)'}`)
+      })
+      if (!lines.length) return undefined
+      return `## 组件代码文件地图(改组件时按 name 直接改对应 vfs 文件;框架自动 checkout/commit)\n${lines.join('\n')}`
     },
     wrapToolCall: async (ctx, next) => {
       const isVfsCodeOp = ctx.name === 'vfs_write' || ctx.name === 'vfs_edit' || ctx.name === 'vfs_rm'

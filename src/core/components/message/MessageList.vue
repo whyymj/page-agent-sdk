@@ -9,6 +9,7 @@ import { computed } from 'vue'
 import { useChatContext } from '../../composables/chatContext'
 import MessageRow from './MessageRow.vue'
 import MessageBubble from './MessageBubble.vue'
+import AvatarIcon from './AvatarIcon.vue'
 
 defineProps<{ showAvatar: boolean; showTyping: boolean }>()
 
@@ -51,7 +52,7 @@ const lastIsAssistant = computed(() => state.messages[state.messages.length - 1]
 
     <!-- 加载占位:仅当最后一条不是 assistant 占位时(非流式等待)才单独显示,避免与流式占位叠加成两个 AI 头像 -->
     <div v-if="state.loading && !lastIsAssistant" class="message-row assistant">
-      <div v-if="showAvatar" class="message-avatar">🤖</div>
+      <div v-if="showAvatar" class="message-avatar"><AvatarIcon role="assistant" /></div>
       <div class="message-content">
         <MessageBubble content="" role="assistant" :is-pending-assistant="true" :show-typing="showTyping" :show-cursor="false" />
       </div>
@@ -77,7 +78,8 @@ const lastIsAssistant = computed(() => state.messages[state.messages.length - 1]
 
 /* loading 占位行布局(与 MessageRow 的 .message-row base 共享;此处仅给 loading 占位用,scoped 隔离不跨组件) */
 .message-row { display: flex; gap: 10px; margin-bottom: 16px; align-items: flex-start; }
-.message-avatar { width: 32px; height: 32px; border-radius: 50%; background: #f3f4f6; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+.message-avatar { width: 32px; height: 32px; border-radius: 50%; background: #f3f4f6; display: flex; align-items: center; justify-content: center; color: #4b5563; flex-shrink: 0; }
+.message-row.assistant .message-avatar { background: var(--cs-avatar-grad, linear-gradient(135deg, #92a2fe 0%, #645bff 100%)); color: #fff; }
 .message-content { max-width: 80%; min-width: 0; }
 
 .error-bar { display: flex; align-items: flex-start; gap: 10px; padding: 8px 12px; border-radius: 8px; background: #fef2f2; color: #dc2626; font-size: 13px; margin-top: 8px; }
