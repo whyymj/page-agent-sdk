@@ -1292,7 +1292,7 @@ createChatSdk({
 | `tool_result` | 工具返回后(stream 模式) | `name` / `result` / `status` |
 | `text` / `reasoning` | 流式文本/思考增量(stream 模式) | `delta` |
 | `round_start` | 每轮模型调用开始 | `round` |
-| `subagent` | 子 agent 工具进度 | `taskId`/`label`/`kind`/`name`/... |
+| `subagent` | 子 agent 进度(工具调用 + 思考过程) | `taskId`/`label`/`kind`(`tool_call`/`tool_result`/`reasoning`)/`name`/`delta`(reasoning 增量)/... |
 | `done` | 一轮回复完成(stream 模式) | `content` |
 | `usage` | 每轮 LLM 调用后(若 provider 返回 usage) | `round` / `usage`(本轮 prompt/completion/total_tokens) / `cumulative`(累计) |
 | `session_restored` | storage 恢复会话快照后(mount 自动恢复 / `switchSession` 切到已存会话) | `sessionId` / `rounds`(恢复的消息数) |

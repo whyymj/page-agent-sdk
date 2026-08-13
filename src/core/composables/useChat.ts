@@ -142,6 +142,10 @@ export function useChat(
                   assistantMsg.steps[i].result = event.result
                   assistantMsg.steps[i].status = event.status
                   assistantMsg.steps[i].durationMs = event.durationMs
+                  // 子 agent 思考细节:步骤完成后丢弃细节(只留短预览)—— 生成期间可展开看全文,
+                  // 收口后不再堆积长 reasoning(省 UI 内存;细节已无回看价值,结论在 result)
+                  const sr = assistantMsg.steps[i].subReason
+                  if (sr && sr.length > 80) assistantMsg.steps[i].subReason = sr.slice(0, 80) + '…'
                   break
                 }
               }
@@ -150,6 +154,11 @@ export function useChat(
             case 'subagent': {
               const spawnStep = assistantMsg.steps[assistantMsg.steps.length - 1]
               if (!spawnStep) break
+              // 子 agent 思考过程增量(reasoning)→ 累积到 spawnStep.subReason(UI 折叠展示"在想什么")
+              if (event.kind === 'reasoning') {
+                spawnStep.subReason = (spawnStep.subReason || '') + (event.delta || '')
+                break
+              }
               if (!spawnStep.children) spawnStep.children = []
               const fullName = event.label ? `[${event.label}] ${event.name}` : event.name
               if (event.kind === 'tool_call') {

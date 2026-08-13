@@ -132,6 +132,9 @@ provide(chatContextKey, ctx)
 
 // template 直接用的容器状态(解构 ref,template 自动解包)
 const { isExpanded, debugVisible, skillVisible, closeSkill } = ctx
+// 滚动容器上移至 .chat-main(消息 + queued/approval/conflict 统一滚动;header/footer 固定),
+// approval-bar 不再被 overflow:hidden 裁剪 —— 与消息一起滚动,超高内容可达。
+const { scrollContainer, onScroll, onWheel } = ctx.chat
 
 /** 区块是否渲染:sections[k] !== false(默认全开,向后兼容)。
  *  例外:focus 默认移至 ChatInput 内 inline chip(输入框区,更贴近输入位置);集成方显式 sections.focus=true 恢复顶部独立条(向后兼容)。 */
@@ -179,6 +182,9 @@ const drawerWidthStyle = computed(() => {
       </slot>
     </template>
 
+    <!-- 统一滚动区:消息 + 排队 + 人工确认 + 冲突(一起滚动;header/footer 固定)。
+         approval-bar 高内容不再被 overflow:hidden 裁剪 —— 用户可滚动查看全部。 -->
+    <div class="chat-main" ref="scrollContainer" @scroll="onScroll" @wheel="onWheel">
     <!-- 消息列表 -->
     <template v-if="renderSection('body')">
       <Transition name="cs-slide">
@@ -204,6 +210,7 @@ const drawerWidthStyle = computed(() => {
         <ConflictBar :pending-conflict="pendingConflict" :on-resolve="onResolveConflict" />
       </slot>
     </template>
+    </div>
 
     <!-- 输入区域 -->
     <template v-if="renderSection('footer')">
@@ -297,6 +304,10 @@ const drawerWidthStyle = computed(() => {
   transition: all 0.3s ease;
   animation: cs-drawer-in 0.28s cubic-bezier(0.16, 1, 0.3, 1);
 }
+
+/* 统一滚动区:消息 + queued/approval/conflict 一起滚动;flex:1 占满 header~footer 之间,overflow 限高 */
+.chat-main { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+
 @keyframes cs-drawer-in {
   from { opacity: 0; transform: translateX(32px); }
   to { opacity: 1; transform: translateX(0); }

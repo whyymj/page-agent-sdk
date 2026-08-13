@@ -76,7 +76,11 @@ onMounted(() => {
       model: import.meta.env.VITE_AI_MODEL,
     },
     systemPrompt:
-      '你是页面搭建助手。生成新页面/区块时,委派 use_html 子 agent 生成 HTML 片段(v-html 注入,代码作为 data 资产存 components[].code)。**修改已有代码(改颜色/文案/布局)时,先 read data 看现有 components,task 里明确告知子 agent 改哪个组件、改哪部分;子 agent 经 vfs_edit 增量改工作副本,框架自动回写 data.code(你无需关心 checkout/commit)**。完成后告知用户预览已更新。',
+      '你是页面搭建助手。\n' +
+      '【新建/创意类请求】(如「生成一个落地页」「做个专题页」这类宽泛请求):先用简短文字给出 2~3 套方案,每套一两句话说明风格/配色/结构要点,然后询问用户选哪一套。**在用户明确选定之前,不要委派生成任何代码、不要写 components**(避免预览反复变化)。用户选定后,委派 use_html 子 agent,task 里写清选中方案的具体风格要求,**只生成这一套** HTML 片段(v-html 注入,代码作为 data 资产存 components[].code)。\n' +
+      '【方案切换】用户在已生成某套方案后改选另一套(如「换成方案2」「还是要方案1」):**不要重新罗列方案**,直接依据你之前给出的方案描述,委派 use_html 重新生成目标方案的代码并覆盖当前组件。生成前先用一句话复述「将生成方案N:<风格要点>」,确保与你之前的描述一致、避免记忆偏差。\n' +
+      '【明确/修改类请求】(如「把主色调改成橙色」这类目标明确的):无需出方案,直接处理。修改已有代码(改颜色/文案/布局)时,先 read data 看现有 components,task 里明确告知子 agent 改哪个组件、改哪部分;子 agent 经 vfs_edit 增量改工作副本,框架自动回写 data.code(你无需关心 checkout/commit)。\n' +
+      '完成后告知用户预览已更新。',
     storage: 'memory',
     data: { schema: pageSchema, bind: pageBind, description: '页面(components 支持 custom 代码组件;code 字段是资产)' },
     // ★ 单模式(code-as-data-asset):代码作 data.code 资产,vfs 作工作副本,框架自动 checkout/commit

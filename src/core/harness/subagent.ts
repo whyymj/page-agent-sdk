@@ -7,8 +7,8 @@
  * 通信(见 evolution-roadmap.md #1):单向委派 —— 主→子=工具参数,子→主=工具返回(最终结论);
  * signal 继承(主停则子停);多子并行不互通,主聚合。
  *
- * 进度展示:子的工具调用进度经主 onEvent 转发(subagent 事件)→ UI 在 spawn 步骤下嵌套展示;
- * **不进入主 LLM 上下文**(只进 UI,严守隔离)。文本/思考不转发(避免噪音)。
+ * 进度展示:子的工具调用进度 + 思考过程(reasoning)经主 onEvent 转发(subagent 事件)→ UI 在 spawn 步骤下嵌套展示;
+ * **不进入主 LLM 上下文**(只进 UI,严守隔离)。text 不转发(是生成内容,经 vfs/data 落地;reasoning 转发展示"在想什么")。
  *
  * 递归防护:maxDepth(默认 1)。depth+1 >= maxDepth 时子 agent 不装本中间件 → 无 spawn 工具 →
  * 物理切断(比运行时检查更可靠)。
@@ -29,8 +29,8 @@ import type { Focus, VfsFile } from './state'
 import type { ZodType } from 'zod'
 import { normalizeUsage } from '../utils/contentParts'
 
-/** 子 agent 的工具调用进度(只转发 tool_call/tool_result,不含文本/思考) */
-type SubProgress = Extract<StreamEvent, { type: 'tool_call' | 'tool_result' }>
+/** 子 agent 转发到主 UI 的进度(tool_call/tool_result 工具级 + reasoning 思考过程增量;text 不转发:是生成内容,经 vfs/data 落地,不进进度) */
+type SubProgress = Extract<StreamEvent, { type: 'tool_call' | 'tool_result' | 'reasoning' }>
 
 export interface SubagentLlmConfig {
   apiKey: string
@@ -407,8 +407,8 @@ async function runSubagent(
     // P1-16:approval_request 直通转发回主循环 handler(ApprovalBar 渲染/收口)—— 不包裹为进度事件,
     // 否则子栈继承的 approval 挂起永无人响应(原 forward 只转发 tool_call/tool_result)
     if (e.type === 'approval_request') { emitToMain?.(e); return }
-    // 只转发工具调用进度到主 UI(文本/思考不转发:避免噪音 + 严守主上下文隔离)
-    if (forward && (e.type === 'tool_call' || e.type === 'tool_result')) forward(e)
+    // 转发工具调用进度 + 思考过程(reasoning)到主 UI(text 不转发:是生成内容,经 vfs/data 落地;UI 可见 ≠ 进主上下文,隔离不破)
+    if (forward && (e.type === 'tool_call' || e.type === 'tool_result' || e.type === 'reasoning')) forward(e)
   }, childAc.signal)
   if (!opts.timeoutMs || opts.timeoutMs <= 0) {
     try { return await streamP } finally { cleanup() }
@@ -438,6 +438,11 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
 
   /** 把子进度(subagent 事件)转发到主 UI(经 currentEmit)+ 观察层累积 steps */
   const makeForward = (taskId: string, label: string) => (e: SubProgress): void => {
+    // reasoning 是高频增量(每 token 一条):只转发到 UI 累积(spawnStep.subReason),不进 tracker 步骤摘要(防爆)
+    if (e.type === 'reasoning') {
+      currentEmit?.({ type: 'subagent', taskId, label, kind: 'reasoning', name: '', delta: e.delta })
+      return
+    }
     // 观察层:累积子工具进度摘要(只记 kind+name+ts;全文在事件/messages)
     opts.tracker?.pushStep(taskId, { kind: e.type, name: e.name, ts: Date.now() })
     if (!currentEmit) return
@@ -681,6 +686,11 @@ export function createSubagentsMiddleware(
   let currentEmit: ((e: StreamEvent) => void) | undefined
   let currentLogSink: ((e: any) => void) | undefined
   const makeForward = (taskId: string, label: string) => (e: SubProgress): void => {
+    // reasoning 高频增量:只转发 delta 到 UI(spawnStep.subReason 累积),不附 name/args
+    if (e.type === 'reasoning') {
+      currentEmit?.({ type: 'subagent', taskId, label, kind: 'reasoning', name: '', delta: e.delta })
+      return
+    }
     if (!currentEmit) return
     currentEmit({
       type: 'subagent', taskId, label, kind: e.type, name: e.name,
@@ -723,7 +733,11 @@ export function createSubagentsMiddleware(
             const observeId = tracker ? `use_${s.id}-${Math.random().toString(36).slice(2, 6)}` : `use_${s.id}`
             const baseForward = makeForward(`use_${s.id}`, s.id)
             const forward = tracker
-              ? (e: SubProgress) => { tracker.pushStep(observeId, { kind: e.type, name: e.name, ts: Date.now() }); baseForward(e) }
+              ? (e: SubProgress) => {
+                  // reasoning 高频增量不进 tracker 步骤摘要(防爆);只 baseForward 转发到 UI
+                  if (e.type !== 'reasoning') tracker.pushStep(observeId, { kind: e.type, name: e.name, ts: Date.now() })
+                  baseForward(e)
+                }
               : baseForward
             const startedAt = Date.now()
             tracker?.start(observeId, task, s.id, startedAt)

@@ -1701,7 +1701,12 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       vfsStore?.setProtectedRefs?.(extractVfsRefs(msgs))
       // 包装:流式事件恒转发内部 UI handler + emit(外发 options.onEvent + sdk.hook listeners)。
       // 修复(P1-23):旧实现仅当传了 options.onEvent 才调 emit → 不传 onEvent 时 sdk.hook() 收不到流式事件。
-      const wrappedHandler: StreamHandler = (event) => { onEvent?.(event); emit(event as SdkEvent) }
+      const wrappedHandler: StreamHandler = (event) => {
+        onEvent?.(event); emit(event as SdkEvent)
+        // 子 agent 工具进度 → bump infoTick 让 DebugDrawer「🤖 子 agent」tab 实时刷新
+        // (reasoning 高频不 bump:主 UI 已实时展示思考过程,避免 DebugDrawer 高频重算)
+        if (event.type === 'subagent' && (event.kind === 'tool_call' || event.kind === 'tool_result')) core.infoTick.value++
+      }
       // abort 联动:用户停止生成时,自动收口挂起的乐观锁冲突(按「保留外部」处理,防工具永久挂起)
       if (signal) {
         const abortConflict = () => conflictMgr.resolve('keep_external')

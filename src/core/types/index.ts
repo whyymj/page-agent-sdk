@@ -10,6 +10,8 @@ export interface ToolStep {
   durationMs?: number
   /** 子 agent 的工具步骤(spawn_agent/spawn_agents 委派时,展示子 agent 工作进度) */
   children?: ToolStep[]
+  /** 子 agent(spawn)思考过程增量累积(reasoning 转发;展示子 agent "在想什么",默认折叠) */
+  subReason?: string
 }
 
 export interface AgentMessage {
@@ -44,7 +46,7 @@ export type StreamEvent =
   | { type: 'text'; delta: string }
   | { type: 'tool_call'; name: string; args: any }
   | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error'; durationMs?: number }
-  | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result'; name: string; args?: any; result?: string; status?: 'done' | 'error' }
+  | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result' | 'reasoning'; name: string; args?: any; result?: string; status?: 'done' | 'error'; delta?: string }
   | { type: 'approval_request'; toolName: string; args: any; resolve: (approved: boolean | string) => void }
   | { type: 'done'; content: string }
 
@@ -62,7 +64,7 @@ export type SdkEvent =
   | { type: 'text'; delta: string }
   | { type: 'tool_call'; name: string; args: any }
   | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error'; durationMs?: number }
-  | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result'; name: string; args?: any; result?: string; status?: 'done' | 'error' }
+  | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result' | 'reasoning'; name: string; args?: any; result?: string; status?: 'done' | 'error'; delta?: string }
   | { type: 'done'; content: string }
   | { type: 'data_change'; operation: 'set' | 'edit' | 'delete' | 'restore'; value?: unknown }
   | { type: 'message_update'; count: number }

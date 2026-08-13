@@ -63,7 +63,12 @@ export class StubChatModel extends BaseChatModel {
         args: tc.args ?? {},
         type: 'tool_call',
       })),
-      ...(resp.usage ? { additional_kwargs: { usage: resp.usage } } : {}),
+      // reasoning(DeepSeek 风格 additional_kwargs.reasoning_content;extractReasoningDelta 统一提取)
+      // + usage 合并进同一 additional_kwargs(空对象对 AIMessageChunk 无害)
+      additional_kwargs: {
+        ...(resp.usage ? { usage: resp.usage } : {}),
+        ...(resp.reasoning ? { reasoning_content: resp.reasoning } : {}),
+      },
     })
     yield { text: typeof msg.content === 'string' ? msg.content : '', message: msg }
   }

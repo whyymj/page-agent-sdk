@@ -819,7 +819,7 @@ The return value for offloaded tool results (above threshold) is upgraded to `Of
 | `tool_result` | After tool returns (stream mode) | `name` / `result` / `status` |
 | `text` / `reasoning` | Streaming text/reasoning delta (stream mode) | `delta` |
 | `round_start` | Each model call round start | `round` |
-| `subagent` | Subagent tool progress | `taskId`/`label`/`kind`/`name`/... |
+| `subagent` | Subagent progress (tool calls + reasoning) | `taskId`/`label`/`kind`(`tool_call`/`tool_result`/`reasoning`)/`name`/`delta`(reasoning increment)/... |
 | `done` | Round reply complete (stream mode) | `content` |
 | `usage` | After each LLM call (if provider returns usage) | `round` / `usage` (round prompt/completion/total_tokens) / `cumulative` (cumulative) |
 | `session_restored` | After storage restores a session snapshot (mount auto-resume / `switchSession` to an existing session) | `sessionId` / `rounds` (restored message count) |

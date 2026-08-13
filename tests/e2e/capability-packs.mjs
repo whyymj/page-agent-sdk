@@ -201,5 +201,35 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:capability-packs] 子 agent reasoning 转发(思考过程可见 → stream onEvent 收到 subagent reasoning)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    // 队列(主子共享 stub,按调用顺序消费):[0]主委派 → [1]子 reasoning+vfs_write → [2]子收口 → [3]主收口
+    // reasoning 与 toolCalls 组合:避免子 agent 因无 tool_call 提前终止,从而能同时验证思考 + 工具进度
+    // 注:用 sdk.stream(流式)而非 send(invoke)—— invoke 不外发流式事件(text/reasoning/tool_call/subagent)
+    const llm = stubModel(
+      { toolCalls: [{ name: 'use_html', args: { task: '生成横幅' } }] },
+      { reasoning: '我需要设计一个带标题的横幅组件', toolCalls: [{ name: 'vfs_write', args: { path: 'html/banner.html', content: '<section>横幅</section>' } }] },
+      { text: '横幅已生成' },
+      { text: '横幅完成' },
+    )
+    const subEvents = []
+    const bind = { title: 't', components: [] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-reasoning', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], codeKind: 'html', formatCheck: false })],
+    })
+    await sdk.mount()
+    await sdk.stream([{ role: 'user', content: '生成横幅', timestamp: Date.now() }], (e) => { if (e.type === 'subagent') subEvents.push(e) })
+    // 子 reasoning 经 subagent 事件外发(思考过程可见;修前:reasoning 硬丢弃致子 LLM 思考期间 UI 静默)
+    const reasoningEv = subEvents.find((e) => e.kind === 'reasoning')
+    assert(reasoningEv && typeof reasoningEv.delta === 'string' && reasoningEv.delta.includes('横幅组件'), '✓ 子 agent reasoning 转发到 stream onEvent(思考过程可见,不再静默)')
+    // 对照:子 tool_call 仍转发(原有行为不破坏)
+    assert(subEvents.some((e) => e.kind === 'tool_call'), '✓ 子 tool_call 仍转发(reasoning 新增不破坏原有工具进度转发)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

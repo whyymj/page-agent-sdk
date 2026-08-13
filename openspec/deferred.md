@@ -261,7 +261,7 @@ SDK 定位是**框架无关的轻量页面 JSON 操作 Agent**(自研 Deep Agent
 
 1. ⏸ **沙箱原型链逃逸残留(S1)**——【低,纵深防御已就位】`(function(){}).constructor` 原型链可达 Function → 任意代码执行,但 `lockSandboxGlobal` 锁死全部外发通道(fetch/XHR/WebSocket/importScripts/sendBeacon/EventSource/BroadcastChannel/indexedDB/Worker)→ 数据发不出,危害受控(二审 §11.3 论证链)。浏览器实测待做(审计 §八.1;Node 无 Worker 不可测)。**升级触发**:集成方 CSP 放宽 / 新增侧信道 / 沙箱引入网络回包。
 2. ⏸ domTool href/src 值敏感参数不扫描 ——【低】get_dom(opt-in)返回 href 可能含 OAuth token query 参数 + LLM 转述外发。同型:P3 envTool 输出完整 href/window.name 可读。
-3. ⏸ glob 单星跨段匹配(permissions)——【低】集成方按单段语义写单星规则,实际跨段匹配;语义与惯例不符,方向:文档明示或收紧。
+3. ✅ glob 单星跨段匹配(permissions)——【已修】audit-five-dimensions P1-2 升级修复:`globToRegex` 单星 `[^/]*`→`[^.]*`(对齐 scope 的 `.` 分隔,不跨段;permissions.ts),随 3.0.0 发布。
 
 ### 测试盲区(T,8 项)
 
@@ -282,6 +282,57 @@ SDK 定位是**框架无关的轻量页面 JSON 操作 Agent**(自研 Deep Agent
 ### P3 备查(不逐条登记)
 
 P3×33 以文档漂移(多处已随审计直接修正)/ 代码卫生 / 测试 / 流程项为主,留 `archive/2026-08-10-audit-sdk-integrity/audit-report.md` §四。其中 **N2 审计事件完备性**(write/draft/eval 是否产 audit 条目 + agent 归属)与 **N3 配置非法值无防御**(CO 维度种子:contextPreset:'unknown'/maxToolRounds:-1 等)有未来专项价值,特此标注。
+
+---
+
+## 2026-08-11 audit-five-dimensions P2/P3 登记(五维二审,分组 + 触发条件)
+
+> 来源:`archive/2026-08-11-audit-five-dimensions/audit-report.md` §四(P2×25 / P3×16,按维度分组)。基线 2.38.0,二审五维(CA/SE/VM/RE/CO)补审六专项外盲区。**真 P1×4 已修**(随各版本,均含 3.0.0):P1-1 并发写注释(createAgent `maxParallelTools` warn)/ P1-2 glob `[^/]*`→`[^.]*`(permissions,见上安全#3 ✅)/ P1-3 WorkingMemory restore 字段守卫 / P1-4 maxToolRounds clamp。§五「不动项」:VM-F1(版本号,架构改进演进时做)/ CO-preset(JS spread 语义,文档警示)。
+> 状态标记同上(⏸/🔁/✅)。证据链 file:line 见各归档 `audit-<DIM>.md`。
+
+### SE 加固组(P2×8)
+
+1. ⏸ DOMPurify 链接缺 rel=noopener ——【低】`a[target=_blank]` 无 rel → 反向 tabnabbing;DOMPurify hook 补 rel。
+2. ⏸ inspect_env 泄漏 location.search ——【低】URL query 含敏感参进 LLM 上下文;脱敏。
+3. ⏸ eval_script jsonPath 缺显式 PATH_UNSAFE ——【低】`eval_script({jsonPath:'__proto__…'})`;加 isUnsafePath 校验。
+4. ⏸ query_data 缺 isUnsafePath ——【低】同型 jsonPath 注入面。
+5. ⏸ lockSandboxGlobal 失败无留痕 ——【低】锁失败静默(sandbox 已锁外发,残留=可见性);debugLogs 留痕。
+6. ⏸ DebugDrawer 脱敏不全 ——【低】debug 输出含敏感字段;redact 加固。
+7. ⏸ CodePreview sandbox 收紧 ——【低】iframe sandbox 配置加固。
+8. ⏸ proxyLlm direct 默认反转 ——【低】proxyLlm direct 模式默认开 → 改显式 opt-in。
+
+### VM 迁移组(P2×6,含降级 F1)
+
+1. ⏸ 无版本号机制(F1,**§五不动项·架构改进**)——【低】setData 换 schema / 跨版本 hydrate 无版本校验;各中间件 ad-hoc 归一化,演进时系统化。演进触发。
+2. ⏸ checkpoint 跨 schema 校验(F3)——【低】setData 换 schema 后旧 checkpoint restore 可能不兼容;校验 + 降级。
+3. ⏸ Todo id 稳定标识(F4)——【低】Todo 按 index 生成 id,重排后 id 变;稳定标识。
+4. ⏸ capabilities 关闭 emit restore_skipped(F5)——【低】关 capability 后无 restore_skipped 事件;集成方不知。
+5. ⏸ VfsFile 字段归一化(F6)——【低】持久化 VfsFile 跨版本字段漂移;归一化。
+6. ⏸ AgentMessage 字段归一化(F7)——【低】同型,消息字段归一化。
+
+### CO fail-fast 组(P2×7,含降级 preset)
+
+1. ⏸ storage 未知 backend warn ——【低】storage 传未知值;warn + 降级。
+2. ⏸ allowedTools 错名 warn ——【低】allowedTools 含不存在的工具名;warn。
+3. ⏸ temperature 范围校验 ——【低】temperature 越界(<0/>2);warn + clamp。
+4. ⏸ maxDepth:0 语义 ——【低】maxDepth:0 含义不明(禁 spawn?);文档/校验。
+5. ⏸ writablePaths:[] 语义 ——【低】空数组含义;warn 或文档。
+6. ⏸ capabilities 矛盾组合 warn 对齐 ——【低】矛盾组合(如 dataOps:false + resources)对齐 warn。
+7. ⏸ preset 对象整体替换文档警示(**§五不动项·JS spread 语义**)——【低】preset 整体替换是 JS 语言语义;文档警示非 SDK 缺陷。
+
+### CA 并发组(P2×2)
+
+1. ⏸ activeScope 并发错乱 ——【低-中】`maxParallelTools>1` 同轮并发工具共享 activeScope 闭包 → dataOps scope 错乱;方向:AsyncLocalStorage / per-call token。与 P1-1 同根(并发边界)。
+2. ⏸ createSubagentsMiddleware 闭包单变量并发(M3 同型)——【中·已知】currentSignal/currentEmit/currentLogSink 闭包单变量,`maxParallelTools>1` 并发 wrapToolCall 互相覆盖 → 子 agent 继承无关工具的 signal/emit。默认串行(`maxParallelTools=1`)规避;彻底修需 spawn 工具从 ToolCallContext 取值。
+
+### RE fire-and-forget 组(P2×2)
+
+1. ⏸ autoTitle LLM 无 unmount 守卫 ——【低】autoTitle 异步 LLM 调用,unmount 后仍执行;无 abort/销毁守卫。与 deferred 挂起面 #3(trim LLM)同型。
+2. 🔁 persistRuntime void store.save 无 .catch ——【中-低】与 deferred 挂起面 #4 合并(persist 失败 unhandled rejection);一行 .catch + debugLogs。
+
+### P3×16(各维卫生,详见各 audit-<DIM>.md)
+
+P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM>.md`(不逐条登记)。其中 **VM 迁移系统性**(版本号 + 字段归一化)与 **CO 配置矩阵覆盖**(capabilities 组合 / 数值边界)有专项价值,特此标注。
 
 ---
 

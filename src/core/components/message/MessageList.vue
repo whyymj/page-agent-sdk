@@ -14,7 +14,9 @@ defineProps<{ showAvatar: boolean; showTyping: boolean }>()
 
 const ctx = useChatContext()
 const { chat, formatTime, copiedMsg, copyMessage, isPendingAssistant, isReasoningExpanded, toggleReasoning, canUndo, undo } = ctx
-const { state, scrollContainer, onScroll, onWheel, retry, regenerate } = chat
+// 滚动容器已上移至 ChatDialog 的 .chat-main(消息 + queued/approval/conflict 统一滚动);
+// 此处只取状态与重试方法
+const { state, retry, regenerate } = chat
 
 const hasMessages = computed(() => state.messages.length > 0)
 const hasUserMessage = computed(() => state.messages.some((m) => m.role === 'user'))
@@ -23,7 +25,7 @@ const lastIsAssistant = computed(() => state.messages[state.messages.length - 1]
 </script>
 
 <template>
-  <div class="chat-body" ref="scrollContainer" @scroll="onScroll" @wheel="onWheel">
+  <div class="chat-body">
     <div v-if="!hasMessages" class="empty-state">
       <div class="empty-icon">💬</div>
       <p>有什么可以帮你的?</p>
@@ -65,10 +67,11 @@ const lastIsAssistant = computed(() => state.messages[state.messages.length - 1]
 </template>
 
 <style scoped>
-.chat-body { flex: 1; overflow-y: auto; padding: 16px; min-height: 0; overscroll-behavior: contain; }
+/* 滚动由外层 .chat-main(ChatDialog)承担;此处仅消息流容器,撑满滚动区可视高度(空态居中) */
+.chat-body { padding: 16px; display: flex; flex-direction: column; min-height: 100%; }
 /* 注:不设 scroll-behavior:smooth —— 流式生成频繁 scrollToBottom,smooth 动画会与 @scroll 的 stick-to-bottom 判定竞争 */
 
-.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 200px; color: #9ca3af; }
+.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; min-height: 200px; color: #9ca3af; }
 .empty-icon { font-size: 48px; margin-bottom: 12px; }
 .empty-state p { font-size: 14px; }
 
