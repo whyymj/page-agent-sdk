@@ -18,3 +18,7 @@
 
 - [x] C1 README 中英:presets 段 pageBuilder 描述补「默认带 HTML 代码 agent(schema 有 code 数组时)」
 - [x] C2 doc/usage-guide 中英 + CLAUDE.md:pageBuilder 描述同步;CHANGELOG [Unreleased]
+
+## 阶段 F:发布
+
+- [x] F1 门禁全绿 → bump → 发布(已随 3.7.0 发布)

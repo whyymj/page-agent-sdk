@@ -236,6 +236,10 @@ export function applyPatchesToBind(args: {
       const pr = maybeParseValue(p.value)
       if (pr.parseError) return { ok: false, error: jsonParseError(`patches[${i}]`, p.value, pr.parseError) }
       pVal = pr.parsed
+      // move 的 value 是目标路径:同样过白名单(防经 move 把元素移进 schema 未声明路径)
+      if (op === 'move' && typeof pVal === 'string' && !isPathAllowed(pVal, schema, allowKeys)) {
+        return { ok: false, error: toolError({ code: 'PATH_DENIED', message: `patches[${i}] move 目标 "${pVal}" 不在 schema 声明字段内`, hint: 'move 的 value(目标路径)也须在 schema 声明字段内' }) }
+      }
     }
     const patchErr = applyPatchToClone(clone, op, jp, pVal)
     if (patchErr) return { ok: false, error: toolError({ code: 'PATCH_FAILED', message: `patches[${i}]: ${patchErr}`, hint: '检查 op 与目标类型:merge 需对象,append 需数组' }) }
@@ -592,7 +596,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       description:
         '增量编辑主数据(对象/数组),只发改动的 patch,无需重传整个大对象。op:set(在 jsonPath 设值)、remove(删 jsonPath)、merge(把 value 合并到 jsonPath 指向的对象,默认根)、append(把 value 追加到 jsonPath 指向的数组,默认根)。jsonPath 为相对主数据根的点号路径(数组索引用数字,如 components.0.text);value 为 JSON 对象(推荐直传)或 JSON 字符串。整体仍经 schema 校验,失败不写入。expectedHash(可选):改前 read/get 返回的 hash;不传时自动用你最后读到的 hash(autoLock,默认开)防"基于过期值覆盖"。',
       schema: z.object({
-        op: z.enum(['set', 'remove', 'merge', 'append']).optional().describe('增量操作(顶层或 patch.op 至少一个):set/remove/merge/append'),
+        op: z.enum(['set', 'remove', 'merge', 'append', 'move']).optional().describe('增量操作(顶层或 patch.op 至少一个):set 设值/remove 删/merge 合并/append 追加/move 移动数组元素(value=目标路径字符串,数组本身=追加/数组内下标=插入;同数组即重排,目标下标按移除源后解释)'),
         jsonPath: z.string().optional().describe('相对主数据根的点号路径(如 components.0.text);顶层或 patch.jsonPath。set/remove 必填,merge/append 不填则作用于根'),
         value: z.unknown().optional().describe('JSON 对象(推荐直传,如 {text:"x"})或 JSON 字符串;顶层或 patch.value(set/merge/append 必填)'),
         expectedHash: z.string().optional().describe('乐观锁:改前 read/get 返回的 hash;传入则校验,不一致拒绝写入防覆盖。不传则自动用你最后读到的 hash(autoLock)'),
@@ -1043,12 +1047,12 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       schema: z.object({
         value: z.unknown().optional().describe('JSON 对象(推荐,如 {title:"x"})或 JSON 字符串;set 整体或单个 patch 的 set/merge/append 必填'),
         patch: z.object({
-          op: z.enum(['set', 'remove', 'merge', 'append']).optional().describe('增量操作:set 设值/remove 删/merge 合并对象/append 追加数组。单 patch edit 缺省按 set;del 模式(write({patch:{jsonPath},del:true}))不读 op 可省略'),
+          op: z.enum(['set', 'remove', 'merge', 'append', 'move']).optional().describe('增量操作:set 设值/remove 删/merge 合并对象/append 追加数组/move 移动数组元素(value=目标路径字符串)。单 patch edit 缺省按 set;del 模式(write({patch:{jsonPath},del:true}))不读 op 可省略'),
           jsonPath: z.string().optional().describe('相对主数据根的点号路径(如 components.0.text);set/remove 必填,merge/append 不填则作用于根'),
           value: z.unknown().optional().describe('该 patch 的值(JSON 直传或 JSON 字符串);set/merge/append 必填,remove 不需。与顶层 value 二选一:优先 patch.value,未填则回退顶层 value(向后兼容)。推荐用 patch.value(自带,与 patches 元素一致,无歧义)'),
         }).optional().describe('单个增量编辑(自带 value,与 patches 元素一致);传 patch(无 patches)走单 patch edit 语义'),
         patches: z.array(z.object({
-          op: z.enum(['set', 'remove', 'merge', 'append']),
+          op: z.enum(['set', 'remove', 'merge', 'append', 'move']),
           jsonPath: z.string().optional().describe('相对主数据根的点号路径;set/remove 必填,merge/append 不填则作用于根'),
           value: z.unknown().optional().describe('JSON 值(推荐直传)或 JSON 字符串;set/merge/append 必填,remove 不需'),
         })).optional().describe('批量增量编辑:一次原子应用多个 patch(任一失败则整体不写入,clone 试跑全部 + schema 校验通过才落 live)。适合一次改多处,减少多轮往返'),

@@ -393,4 +393,45 @@ export async function run(ctx: TestCtx): Promise<void> {
       assert(typeof all[c.name] === 'boolean', `resolveCapabilities → ${c.name} 解析为 boolean(非 undefined)`)
     }
   }
+
+  // ===== move op(jsonUtils moveByPath + write/edit patches 集成)=====
+  {
+    const { moveByPath } = await import('../../tools/jsonUtils')
+    // ① 同数组重排:components.2 → components.0(提到最前)
+    const d1: any = { components: [{ id: 1 }, { id: 2 }, { id: 3 }] }
+    assert(moveByPath(d1, 'components.2', 'components.0') === null && d1.components.map((c: any) => c.id).join(',') === '3,1,2',
+      '✓ move 同数组重排:components.2 → components.0 提到最前(目标下标按移除源后解释)')
+    // ② 跨数组移动到数组本身(追加)
+    const d2: any = { components: [{ id: 1 }, { id: 2 }], sections: [{ children: [{ id: 9 }] }] }
+    assert(moveByPath(d2, 'components.1', 'sections.0.children') === null && d2.components.length === 1 && d2.sections[0].children.map((c: any) => c.id).join(',') === '9,2',
+      '✓ move 跨数组:目标为数组本身 → 追加到末尾(append+remove 一步原子)')
+    // ③ 跨数组移动到数组内下标(插入)
+    const d3: any = { a: [{ id: 1 }, { id: 2 }], b: [{ id: 'x' }, { id: 'y' }] }
+    assert(moveByPath(d3, 'a.0', 'b.1') === null && d3.a.map((c: any) => c.id).join(',') === '2' && d3.b.map((c: any) => c.id).join(',') === 'x,1,y',
+      '✓ move 跨数组:目标为数组内下标 → 插入到该位置')
+    // ④ 下标越界 clamp 到末尾
+    const d4: any = { components: [{ id: 1 }, { id: 2 }] }
+    assert(moveByPath(d4, 'components.0', 'components.99') === null && d4.components.map((c: any) => c.id).join(',') === '2,1',
+      '✓ move 目标下标越界 → clamp 到末尾(不报错不丢元素)')
+    // ④.5 目标数组尚不存在(容器首次挂 children)→ 自动建空数组再追加(与 setByPath 自动建中间容器语义一致)
+    const d45: any = { components: [{ id: 1, name: 'hero' }, { id: 2, name: 'x' }] }
+    assert(moveByPath(d45, 'components.1', 'components.0.children') === null && d45.components.length === 1 && d45.components[0].children?.[0]?.name === 'x',
+      '✓ move 目标数组不存在 → 自动建数组追加(容器首次挂 children 一步完成)')
+    // ⑤ 错误面:源父级非数组 / 目标非数组 / value 非路径字符串
+    assert(moveByPath({ a: { id: 1 } }, 'a', 'b') !== null, '✓ move 源父级非数组 → 报错(仅支持数组元素)')
+    assert(moveByPath({ a: [{ id: 1 }], b: { id: 2 } }, 'a.0', 'b') !== null, '✓ move 目标非数组 → 报错')
+    assert(moveByPath({ a: [{ id: 1 }], b: [] }, 'a.0', 123) !== null, '✓ move value 非字符串 → 报错(提示 value=目标路径)')
+
+    // ⑥ write 工具集成:patch move 落地 + schema 校验
+    const { createDataOps } = await import('../../tools/dataOps')
+    const bindM: any = { components: [{ type: 'banner', title: 'a' }, { type: 'navbar', title: 'b' }] }
+    const toolsM = createDataOps({ schema: z.object({ components: z.array(z.object({ type: z.string(), title: z.string() })) }), bind: bindM, description: 'm' })
+    const tM = byName(toolsM)
+    const rm = await invoke(tM['write'], { patch: { op: 'move', jsonPath: 'components.1', value: 'components.0' } })
+    assert(!/PATCH_FAILED|PATH_DENIED/.test(rm) && bindM.components[0].title === 'b' && bindM.components[1].title === 'a',
+      '✓ write patch move:同数组调序一步落地(schema 校验通过)')
+    // ⑦ move 目标路径白名单:未声明路径 → PATH_DENIED
+    const rd = await invoke(tM['write'], { patch: { op: 'move', jsonPath: 'components.0', value: 'undeclared.0' } })
+    assert(/PATH_DENIED/.test(rd) && bindM.components.length === 2, '✓ move 目标路径过白名单:未声明路径拒绝(防经 move 移进未声明区)')
+  }
 }

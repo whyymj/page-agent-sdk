@@ -7,7 +7,7 @@
  * evolve-default-toolset 的 diffObjects(差异对比)落入本文件。
  */
 
-export type EditOp = 'set' | 'remove' | 'merge' | 'append'
+export type EditOp = 'set' | 'remove' | 'merge' | 'append' | 'move'
 
 export const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 
@@ -179,11 +179,62 @@ export function applyPatchToClone(clone: any, op: EditOp, jsonPath: string, valu
     safeMerge(target as Record<string, any>, value)
     return null
   }
+  if (op === 'move') return moveByPath(clone, jsonPath, value)
   const arr = jsonPath ? getByPath(clone, jsonPath) : clone
   if (!Array.isArray(arr)) return `append 目标${jsonPath ? `(${jsonPath})` : '(根)'}不是数组`
   if (Array.isArray(value)) arr.push(...value)
   else arr.push(value)
   return null
+}
+
+/** 解析路径的父容器与末段 key(路径不存在返 null) */
+function resolveParent(obj: unknown, path: string): [parent: any, lastKey: string] | null {
+  const keys = path.split('.')
+  let cur: any = obj
+  for (let i = 0; i < keys.length - 1; i++) {
+    if (cur == null) return null
+    cur = cur[keys[i]]
+  }
+  return [cur, keys[keys.length - 1]]
+}
+
+/**
+ * move:把 jsonPath 指向的**数组元素**移动到 value(目标路径字符串)位置 —— 同数组 = 重排(交换/前移/后移一步完成),
+ * 跨数组 = 移动(替代 append+remove 两步)。目标两种形态:数组本身路径(追加到末尾,如 'sections.1.children')
+ * 或数组内下标路径(插入到该下标,如 'components.0')。**目标下标按移除源元素后的数组解释**(与直觉一致:
+ * move components.2 → components.0 即"提到最前")。仅支持数组元素(对象属性移动不做,语义含歧义)。
+ * 返回错误信息或 null(成功)。纯函数,applyPatchToClone / applyPatchToLive 共用。
+ */
+export function moveByPath(root: any, jsonPath: string, toPath: unknown): string | null {
+  if (!jsonPath) return 'move 操作需要 jsonPath(源数组元素路径,如 components.2)'
+  if (typeof toPath !== 'string' || !toPath) return 'move 的 value 必须是目标路径字符串(数组本身=追加,如 "sections.1.children";数组内下标=插入,如 "components.0")'
+  if (isUnsafePath(toPath)) return `move 目标路径 "${toPath}" 含非法段`
+  const src = resolveParent(root, jsonPath)
+  if (!src || !Array.isArray(src[0])) return `move 源的父级不是数组(仅支持数组元素移动,jsonPath 应指向数组下标,如 components.2)`
+  const srcIdx = Number(src[1])
+  if (!Number.isInteger(srcIdx) || srcIdx < 0 || srcIdx >= src[0].length) return `move 源下标越界:${jsonPath}(父数组长度 ${src[0].length})`
+  const element = src[0][srcIdx]
+  src[0].splice(srcIdx, 1)  // 先移除;目标下标按移除后的数组解释
+  const dest = getByPath(root, toPath)
+  if (Array.isArray(dest)) {
+    dest.push(element)      // 目标是数组本身 → 追加末尾
+    return null
+  }
+  // 目标数组尚不存在(如容器首次挂 children)且父级是对象 → 自动建空数组再追加(与 setByPath 自动建中间容器语义一致)
+  if (dest === undefined) {
+    const dp = resolveParent(root, toPath)
+    if (dp && dp[0] != null && typeof dp[0] === 'object' && !/^\d+$/.test(dp[1])) {
+      dp[0][dp[1]] = [element]
+      return null
+    }
+  }
+  const dst = resolveParent(root, toPath)
+  if (dst && Array.isArray(dst[0]) && /^\d+$/.test(dst[1])) {
+    const idx = Math.min(Number(dst[1]), dst[0].length)  // 越界 clamp 到末尾
+    dst[0].splice(idx, 0, element)
+    return null
+  }
+  return `move 目标 "${toPath}" 不是数组(目标须为数组本身(追加)或数组内某下标(插入))`
 }
 
 /** 就地把 patch 落到 live bind(改子属性,不替换 bind 根引用 → 兼容 reactive) */
@@ -195,6 +246,8 @@ export function applyPatchToLive(bind: any, op: EditOp, jsonPath: string, value:
   } else if (op === 'merge') {
     const target = (jsonPath ? getByPath(bind, jsonPath) : bind) as Record<string, unknown>
     safeMerge(target as Record<string, any>, value)
+  } else if (op === 'move') {
+    moveByPath(bind, jsonPath, value)  // 失败静默(clone 路径已校验报错过;live 兜底不该再炸)
   } else {
     const arr = (jsonPath ? getByPath(bind, jsonPath) : bind) as unknown[]
     if (Array.isArray(value)) arr.push(...value)

@@ -1097,7 +1097,7 @@ export interface TraceMetrics {
 /** 从 TraceSpan[] 聚合 metrics(纯函数:轮次/延迟/工具成功率/重试/压缩/token) */
 export declare function getTraceMetrics(spans: TraceSpan[]): TraceMetrics;
 // ============ 通用 JSON 操作纯函数(jsonUtils,refactor-module-extraction 从 dataOps 抽离;零依赖,经 ./query subpath 按需引入)============
-export type EditOp = 'set' | 'remove' | 'merge' | 'append';
+export type EditOp = 'set' | 'remove' | 'merge' | 'append' | 'move';
 export declare const UNSAFE_KEYS: Set<string>;
 export declare function isUnsafePath(path: string): boolean;
 export declare function safeMerge(target: Record<string, any>, src: unknown): void;
@@ -1112,6 +1112,8 @@ export declare function safeStringify(value: unknown, maxLen?: number): string;
 export declare function hashValue(value: unknown): string;
 export declare function applyPatchToClone(clone: any, op: EditOp, jsonPath: string, value: unknown): string | null;
 export declare function applyPatchToLive(bind: any, op: EditOp, jsonPath: string, value: unknown): void;
+/** move op:把 jsonPath 指向的数组元素移动到 toPath 位置(数组本身=追加/数组内下标=插入;同数组即重排,目标下标按移除源后解释)。返回错误信息或 null */
+export declare function moveByPath(root: any, jsonPath: string, toPath: unknown): string | null;
 export declare function restoreLive(bind: any, snapshotVal: unknown): void;
 export declare function restoreInPlace(live: Record<string, unknown> | unknown[], snapshotVal: unknown): void;
 /** 深度差异对比(对象/数组递归,叶子差异),返回 {path, from, to}[];供 diff_data / verify 自纠 / 审计复用 */

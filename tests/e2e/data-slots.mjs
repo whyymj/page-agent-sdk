@@ -56,6 +56,49 @@ export async function run() {
     sdk.unmount()
   }
 
+
+  console.log('[e2e:data] write patch move:同数组重排 + 跨数组移动(一步原子,替代双 set 交换 / append+remove 两步)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    const bind = {
+      components: [
+        { type: 'navbar', title: '导航' },
+        { type: 'banner', title: '横幅' },
+        { type: 'custom', name: 'hero', code: '<section>hero</section>' },
+      ],
+    }
+    const llm = stubModel(
+      { toolCalls: [{ name: 'read', args: { jsonPath: 'components' } }] },
+      // 轮 1:hero(下标 2)提到最前(同数组重排)
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'move', jsonPath: 'components.2', value: 'components.0' } } }] },
+      // 轮 2:横幅移入 hero 容器(跨数组,用回 read 刷基线后的新下标)
+      { toolCalls: [{ name: 'read', args: { jsonPath: 'components' } }] },
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'move', jsonPath: 'components.2', value: 'components.0.children' } } }] },
+      { text: '已重排并移入容器' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-move-op', storage: false, llm,
+      capabilities: MIN_CAPS,
+      data: {
+        schema: z.object({
+          components: z.array(z.discriminatedUnion('type', [
+            z.object({ type: z.literal('navbar'), title: z.string() }),
+            z.object({ type: z.literal('banner'), title: z.string() }),
+            z.object({ type: z.literal('custom'), name: z.string(), code: z.string(), children: z.array(z.object({ type: z.string(), title: z.string() })).optional() }),
+          ])),
+        }),
+        bind, description: '测试',
+      },
+    })
+    await sdk.mount()
+    await sdk.send('调整组件顺序并移入容器')
+    assert(bind.components[0].name === 'hero', '✓ move 同数组重排:components.2 → components.0(hero 提到最前)')
+    assert(bind.components[1].type === 'navbar' && bind.components.length === 2 && !bind.components.some((c) => c.type === 'banner'), '✓ move 重排后相对顺序保持(navbar 紧随 hero;banner 已被第 2 轮移入 children)')
+    assert(Array.isArray(bind.components[0].children) && bind.components[0].children[0]?.title === '横幅',
+      '✓ move 跨数组:banner 移入 hero.children(一步,免 append+remove 两步非原子)')
+    sdk.unmount()
+  }
+
   console.log('[e2e:data] 数组子项删除 splice:length 递减、元素前移、无稀疏空位(fix-dataops-write-correctness)')
   {
     const { createDataOps } = await import('../../dist/page-agent-sdk.js')

@@ -81,7 +81,7 @@ export interface CreateHtmlSubagentOptions {
 function htmlSystemPrompt(prefix: string): string {
   const ext = 'html'
   const kindRules = `- 输出形态:完整、自包含的 HTML 页面(.${ext},可独立成页)`
-  return `你是纯代码组件生成专家。可用工具:vfs_write / vfs_edit / vfs_rm(写/改/删代码工作副本 vfs ${prefix}) / vfs_read + vfs_grep(读 vfs) / validate_code(代码格式自检) / write + set(写 data,writablePaths 限定) / read / write_todos + update_todo(规划)。
+  return `你是纯代码组件生成专家。可用工具:vfs_write / vfs_edit / vfs_rm(写/改/删代码工作副本 vfs ${prefix}) / vfs_read + vfs_grep(读 vfs) / validate_code(代码格式自检) / write(写 data,writablePaths 限定;set/patch 增量或整体) / read / write_todos + update_todo(规划)。
 
 收 task 规格照做(减少你自己的思考纠结):task 含视觉(配色/质感)+ 内容(文案/数据)+ 交互(动效/触发)规格时,**照规格实现**(技术实现 SVG vs CSS / keyframes vs transition 自行选成熟模式,不穷举);task 缺规格(主 agent 漏写)时,按字面意图选**一个简单方案**直接实现,不纠结「该用什么风格」—— 主 agent 掌整页主题协调,你负责落地。
 

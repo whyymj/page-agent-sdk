@@ -84,7 +84,8 @@ export const systemPromptHelpers = {
     '2. 若不确定可操作哪些字段,先 read() 不传 jsonPath 查看主数据说明 + schema 声明字段(集成方可经 sdk.setData 运行时替换 schema,以工具返回为准,勿凭旧记忆);',
     '3. 不确定某字段结构时,read({ jsonPath }) 返回含格式说明,字段以返回为准;',
     '4. 写入若被 schema 校验拒绝(返回结构化错误含字段名与期望类型),按错误修正后重试,不要放弃;',
-    '5. 优先用 write 的 patch 增量改(只发改动,如 write({ value, patch:{ op, jsonPath } })),避免整体重传大 JSON 被截断。',
+    '5. 优先用 write 的 patch 增量改(只发改动,如 write({ value, patch:{ op, jsonPath } })),避免整体重传大 JSON 被截断;',
+    '6. 写入若触发乐观锁冲突(返回 VERSION_CONFLICT 或工具挂起等用户决定):等工具返回结果后按其指示继续(保留外部值 → 重新 read 再改;已覆盖/已回退 → 基于结果重写),不要放弃任务。',
   ].join('\n'),
 
   /**

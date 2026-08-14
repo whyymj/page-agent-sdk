@@ -222,7 +222,7 @@ Declare `data`; the Agent reads/writes via tools, validated by schema:
 
 Key points:
 - `set`/`edit`/`delete` are restricted to schema-declared fields (whitelist for ZodObject); `set`/`edit` validate against schema — invalid → structured error (no write)
-- `edit_data` patches by `jsonPath` (set/remove/merge/append) — avoids re-sending the whole large JSON; writes in-place without replacing the root ref → Vue-reactive compatible
+- `edit_data` patches by `jsonPath` (set/remove/merge/append/move (move: value = target path string; same array = reorder, cross-array = relocate)) — avoids re-sending the whole large JSON; writes in-place without replacing the root ref → Vue-reactive compatible
 - Snapshots auto-stored before `set`/`edit`/`delete`; `restore_data` rolls back
 - **No `window` dependency**: `data.bind` is any reactive/plain object tools read/write directly; only `eval_script` needs Web Worker (browser)
 

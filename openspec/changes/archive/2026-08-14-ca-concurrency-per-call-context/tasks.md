@@ -22,3 +22,7 @@
 ## 阶段 D:文档
 
 - [x] D1 CLAUDE.md 并发段一句话 + deferred.md CA 组标 ✅;CHANGELOG [Unreleased]
+
+## 阶段 E:发布
+
+- [x] E1 已随 3.7.0 发布

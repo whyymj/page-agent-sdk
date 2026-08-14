@@ -7,6 +7,13 @@
 > ℹ️ 本段累积了 2.23.0 → 2.24.1 多个已发布版本的内容(harden-eval-sandbox / main-flow-audit / context-inspector / arch-review P1 / demo 主题 / session-history / 串行化 / simplify-toolset 等),待按 git tag 逐条归入对应版本段(已知文档债,本次未拆)。
 
 ### Added
+- **patch op `move`(移动/重排数组元素一步完成)**:`{op:'move', jsonPath:'components.2', value:'components.0'}` —— 同数组即重排(替代双 set 交换,索引易错),跨数组即移动(替代 append+remove 两步非原子);目标可为数组本身(追加;不存在且父级为对象时自动建数组)或数组内下标(插入,越界 clamp);目标下标按移除源后解释;仅支持数组元素;目标路径同样过 schema 白名单;进 patches 原子批。新导出 `moveByPath` 纯函数
+### Fixed
+- **draftWrite 提示词与工具面不一致(simple 模式教 LLM 调不存在的工具)**:SIMPLE_HIDDEN 滤除 draft_write/draft_commit 但 usageHints 照常注入用法 → 补 `!simple` 守卫
+### Changed
+- **spawn 委派提示更新**:补 writablePaths 授写说明 + spawn_agents 并行委派(注明并行不可授写,写操作由主 agent 收尾)
+- **reliableWriteRules 补第 6 条**:乐观锁冲突(VERSION_CONFLICT/挂起等用户)的行为预期,防 LLM 遇冲突放弃任务
+- htmlSystemPrompt 工具清单措辞修正(`write + set` → `write(set/patch)`)
 - **presets.pageBuilder 默认带 HTML 代码子 agent**:`createChatSdk({ ...presets.pageBuilder, container, llm, data })` spread 一步 = 完整页面搭建能力(schema 有「数组元素含 code 字段」时自动获得委派编排 + code 资产机制;显式传 `subagents` spread 覆盖即替换);`subagents` 经 getter 每次取值新建 config(防装配期回填 writablePaths 跨实例污染共享单例)
 
 ### Changed
