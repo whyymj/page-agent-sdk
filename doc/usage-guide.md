@@ -1704,7 +1704,7 @@ createChatSdk({ ...presets.pageBuilder, container: '#root', llm, data })  // 页
 createChatSdk({ ...presets.researcher, container, llm })                         // 并行调研
 createChatSdk({ ...presets.minimal, container, llm, data })               // 极简(关高级能力)
 ```
-可用预设:`pageBuilder`(读写 window 驱动页面)、`researcher`(spawn_agents 并行调研)、`minimal`(关闭所有高级能力,省 token)。
+可用预设:`pageBuilder`(读写主数据驱动页面;**3.6+ 默认带 HTML 代码子 agent** —— schema 有「数组元素含 code 字段」时自动获得委派编排 + code 资产机制(vfs 工作副本 + 格式校验 + 增量 commit),无 code 数组自动剔除不影响纯数据页面;显式传 `subagents` spread 覆盖即替换)、`researcher`(spawn_agents 并行调研)、`minimal`(关闭所有高级能力,省 token)。
 
 ### 8.5 服务端(Node.js)用法
 

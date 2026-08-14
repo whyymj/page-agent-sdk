@@ -270,14 +270,20 @@ export function wrapWithPathGuard(t: StructuredToolInterface, prefixes: string[]
   }) as StructuredToolInterface
 }
 
-/** 包一层 scope proxy:invoke 期间切 dataOps activeScope 到 scopeId,finally 恢复(嵌套安全)。P1-13 */
+/**
+ * 包一层 scope proxy:invoke 期间切 dataOps activeScope 到 scopeId,finally 恢复(嵌套安全)。P1-13
+ * CA 并发修复:同时经 RunnableConfig.configurable.__pgDataScope 传 per-call scope token(dataOps 工具 fns
+ * 优先取 token,并发交错不再读错 scope);下方 enter/exit ambient 保留为兜底(无 config 的旧路径)。
+ */
 export function wrapWithScope(t: StructuredToolInterface, scopeId: string, enter: (id: string) => () => void): StructuredToolInterface {
   return new Proxy(t, {
     get(target, prop, receiver) {
       if (prop === 'invoke') {
-        return async (args: unknown) => {
+        return async (args: unknown, config?: { configurable?: Record<string, unknown> }) => {
           const exit = enter(scopeId)
-          try { return await target.invoke(args) } finally { exit() }
+          try {
+            return await target.invoke(args, { ...config, configurable: { ...config?.configurable, __pgDataScope: scopeId } })
+          } finally { exit() }
         }
       }
       return Reflect.get(target, prop, receiver)
@@ -437,25 +443,33 @@ async function runSubagent(
 
 export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
   const maxParallel = opts.maxParallel ?? DEFAULT_MAX_PARALLEL
-  // 当前主循环的 signal / emit / logSink(由 wrapToolCall 捕获,供 spawn 工具继承/转发)。
-  // ⚠️ 并发限制(M3,已知):此为闭包级单变量,maxParallelTools>1 时并发工具调用的 wrapToolCall 会互相覆盖,
-  // 子 agent 可能继承到无关工具的 signal/emit(停止信号错乱 / 进度转发到错误 handler)。
-  // 默认 maxParallelTools=1(串行)规避;subagent 场景建议保持串行。彻底修需让 spawn 工具从 ToolCallContext 取这些值(待后续)
+  // 当前主循环的 signal / emit / logSink(供 spawn 工具继承/转发)。
+  // CA 并发修复(per-call 通道):优先从工具 fn 第二参 config.configurable.__pgSubagentCall 取本次调用的值
+  // (wrapToolCall 注入 ctx.callConfig → coreExecTool 透传;并发工具各持独立 ctx,不再互相覆盖);
+  // 下方闭包单变量降为 fallback(无 config 通道的旧调用路径),maxParallelTools>1 不再有 M3 错乱
   let currentSignal: AbortSignal | undefined
   let currentEmit: ((e: StreamEvent) => void) | undefined
   let currentLogSink: ((e: any) => void) | undefined
 
-  /** 把子进度(subagent 事件)转发到主 UI(经 currentEmit)+ 观察层累积 steps */
-  const makeForward = (taskId: string, label: string) => (e: SubProgress): void => {
+  /** per-call 值解析:优先本次工具调用的 config 注入,降级闭包 fallback(非并发下两者同值) */
+  const callCtxOf = (config: unknown): { signal?: AbortSignal; emit?: (e: StreamEvent) => void; logSink?: (e: any) => void } => {
+    const c = (config as { configurable?: Record<string, unknown> } | undefined)?.configurable?.__pgSubagentCall as
+      | { signal?: AbortSignal; emit?: (e: StreamEvent) => void; logSink?: (e: any) => void }
+      | undefined
+    return c ?? { signal: currentSignal, emit: currentEmit, logSink: currentLogSink }
+  }
+
+  /** 把子进度(subagent 事件)转发到主 UI(经 per-call emit)+ 观察层累积 steps */
+  const makeForward = (taskId: string, label: string, emit?: (e: StreamEvent) => void) => (e: SubProgress): void => {
     // reasoning 是高频增量(每 token 一条):只转发到 UI 累积(spawnStep.subReason),不进 tracker 步骤摘要(防爆)
     if (e.type === 'reasoning') {
-      currentEmit?.({ type: 'subagent', taskId, label, kind: 'reasoning', name: '', delta: e.delta })
+      emit?.({ type: 'subagent', taskId, label, kind: 'reasoning', name: '', delta: e.delta })
       return
     }
     // 观察层:累积子工具进度摘要(只记 kind+name+ts;全文在事件/messages)
     opts.tracker?.pushStep(taskId, { kind: e.type, name: e.name, ts: Date.now() })
-    if (!currentEmit) return
-    currentEmit({
+    if (!emit) return
+    emit({
       type: 'subagent',
       taskId,
       label,
@@ -468,7 +482,9 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
   }
 
   const spawnOne = tool(
-    async ({ prompt, role, tools, writablePaths, model }) => {
+    async ({ prompt, role, tools, writablePaths, model }, config) => {
+      // per-call signal/emit/logSink(CA 并发修复):并发委派各用各的,不再串到无关工具的值
+      const call = callCtxOf(config)
       // P1-16(fix-authorization-surface):spawn 自授 tools 剥离写工具 —— 写权限只能经 writablePaths(path guard)获得;
       // 框架/保留工具(use_*/spawn/load_skill 等)由 buildChildTools 装配期兜底排除
       const granted = (tools ?? []).filter((t) => !SUB_WRITE_TOOLS.includes(t))
@@ -477,12 +493,12 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
         : opts
       const taskId = `sub-${Math.random().toString(36).slice(2, 8)}`
       const label = role?.trim() || '子任务'
-      const onLog = (entry: any) => currentLogSink?.({ ...entry, source: `子:${label}` })
+      const onLog = (entry: any) => call.logSink?.({ ...entry, source: `子:${label}` })
       // 观察层:记 active(委派开始)
       const startedAt = Date.now()
       opts.tracker?.start(taskId, prompt, label, startedAt)
       try {
-        const result = await runSubagent({ prompt, role, model }, subOpts, currentSignal, makeForward(taskId, label), onLog, currentEmit)
+        const result = await runSubagent({ prompt, role, model }, subOpts, call.signal, makeForward(taskId, label, call.emit), onLog, call.emit)
         opts.tracker?.finish(taskId, 'done', result)
         return result
       } catch (e) {
@@ -505,7 +521,9 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
   )
 
   const spawnMany = tool(
-    async ({ tasks }) => {
+    async ({ tasks }, config) => {
+      // per-call signal/emit/logSink(CA 并发修复):并发委派各用各的,不再串到无关工具的值
+      const call = callCtxOf(config)
       // 并发池(maxParallel):子 agent 间并行,结果按原顺序聚合;signal 继承
       // P1-14(allSettled 语义):逐任务 try/catch 结算,失败不 throw —— 修原 Promise.all 整体 reject:
       // 一个子失败 → 已成功兄弟结果全丢 + 主 LLM 只见一条错误。现各自结算,聚合文本 ✓/✗ 逐条,主 LLM 决策如何处理
@@ -515,12 +533,12 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
         async (t, i) => {
           const taskId = `sub-${i}-${Math.random().toString(36).slice(2, 6)}`
           const label = t.role?.trim() || `子任务${i + 1}`
-          const onLog = (entry: any) => currentLogSink?.({ ...entry, source: `子:${label}` })
+          const onLog = (entry: any) => call.logSink?.({ ...entry, source: `子:${label}` })
           // 观察层:记 active(并行委派,各 taskId 独立 entry)
           const startedAt = Date.now()
           opts.tracker?.start(taskId, t.prompt, label, startedAt)
           try {
-            const r = await runSubagent(t, opts, currentSignal, makeForward(taskId, label), onLog, currentEmit)
+            const r = await runSubagent(t, opts, call.signal, makeForward(taskId, label, call.emit), onLog, call.emit)
             opts.tracker?.finish(taskId, 'done', r ?? '(未完成)')
             return { ok: true as const, text: r ?? '(未完成)' }
           } catch (e) {
@@ -529,7 +547,7 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
             return { ok: false as const, error: msg }
           }
         },
-        currentSignal,
+        call.signal,
       )
       return results
         .map((r, i) =>
@@ -559,10 +577,13 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
     name: 'subagent',
     tools: [spawnOne, spawnMany],
     wrapToolCall: async (ctx, next) => {
-      // 捕获主循环 signal(主停则子停)+ emit(子进度转发到主 UI)
+      // 捕获主循环 signal(主停则子停)+ emit(子进度转发到主 UI)。
+      // per-call 注入(CA 并发修复):值随 ctx.callConfig 经 RunnableConfig 透传到工具 fn 第二参,
+      // 并发工具各持独立 ctx 不互相覆盖;闭包单变量仍同步维护(fallback + 非工具路径)
       if (ctx.signal) currentSignal = ctx.signal
       if (ctx.emit) currentEmit = ctx.emit
       if (ctx.logSink) currentLogSink = ctx.logSink
+      ctx.callConfig = { ...(ctx.callConfig ?? {}), __pgSubagentCall: { signal: ctx.signal ?? currentSignal, emit: ctx.emit ?? currentEmit, logSink: ctx.logSink ?? currentLogSink } }
       return next(ctx)
     },
   }
@@ -692,18 +713,26 @@ export function createSubagentsMiddleware(
   subagents: SubagentConfig[],
   main: SubagentsMiddlewareOptions,
 ): Middleware & { controller: SubagentsController } {
-  // 当前主循环 signal/emit/logSink(wrapToolCall 捕获,供 use_<id> 继承/转发子进度)
+  // 当前主循环 signal/emit/logSink(供 use_<id> 继承/转发子进度)。
+  // CA 并发修复(per-call 通道):优先工具 fn 第二参 config.configurable.__pgSubagentCall(并发各持独立值),
+  // 闭包单变量降 fallback —— 同 spawn 侧 callCtxOf 模式
   let currentSignal: AbortSignal | undefined
   let currentEmit: ((e: StreamEvent) => void) | undefined
   let currentLogSink: ((e: any) => void) | undefined
-  const makeForward = (taskId: string, label: string) => (e: SubProgress): void => {
+  const callCtxOf = (config: unknown): { signal?: AbortSignal; emit?: (e: StreamEvent) => void; logSink?: (e: any) => void } => {
+    const c = (config as { configurable?: Record<string, unknown> } | undefined)?.configurable?.__pgSubagentCall as
+      | { signal?: AbortSignal; emit?: (e: StreamEvent) => void; logSink?: (e: any) => void }
+      | undefined
+    return c ?? { signal: currentSignal, emit: currentEmit, logSink: currentLogSink }
+  }
+  const makeForward = (taskId: string, label: string, emit?: (e: StreamEvent) => void) => (e: SubProgress): void => {
     // reasoning 高频增量:只转发 delta 到 UI(spawnStep.subReason 累积),不附 name/args
     if (e.type === 'reasoning') {
-      currentEmit?.({ type: 'subagent', taskId, label, kind: 'reasoning', name: '', delta: e.delta })
+      emit?.({ type: 'subagent', taskId, label, kind: 'reasoning', name: '', delta: e.delta })
       return
     }
-    if (!currentEmit) return
-    currentEmit({
+    if (!emit) return
+    emit({
       type: 'subagent', taskId, label, kind: e.type, name: e.name,
       args: e.type === 'tool_call' ? e.args : undefined,
       result: e.type === 'tool_result' ? e.result : undefined,
@@ -735,14 +764,16 @@ export function createSubagentsMiddleware(
       v.push(s)
       t.push(
         tool(
-          async ({ task }) => {
+          async ({ task }, config) => {
+            // per-call signal/emit/logSink(CA 并发修复):并发委派各用各的
+            const call = callCtxOf(config)
             const opts = configToSubOpts(s, main)
-            const onLog = (entry: any) => currentLogSink?.({ ...entry, source: `子:${s.id}` })
+            const onLog = (entry: any) => call.logSink?.({ ...entry, source: `子:${s.id}` })
             // 观察层:唯一 observeId(并发安全 —— 同 use_<id> 多次并发不冲突);
             // 事件 taskId 保持 use_${s.id} 不变(不破坏 UI 嵌套分组),steps 经 forward wrapper 累积到 observeId
             const tracker = main.tracker
             const observeId = tracker ? `use_${s.id}-${Math.random().toString(36).slice(2, 6)}` : `use_${s.id}`
-            const baseForward = makeForward(`use_${s.id}`, s.id)
+            const baseForward = makeForward(`use_${s.id}`, s.id, call.emit)
             const forward = tracker
               ? (e: SubProgress) => {
                   // reasoning 高频增量不进 tracker 步骤摘要(防爆);只 baseForward 转发到 UI
@@ -753,7 +784,7 @@ export function createSubagentsMiddleware(
             const startedAt = Date.now()
             tracker?.start(observeId, task, s.id, startedAt)
             try {
-              const result = await runSubagent({ prompt: task }, opts, currentSignal, forward, onLog, currentEmit)
+              const result = await runSubagent({ prompt: task }, opts, call.signal, forward, onLog, call.emit)
               tracker?.finish(observeId, 'done', result)
               return result
             } catch (e) {
@@ -824,6 +855,8 @@ export function createSubagentsMiddleware(
       if (ctx.signal) currentSignal = ctx.signal
       if (ctx.emit) currentEmit = ctx.emit
       if (ctx.logSink) currentLogSink = ctx.logSink
+      // per-call 注入(CA 并发修复):随 ctx.callConfig 经 RunnableConfig 透传到 use_<id> fn 第二参
+      ctx.callConfig = { ...(ctx.callConfig ?? {}), __pgSubagentCall: { signal: ctx.signal ?? currentSignal, emit: ctx.emit ?? currentEmit, logSink: ctx.logSink ?? currentLogSink } }
       return next(ctx)
     },
   }

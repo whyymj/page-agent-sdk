@@ -506,4 +506,49 @@ export async function run(ctx: TestCtx): Promise<void> {
     await invoke(at4['delete_data'], { jsonPath: 'components.0' })
     assert(ap4.components.length === 0, '数组连续删除: 3→2→1→0,length 一路递减无残留空位')
   }
+
+  // ===== CA 并发修复:per-call scope token(RunnableConfig.configurable.__pgDataScope)=====
+  {
+    // 场景:ambient scope A 有过期基线(autoLock 会冲突);带 config scope B 的调用不受 A 污染(token 优先)
+    const pageC: any = { count: 1 }
+    const toolsC = createDataOps({ schema: z.object({ count: z.number() }), bind: pageC, description: 'c' })
+    const tC = byName(toolsC)
+    const ctl = (toolsC as any).controller
+    // ① ambient 切到 scope-A 并 read 建基线
+    const exitA = ctl.enterScope('scope-A')
+    await invoke(tC['get_data'], {})
+    // ② 外部改 bind(基线过期;无 token 时 autoLock 必冲突挂起)
+    pageC.count = 99
+    // ③ 带 per-call token scope-B 的 set:读 B 基线(空 → 无 effHash → 直接写),不冲突
+    const r3 = await tC['set_data'].invoke({ value: '{ "count": 5 }' }, { configurable: { __pgDataScope: 'scope-B' } })
+    assert(!/CONFLICT/.test(r3) && pageC.count === 5, '✓ per-call scope token 优先:带 __pgDataScope 的写用 B 基线,不被 ambient scope-A 过期基线污染')
+    // ④ 对照:不带 token 的 set 走 ambient scope-A 过期基线 → autoLock 冲突挂起(证明 ③ 确实走了 token 而非巧合)
+    pageC.count = 77  // 再制造一次外部改动
+    await invoke(tC['get_data'], {})  // 刷新 scope-A 基线(=77 的 hash)
+    pageC.count = 88  // 基线再次过期
+    const r4 = await invoke(tC['set_data'], { value: '{ "count": 6 }' })
+    assert(/CONFLICT/.test(r4), '✓ 对照:无 token 走 ambient 过期基线 → 冲突(隔离来自 token 而非 ambient)')
+    if ((ctl as any).exitScope) ctl.exitScope('scope-A')
+    exitA?.()
+  }
+
+  // ===== CA 并发修复:wrapToolCall → coreExecTool 的 per-call config 通道(subagent M3 同款机制)=====
+  {
+    const { composeToolCall } = await import('../../harness/middleware')
+    // 中间件:把 per-call 值(signal 标识)注入 ctx.callConfig(模拟 subagent 中间件)
+    const mw = {
+      name: 'probe',
+      wrapToolCall: async (ctx: any, next: any) => {
+        ctx.callConfig = { ...(ctx.callConfig ?? {}), __pgProbe: `call-${ctx.id}` }
+        return next(ctx)
+      },
+    }
+    const seen: string[] = []
+    // 模拟 coreExecTool:从 ctx.callConfig 读(真实实现经 { configurable: ctx.callConfig } 透传到工具 fn)
+    const core = async (ctx: any) => { seen.push(ctx.callConfig.__pgProbe); return { content: 'ok', status: 'done' as const } }
+    const handler = composeToolCall([mw as any], core)
+    // 并发两路(交错 await):各 ctx 独立,不互相覆盖(修前闭包单变量后写覆盖前写)
+    await Promise.all([handler({ id: 'a', name: 't', args: {}, state: {} as any }), handler({ id: 'b', name: 't', args: {}, state: {} as any })])
+    assert(seen.includes('call-a') && seen.includes('call-b'), '✓ per-call config 通道:并发工具各持独立 callConfig,不互相覆盖(M3 机制)')
+  }
 }

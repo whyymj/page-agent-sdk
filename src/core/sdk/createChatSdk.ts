@@ -871,12 +871,17 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
   // code-as-data-asset:检测 htmlSubagent 单模式(_codeAsset 标记)→ 提取 pgIdPaths(schema extend 加 __pgId + afterWrite 补)/ largeTextPaths(主 scope read 摘要挡代码灌主上下文)
   // 装配期识别(集成商 createHtmlSubagent 时设标记;本工厂调用时 data 尚未传,故延迟到此处)
-  const codeAssetConfigs = (options.subagents ?? []).filter(
+  const allCodeAssetConfigs = (options.subagents ?? []).filter(
     (s): s is SubagentConfig & { _codeAsset: NonNullable<SubagentConfig['_codeAsset']> } => !!s._codeAsset,
   )
   // writablePaths 装配期推断:工厂调用时 schema 尚未传,未传 writablePaths(空数组)在此回填。
   // 就地回填 config 对象 → 下方 pgIdPaths/largeTextPaths 与 subagentsForAssemble(middleware)三处下游自然拿回填值。
-  for (const s of codeAssetConfigs) {
+  // 推断不出(开放 schema/嵌套容器/点路径 codeField)→ warn + 剔除该子 agent(优雅降级,不 throw):
+  //   preset 默认注入(pageBuilder)或集成方空调用时,schema 无 code 数组 = 该能力不适用,不该崩整个集成;
+  //   剔除后编排注入自然走「无 html agent」分支(schema 另有顶层 code 字段 → 降级直写 fallback),行为自洽。
+  //   「宁失败不猜错路径」不受损 —— 不猜路径,只不装不适用的能力,console.warn 留痕。
+  const droppedCodeAsset = new Set<SubagentConfig>()
+  for (const s of allCodeAssetConfigs) {
     if (s._codeAsset.writablePaths.length) continue
     const inferred = inferWritablePaths(finalDataConfig?.schema, s._codeAsset.codeField)
     if (inferred.length) {
@@ -885,10 +890,15 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       if (Array.isArray(s.writablePaths)) s.writablePaths = inferred
       console.info(`[page-agent-sdk][createHtmlSubagent] 未传 writablePaths,已从 schema 推断: [${inferred.map((p) => `'${p}'`).join(', ')}]`)
     } else {
-      console.warn('[page-agent-sdk][createHtmlSubagent] 未能从 schema 推断 writablePaths(开放 schema(z.any()/z.record())/嵌套容器(如 sections[].children[])/点路径 codeField(如 props.html_code)不支持自动推断),请显式传 writablePaths(代码组件 data 区,如 [\'components\'])')
-      throw new Error('[page-agent-sdk][createHtmlSubagent] writablePaths 推断失败:请显式传 writablePaths(代码组件 data 区,如 [\'components\'])')
+      console.warn('[page-agent-sdk][createHtmlSubagent] 未能从 schema 推断 writablePaths(开放 schema(z.any()/z.record())/嵌套容器(如 sections[].children[])/点路径 codeField(如 props.html_code)不支持自动推断),已跳过该 html 子 agent(整体不受影响);如确需代码资产机制(vfs + 格式校验 + 增量 commit),请显式传 writablePaths(代码组件 data 区,如 [\'components\'])')
+      droppedCodeAsset.add(s)
     }
   }
+  const codeAssetConfigs = droppedCodeAsset.size ? allCodeAssetConfigs.filter((s) => !droppedCodeAsset.has(s)) : allCodeAssetConfigs
+  // effective 列表 = 剔除被跳过子 agent 后的实际装配面(subagentsForAssemble / inspect 反射同源)
+  const effectiveSubagents = droppedCodeAsset.size
+    ? (options.subagents ?? []).filter((s) => !droppedCodeAsset.has(s))
+    : options.subagents
   const hasCodeAsset = codeAssetConfigs.length > 0
   const codeAssetPgIdPaths = codeAssetConfigs.flatMap((s) => s._codeAsset.writablePaths)
   const codeAssetLargeTextPaths = codeAssetConfigs.flatMap((s) => s._codeAsset.writablePaths.map((wp) => `${wp}.${s._codeAsset.codeField}`))
@@ -1165,7 +1175,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   //
   // code-as-data-asset:给 codeAsset 子 agent config 追加 checkout/commit 钩子(本工厂调用时集成商尚未传 data,
   //   故延迟到装配期;钩子闭包持 dataOpsController + vfsStore,经 config.middleware 透传到子 agent createAgent)
-  const subagentsForAssemble: SubagentConfig[] | undefined = options.subagents?.map((s) => {
+  const subagentsForAssemble: SubagentConfig[] | undefined = effectiveSubagents?.map((s) => {
     if (!s._codeAsset) return s
     const cc = s._codeAsset
     const codeAssetMw = createCodeAssetMiddleware({
@@ -1220,7 +1230,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       ...caps,
       humanConfirm: useHumanConfirm,
       // 预声明子 agent(供"规划-反思-执行"路由提示;只取 id/description/temperature 轻量字段)
-      subagents: options.subagents?.map((s) => ({ id: s.id, description: s.description, temperature: s.temperature })),
+      subagents: effectiveSubagents?.map((s) => ({ id: s.id, description: s.description, temperature: s.temperature })),
     },
     useDataOps && !!finalDataConfig,
     options.toolMode,

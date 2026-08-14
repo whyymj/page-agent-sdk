@@ -533,7 +533,9 @@ export function createAgent(options: CreateAgentOptions) {
     const target = allTools.find((t) => t.name === ctx.name)
     if (!target) return { content: `工具 "${ctx.name}" 不存在`, status: 'error' }
     try {
-      const result = await (target.invoke as any)(ctx.args)
+      // per-call config 通道(CA 并发修复):中间件经 ctx.callConfig 注入的键值透传到工具 fn 第二参
+      // (config.configurable.__pgXxx);zod 校验会重建 args 对象,这是唯一的 per-call 干净通道
+      const result = await (target.invoke as any)(ctx.args, ctx.callConfig ? { configurable: ctx.callConfig } : undefined)
       let content = typeof result === 'string' ? result : JSON.stringify(result)
       // 大结果外存:经 ctx.state.files(vfs 中间件注入的共享引用),超阈值转存 vfs 只留预览+引用
       content = offloadLargeResult(content, {

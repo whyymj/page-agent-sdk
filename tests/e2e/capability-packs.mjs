@@ -530,21 +530,17 @@ export async function run() {
     assert(bind.components.length === 1 && bind.components[0].name === 'hero' && bind.components[0].code === '<section>hero</section>', '✓ ⑨ 推断路径写权限生效:子 agent write components.0 落 bind(path guard 放行)')
     assert(typeof bind.components[0].__pgId === 'string' && bind.components[0].__pgId, '✓ ⑨ __pgId 注入链生效(afterWrite 补 id,推断路径进了 pgIdPaths)')
     sdk.unmount()
-    // ② 推断不出(无 code 字段 schema)→ throw 含提示
+    // ② 推断不出(无 code 字段 schema)→ warn + 剔除该子 agent(优雅降级,不 throw;pagebuilder-default-html-agent 改语义)
     {
-      let threw = false
-      try {
-        createChatSdk({
-          ui: false, id: 'e2e-wp-infer-fail', storage: 'memory', llm: FAKE_LLM,
-          capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
-          data: { schema: z.object({ title: z.string() }), bind: { title: 'x' }, description: '测试' },
-          subagents: [createHtmlSubagent({ formatCheck: false })],
-        })
-      } catch (e) {
-        threw = true
-        assert(String(e).includes('writablePaths'), '✓ ⑨ 推断不出 → throw 错误信息含 writablePaths 用法提示')
-      }
-      assert(threw, '✓ ⑨ 未传 + 无 code schema → 装配 throw(宁失败不静默)')
+      const sdk2 = createChatSdk({
+        ui: false, id: 'e2e-wp-infer-fail', storage: 'memory', llm: FAKE_LLM,
+        capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+        data: { schema: z.object({ title: z.string() }), bind: { title: 'x' }, description: '测试' },
+        subagents: [createHtmlSubagent({ formatCheck: false })],
+      })
+      await sdk2.mount()
+      assert(!sdk2.inspect().tools.some((t) => t.name === 'use_html'), '✓ ⑨ 未传 + 无 code schema → mount 成功 + html agent 被剔除(warn 降级,不崩集成)')
+      sdk2.unmount()
     }
   }
 

@@ -320,10 +320,10 @@ P3×33 以文档漂移(多处已随审计直接修正)/ 代码卫生 / 测试 / 
 6. ⏸ capabilities 矛盾组合 warn 对齐 ——【低】矛盾组合(如 dataOps:false + resources)对齐 warn。
 7. ⏸ preset 对象整体替换文档警示(**§五不动项·JS spread 语义**)——【低】preset 整体替换是 JS 语言语义;文档警示非 SDK 缺陷。
 
-### CA 并发组(P2×2)
+### CA 并发组(P2×2)—— ✅ 已修(ca-concurrency-per-call-context,2026-08-14)
 
-1. ⏸ activeScope 并发错乱 ——【低-中】`maxParallelTools>1` 同轮并发工具共享 activeScope 闭包 → dataOps scope 错乱;方向:AsyncLocalStorage / per-call token。与 P1-1 同根(并发边界)。
-2. ⏸ createSubagentsMiddleware 闭包单变量并发(M3 同型)——【中·已知】currentSignal/currentEmit/currentLogSink 闭包单变量,`maxParallelTools>1` 并发 wrapToolCall 互相覆盖 → 子 agent 继承无关工具的 signal/emit。默认串行(`maxParallelTools=1`)规避;彻底修需 spawn 工具从 ToolCallContext 取值。
+1. ✅ activeScope 并发错乱 —— 已修:per-call scope token(`RunnableConfig.configurable.__pgDataScope`,wrapWithScope 注入 + dataOps `scopeOf(config)` 优先取,ambient 兜底);AsyncLocalStorage 浏览器不可用,args 注入通道被 zod 重建阻断,configurable 是唯一干净通道。
+2. ✅ createSubagentsMiddleware 闭包单变量并发(M3 同型)—— 已修:wrapToolCall 注入 `ctx.callConfig.__pgSubagentCall`(signal/emit/logSink)→ coreExecTool 经 configurable 透传到 spawn/use_<id> 工具 fn 第二参;闭包单变量降 fallback。
 
 ### RE fire-and-forget 组(P2×2)
 

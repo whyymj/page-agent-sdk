@@ -286,7 +286,7 @@ const FORMAT_CHECK_MAX_ATTEMPTS = 2
  * 单模式(breaking major):代码进 data.code 字段(不再 codeRef 引用);框架自动 checkout/commit 透明搬运。
  * @returns 标准 SubagentConfig,集成方塞 createChatSdk({ subagents:[createHtmlSubagent({writablePaths})] }) → 主 agent 获得 use_<id> 委派工具。
  */
-export function createHtmlSubagent(options: CreateHtmlSubagentOptions): SubagentConfig {
+export function createHtmlSubagent(options: CreateHtmlSubagentOptions = {}): SubagentConfig {
   const {
     writablePaths, codeVfsPrefix = 'html/', id = 'html', description, planning = true,
     summarization = true, maxToolRounds = 12, temperature = 0.4, skills, extraTools,

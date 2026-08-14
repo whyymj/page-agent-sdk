@@ -64,6 +64,13 @@ export interface ToolCallContext {
   emit?: (event: StreamEvent) => void
   /** 日志下沉(供 spawn 工具把子 agent 的 debugLog 转发到主;子日志带 source 标签) */
   logSink?: (entry: any) => void
+  /**
+   * per-call 注入 bag(CA 并发修复):中间件在 wrapToolCall 往 ctx 写键值,coreExecTool 经
+   * RunnableConfig.configurable 透传到工具 fn 第二参(config.configurable.<key>)。
+   * 并发工具各持独立 ctx → 闭包单变量互相覆盖的并发缺陷不再(实测 zod 校验重建 args 对象,args 注入通道不可行)。
+   * 键名约定 `__pg` 前缀(框架内部标记)
+   */
+  callConfig?: Record<string, unknown>
 }
 
 /** 工具执行结果 */
