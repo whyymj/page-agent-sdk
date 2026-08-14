@@ -633,7 +633,7 @@ const sdk = createChatSdk({
       // useVfs 默认 true:子 agent 经 vfs_grep 搜 sdk.vfsWrite 注入的文档
     }),
     // ② HTML 代码组件生成子 agent:代码作 data 资产(code 字段)+ vfs 工作副本 + 框架自动 checkout/commit
-    createHtmlSubagent({ writablePaths: ['components'] }),
+    createHtmlSubagent({ writablePaths: ['components'] }),   // writablePaths 可省略(3.6+ 装配期从 schema 自动推断)
   ],
 }).mount()
 
@@ -649,6 +649,7 @@ sdk.vfsWrite('docs/components/hero.md', 'Hero 组件用于首屏主视觉...')
   - **输出格式校验**(`formatCheck`,默认开):① `validate_code` 自检工具(子 agent 生成/修改后自主调用;标签配对闭合等结构合法性,带行号报错)② verify beforeReturn 门禁(返回前确定性扫 vfs 工作副本,不通过回灌 feedback 自纠,`maxVerifyAttempts:2` 兜底防循环)。校验器为纯函数 `validateHtmlFormat`(已导出,集成方渲染层可复用做纵深防御);`formatCheck:false` 关闭整条校验链
   - **主 scope read 摘要**:主 agent read data 时,标记字段(`code`)摘要为 `<code Nkb>`(防代码正文灌主上下文);子 agent read 完整(改 code 需全文);集成方业务长文本不受影响
   - **`codeField` 可配置(开放 schema 适配)**:code 字段位置默认 `'code'`(组件顶层),开放 schema 平台可配嵌套 jsonPath(如 `'props.html_code'`);「是否代码组件」= 该路径有 string(非代码组件自然跳过);装配期命中校验(组件数>0 且全员未命中 → console.warn,防填错路径静默失败)。例:`createHtmlSubagent({ writablePaths:['components'], codeField:'props.html_code' })`
+  - **`writablePaths` 装配期自动推断(3.6+,可省略)**:未传时 createChatSdk 装配期从 `data.schema` 顶层扫描「数组元素含 `codeField` string 字段」的路径自动回填(`inferWritablePaths`,console.info 留痕;显式传入优先跳过推断)。不支持推断的形态 → warn + throw 提示显式传参:开放 schema(`z.any()`/`z.record`)、嵌套容器(如 `sections[].children[]`)、点路径 codeField(`props.html_code` 嵌套结构)—— 宁失败不猜错路径(错误路径 = 框架扫描区整体落空)
   - **主 agent 编排自适应注入(零配置)**:装配期自动检测 —— 有 html 子 agent → 主 agent systemPrompt 自动追加委派编排 `htmlOrchestratorPrompt(id)`(custom code 不 read 不 write 全权 `use_<id>` / 逐个委派防污染 / task 规格化 4 要素 + ⑤历史偏好转述);无 html 子 agent + schema 有 code 字段 → 自动注入 `htmlDirectWriteFallback`(主 agent 自己 write code,无 vfs/verify)+ warn;开放 schema(`z.any()`)扫不到时集成方 opt-in spread。**勿手动 spread `htmlPageOrchestrator`**(自动注入已覆盖,双重注入浪费 token);opt-out `orchestratorPrompt:false`
   - **组件工匠笔记 `craftNotes`(默认开)**:子 agent 收口回复末尾附 `[note] <一句话实现要点>` 行(htmlSystemPrompt 约定),框架 afterAgent 提取沉淀为组件 `__pgNotes`(FIFO ≤5 条 × 200 字,随 data json 进服务端 DB 跨会话持久);下次委派同组件时经「组件代码文件地图」注入最近 1 条(`📝 笔记×N`)—— 同组件跨委派**设计意图持续**("前任的交接":设计决策/用户偏好/踩坑),状态在数据里不在子 agent 实例里(与 code-as-data-asset 哲学同构)。`__pgNotes` 走 `__pg*` sidecar 机制(agent read 投影隐藏、写不进,框架独占);`craftNotes:false` 关闭(零沉淀零注入)
   - **模型建议(真 LLM 实测)**:html 代码生成推荐强指令遵循模型(deepseek-v4 / claude / gpt-4o);flash 类弱模型放大过度思考(装饰穷举 / token 纠结),高频/批量场景建议非 flash
@@ -873,6 +874,7 @@ createChatSdk({ maxRetries: 0 })   // 关闭自动重试
 - **无 UI 场景的确认请求自动拒**:`send`/`batch` 路径(无 ApprovalBar 响应方)触发人工确认时,**30s 无响应自动拒绝** + error 事件留痕,LLM 收到拒绝继续/收口(不再永挂)。`approval.timeoutMs` 可覆盖(传 `Infinity` = 无限等,给自建确认通道的集成方)
 - **send/batch 可中断**:`send(msg, { signal })` / `batch(tasks, onProgress, signal)` 接 AbortSignal;`unmount()` / `switchSession()` / `resetSession()` 也会自动中止在途流(无幽灵流烧 token)
 - **MCP 握手超时**:默认 15s(`mcp[].timeoutMs` 可调),黑洞端点降级跳过,不阻塞 SDK 启动
+- **MCP 工具调用超时**(3.6+):单次 callTool 默认 60s(`mcp[].callTimeoutMs` 可调),server 挂起不再拖死 ReAct 轮 —— 超时该次调用作废回灌 LLM 自纠(不重试),连接不断后续调用复用
 - **LLM 流停滞看门狗**:chunk 间隔(含等首个)超 `streamStallMs`(默认 90s,0 关)→ 自动中断报错,防 loading 永转
 
 ### 6.8 上下文与内存上限

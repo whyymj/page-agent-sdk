@@ -111,17 +111,17 @@ function getArrayElementSchema(s: any): any | null {
   return null
 }
 
-/** 数组元素 schema(object / union / discriminatedUnion 选项)是否含名为 code 的 string 字段 */
-function elementHasCodeField(elem: any): boolean {
+/** 数组元素 schema(object / union / discriminatedUnion 选项)是否含指定名字的 string 字段(codeField 参数化,默认 'code') */
+function elementHasCodeField(elem: any, codeField = 'code'): boolean {
   const e = unwrapSchema(elem)
   if (!e) return false
   if (e.shape && typeof e.shape === 'object') {
     const shape = typeof e.shape === 'function' ? e.shape() : e.shape
-    return 'code' in shape && isStringSchema(shape.code)
+    return codeField in shape && isStringSchema(shape[codeField])
   }
   // union / discriminatedUnion(zod4 _def.type='union' / .options):任一 option 含 code 即命中
   if (e._def?.type === 'union' || Array.isArray(e.options)) {
-    return (e.options ?? []).some((opt: any) => elementHasCodeField(opt))
+    return (e.options ?? []).some((opt: any) => elementHasCodeField(opt, codeField))
   }
   return false
 }
@@ -142,6 +142,25 @@ export function schemaHasCodeField(schema: any): boolean {
     if (elem && elementHasCodeField(elem)) return true
   }
   return false
+}
+
+/**
+ * 推断「代码组件数组」的顶层 data 路径(writablePaths 装配期推断用):顶层 shape 中
+ * z.array(elem) 且元素含 codeField string 字段(union/discriminatedUnion 任一 option 命中即可)→ 收集该 key。
+ * 只扫顶层(schemaHasCodeField 同深度):嵌套容器(sections[].children[])不推断——猜错路径代价高于要求显式传参;
+ * 开放 schema(z.any()/z.record)/ 点路径 codeField('props.html_code')静态扫不到 → 返 [](调用方 warn+throw 提示显式传)。
+ */
+export function inferWritablePaths(schema: any, codeField = 'code'): string[] {
+  const top = unwrapSchema(schema)
+  if (!top || !top.shape || typeof top.shape !== 'object') return []
+  const shape = typeof top.shape === 'function' ? top.shape() : top.shape
+  const out: string[] = []
+  for (const k of Object.keys(shape)) {
+    if (k.startsWith('__pg')) continue  // 框架内部标记字段不参与推断
+    const elem = getArrayElementSchema(shape[k])
+    if (elem && elementHasCodeField(elem, codeField)) out.push(k)
+  }
+  return out
 }
 
 /** 按 schema 投影对象(只保留 schema 声明字段,递归处理嵌套对象/数组元素;非 ZodObject 原样返回) */

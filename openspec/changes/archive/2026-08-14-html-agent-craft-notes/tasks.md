@@ -24,7 +24,7 @@
 - [x] D1 selftest sec-72 扩展:A1/B1 六项可测约束(沉淀/FIFO 截断/无 note 不沉淀/注入行/read 投影隐藏/craftNotes:false)
 - [x] D2 e2e capability-packs:stub 子 agent 返回含 [note] → data bind 含 __pgNotes;二次委派子上下文见笔记
 - [x] D3 browser html-page-demo:mock 子收口含 [note] → 主 data tab 含 __pgNotes
-- [ ] D4 真 LLM 复验(手动):同组件二次精修,子 agent 思考引用笔记而非重新推演(记 doc/CLAUDE.md)
+- [x] D4 真 LLM 复验(手动):同组件二次精修,子 agent 思考引用笔记而非重新推演(记 doc/CLAUDE.md)
 
 ## 阶段 E:文档
 
@@ -35,4 +35,4 @@
 
 ## 阶段 F:发布(minor,用户确认后)
 
-- [ ] F1 门禁全绿(build/test/e2e/browser/exports/types/size/pack)→ bump → commit → 询问用户是否发布
+- [x] F1 门禁全绿(build/test/e2e/browser/exports/types/size/pack)→ bump → commit → 询问用户是否发布(已随 3.5.0 发布)

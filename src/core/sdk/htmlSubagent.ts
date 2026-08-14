@@ -34,8 +34,12 @@ import { getByPath } from '../tools/jsonUtils'
 import type { DataOpsController } from '../tools/dataOps'
 
 export interface CreateHtmlSubagentOptions {
-  /** 可写 data 路径前缀(写 components,含 code 字段;如 ['components']);write/set 经 path guard 越界 PATH_OUT_OF_SCOPE */
-  writablePaths: string[]
+  /**
+   * 可写 data 路径前缀(写 components,含 code 字段;如 ['components']);write/set 经 path guard 越界 PATH_OUT_OF_SCOPE。
+   * 可选:未传时 createChatSdk 装配期从 schema 顶层自动推断(z.array 元素含 codeField string 的路径,console.info 留痕);
+   * 推断不出(开放 schema z.any()/嵌套容器/点路径 codeField)→ warn + throw,需显式传参
+   */
+  writablePaths?: string[]
   /** 代码工作副本存 vfs 的路径前缀;默认 'html/'(工作副本文件 html/<__pgId>.html) */
   codeVfsPrefix?: string
   /** 子 agent 标识;默认 'html' */
@@ -288,9 +292,10 @@ export function createHtmlSubagent(options: CreateHtmlSubagentOptions): Subagent
     summarization = true, maxToolRounds = 12, temperature = 0.4, skills, extraTools,
     formatCheck = true, codeField = 'code', orchestratorPrompt = true, craftNotes = true,
   } = options
-  if (!writablePaths?.length) {
-    throw new Error('[page-agent-sdk][createHtmlSubagent] writablePaths 必填(代码组件 data 区,如 ["components"])')
+  if (writablePaths !== undefined && !Array.isArray(writablePaths)) {
+    throw new Error('[page-agent-sdk][createHtmlSubagent] writablePaths 须为字符串数组(代码组件 data 区,如 ["components"])/ 省略以从 schema 自动推断')
   }
+  // writablePaths 允许空:装配期(createChatSdk)从 schema 顶层推断回填(本工厂调用时 data/schema 尚未传)
   const ext = 'html'
   const middleware: Middleware[] = []
   if (planning) middleware.push(createTodosMiddleware())   // write_todos / update_todo(规划)
@@ -306,7 +311,7 @@ export function createHtmlSubagent(options: CreateHtmlSubagentOptions): Subagent
     id,
     description: description ?? '生成/修改纯代码组件(custom 代码)。代码作为 data 资产(code 字段进 DB),vfs 作工作副本;能规划(write_todos)+ 执行。需写代码组件或灵活定制时委派',
     systemPrompt: htmlSystemPrompt(codeVfsPrefix),
-    writablePaths,                                           // 写 data(code + 元信息,path guard)
+    writablePaths: writablePaths ?? [],                      // 写 data(code + 元信息,path guard);空=装配期推断回填
     allowedTools: ['vfs_write', 'vfs_edit', 'vfs_rm', 'vfs_grep', 'vfs_read'],  // 代码工作副本 写/改/删/搜/读
     middleware: middleware.length ? middleware : undefined,  // 装 todos 规划 + 格式校验链(架构扩展)
     summarization: summarization === false ? undefined : summarization,  // 默认开跨轮压缩(架构扩展)
@@ -316,6 +321,6 @@ export function createHtmlSubagent(options: CreateHtmlSubagentOptions): Subagent
     maxToolRounds,
     tools: tools.length ? tools : undefined,
     // 框架内部标记:createChatSdk 装配期识别 → 注入 checkout/commit 钩子 + pgIdPaths + largeTextPaths + 强制 vfs
-    _codeAsset: { writablePaths, codeVfsPrefix, ext, codeField, craftNotes, ...(orchestratorPrompt ? { orchestratorPrompt: htmlOrchestratorPrompt(id) } : {}) },
+    _codeAsset: { writablePaths: writablePaths ?? [], codeVfsPrefix, ext, codeField, craftNotes, ...(orchestratorPrompt ? { orchestratorPrompt: htmlOrchestratorPrompt(id) } : {}) },
   }
 }

@@ -22,7 +22,7 @@ import { createAgent, type DebugLog } from '../harness/createAgent'
 import { asAgentError } from '../tools/toolError'
 import { isAbort } from '../harness/retry'
 import { z, type ZodType } from 'zod'
-import { getSchemaAtPath, schemaHasCodeField } from '../tools/schemaUtils'
+import { getSchemaAtPath, schemaHasCodeField, inferWritablePaths } from '../tools/schemaUtils'
 import { systemPromptHelpers } from '../presets'
 import { createTodosMiddleware } from '../harness/todos'
 import { createMissionMiddleware } from '../harness/mission'
@@ -874,6 +874,21 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const codeAssetConfigs = (options.subagents ?? []).filter(
     (s): s is SubagentConfig & { _codeAsset: NonNullable<SubagentConfig['_codeAsset']> } => !!s._codeAsset,
   )
+  // writablePaths 装配期推断:工厂调用时 schema 尚未传,未传 writablePaths(空数组)在此回填。
+  // 就地回填 config 对象 → 下方 pgIdPaths/largeTextPaths 与 subagentsForAssemble(middleware)三处下游自然拿回填值。
+  for (const s of codeAssetConfigs) {
+    if (s._codeAsset.writablePaths.length) continue
+    const inferred = inferWritablePaths(finalDataConfig?.schema, s._codeAsset.codeField)
+    if (inferred.length) {
+      s._codeAsset.writablePaths = inferred
+      // 同步 SubagentConfig 顶层 writablePaths(spawn 自授剥离写工具后经它授予写权限)
+      if (Array.isArray(s.writablePaths)) s.writablePaths = inferred
+      console.info(`[page-agent-sdk][createHtmlSubagent] 未传 writablePaths,已从 schema 推断: [${inferred.map((p) => `'${p}'`).join(', ')}]`)
+    } else {
+      console.warn('[page-agent-sdk][createHtmlSubagent] 未能从 schema 推断 writablePaths(开放 schema(z.any()/z.record())/嵌套容器(如 sections[].children[])/点路径 codeField(如 props.html_code)不支持自动推断),请显式传 writablePaths(代码组件 data 区,如 [\'components\'])')
+      throw new Error('[page-agent-sdk][createHtmlSubagent] writablePaths 推断失败:请显式传 writablePaths(代码组件 data 区,如 [\'components\'])')
+    }
+  }
   const hasCodeAsset = codeAssetConfigs.length > 0
   const codeAssetPgIdPaths = codeAssetConfigs.flatMap((s) => s._codeAsset.writablePaths)
   const codeAssetLargeTextPaths = codeAssetConfigs.flatMap((s) => s._codeAsset.writablePaths.map((wp) => `${wp}.${s._codeAsset.codeField}`))

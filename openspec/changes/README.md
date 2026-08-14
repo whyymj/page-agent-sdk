@@ -1,5 +1,7 @@
 # 活跃 Changes 优先级索引
 
+> **2026-08-14 发布 3.5.0**(minor):`html-agent-craft-notes` 实施完成并归档 —— **组件工匠笔记**(`__pgNotes` sidecar:子 agent 收口 `[note]` 行沉淀(wrapModelCall 捕获收口文本进 state `__pgFinalText`)+ 文件地图注入「前任的交接」(📝 笔记×N + 最近 1 条),同组件跨委派设计意图持续;craftNotes 默认开可 opt-out)+ 主 agent 偏好转述(task 规格化 ⑤ 历史偏好要素)+ html 子 agent 终稿纪律/视觉锚。同批:**严格 CORS 网关开箱兼容**(剥 `x-stainless-*` 头,主/子 agent 全路径)、子 agent `extraConfig`/`extraBody` 透传修复、html-page-demo 点击拾取修复、mcp-demo 双模式(RAG 知识库/mock)、无 html agent 复杂多组件 e2e(10 断言:建页/调序/改纯代码/层级移动)。selftest 1931 / e2e 569 / browser 53。见 [`archive/2026-08-14-html-agent-craft-notes/`](./archive/2026-08-14-html-agent-craft-notes/)。
+
 > **2026-08-14 发布 3.4.0**(minor):`html-subagent-open-schema` + `html-agent-thinking-taming` 实施完成并归档 —— ① createHtmlSubagent `codeField`(默认 'code',嵌套如 'props.html_code' 适配开放 schema)+ 装配期命中校验;② 主 agent 编排**自适应注入**(零配置:有 html agent→委派 htmlOrchestratorPrompt(id)/ 无 agent+code 字段→htmlDirectWriteFallback+warn / 开放 schema opt-in;opt-out `orchestratorPrompt:false`);③ html 子 agent 过度思考治理(task 规格化 4 要素(实测完全生效)/ validate_code jsonPath 零重传(**schema/实现/skill 三处统一 jsonPath 首选** —— 实测工具 schema 反向引导会覆盖 system prompt 的教训)/ 写前简述);**真 LLM 多场景 A-E(新建/调换/层级/属性/聚焦)端到端全跑通**。同批:schema_data 栈溢出修复(容器 children 自引用 → describeSchemaNode depth+visited 双截断)+ complex-demo e2e 组件操作 3 场景 + custom 拾取修复(iframe pointer-events)+ 编排双重注入修复 + 文档 D 阶段补齐。selftest 1905 / e2e 556 / browser 51。见 [`archive/2026-08-13-html-subagent-open-schema/`](./archive/2026-08-13-html-subagent-open-schema/) + [`archive/2026-08-14-html-agent-thinking-taming/`](./archive/2026-08-14-html-agent-thinking-taming/)。
 
 > **2026-08-12 发布 3.0.0**(breaking major):`code-as-data-asset` 实施完成并归档 —— **createHtmlSubagent 改单模式**(代码作为 data 资产:`code` 字段进服务端 DB + vfs 作编辑工作副本 + 框架 beforeAgent checkout/afterAgent commit 自动搬运,主 agent 透明 + `__pgId` 无感注入 + 主 scope read 摘要)。**breaking**:去 `onComplete`/`codeRef`/`codeSnapshots`,集成方迁移 `codeRef`→`code` 字段。selftest 1849 / browser 端到端 3 passed。详见 [`archive/2026-08-12-code-as-data-asset/`](./archive/2026-08-12-code-as-data-asset/)。
@@ -32,7 +34,7 @@
 
 ## 进行中
 
-- [`2026-08-14-html-agent-craft-notes/`](./2026-08-14-html-agent-craft-notes/)(**proposal 待实施**,minor,M):组件工匠笔记(`__pgNotes` sidecar:子 agent 收口 `[note]` 行沉淀 + 文件地图注入,同组件跨委派设计意图持续;craftNotes 默认开可 opt-out)+ 主 agent 偏好转述(task 规格化 ⑤ 要素)。状态在数据里不在实例里(与 code-as-data-asset 哲学同构),不做常驻子 agent。
+- [`2026-08-14-writablepaths-infer-mcp-timeout/`](./2026-08-14-writablepaths-infer-mcp-timeout/)(**proposal 待实施**,minor,S):① createHtmlSubagent `writablePaths` 可选化 —— 装配期从 schema 顶层推断(复用 schemaHasCodeField 同源扫描,`inferWritablePaths` 纯函数;命中 info 回填 / 推断不出 warn+throw 宁失败不猜嵌套);② MCP `callTool` 超时闸(`callTimeoutMs` 默认 60s,补 2.39.0 挂起收口三契约漏网项;超时回灌不重试不断连)。
 
 ---
 

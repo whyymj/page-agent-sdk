@@ -96,8 +96,12 @@ export async function run(ctx: TestCtx): Promise<void> {
   const hcfg4 = createHtmlSubagent({ writablePaths: ['components'], codeVfsPrefix: 'custom-code/' })
   assert(hcfg4.systemPrompt?.includes('custom-code/'), '✓ codeVfsPrefix 可配(systemPrompt 含 custom-code/)')
 
-  // writablePaths 空 → 抛错
+  // writablePaths 可选(writablepaths-infer):未传/空数组不再工厂层抛错,透传 _codeAsset 由装配期推断;
+  // 非法类型(非数组)仍在工厂层 fail-fast
+  const hcfg5 = createHtmlSubagent({})
+  assert(Array.isArray(hcfg5.writablePaths) && hcfg5.writablePaths.length === 0 && hcfg5._codeAsset?.writablePaths.length === 0,
+    '✓ createHtmlSubagent 未传 writablePaths → 不抛错,空数组透传(装配期 createChatSdk 从 schema 推断回填)')
   let hthrew = false
-  try { createHtmlSubagent({ writablePaths: [] as string[] }) } catch { hthrew = true }
-  assert(hthrew, '✓ createHtmlSubagent → writablePaths 空抛错(必填)')
+  try { createHtmlSubagent({ writablePaths: 'components' as unknown as string[] }) } catch { hthrew = true }
+  assert(hthrew, '✓ writablePaths 非法类型(字符串)→ 工厂层抛错(fail-fast)')
 }

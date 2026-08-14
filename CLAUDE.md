@@ -30,8 +30,8 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,1931 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,569 项;tests/e2e/<module>.mjs 按模块拆分)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,1944 项断言)
+npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,575 项;tests/e2e/<module>.mjs 按模块拆分)
 npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,53 项;tests/browser/<demo>.spec.ts)
 ```
 
@@ -92,11 +92,11 @@ skills/                         # 分发给使用者的 Agent Skill(入 npm 包 
 ### 子 agent 与并行编排(详见 architecture.md §⑨⑮)
 - `spawn_agent`/`spawn_agents`(默认开)只返回最终结论(省 token);预声明 `subagents:[{id, description, …}]` 生成 `use_<id>`;`maxDepth`(默认 1)物理切断
 - **授权面**:装配期 filter 排除框架/保留工具;spawn 自授剥离写工具(写权限仅经 `writablePaths`);子栈继承主 permissions/approval(approval_request 直通主循环);子 offload 直落主 vfs 共享池
-- **能力包**:`createRagSubagent({retriever?, loader?, useVfs?})`(只读检索)/ `createHtmlSubagent({writablePaths, codeVfsPrefix?, codeField?, orchestratorPrompt?, formatCheck?, craftNotes?})`(**3.0 单模式 breaking**:代码作 `data.code` 资产(进服务端 DB),vfs 作工作副本,框架 beforeAgent checkout(data.code→vfs by `__pgId`)/ afterAgent commit(vfs→data.code 增量,直改 bind 不进快照栈)自动搬运,主 agent 透明(主 scope read 见 `<code Nkb>` 摘要);`__pgId` 无感注入(schema 不声明/read 投影隐藏 `__pg*`/agent 写不进/persist 透明);去 `onComplete`/`codeRef`/`codeSnapshots`;单模式=**完整页面级 HTML**(自包含可独立成页,script/CSS 默认含、集中放 `<style>`/`<script>` 块便于下游提取,可引外部 JS/CSS;改造组件/独立页由下游插件/tool 做);`formatCheck` 默认开 = `validate_code` 自检 + verify beforeReturn 门禁,校验器 `validateHtmlFormat` 已导出(**只校验结构合法性**——标签闭合/注释/多余闭合;DOCTYPE/html/head/body/script 均允许),自纠上限 `maxVerifyAttempts:2`);**`codeField`**(默认 `'code'`,嵌套如 `'props.html_code'`,适配开放 schema 代码字段位置;「是否代码组件」= 该路径有 string)+ **装配期命中校验**(组件数>0 且全员未命中 → onWarning,防填错路径静默失败);**编排自适应注入**(createChatSdk 装配期零配置:`htmlOrchestratorPrompt(id)` 同源纯函数 —— 有 html agent→注入委派编排(custom code 不 read 不 write 全权 `use_<id>`)/ 无 agent+schema 有 code 字段→注入 `htmlDirectWriteFallback` 自己写+warn;开放 schema `z.any()` 扫不到时集成方 opt-in spread;opt-out `orchestratorPrompt:false`));**thinking-taming(真 LLM 实测驱动)**:① 委派 task 规格化 4 要素(实测完全生效;补视觉锚 + ⑤历史偏好转述)② validate_code jsonPath 零重传(**schema 描述/字段顺序/实现三处统一 jsonPath 首选** —— 实测工具 schema 反向引导会覆盖 system prompt)③ 写前简述 + 终稿纪律;**工匠笔记 `craftNotes`**(默认开):子 agent 收口回复 `[note]` 行 → 组件 `__pgNotes` sidecar(FIFO ≤5×200,随 data 持久化;收口文本经 **wrapModelCall 捕获进 state `__pgFinalText`** —— afterAgent 的 state.messages 只有初始 user 消息,beforeReturn 受 maxVerifyAttempts>0 门控,wrapModelCall 是唯一全路径覆盖点),下次委派同组件经文件地图注入「前任的交接」;read 投影隐藏/agent 写不进(`__pg*` 现成);`craftNotes:false` 关闭;**模型建议**:html 代码生成推荐强指令模型(deepseek-v4/claude/gpt-4o),flash 类放大过度思考
+- **能力包**:`createRagSubagent({retriever?, loader?, useVfs?})`(只读检索)/ `createHtmlSubagent({writablePaths?, codeVfsPrefix?, codeField?, orchestratorPrompt?, formatCheck?, craftNotes?})`(**3.6+ `writablePaths` 可省**:装配期 `inferWritablePaths` 从 schema 顶层扫「数组元素含 codeField string」路径回填(info 留痕);开放 schema/嵌套容器/点路径 codeField 推断不出 → warn+throw 显式传,宁失败不猜错)(**3.0 单模式 breaking**:代码作 `data.code` 资产(进服务端 DB),vfs 作工作副本,框架 beforeAgent checkout(data.code→vfs by `__pgId`)/ afterAgent commit(vfs→data.code 增量,直改 bind 不进快照栈)自动搬运,主 agent 透明(主 scope read 见 `<code Nkb>` 摘要);`__pgId` 无感注入(schema 不声明/read 投影隐藏 `__pg*`/agent 写不进/persist 透明);去 `onComplete`/`codeRef`/`codeSnapshots`;单模式=**完整页面级 HTML**(自包含可独立成页,script/CSS 默认含、集中放 `<style>`/`<script>` 块便于下游提取,可引外部 JS/CSS;改造组件/独立页由下游插件/tool 做);`formatCheck` 默认开 = `validate_code` 自检 + verify beforeReturn 门禁,校验器 `validateHtmlFormat` 已导出(**只校验结构合法性**——标签闭合/注释/多余闭合;DOCTYPE/html/head/body/script 均允许),自纠上限 `maxVerifyAttempts:2`);**`codeField`**(默认 `'code'`,嵌套如 `'props.html_code'`,适配开放 schema 代码字段位置;「是否代码组件」= 该路径有 string)+ **装配期命中校验**(组件数>0 且全员未命中 → onWarning,防填错路径静默失败);**编排自适应注入**(createChatSdk 装配期零配置:`htmlOrchestratorPrompt(id)` 同源纯函数 —— 有 html agent→注入委派编排(custom code 不 read 不 write 全权 `use_<id>`)/ 无 agent+schema 有 code 字段→注入 `htmlDirectWriteFallback` 自己写+warn;开放 schema `z.any()` 扫不到时集成方 opt-in spread;opt-out `orchestratorPrompt:false`));**thinking-taming(真 LLM 实测驱动)**:① 委派 task 规格化 4 要素(实测完全生效;补视觉锚 + ⑤历史偏好转述)② validate_code jsonPath 零重传(**schema 描述/字段顺序/实现三处统一 jsonPath 首选** —— 实测工具 schema 反向引导会覆盖 system prompt)③ 写前简述 + 终稿纪律;**工匠笔记 `craftNotes`**(默认开):子 agent 收口回复 `[note]` 行 → 组件 `__pgNotes` sidecar(FIFO ≤5×200,随 data 持久化;收口文本经 **wrapModelCall 捕获进 state `__pgFinalText`** —— afterAgent 的 state.messages 只有初始 user 消息,beforeReturn 受 maxVerifyAttempts>0 门控,wrapModelCall 是唯一全路径覆盖点),下次委派同组件经文件地图注入「前任的交接」;read 投影隐藏/agent 写不进(`__pg*` 现成);`craftNotes:false` 关闭;**模型建议**:html 代码生成推荐强指令模型(deepseek-v4/claude/gpt-4o),flash 类放大过度思考
 - **主×子协同**:per-scope 基线 / allSettled 逐任务结算 / 子 usage 回传 `sdk.usage` / `subagent.timeoutMs` opt-in;观察层 `inspect().subagent.{active,history}` + DebugDrawer tab
 
 ### 其他能力(详见 architecture.md §⑩⑪⑮)
-- MCP 远程工具(allSettled 故障隔离 + 握手 15s 降级)/ Verify 自检 opt-in(`createWriteBackCheck` + adversarial)/ `get_dom` opt-in / `inspect_env` 默认开 / actions 宿主动作 / SkillSpec.exec(一次性)vs tools(反复查询)勿双轨 / Approval(无响应方 30s 自动拒)/ Checkpoint 每轮存档 / Automation 预算 + `sdk.batch`
+- MCP 远程工具(allSettled 故障隔离 + 握手 15s 降级 + **callTool 超时闸 60s**(`callTimeoutMs` 可调,3.6+;超时回灌自纠不断连))/ Verify 自检 opt-in(`createWriteBackCheck` + adversarial)/ `get_dom` opt-in / `inspect_env` 默认开 / actions 宿主动作 / SkillSpec.exec(一次性)vs tools(反复查询)勿双轨 / Approval(无响应方 30s 自动拒)/ Checkpoint 每轮存档 / Automation 预算 + `sdk.batch`
 
 ### 对话鲁棒性(详见 architecture.md §⑮)
 - **三档错误模型**:recoverable 回灌自纠 / fatal emit+中断 / observable 记录;导出 `routeError`/`asAgentError`/`agentError`
@@ -127,13 +127,13 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test    # tsx 跑 src/core/__tests__/selftest.ts,1931 项断言
+npm test    # tsx 跑 src/core/__tests__/selftest.ts,1944 项断言
 ```
 按模块拆分:`src/core/__tests__/modules/sec-NN.ts`(54+ 个模块)各导出 `run(ctx)`,runner 汇总;共享 `TestCtx` 在 `modules/_ctx.ts`。tsx 跑源码(不经构建),触不到 createChatSdk 顶层 API 作用域。**改任何核心模块后必跑**。
 
 #### 2. 集成层 e2e(改 createChatSdk 顶层 API 后必跑)
 ```bash
-npm run build && npm run test:e2e    # node 跑 dist 产物,569 项
+npm run build && npm run test:e2e    # node 跑 dist 产物,575 项
 ```
 模块在 `tests/e2e/<module>.mjs`(systemprompt/dynamic-register/inspect/subagents/events/storage/exports/data-slots/presets/boundary/custom-injection/conflict/automation/llm-provider/focus/resources/agent-compression/headless-subpath/capability-packs/authorization-surface/hang-feedback/main-sub-isolation/session-integrity),共享 stub 在 `tests/e2e/_helpers.mjs`(StubChatModel 在 `_stub-model.mjs`,响应队列驱动真 ReAct)。覆盖顶层 return 对象作用域。**改 createChatSdk 返回对象、AgentCore 接口、动态注册 API、默认提示词、新增导出/配置项后必跑**。
 
@@ -166,7 +166,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(1931/569/53)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(1944/575/53)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判)→ `npm run test:size` → `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证

@@ -342,7 +342,7 @@ export interface ContextInspectorMiddleware {
 }
 /** 创建上下文检查中间件(capabilities.contextInspector 默认开) */
 export declare function createContextInspectorMiddleware(opts?: ContextInspectorOptions): ContextInspectorMiddleware;
-export interface McpServerConfig { transport: 'http' | 'sse' | 'websocket'; url: string; name?: string; requestInit?: any; /** 握手超时 ms(默认 15s;fix-hang-and-feedback P1-2);超时按连接失败降级 */ timeoutMs?: number; }
+export interface McpServerConfig { transport: 'http' | 'sse' | 'websocket'; url: string; name?: string; requestInit?: any; /** 握手超时 ms(默认 15s;fix-hang-and-feedback P1-2);超时按连接失败降级 */ timeoutMs?: number; /** 单次工具调用超时 ms(默认 60s);超时该次调用作废回灌自纠,不断连接 */ callTimeoutMs?: number; }
 
 export declare const ChatDialog: DefineComponent<ChatDialogProps>;
 // chatdialog-component-split:原子组件(可拼装/替换,经 ChatDialog 具名 slot 或 L2 自建根组件 provide ctx 后拼装)
@@ -1408,7 +1408,8 @@ export interface CreateRagSubagentOptions {
   [k: string]: any;
 }
 export interface CreateHtmlSubagentOptions {
-  writablePaths: string[];
+  /** 可选:未传时装配期从 schema 顶层自动推断(z.array 元素含 codeField string 的路径);推断不出(开放 schema/嵌套容器/点路径 codeField)须显式传 */
+  writablePaths?: string[];
   codeVfsPrefix?: string;
   id?: string;
   description?: string;

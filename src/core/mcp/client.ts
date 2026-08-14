@@ -24,10 +24,15 @@ export interface McpServerConfig {
   requestInit?: RequestInit
   /** 握手超时 ms(fix-hang-and-feedback P1-2;默认 15s)。sse/websocket 握手裸等 onopen,黑洞端点会永挂拖死 initDone → 超时按连接失败降级(其余 server 与 SDK 启动不受影响) */
   timeoutMs?: number
+  /** 单次工具调用超时 ms(默认 60s;独立于握手 15s —— 工具执行正当慢于握手)。超时该次调用作废(recoverable 回灌 LLM 自纠,不重试);连接不断,后续调用复用 */
+  callTimeoutMs?: number
 }
 
 /** MCP 握手默认超时 15s:握手本应 <1s,宽容弱网;黑洞端点(防火墙吞 SYN)是最常见故障形态 */
 export const DEFAULT_MCP_HANDSHAKE_MS = 15_000
+
+/** MCP 工具调用默认超时 60s:RAG 检索/大计算类工具正当耗时可达数十秒,30s 误杀;再慢大概率 server 侧挂起 */
+export const DEFAULT_MCP_CALL_TIMEOUT_MS = 60_000
 
 export interface McpConnection {
   tools: StructuredToolInterface[]
@@ -73,14 +78,38 @@ async function buildTransport(config: McpServerConfig): Promise<unknown> {
   return new WebSocketClientTransport(url) // websocket 构造仅接 url,忽略 requestInit
 }
 
+/**
+ * 单次 MCP 工具调用超时闸(挂起收口三契约漏网项):server 收到请求后挂起(慢查询/死锁/网络半开)则该次调用永挂拖死 ReAct 轮。
+ * 超时仅作废本次调用(recoverable 回灌 LLM 自纠,不重试);不 close 连接(StreamableHTTP 单连接复用,断连殃及后续调用)。
+ * 纯函数(不触 MCP SDK,可单测):不挂起场景零额外开销(先完成即 clearTimeout)。
+ */
+export async function withCallTimeout<T>(p: Promise<T>, toolName: string, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      p,
+      new Promise<never>((_, rej) => {
+        timer = setTimeout(() => rej(new Error(`MCP 工具 ${toolName} 调用超时(${timeoutMs}ms)`)), timeoutMs)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /** MCP tool(标准 {name,description,inputSchema})→ LangChain 工具(JSON Schema 直传 schema) */
 function toLangChainTool(
   t: { name: string; description?: string; inputSchema: Record<string, unknown> },
   client: Client,
+  callTimeoutMs: number,
 ): StructuredToolInterface {
   return tool(
     async (args) => {
-      const result = await client.callTool({ name: t.name, arguments: args as Record<string, unknown> })
+      const result = await withCallTimeout(
+        client.callTool({ name: t.name, arguments: args as Record<string, unknown> }) as Promise<unknown>,
+        t.name,
+        callTimeoutMs,
+      )
       return extractText(result as Parameters<typeof extractText>[0])
     },
     {
@@ -118,6 +147,6 @@ export async function connectMcp(config: McpServerConfig): Promise<McpConnection
     clearTimeout(timer)
   }
   const { tools } = await client.listTools()
-  const lcTools = tools.map((t) => toLangChainTool(t, client))
+  const lcTools = tools.map((t) => toLangChainTool(t, client, config.callTimeoutMs ?? DEFAULT_MCP_CALL_TIMEOUT_MS))
   return { tools: lcTools, close: () => client.close() }
 }

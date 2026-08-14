@@ -7,6 +7,8 @@
 > ℹ️ 本段累积了 2.23.0 → 2.24.1 多个已发布版本的内容(harden-eval-sandbox / main-flow-audit / context-inspector / arch-review P1 / demo 主题 / session-history / 串行化 / simplify-toolset 等),待按 git tag 逐条归入对应版本段(已知文档债,本次未拆)。
 
 ### Added
+- **`writablePaths` 装配期自动推断(createHtmlSubagent 集成降门槛)**:`writablePaths` 改可选 —— 未传时 createChatSdk 装配期从 `data.schema` 顶层扫描「数组元素含 `codeField` string 字段」的路径自动回填(新导出纯函数 `inferWritablePaths`,console.info 留痕;显式传入优先跳过推断);推断不出的形态(开放 schema `z.any()`/`z.record`、嵌套容器如 `sections[].children[]`、点路径 codeField 嵌套结构)→ console.warn + throw 提示显式传参(宁失败不猜错路径)
+- **MCP 工具调用超时闸**:单次 `callTool` 默认 60s(`mcp[].callTimeoutMs` 可调,独立于握手 `timeoutMs` 15s),server 挂起不再拖死 ReAct 轮 —— 超时该次调用作废(recoverable 回灌 LLM 自纠,不重试),连接不断后续调用复用;新导出 `withCallTimeout` 纯函数 + `DEFAULT_MCP_CALL_TIMEOUT_MS`;补 2.39.0「挂起收口三契约」漏网项
 - **组件工匠笔记(`craftNotes`,默认开)**:html 子 agent 收口回复末尾 `[note] <一句话实现要点>` 行(htmlSystemPrompt 约定)→ 框架 afterAgent 沉淀为组件 `__pgNotes` sidecar(FIFO ≤5 条 × 200 字,随 data json 进服务端 DB 跨会话持久),下次委派同组件经「组件代码文件地图」注入最近 1 条(`📝 笔记×N`)—— 同组件跨委派**设计意图持续**(「前任的交接」:设计决策/用户偏好/踩坑),状态在数据里不在子 agent 实例里(与 code-as-data-asset 哲学同构);收口文本经 **wrapModelCall 捕获进 state `__pgFinalText`**(afterAgent 的 state.messages 只有初始 user 消息,beforeReturn 受 `maxVerifyAttempts>0` 门控,wrapModelCall 洋葱是唯一全路径覆盖点);`__pgNotes` 走 `__pg*` sidecar 机制(agent read 投影隐藏 / 写不进,框架独占);`createHtmlSubagent({ craftNotes:false })` 关闭(零沉淀零注入)
 - **主 agent 偏好转述**:委派 task 规格化补 ⑤ 要素(可选)—— 聊天上下文中有与该组件相关的用户历史偏好/反馈时提炼一句附 task 末尾(新子 agent 无记忆,偏好经 task 传递)
 

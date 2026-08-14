@@ -498,6 +498,56 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:capability-packs] writablePaths 装配期推断(未传 → schema 顶层扫 code 数组回填 / 推断不出 → throw;writablepaths-infer)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    // ① 正常推断:discriminatedUnion 数组(complex-demo 形态)→ mount 成功 + 委派全链路走通(子 vfs_write → commit 回 bind + __pgId 补齐)
+    const llm = stubModel(
+      { toolCalls: [{ name: 'use_html', args: { task: '生成 hero 组件' } }] },
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.0', value: { type: 'custom', name: 'hero', code: '<section>hero</section>' } } } }] },
+      { text: '已生成' },
+      { text: '完成' },
+    )
+    const bind = { components: [] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-wp-infer-ok', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: {
+        schema: z.object({
+          components: z.array(z.discriminatedUnion('type', [
+            z.object({ type: z.literal('banner'), title: z.string() }),
+            z.object({ type: z.literal('custom'), name: z.string().optional(), code: z.string() }),
+          ])),
+        }),
+        bind, description: '测试',
+      },
+      subagents: [createHtmlSubagent({ formatCheck: false })],   // ← 未传 writablePaths
+    })
+    await sdk.mount()
+    assert(sdk.inspect().tools.some((t) => t.name === 'use_html'), '✓ ⑨ 未传 writablePaths + schema 可推断 → mount 成功,use_html 委派工具存在(推断回填生效)')
+    assert(sdk.inspect().systemPrompt.includes('use_html'), '✓ ⑨ 推断成功 → 编排注入正常(下游 pgIdPaths/largeTextPaths 拿回填值)')
+    await sdk.send('生成 hero 组件')
+    assert(bind.components.length === 1 && bind.components[0].name === 'hero' && bind.components[0].code === '<section>hero</section>', '✓ ⑨ 推断路径写权限生效:子 agent write components.0 落 bind(path guard 放行)')
+    assert(typeof bind.components[0].__pgId === 'string' && bind.components[0].__pgId, '✓ ⑨ __pgId 注入链生效(afterWrite 补 id,推断路径进了 pgIdPaths)')
+    sdk.unmount()
+    // ② 推断不出(无 code 字段 schema)→ throw 含提示
+    {
+      let threw = false
+      try {
+        createChatSdk({
+          ui: false, id: 'e2e-wp-infer-fail', storage: 'memory', llm: FAKE_LLM,
+          capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+          data: { schema: z.object({ title: z.string() }), bind: { title: 'x' }, description: '测试' },
+          subagents: [createHtmlSubagent({ formatCheck: false })],
+        })
+      } catch (e) {
+        threw = true
+        assert(String(e).includes('writablePaths'), '✓ ⑨ 推断不出 → throw 错误信息含 writablePaths 用法提示')
+      }
+      assert(threw, '✓ ⑨ 未传 + 无 code schema → 装配 throw(宁失败不静默)')
+    }
+  }
+
   console.log('[e2e:capability-packs] 有 html agent 但 orchestratorPrompt:false(不注入委派编排;opt-out)')
   {
     const sdk = createChatSdk({

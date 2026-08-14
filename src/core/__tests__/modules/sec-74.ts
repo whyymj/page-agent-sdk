@@ -8,7 +8,7 @@
  */
 import { z } from 'zod'
 import { createDataOps, supplementPgId, genPgId } from '../../tools/dataOps'
-import { extendSchemaWithPgId, schemaHasCodeField, describeSchemaNode } from '../../tools/schemaUtils'
+import { extendSchemaWithPgId, schemaHasCodeField, describeSchemaNode, inferWritablePaths } from '../../tools/schemaUtils'
 import type { TestCtx } from './_ctx'
 
 function makeOps(bind: Record<string, unknown>) {
@@ -146,6 +146,62 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(!schemaHasCodeField(z.any()), '✓ z.any() → 不命中(开放 schema 扫不到 → 集成方 opt-in spread htmlDirectWriteFallback)')
     assert(!schemaHasCodeField(z.record(z.string())), '✓ z.record → 不命中(无 shape)')
     assert(!schemaHasCodeField(null), '✓ null/无 schema → 不命中(健壮)')
+  }
+
+  // ===== inferWritablePaths(writablepaths-infer:createHtmlSubagent 未传 writablePaths 时装配期从 schema 顶层推断)=====
+  {
+    // 正常命中:顶层 z.array(元素含 code string)
+    const hit = inferWritablePaths(z.object({ title: z.string(), components: z.array(z.object({ name: z.string(), code: z.string() })) }))
+    assert(hit.length === 1 && hit[0] === 'components', '✓ 顶层 code 数组 → 推断出 [\'components\'](非数组字段跳过)')
+
+    // discriminatedUnion 数组元素:任一 option 含 code 即命中(complex-demo 形态)
+    const unionHit = inferWritablePaths(z.object({
+      components: z.array(z.discriminatedUnion('type', [
+        z.object({ type: z.literal('custom'), code: z.string() }),
+        z.object({ type: z.literal('banner'), title: z.string() }),
+      ])),
+    }))
+    assert(unionHit.length === 1 && unionHit[0] === 'components', '✓ z.array(discriminatedUnion) 任一 option 含 code → 命中')
+
+    // 多数组全返
+    const multi = inferWritablePaths(z.object({
+      blocks: z.array(z.object({ code: z.string() })),
+      widgets: z.array(z.object({ code: z.string() })),
+      title: z.string(),
+    }))
+    assert(multi.length === 2 && multi.includes('blocks') && multi.includes('widgets'), '✓ 多个 code 数组全部返回(多 writablePaths 合法)')
+
+    // 自定义 codeField
+    const cf = inferWritablePaths(z.object({ items: z.array(z.object({ html: z.string() })) }), 'html')
+    assert(cf.length === 1 && cf[0] === 'items', '✓ 自定义 codeField(如 \'html\')按参数匹配')
+    // 点路径 codeField 真实形态:嵌套结构 props:{html_code}(非字面 key)→ 顶层 shape 无 'props.html_code' 字段 → 空返(不支持推断,须显式传)
+    assert(inferWritablePaths(z.object({ items: z.array(z.object({ props: z.object({ html_code: z.string() }) })) }), 'props.html_code').length === 0,
+      '✓ 点路径 codeField(嵌套 props.html_code)不支持推断 → 空返(调用方 warn+throw 提示显式传)')
+
+    // 边界:开放 schema / 无 code / 嵌套容器 / null → 空返
+    assert(inferWritablePaths(z.any()).length === 0, '✓ z.any() → 空返(开放 schema 扫不到)')
+    assert(inferWritablePaths(z.object({ title: z.string(), list: z.array(z.string()) })).length === 0, '✓ 无 code 字段 → 空返')
+    assert(inferWritablePaths(z.object({ sections: z.array(z.object({ children: z.array(z.object({ code: z.string() })) })) })).length === 0,
+      '✓ 嵌套容器(sections[].children[].code)→ 空返(只扫顶层,宁不猜不错)')
+    assert(inferWritablePaths(null).length === 0, '✓ null/无 schema → 空返(健壮)')
+  }
+
+  // ===== withCallTimeout(writablepaths-infer-mcp-timeout:MCP callTool 超时闸,挂起收口三契约漏网项)=====
+  {
+    const { withCallTimeout } = await import('../../mcp/client')
+    // 超时:永挂 promise + 10ms 闸 → 抛超时错(不永挂)
+    let timedOut = false
+    try {
+      await withCallTimeout(new Promise<never>(() => {}), 'rag_search', 10)
+    } catch (e) {
+      timedOut = true
+      assert(String(e).includes('rag_search') && String(e).includes('超时'), '✓ 永挂调用超时抛错(含工具名与超时字样)')
+    }
+    assert(timedOut, '✓ 超时路径确实 reject(不永挂)')
+
+    // 正常完成:先于超时 → 原值返回,不受影响
+    const ok = await withCallTimeout(Promise.resolve({ content: [{ type: 'text', text: 'hi' }] }), 'calc', 1000)
+    assert((ok as any).content[0].text === 'hi', '✓ 超时内完成 → 原结果透传(零额外开销)')
   }
 
   // ===== describeSchemaNode 自引用 + 深度截断(schema_data 栈溢出修复:complex-demo 容器 children: z.array(PageComponent) 自引用致无限递归)=====
