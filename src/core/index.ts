@@ -34,7 +34,7 @@ export type { SchemaHintOptions } from './presets'
 export { connectMcp, extractText } from './mcp/client'
 export type { McpServerConfig, McpTransport, McpConnection } from './mcp/client'
 // harness 核心 + 中间件契约
-export { createAgent, detectGarbledToolCall } from './harness/createAgent'
+export { createAgent, detectGarbledToolCall, detectTransitionalReply } from './harness/createAgent'
 export type { CreateAgentOptions, DebugLog, TraceSpan, TraceMetrics, SpanType, SpanStatus } from './harness/createAgent'
 export type { Middleware, ModelRequest, ModelResponse, ToolCallContext, StateUpdate } from './harness/middleware'
 export { createSubagentMiddleware, createSubagentsMiddleware, createSubagentTracker } from './harness/subagent'

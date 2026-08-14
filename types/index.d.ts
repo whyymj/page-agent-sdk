@@ -15,6 +15,10 @@ export interface ProxyLlmOptions {
   headers?: Record<string, string>;
 }
 export declare function createProxyLlm(opts: ProxyLlmOptions): import('@langchain/core/language_models/chat_models').BaseChatModel;
+/** 检测 garbled 工具调用文本(DeepSeek DSML/伪 XML 泄漏到正文) */
+export declare function detectGarbledToolCall(content: string): boolean;
+/** 检测过程性收口(短文本 + 过渡模式如「我先看看…稍后委派」+ 无完成动词)—— createAgent 据此有界回灌(≤2) */
+export declare function detectTransitionalReply(content: string): boolean;
 export interface ConstructOpts {
   temperature?: number;
   maxTokens?: number;
