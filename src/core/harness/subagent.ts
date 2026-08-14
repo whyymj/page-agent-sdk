@@ -38,6 +38,10 @@ export interface SubagentLlmConfig {
   model?: string
   temperature?: number
   maxTokens?: number
+  /** 透传 openai configuration 额外字段(headers/fetch 等;子 agent 兜底构造时同主 LLM 生效) */
+  extraConfig?: Record<string, any>
+  /** 透传 modelKwargs(如 deepseek thinking);子 agent 兜底构造时同主 LLM 生效 */
+  extraBody?: Record<string, any>
 }
 
 // ===== 子 agent 观察层(active/history 状态;纯观察,不改子 agent 生命周期/事件链)=====
@@ -364,6 +368,7 @@ async function runSubagent(
     contextWindow: subCaps.contextWindow,
     maxOutputTokens: subCaps.maxOutputTokens,
     // provider 抽离:llm 实例则注入(温度/maxTokens 已在实例上定,忽略 opts.temperature/maxTokens),否则按配置构造(子 agent 配置优先于主 llm)
+    // extraConfig/extraBody 一并透传(真 LLM 抓包实测:散字段重构造曾丢它们 → 集成方的 headers/fetch/thinking 配置在子 agent 失效)
     ...(isChatModel(opts.llm)
       ? { llm: opts.llm }
       : {
@@ -372,6 +377,8 @@ async function runSubagent(
           model: task.model ?? opts.llm.model,
           temperature: opts.temperature ?? opts.llm.temperature,
           maxTokens: opts.maxTokens ?? opts.llm.maxTokens,
+          ...(opts.llm.extraConfig ? { extraConfig: opts.llm.extraConfig } : {}),
+          ...(opts.llm.extraBody ? { extraBody: opts.llm.extraBody } : {}),
         }),
     // 身份优先级:运行时 role(spawn 参数)> 配置默认 systemPrompt > 兜底
     systemPrompt:
@@ -595,7 +602,7 @@ export interface SubagentConfig {
    * 注入 checkout/commit 钩子(beforeAgent data.code→vfs / afterAgent vfs→data.code 增量回写)+
    * dataOps 传 pgIdPaths + largeTextPaths + 强制 vfs。下划线前缀 = 框架内部,不进公开 API。
    */
-  _codeAsset?: { writablePaths: string[]; codeVfsPrefix: string; ext: 'html'; codeField: string; orchestratorPrompt?: string }
+  _codeAsset?: { writablePaths: string[]; codeVfsPrefix: string; ext: 'html'; codeField: string; orchestratorPrompt?: string; craftNotes?: boolean }
 }
 
 export interface SubagentsMiddlewareOptions {

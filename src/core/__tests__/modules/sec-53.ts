@@ -80,4 +80,35 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(extractUsage({ response_metadata: { token_usage: { total_tokens: 30 } } } as any)?.total_tokens === 30, 'extractUsage response_metadata.token_usage(兼容)')
     assert(extractUsage({} as any) === undefined, 'extractUsage 无 usage → undefined')
   }
+  {
+    // 默认 fetch 包装剥 x-stainless-* 遥测头(严格 CORS 的 OpenAI 兼容网关白名单不含它们 → 浏览器预检失败;真 LLM 实测)
+    const llm = constructOpenLlmSync({ apiKey: 'sk-test', model: 'gpt-4' }) as any
+    const fetchFn = llm.clientConfig?.fetch  // ChatOpenAI → OpenAI client 的 configuration 透传证据
+    assert(!!fetchFn, '✓ constructOpenLlmSync 默认注入 fetch 包装(剥 x-stainless-* 头)')
+    // 包装行为:mock global fetch 捕获实际发出的头,断言 x-stainless-* 被剥 / 业务头保留
+    const origFetch = globalThis.fetch
+    let seen: string[] = []
+    globalThis.fetch = (async (_url: any, init?: any) => {
+      seen = [...new Headers(init?.headers ?? {}).keys()]
+      return new Response('{"ok":true}', { status: 200 }) as any
+    }) as any
+    try {
+      await fetchFn!('https://example.test/v1', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-stainless-os': 'MacOS', 'x-stainless-lang': 'js', Authorization: 'Bearer k' } as any,
+      })
+      assert(!seen.some((k) => k.toLowerCase().startsWith('x-stainless')), '✓ fetch 包装:x-stainless-* 头被剥离(浏览器 CORS 预检不再被严格网关卡死)')
+      assert(seen.some((k) => k.toLowerCase() === 'content-type') && seen.some((k) => k.toLowerCase() === 'authorization'), '✓ fetch 包装:业务头(Content-Type/Authorization)保留不动')
+      // 无 x-stainless 头时零改写(Headers 重建但不丢字段)
+      await fetchFn!('https://example.test/v1', { headers: { 'X-Custom': '1' } as any })
+      assert(seen.some((k) => k.toLowerCase() === 'x-custom'), '✓ fetch 包装:普通自定义头保留(只剥遥测头)')
+    } finally {
+      globalThis.fetch = origFetch
+    }
+    // extraConfig.fetch 覆盖默认(集成方自带 fetch 不被默认包装劫持)
+    const customFetch = async () => new Response('{}') as any
+    const llm2 = constructOpenLlmSync({ apiKey: 'sk-test', model: 'gpt-4', extraConfig: { fetch: customFetch } }) as any
+    const f2 = llm2.clientConfig?.fetch
+    assert(f2 === customFetch, '✓ extraConfig.fetch 覆盖默认包装(集成方可整体替换)')
+  }
 }

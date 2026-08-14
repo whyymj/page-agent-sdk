@@ -1424,6 +1424,12 @@ export interface CreateHtmlSubagentOptions {
   codeField?: string;
   /** 自动注入主 agent 委派编排段(含正确 use_<id>);默认 true,false=不注入 */
   orchestratorPrompt?: boolean;
+  /**
+   * 组件工匠笔记;默认 true:子 agent 收口回复 [note] 行沉淀为组件 __pgNotes(随 data 持久化),
+   * 下次委派同组件经文件地图注入("前任的交接":设计决策/用户偏好/踩坑)—— 同组件跨委派设计意图持续。
+   * false 关闭(零沉淀零注入)
+   */
+  craftNotes?: boolean;
   [k: string]: any;
 }
 export declare function createRagSubagent(options: CreateRagSubagentOptions): SubagentConfig;

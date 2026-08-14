@@ -59,6 +59,57 @@ test.describe('html-page-demo: HTML 页面生成(单模式 code-as-data-asset)',
     expect(tracker.calls()).toBe(4)
   })
 
+  test('工匠笔记:子收口 [note] 行 → 组件 __pgNotes 沉淀(主 data tab 可见随 data 持久化)', async ({ page }) => {
+    // craft-notes:子 agent 收口回复末尾附 [note] 交接行 → 框架 afterAgent 沉淀为组件 __pgNotes(随 data json 进服务端 DB),
+    // 下次委派同组件经文件地图注入 —— 同组件跨委派设计意图持续(状态在数据里,不在子 agent 实例里)
+    const tracker = await mockLlm(page, [
+      { tool_calls: [{ name: 'use_html', arguments: { task: '生成一个倒计时组件' } }] },
+      {
+        tool_calls: [{
+          name: 'write',
+          arguments: { patch: { op: 'set', jsonPath: 'components.2', value: { type: 'custom', name: 'countdown', code: '<section class="pg-countdown"><h2>距开幕</h2></section>' } } },
+        }],
+      },
+      { text: '已生成 countdown\n[note] countdown 倒计时用 setInterval 每秒重算,结束时 clearInterval;文案支持 props 注入' },
+      { text: '已生成,预览已更新' },
+    ])
+    await fillInput(page, '生成一个倒计时组件')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+
+    // 切「主 data」tab:JSON.stringify(bind) 直显 __pgNotes(demo 展示原始 bind,非 agent read 投影)
+    await page.locator('.view-tab', { hasText: '主 data' }).click()
+    const dataPane = await page.textContent('.data-pane')
+    expect(dataPane).toContain('__pgNotes')
+    expect(dataPane).toContain('setInterval 每秒重算')
+    // 主对话不泄露笔记原文(agent 侧 read 投影隐藏 __pg*;笔记只经 augmentPrompt 给下一个子 agent)
+    expect(await page.textContent('.chat-dialog')).toContain('已生成')
+    expect(tracker.calls()).toBe(4)
+  })
+
+  test('子 agent LLM 请求剥 x-stainless-* 头(严格 CORS 网关兼容;散字段兜底构造同生效)', async ({ page }) => {
+    // 真实覆盖链:createChatSdk LLMConfig → subagents 中间件(配置对象)→ 子 agent createAgent 散字段兜底构造。
+    // 修前:子 agent 重构造丢 fetch 包装 → 请求带 x-stainless-* → 严格 CORS 网关预检失败(真 LLM 抓包实测)
+    const stainlessHeaders: string[] = []
+    page.on('request', (r) => {
+      if (r.url().includes('chat/completions')) {
+        stainlessHeaders.push(...Object.keys(r.headers()).filter((k) => k.startsWith('x-stainless')))
+      }
+    })
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'use_html', arguments: { task: '生成徽标' } }] },
+      { tool_calls: [{ name: 'write', arguments: { patch: { op: 'set', jsonPath: 'components.2', value: { type: 'custom', name: 'badge', code: '<section><h3>徽标</h3></section>' } } } }] },
+      { text: '已生成徽标\n[note] badge 用纯 CSS 圆角标签' },
+      { text: '完成' },
+    ])
+    await fillInput(page, '生成一个徽标组件')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    // 主 agent + 子 agent(mock 同端点)的全部 completions 请求均不带 x-stainless-*
+    expect(stainlessHeaders).toEqual([])
+    expect(await previewText(page)).toContain('徽标')
+  })
+
   test('修改组件:未闭合标签 → verify 门禁回灌自纠(vfs_write 修正)→ 预览为修正后内容', async ({ page }) => {
     // demo 预置 hero(__pgId:c_hero);框架 checkout(hero.code→vfs html/c_hero.html)→ 子 vfs_write 覆盖工作副本
     const broken = '<section class="pg-hero"><h1>特惠专区'
@@ -130,13 +181,17 @@ test.describe('html-page-demo: HTML 页面生成(单模式 code-as-data-asset)',
       { text: '已改 features 标题' },
       { text: 'features 已改好,预览已更新' },
     ])
-    // 第 1 步:点 features tab → 选中(PickOverlay 浮层 + 「加入聊天」按钮出现)
-    await page.locator('.comp-tab').nth(1).click()
+    // 第 1 步:点预览块 features → 选中(PickOverlay 浮层 + 「加入聊天」按钮出现)。
+    // 真实用户路径:iframe(sandbox 无 allow-same-origin)吞 click 不冒泡,须 .pick-capture 透明捕获层代理(与首页「点组件即选中」统一)
+    await page.locator('.preview-comp').nth(1).click()
     await expect(page.locator('.pick-overlay__btn')).toBeVisible()
     // 第 2 步:点「加入聊天」→ addFocus → focus_change 事件同步 🎯 标记
     await page.locator('.pick-overlay__btn').click()
     await expect(page.locator('.focus-mark')).toBeVisible()
     await expect(page.locator('.preview-meta')).toContainText('已聚焦')
+    // 聚焦后撤捕获层:该组件 iframe 内交互(轮播/特效)放行,未聚焦组件捕获层仍在(点击仍可选中)
+    await expect(page.locator('.preview-comp').nth(1).locator('.pick-capture')).toHaveCount(0)
+    await expect(page.locator('.preview-comp').nth(0).locator('.pick-capture')).toHaveCount(1)
 
     await fillInput(page, '把 features 标题改成核心优势')
     await clickSend(page)

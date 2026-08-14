@@ -9,6 +9,7 @@
  */
 import { shallowRef, triggerRef } from 'vue'
 import { ChatOpenAI } from '@langchain/openai'
+import { stripStainlessFetch } from '../llm/constructLlm'  // 兜底构造(散字段,子 agent 路径)同样剥 x-stainless-* 头
 import {
   HumanMessage,
   AIMessage,
@@ -366,7 +367,7 @@ export function createAgent(options: CreateAgentOptions) {
     model,
     temperature,
     maxTokens: resolvedMaxTokens,
-    configuration: { ...(baseUrl ? { baseURL: baseUrl } : {}), ...extraConfig },
+    configuration: { ...(baseUrl ? { baseURL: baseUrl } : {}), fetch: stripStainlessFetch, ...extraConfig },
     ...(extraBody ? { modelKwargs: extraBody } : {}),
   })
   let llmWithTools = allTools.length > 0 ? (llm.bindTools?.(allTools) ?? llm) : llm

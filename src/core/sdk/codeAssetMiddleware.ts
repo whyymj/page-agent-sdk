@@ -19,6 +19,36 @@ import { validateHtmlFormat } from '../tools/htmlValidate'
 
 /** state 上挂载的「本轮子 agent touch 过的 vfs 路径」(子 agent 私有 Set,经 applyUpdate 浅合并保留引用;并发 use_html 互不污染) */
 const TOUCHED = '__pgTouched'
+/** state 上挂载的「本轮子 agent 最终回复文本」holder(对象引用,wrapModelCall mutate / afterAgent 读;并发子 agent 实例天然隔离) */
+const FINAL = '__pgFinalText'
+
+/** 工匠笔记 sidecar 字段名(read 投影隐藏 __pg* 现成;框架直改 bind,不进 schema) */
+const NOTES = '__pgNotes'
+/** 每组件笔记上限(FIFO 保最近 N 条)与单条长度上限 */
+const NOTES_MAX = 5
+const NOTE_MAX_CHARS = 200
+
+/**
+ * 从文本提取 `[note] ` 前缀行(工匠笔记约定行;htmlSystemPrompt 引导收口回复附实现要点交接)。
+ * 容忍列表符号(- 或 *)与空白前缀变体;同行去重。纯函数可单测。
+ */
+export function extractNoteLinesFromText(text: string): string[] {
+  const out: string[] = []
+  for (const line of text.split('\n')) {
+    const hit = line.match(/^\s*[-*]?\s*\[note\]\s*(.*)$/i)
+    if (hit && hit[1].trim()) out.push('[note] ' + hit[1].trim())
+  }
+  return [...new Set(out)]
+}
+
+/** 笔记 append 到组件(单条截断 + FIFO ≤ NOTES_MAX + 跨轮去重;直改组件对象 = 直改 bind) */
+function appendNotes(item: Record<string, unknown>, notes: string[]): void {
+  const cur = Array.isArray(item[NOTES]) ? (item[NOTES] as string[]).filter((n) => typeof n === 'string') : []
+  const merged = [...new Set([...cur, ...notes])]
+    .map((n) => (n.length > NOTE_MAX_CHARS ? n.slice(0, NOTE_MAX_CHARS) + '…' : n))
+    .slice(-NOTES_MAX)
+  item[NOTES] = merged
+}
 
 export interface CodeAssetMiddlewareOptions {
   /** data 可写路径前缀(同 htmlSubagent writablePaths;如 ['components']) */
@@ -31,6 +61,8 @@ export interface CodeAssetMiddlewareOptions {
   codeField?: string
   /** 命中校验回调:组件数>0 且 codeField 全员未命中 string → 调一次(防集成方填错路径静默失败;不阻断 checkout) */
   onWarning?: (msg: string) => void
+  /** 工匠笔记(默认 true):子 agent 收口回复 [note] 行沉淀为组件 __pgNotes + 文件地图注入,同组件跨委派设计意图持续;false 零沉淀零注入 */
+  craftNotes?: boolean
   /** 主 dataOps controller getter(延迟引用:装配期 controller 尚未建,运行时取) */
   getController: () => DataOpsController | null | undefined
   /** 主 vfsStore(工作副本共享池;__pgId 文件名隔离;与子 agent vfs 工具同引用) */
@@ -113,7 +145,7 @@ function focusPathsToPgIds(
  *   design §2.3)+ 孤儿清理(data 没 __pgId 的 vfs 文件删,design §6.2)+ markDataDirty + recomputeBaseline(防主 agent autoLock 误冲突)。
  */
 export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Middleware {
-  const { writablePaths, codeVfsPrefix, ext, codeField = 'code', onWarning, getController, vfsStore } = opts
+  const { writablePaths, codeVfsPrefix, ext, codeField = 'code', onWarning, getController, vfsStore, craftNotes = true } = opts
   return {
     name: 'code-asset-checkout-commit',
     beforeAgent: (state) => {
@@ -140,9 +172,19 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
         onWarning(`codeField '${codeField}' 在当前 ${codeTotal} 个组件中均未命中 string 值。组件实际字段:[${sampleFields}]。若预期有代码组件请核对 codeField 路径;若当前确无代码组件可忽略。`)
       }
       // ② 初始化本轮 touchedVfsPaths(子 agent 私有;经 applyUpdate 浅合并保留引用 → 并发 use_html 互不污染)
+      //    + __pgFinalText holder(wrapModelCall 捕获子 agent 最终回复,工匠笔记提取源;对象引用 mutate,并发实例隔离)
       // ③ 注入 vfsStore.files 引用到 state.files(verify 门禁扫 state.files 见 code 工作副本;与 vfs-bridge 同引用,覆盖无副作用)
-      //    __pgTouched 是框架内部 state 扩展(类 __pgId);TS 上以 Partial<typeof state> 表达,运行时浅合并保留 Set 引用
-      return { files: vfsStore.files, [TOUCHED]: new Set<string>() } as unknown as Partial<typeof state>
+      //    __pgTouched/__pgFinalText 是框架内部 state 扩展(类 __pgId);TS 上以 Partial<typeof state> 表达,运行时浅合并保留引用
+      return { files: vfsStore.files, [TOUCHED]: new Set<string>(), [FINAL]: { text: '' } } as unknown as Partial<typeof state>
+    },
+    // 捕获子 agent 收口回复(无 tool_calls 的模型响应 = 最终文本;wrap-up 收口轮同经洋葱):工匠笔记提取源。
+    // 不用 beforeReturn(maxVerifyAttempts>0 才跑,formatCheck:false 不覆盖)/afterAgent state.messages(createAgent 消息流
+    // 在 stream 局部数组,afterAgent 的 state.messages 只有初始 user 消息 —— wrapModelCall 洋葱是唯一全路径覆盖点。
+    wrapModelCall: async (req, next) => {
+      const resp = await next(req)
+      const h = (req.state as unknown as Record<string, unknown>)[FINAL] as { text: string } | undefined
+      if (h && !(resp.toolCalls && resp.toolCalls.length) && typeof resp.content === 'string' && resp.content) h.text = resp.content
+      return resp
     },
     // 组件代码文件地图(name → vfs 工作副本路径):修 __pgId 映射摩擦 —— __pgId 随机生成且对 agent 隐藏,
     // 子 agent 拿 name 定位不到 vfs 文件(尤其新建组件随机 id)。每轮注入映射表,按 name 直接改对应文件。
@@ -159,6 +201,14 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
         const vfsPath = `${codeVfsPrefix}${o.__pgId}.${ext}`
         const checkedOut = !!vfsStore.files[vfsPath]
         lines.push(`- ${label} → ${vfsPath}${checkedOut ? '' : '(尚未检出,先 vfs_write 创建)'}`)
+        // 工匠笔记注入:每组件 1 行(最近 1 条 + 总数,防地图膨胀);前任维护者的交接,改该组件时遵循
+        if (craftNotes) {
+          const ns = Array.isArray(o[NOTES]) ? (o[NOTES] as string[]).filter((x) => typeof x === 'string') : []
+          if (ns.length) {
+            const latest = ns[ns.length - 1]
+            lines.push(`  📝 笔记×${ns.length}(最近):${latest.length > 120 ? latest.slice(0, 120) + '…' : latest}`)
+          }
+        }
       })
       if (!lines.length) return undefined
       // 追加起始索引(防子 agent 猜索引覆盖已有组件:write components.N 的 N 必须 = 当前数组长度)
@@ -170,7 +220,7 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
           break
         }
       }
-      return `## 组件代码文件地图(改组件时按 name 直接改对应 vfs 文件;框架自动 checkout/commit)\n${lines.join('\n')}${appendHint}`
+      return `## 组件代码文件地图(改组件时按 name 直接改对应 vfs 文件;框架自动 checkout/commit)${craftNotes ? '\n📝 笔记 = 前任维护者交接(设计决策/用户反馈/踩坑),改该组件时遵循' : ''}\n${lines.join('\n')}${appendHint}`
     },
     wrapToolCall: async (ctx, next) => {
       const isVfsCodeOp = ctx.name === 'vfs_write' || ctx.name === 'vfs_edit' || ctx.name === 'vfs_rm'
@@ -212,39 +262,64 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
     afterAgent: (state) => {
       const ctrl = getController()
       const bind = ctrl?.get?.().bind
-      const touched = (state as unknown as Record<string, unknown>)[TOUCHED] as Set<string> | undefined
-      if (!bind || !touched || !touched.size) return
-      // ① 增量 commit:touched vfs 文件 → data.code(按 __pgId,直改 bind;不经 write → 不进快照栈、不经 schema 校验)
-      const dataPgIds = new Set<string>()  // data 现有 __pgId(孤儿清理判定用)
-      forEachCodeItem(bind, writablePaths, (o) => {
-        const pgId = o.__pgId as string
-        dataPgIds.add(pgId)
-        const vfsPath = `${codeVfsPrefix}${pgId}.${ext}`
-        if (touched.has(vfsPath)) {
-          const f = vfsStore.files[vfsPath]
-          if (f && typeof f.content === 'string') {
-            // F2: commit 前校验结构合法性 —— 防 abort/timeout 路径 commit 未跑 verify beforeReturn 的半成品(未闭合标签等)。
-            // 正常路径 verify 门禁已用同校验器验过,此处必过(零误伤);仅兜底拦 abort/timeout 半成品,data.code 保持旧值。
-            const issues = validateHtmlFormat(f.content)
-            if (issues.length) {
-              console.warn(`[page-agent-sdk][code-asset] 跳过 commit 未通过校验的半成品(可能 abort/timeout 未跑完 verify):${vfsPath} - ${issues[0].message}(${issues[0].code})`)
-              return  // forEachCodeItem 回调内 return = 跳过当前组件 commit;dataPgIds 已加(孤儿清理仍认此组件)
+      if (!bind) return
+      const touched = ((state as unknown as Record<string, unknown>)[TOUCHED] as Set<string> | undefined) ?? new Set<string>()
+      if (touched.size) {
+        // ① 增量 commit:touched vfs 文件 → data.code(按 __pgId,直改 bind;不经 write → 不进快照栈、不经 schema 校验)
+        const dataPgIds = new Set<string>()  // data 现有 __pgId(孤儿清理判定用)
+        forEachCodeItem(bind, writablePaths, (o) => {
+          const pgId = o.__pgId as string
+          dataPgIds.add(pgId)
+          const vfsPath = `${codeVfsPrefix}${pgId}.${ext}`
+          if (touched.has(vfsPath)) {
+            const f = vfsStore.files[vfsPath]
+            if (f && typeof f.content === 'string') {
+              // F2: commit 前校验结构合法性 —— 防 abort/timeout 路径 commit 未跑 verify beforeReturn 的半成品(未闭合标签等)。
+              // 正常路径 verify 门禁已用同校验器验过,此处必过(零误伤);仅兜底拦 abort/timeout 半成品,data.code 保持旧值。
+              const issues = validateHtmlFormat(f.content)
+              if (issues.length) {
+                console.warn(`[page-agent-sdk][code-asset] 跳过 commit 未通过校验的半成品(可能 abort/timeout 未跑完 verify):${vfsPath} - ${issues[0].message}(${issues[0].code})`)
+                return  // forEachCodeItem 回调内 return = 跳过当前组件 commit;dataPgIds 已加(孤儿清理仍认此组件)
+              }
+              setByPath(o, codeField, f.content)  // 直改 bind(Vue 响应式触发 UI;不进快照栈;按 codeField 写回嵌套字段)
             }
-            setByPath(o, codeField, f.content)  // 直改 bind(Vue 响应式触发 UI;不进快照栈;按 codeField 写回嵌套字段)
+            // vfs_rm 删了文件:f 为空 → 不改 data.code(组件项还在;子 agent 意图删整个组件应 write del components.N,触发孤儿清理)
           }
-          // vfs_rm 删了文件:f 为空 → 不改 data.code(组件项还在;子 agent 意图删整个组件应 write del components.N,触发孤儿清理)
+        })
+        // ② 孤儿清理:vfs 工作副本里 __pgId 不在 data 的 → 删 vfs 文件(子 agent write del 删组件后,data 项没了,vfs 文件残留)
+        for (const p of touched) {
+          const pgId = pgIdFromVfsPath(p, codeVfsPrefix)
+          if (pgId && !dataPgIds.has(pgId)) {
+            delete vfsStore.files[p]
+          }
         }
-      })
-      // ② 孤儿清理:vfs 工作副本里 __pgId 不在 data 的 → 删 vfs 文件(子 agent write del 删组件后,data 项没了,vfs 文件残留)
-      for (const p of touched) {
-        const pgId = pgIdFromVfsPath(p, codeVfsPrefix)
-        if (pgId && !dataPgIds.has(pgId)) {
-          delete vfsStore.files[p]
-        }
+        // ③ markDataDirty(checkpoint 增量 save)+ recomputeBaseline(主 scope;commit 改 bind 后重算基线,防主 agent 后续 autoLock 误冲突)
+        ctrl?.markDataDirty?.()
+        ctrl?.recomputeBaseline?.()
       }
-      // ③ markDataDirty(checkpoint 增量 save)+ recomputeBaseline(主 scope;commit 改 bind 后重算基线,防主 agent 后续 autoLock 误冲突)
-      ctrl?.markDataDirty?.()
-      ctrl?.recomputeBaseline?.()
+      // ④ 工匠笔记沉淀(craftNotes):子 agent 收口回复(wrapModelCall 捕获的 __pgFinalText)[note] 行 → 组件 __pgNotes(FIFO)。
+      //    独立于 commit 跑(新建组件走 write 不经 vfs,touched 空也要沉淀);状态在数据里不在实例里:
+      //    下次委派同组件,子 agent 经文件地图看到"前任的交接"(设计决策/用户反馈/踩坑)
+      if (!craftNotes) return
+      const finalText = ((state as unknown as Record<string, unknown>)[FINAL] as { text: string } | undefined)?.text ?? ''
+      const notes = extractNoteLinesFromText(finalText)
+      if (!notes.length) return
+      // 归属候选:touched 组件优先(与 commit 同映射);无 touched(新建场景)按 note 行内 name 精确匹配 data 组件(委派 task 常含 name);都不中则跳过不猜
+      const candidates: Array<Record<string, unknown>> = []
+      forEachCodeItem(bind, writablePaths, (o) => {
+        if (touched.size === 0 || touched.has(`${codeVfsPrefix}${o.__pgId}.${ext}`)) candidates.push(o)
+      })
+      if (!candidates.length) return
+      let dirty = false
+      for (const n of notes) {
+        const target = candidates.length === 1
+          ? candidates[0]
+          : candidates.find((o) => typeof o.name === 'string' && !!o.name && n.includes(o.name))
+        if (!target) continue  // 多候选但 note 无 name 可匹配 → 不猜归属,跳过该条
+        appendNotes(target, [n])
+        dirty = true
+      }
+      if (dirty) ctrl?.markDataDirty?.()  // 笔记进 bind → checkpoint 增量保存(commit 段未跑时也要标脏)
     },
   }
 }

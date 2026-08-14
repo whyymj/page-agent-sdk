@@ -23,6 +23,28 @@ export interface ConstructOpts {
 }
 
 /**
+ * 默认 fetch 包装:剥离 openai SDK 自动附加的 `x-stainless-*` 遥测头。
+ * 这些头是纯遥测(无功能影响),但严格 CORS 的 OpenAI 兼容代理(如企业网关)白名单常不含它们
+ * → 浏览器预检直接失败(ERR_FAILED);默认剥离换开箱兼容(真 LLM 实测:严格 CORS 网关被此头卡死)。
+ * 集成方 extraConfig.fetch 在其后展开,可整体覆盖。
+ * 导出共享:createAgent 的散字段兜底构造同样注入(子 agent 路径;真 LLM 抓包实测子 agent 重新构造丢包装)。
+ */
+export function stripStainlessFetch(url: string | URL | Request, init?: RequestInit): Promise<Response> {
+  if (init?.headers) {
+    const h = new Headers(init.headers as HeadersInit)
+    let touched = false
+    for (const k of [...h.keys()]) {
+      if (k.toLowerCase().startsWith('x-stainless')) {
+        h.delete(k)
+        touched = true
+      }
+    }
+    if (touched) init = { ...init, headers: h }
+  }
+  return fetch(url, init)
+}
+
+/**
  * 同步构造 OpenAI 协议 LLM(供 setLlm 等同步契约场景)。
  * 仅 openai 分支;Anthropic 无同步构造(动态 import 本质 async)。
  */
@@ -34,7 +56,8 @@ export function constructOpenLlmSync(cfg: LLMConfig, opts: ConstructOpts = {}): 
     maxTokens: opts.maxTokens ?? cfg.maxTokens,
     configuration: {
       ...(cfg.baseUrl ? { baseURL: cfg.baseUrl } : {}),
-      ...cfg.extraConfig,
+      fetch: stripStainlessFetch,
+      ...cfg.extraConfig,  // 集成方 fetch/headers 等覆盖默认(含整体替换 fetch)
     },
     ...(cfg.extraBody ? { modelKwargs: cfg.extraBody } : {}),
   })

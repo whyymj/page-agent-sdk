@@ -7,6 +7,29 @@
 > ℹ️ 本段累积了 2.23.0 → 2.24.1 多个已发布版本的内容(harden-eval-sandbox / main-flow-audit / context-inspector / arch-review P1 / demo 主题 / session-history / 串行化 / simplify-toolset 等),待按 git tag 逐条归入对应版本段(已知文档债,本次未拆)。
 
 ### Added
+- **组件工匠笔记(`craftNotes`,默认开)**:html 子 agent 收口回复末尾 `[note] <一句话实现要点>` 行(htmlSystemPrompt 约定)→ 框架 afterAgent 沉淀为组件 `__pgNotes` sidecar(FIFO ≤5 条 × 200 字,随 data json 进服务端 DB 跨会话持久),下次委派同组件经「组件代码文件地图」注入最近 1 条(`📝 笔记×N`)—— 同组件跨委派**设计意图持续**(「前任的交接」:设计决策/用户偏好/踩坑),状态在数据里不在子 agent 实例里(与 code-as-data-asset 哲学同构);收口文本经 **wrapModelCall 捕获进 state `__pgFinalText`**(afterAgent 的 state.messages 只有初始 user 消息,beforeReturn 受 `maxVerifyAttempts>0` 门控,wrapModelCall 洋葱是唯一全路径覆盖点);`__pgNotes` 走 `__pg*` sidecar 机制(agent read 投影隐藏 / 写不进,框架独占);`createHtmlSubagent({ craftNotes:false })` 关闭(零沉淀零注入)
+- **主 agent 偏好转述**:委派 task 规格化补 ⑤ 要素(可选)—— 聊天上下文中有与该组件相关的用户历史偏好/反馈时提炼一句附 task 末尾(新子 agent 无记忆,偏好经 task 传递)
+
+### Changed
+- **html 子 agent 终稿纪律 + task 视觉锚**(真 LLM 思考日志实测驱动):htmlSystemPrompt 加终稿纪律(要点清单一次定稿 → 直写终稿 / 同一几何层级约束只推演一次 / 不整段重写;实测 beer-effect 思考里写两版完整代码 + 同一 bottom 推导 3 遍,代码 token 翻倍);htmlOrchestratorPrompt 视觉风格要素补视觉锚指引(主色 hex / 主体占比 / 装饰密度,收窄子 agent 装饰细节推演空间)
+
+### Added
+- **无 html agent 复杂多组件 e2e 场景**:降级直写模式下主 agent 独立完成复杂页面操作(4 组件建页含 2 纯代码 / `write patches` 原子批调序 + 增量改 code + 组件移入容器嵌套 / 全程零委派 / 无 `__pgId` 注入差异断言),与委派模式行为对照锁定
+
+### Fixed
+- **html-page-demo 预览块点击拾取失效**:sandbox iframe 吞 click 不冒泡回父页(点预览区组件块永远触发不了选中;e2e 之前点 tab 掩盖)→ 加 `.pick-capture` 透明捕获层(与首页两步拾取统一),已聚焦组件撤层放行 iframe 内交互;e2e test5 改走真实用户路径
+
+### Changed
+- **严格 CORS 网关开箱兼容**:constructLlm 默认注入 fetch 包装剥 openai SDK 自动附加的 `x-stainless-*` 遥测头(严格 CORS 的 OpenAI 兼容网关白名单不含 → 浏览器预检失败;主 agent 与子 agent 散字段兜底路径三处统一,真 LLM 抓包实测);集成方 `extraConfig` 可覆盖
+- **子 agent LLM 配置完整透传**:`createChatSdk` 传给 subagents 中间件的 `LLMConfig` 在子 agent 兜底散字段构造时丢 `extraConfig`/`extraBody` → 透传修复(修前集成方 headers/fetch/thinking 配置在子 agent 全失效)
+- **mcp-demo 双模式**:`.env` 配 `VITE_RAG_MCP_URL` 切 RAG 知识库模式(动态注入 rag_search/rag_ask/rag_documents),未配保持 mock 模式;内网地址只进 `.env` 不进源码
+
+### Tests
+- selftest 1931 / e2e 569 / browser 53(+ craft-notes selftest 19 项 / e2e 沉淀累积注入场景 / browser 工匠笔记场景 / 无 agent 复杂多组件 10 断言)
+
+## [3.4.0]
+
+### Added
 - **createHtmlSubagent 可配置 code 字段(`codeField`)+ 主 agent 编排自适应注入**(open-schema):`codeField`(默认 `'code'`,嵌套 jsonPath 如 `'props.html_code'` 适配开放 schema 多组件平台;「是否代码组件」= 该路径有 string)+ 装配期命中校验(组件数>0 全员未命中 → onWarning 防填错静默失败);编排**零配置自适应**(有 html 子 agent → 自动注入委派编排 `htmlOrchestratorPrompt(id)`(custom code 不 read 不 write 全权 `use_<id>`)/ 无 agent + schema 有 code 字段 → 自动注入 `htmlDirectWriteFallback` 自己写 + warn / 开放 schema `z.any()` 扫不到 → 集成方 opt-in spread);opt-out `orchestratorPrompt:false`;`htmlOrchestratorPrompt(id)` 导出(动态 `use_<id>`,`systemPromptHelpers.htmlPageOrchestrator` 为其 `'html'` 静态快照,单一数据源)
 - **html 子 agent 过度思考治理**(thinking-taming,真 LLM 实测驱动):① 主 agent 委派 task 规格化(4 要素:定位/视觉/内容/交互,不含技术实现,收窄子 agent 决策空间)② `validate_code` 支持 `jsonPath`(从 data 读 code 校验,零重传 content;**schema 描述/字段顺序/实现 if 链三处优先级统一为 jsonPath 首选** —— 真 LLM 实测发现 schema 反向引导会覆盖 prompt)③ 写前简述(1-2 句方案 → 实现 → 照做)
 - **complex-demo e2e 组件操作场景**(+3):调换顺序(`write` patches 批量 set 交换)/ 改层级(组件移进容器 `props.children`)/ 聚焦改纯代码(addFocus → use_html 委派 → 子 `vfs_write` 越界 `PATH_DENIED` 回灌 / 焦点文件放行)

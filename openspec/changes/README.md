@@ -1,5 +1,7 @@
 # 活跃 Changes 优先级索引
 
+> **2026-08-14 发布 3.4.0**(minor):`html-subagent-open-schema` + `html-agent-thinking-taming` 实施完成并归档 —— ① createHtmlSubagent `codeField`(默认 'code',嵌套如 'props.html_code' 适配开放 schema)+ 装配期命中校验;② 主 agent 编排**自适应注入**(零配置:有 html agent→委派 htmlOrchestratorPrompt(id)/ 无 agent+code 字段→htmlDirectWriteFallback+warn / 开放 schema opt-in;opt-out `orchestratorPrompt:false`);③ html 子 agent 过度思考治理(task 规格化 4 要素(实测完全生效)/ validate_code jsonPath 零重传(**schema/实现/skill 三处统一 jsonPath 首选** —— 实测工具 schema 反向引导会覆盖 system prompt 的教训)/ 写前简述);**真 LLM 多场景 A-E(新建/调换/层级/属性/聚焦)端到端全跑通**。同批:schema_data 栈溢出修复(容器 children 自引用 → describeSchemaNode depth+visited 双截断)+ complex-demo e2e 组件操作 3 场景 + custom 拾取修复(iframe pointer-events)+ 编排双重注入修复 + 文档 D 阶段补齐。selftest 1905 / e2e 556 / browser 51。见 [`archive/2026-08-13-html-subagent-open-schema/`](./archive/2026-08-13-html-subagent-open-schema/) + [`archive/2026-08-14-html-agent-thinking-taming/`](./archive/2026-08-14-html-agent-thinking-taming/)。
+
 > **2026-08-12 发布 3.0.0**(breaking major):`code-as-data-asset` 实施完成并归档 —— **createHtmlSubagent 改单模式**(代码作为 data 资产:`code` 字段进服务端 DB + vfs 作编辑工作副本 + 框架 beforeAgent checkout/afterAgent commit 自动搬运,主 agent 透明 + `__pgId` 无感注入 + 主 scope read 摘要)。**breaking**:去 `onComplete`/`codeRef`/`codeSnapshots`,集成方迁移 `codeRef`→`code` 字段。selftest 1849 / browser 端到端 3 passed。详见 [`archive/2026-08-12-code-as-data-asset/`](./archive/2026-08-12-code-as-data-asset/)。
 
 > **2026-08-11 audit-five-dimensions(已归档)**:SDK 五维二审(CA 并发原子性 / SE 安全纵深 / VM 版本迁移 / RE 资源累积 / CO 配置健壮)。基线 2.38.0,补审六专项外盲区。**真 P1×4 已修**(均含 3.0.0):P1-1 并发写注释(createAgent `maxParallelTools` warn)/ P1-2 glob `[^/]*`→`[^.]*`(permissions)/ P1-3 WorkingMemory restore 字段守卫 / P1-4 maxToolRounds clamp;**P2×25 / P3×16 登记 `deferred.md`**(6 分组:SE 加固 / VM 迁移 / CO fail-fast / CA 并发 / RE fire-and-forget / P3 卫生);§五不动项 VM-F1(版本号架构)/ CO-preset(JS spread 文档)。见 [`archive/2026-08-11-audit-five-dimensions/`](./archive/2026-08-11-audit-five-dimensions/)。
@@ -30,9 +32,7 @@
 
 ## 进行中
 
-> **2026-08-13 html-subagent-open-schema(已实施,待归档)**:createHtmlSubagent 适配开放 schema 多组件平台 —— ① `codeField` 可配置(替换硬编码 `.code`,支持嵌套 jsonPath 如 `props.html_code`,默认 `'code'` 保现状)+ 装配期命中校验(填错路径 onWarning 提示,不阻断);② 主 agent 编排**自适应注入**(有 html agent→委派:custom code 不 read 不 write 全权 use_<id> / 无 html agent+schema 有 code 字段→主 agent 自己写 `htmlDirectWriteFallback`+warn;集成方零配置,开放 schema opt-in spread,opt-out `orchestratorPrompt:false`)。同源化 `htmlOrchestratorPrompt(id)`(动态 use_<id>)+ 静态快照。minor(向后兼容)。selftest 1897 / e2e 547(+B6 编排注入)/ browser 48。见 [`2026-08-13-html-subagent-open-schema/`](./2026-08-13-html-subagent-open-schema/)。
-
-> **2026-08-14 html-agent-thinking-taming(已实施,待归档,commit a3f5d09)**:治理 html 子 agent 过度思考(complex-demo 真 LLM 实测:撕边穷举 / validate token 纠结 / 边写边纠结)—— ① 主 agent task 规格化(4 要素,真 LLM 验证**完全生效**)+ ② validate_code jsonPath(零重传;后续真 LLM 实测暴露根因 = 工具 schema 反向引导,已修:schema 描述/字段顺序/实现三处统一 jsonPath 首选)+ ③ 写前简述 + ④ 模型对比(文档 D 随 usage-guide 补)。真 LLM 多场景(A-E 新建/调换/层级/属性/聚焦)端到端全跑通。见 [`2026-08-14-html-agent-thinking-taming/`](./2026-08-14-html-agent-thinking-taming/)。
+- [`2026-08-14-html-agent-craft-notes/`](./2026-08-14-html-agent-craft-notes/)(**proposal 待实施**,minor,M):组件工匠笔记(`__pgNotes` sidecar:子 agent 收口 `[note]` 行沉淀 + 文件地图注入,同组件跨委派设计意图持续;craftNotes 默认开可 opt-out)+ 主 agent 偏好转述(task 规格化 ⑤ 要素)。状态在数据里不在实例里(与 code-as-data-asset 哲学同构),不做常驻子 agent。
 
 ---
 

@@ -321,6 +321,10 @@ export function genPgId(): string {
  * 框架 afterWrite 钩子调(不经 schema 校验 / isPathAllowed,框架独占);read 因 __pgId 不在 schema → projectBySchemaDeep 自然隐藏。
  * agent 写 __pgId 被 isPathAllowed 自然拒(__pgId 不在 schema 白名单 → PATH_DENIED)。纯函数可单测;
  * writablePath 在 bind 非数组(或元素非对象)→ 跳过(fallback 降级,不抛错)。
+ *
+ * 已知边界(craft-notes design A3):write patch **整对象替换**组件(如 patches 交换顺序)时,LLM value 不含 __pg*
+ * (read 投影看不到)→ __pgId 重新生成(映射键换新,checkout 按新 id 建文件,功能不破坏);
+ * __pgNotes(工匠笔记)随旧对象丢失 —— 接受(频率低,下次委派子 agent 会重新沉淀;write 前快照旧值需侵入 clone 应用链,不值得)。
  */
 export function supplementPgId(bind: any, writablePaths: string[]): void {
   if (!bind || typeof bind !== 'object') return

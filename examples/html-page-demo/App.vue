@@ -149,7 +149,6 @@ onMounted(() => {
     // 此处只留业务身份 + opt-in 片段(先出方案 htmlPageProposeFirst)+ 焦点精修特有规则。
     systemPrompt:
       '你是页面搭建助手,管理多个纯代码组件(data.components 数组,每个 custom 组件有 name + code 字段)。\n' +
-      systemPromptHelpers.htmlPageProposeFirst + '\n' +
       '【焦点精修】若当前聚焦某组件,对话默认针对该焦点组件:task 里指明「只改 <焦点组件 name>」,子 agent 受硬约束只能改该组件代码(越界 PATH_DENIED)。聚焦时仍可新建组件(尾部追加放行),但精修类请求优先聚焦。\n' +
       '完成后告知用户预览已更新。',
     maxToolRounds: 25,  // 多组件逐个委派需更多轮次(每组件≈委派+read 2 轮);默认 10 仅够~5 组件,抬到 25 给 ~10 组件空间
@@ -179,6 +178,8 @@ onMounted(() => {
   })
 
   agent.mount('#chat-root')
+  // 调试/脚本钩子:暴露 sdk(同 complex-demo;收集子 agent 事件、读 data 状态用)
+  ;(window as any).__sdk = agent
 
   // iframe 自适应高度:监听子 iframe 量高消息(经 postMessage 报回,保 sandbox 隔离)
   window.addEventListener('message', onPreviewMessage)
@@ -252,6 +253,10 @@ function sendSuggestion(text: string) {
               :style="{ height: (iframeHeights[c.origIdx] || 420) + 'px' }"
               sandbox="allow-scripts allow-modals allow-popups allow-forms"
               title="组件预览"></iframe>
+            <!-- 点击捕获层:iframe(sandbox 无 allow-same-origin)吞 click,事件不冒泡回父页 → 需透明层代理两步拾取第 1 步(同首页「点组件即选中」)。
+                 已聚焦组件撤层:iframe 内交互(轮播/特效)直接可用,聚焦期间以精修 + 体验为主 -->
+            <div v-if="!isFocused(c.origIdx)" class="pick-capture"
+              @click.stop="onSelect(`components.${c.origIdx}`)"></div>
           </div>
         </div>
         <!-- 源代码:选中组件的 code -->
@@ -414,7 +419,9 @@ function sendSuggestion(text: string) {
 /* 预览:整页堆叠(撑满内容区;点块 = 第 1 步选中 → PickOverlay 浮层「加入聊天」→ 第 2 步聚焦) */
 .preview { flex: 1; min-height: 0; background: #fff; border-radius: 0 8px 8px 8px; overflow: auto; padding: 8px; }
 .preview-empty { padding: 40px; text-align: center; color: #9ca3af; font-size: 13px; }
-.preview-comp { cursor: pointer; border: 2px dashed transparent; border-radius: 6px; transition: border-color 0.15s; margin-bottom: 8px; }
+.preview-comp { cursor: pointer; border: 2px dashed transparent; border-radius: 6px; transition: border-color 0.15s; margin-bottom: 8px; position: relative; }
+/* 拾取捕获层:盖住 iframe(点击 = 选中第 1 步);聚焦后撤层放行 iframe 内交互 */
+.pick-capture { position: absolute; inset: 0; z-index: 1; cursor: pointer; }
 /* iframe 渲染完整页面级 HTML(sandbox 隔离 + 执行 script)。
    高度自适应:注入脚本 postMessage 报 scrollHeight 回父页面按 origIdx 绑定(默认 420px 兜底);
    无 allow-same-origin(安全隔离,P0-2)下靠 postMessage 量高,不破坏隔离 */

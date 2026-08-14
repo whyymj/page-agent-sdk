@@ -147,6 +147,13 @@ export async function run(ctx: TestCtx): Promise<void> {
       systemPromptHelpers.htmlPageOrchestrator.includes('✅'),
     '✓ 委派 task 规格化:htmlPageOrchestrator 含规格条(4 要素 定位/视觉/内容/交互 + ❌/✅ 示例,不含技术实现)',
   )
+  // thinking-taming ①补强:视觉锚(task 给具体 hex/占比,收窄子 agent 装饰细节推演;真 LLM 实测 beer-effect 思考 610 行冗余 30% 的成因)
+  assert(
+    htmlOrchestratorPrompt('html').includes('视觉锚') &&
+      htmlOrchestratorPrompt('html').includes('#F7C948') &&
+      htmlOrchestratorPrompt('html').includes('画布 60%'),
+    '✓ 委派 task 视觉锚:规格条含具体锚点示例(主色 hex / 主体占比),示例本身可模仿',
+  )
 
   // buildDataPrompt
   assert(buildDataPrompt(undefined) === '', 'buildDataPrompt → 无 data 返空串')

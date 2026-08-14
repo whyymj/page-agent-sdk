@@ -12,13 +12,13 @@
 import { z } from 'zod'
 import { createDataOps } from '../../tools/dataOps'
 import { createVfs } from '../../backends/vfs'
-import { createCodeAssetMiddleware, pgIdFromVfsPath } from '../../sdk/codeAssetMiddleware'
+import { createCodeAssetMiddleware, pgIdFromVfsPath, extractNoteLinesFromText } from '../../sdk/codeAssetMiddleware'
 import { createHtmlValidateToolsMiddleware } from '../../sdk/htmlSubagent'
 import { applyUpdate } from '../../harness/middleware'
 import { createInitialState } from '../../harness/state'
 import type { TestCtx } from './_ctx'
 
-function setup(bind: Record<string, unknown>, opts?: { codeField?: string; onWarning?: (msg: string) => void }) {
+function setup(bind: Record<string, unknown>, opts?: { codeField?: string; onWarning?: (msg: string) => void; craftNotes?: boolean }) {
   const tools = createDataOps({
     schema: z.object({
       title: z.string(),
@@ -35,6 +35,7 @@ function setup(bind: Record<string, unknown>, opts?: { codeField?: string; onWar
     ext: 'html',
     codeField: opts?.codeField,
     onWarning: opts?.onWarning,
+    craftNotes: opts?.craftNotes,
     getController: () => controller,
     vfsStore,
   })
@@ -277,5 +278,122 @@ export async function run(ctx: TestCtx): Promise<void> {
     mw.beforeAgent({ files: { 'html/x.html': { content: '<b/>', updatedAt: 0 } } } as any)
     const r5 = await validateCode.invoke({ path: 'html/x.html' })
     assert(/✅/.test(String(r5)), '✓ validate_code path 旧用法零回归(校验 vfs 文件)')
+  }
+
+  // ===== craft-notes:组件工匠笔记(__pgNotes sidecar:子 agent 收口 [note] 行沉淀 + 地图注入,同组件跨委派设计意图持续)=====
+  // ① extractNoteLinesFromText 纯函数:[note] 行提取(前缀变体/去重);收口文本源 = wrapModelCall 捕获链
+  {
+    assert(
+      JSON.stringify(extractNoteLinesFromText('已生成 beer 组件\n[note] 液面 height keyframes 4.2s 循环')) === JSON.stringify(['[note] 液面 height keyframes 4.2s 循环']),
+      '✓ extractNoteLinesFromText:收口文本提取 [note] 行(规范前缀)',
+    )
+    assert(
+      JSON.stringify(extractNoteLinesFromText('- [note] 带列表前缀\n*  [note]  另一条\n[note] 液面循环\n[note] 液面循环')) === JSON.stringify(['[note] 带列表前缀', '[note] 另一条', '[note] 液面循环']),
+      '✓ extractNoteLinesFromText:容忍 -/*/ 空白前缀变体 + 同轮去重',
+    )
+    assert(extractNoteLinesFromText('普通收口无笔记').length === 0, '✓ extractNoteLinesFromText:无 [note] 行 → 空(不硬造笔记)')
+  }
+
+  // ①b wrapModelCall 捕获链:无 tool_calls 的模型响应 = 收口文本 → state.__pgFinalText(afterAgent 提取源;有 tool_calls 不覆盖)
+  {
+    const bind: any = { title: 't', components: [{ __pgId: 'c_a', name: 'a', code: '<p/>' }] }
+    const { mw } = setup(bind)
+    const st = applyUpdate(createInitialState(), mw.beforeAgent!(createInitialState()) as any)
+    const mockToolNext = async () => ({ content: '工具调用中', toolCalls: [{ name: 'vfs_edit', args: {} }], message: null as any })
+    await (mw as any).wrapModelCall!({ messages: [], state: st }, mockToolNext)
+    assert((st as any).__pgFinalText.text === '', '✓ wrapModelCall 捕获:有 tool_calls 的响应不记(非收口文本)')
+    const mockFinalNext = async () => ({ content: '已改\n[note] 交接行', toolCalls: [], message: null as any })
+    await (mw as any).wrapModelCall!({ messages: [], state: st }, mockFinalNext)
+    assert((st as any).__pgFinalText.text === '已改\n[note] 交接行', '✓ wrapModelCall 捕获:无 tool_calls 响应 → __pgFinalText holder(真实链路:afterAgent state.messages 只有初始 user,收口文本唯此可得)')
+  }
+
+  // ② afterAgent 沉淀:收口文本(holder)[note] 行 → touched 组件 __pgNotes;无 [note] 不沉淀
+  {
+    const bind: any = { title: 't', components: [{ __pgId: 'c_a', name: 'beer', code: '<p>old</p>' }] }
+    const { vfsStore, mw } = setup(bind)
+    const st = runRound(mw, [{ path: 'html/c_a.html', content: '<p>NEW</p>' }], bind, vfsStore)
+    await mw.wrapToolCall!({ name: 'vfs_edit', args: { path: 'html/c_a.html' }, state: st } as any, mockNext)
+    ;(st as any).__pgFinalText.text = '已修改 beer\n[note] 液面 height keyframes 4.2s 循环;装饰仅灯串+光斑'
+    mw.afterAgent!(st)
+    assert(JSON.stringify(bind.components[0].__pgNotes) === JSON.stringify(['[note] 液面 height keyframes 4.2s 循环;装饰仅灯串+光斑']), '✓ craft-notes 沉淀:子 agent 收口 [note] 行 → touched 组件 __pgNotes(单组件直接归属)')
+    // 无 [note] 行 → 不沉淀(字段不出现)
+    const st2 = applyUpdate(createInitialState(), mw.beforeAgent!(createInitialState()) as any)
+    ;(st2 as any).__pgFinalText.text = '已修改,无笔记约定行'
+    mw.afterAgent!(st2)
+    assert(bind.components[0].__pgNotes.length === 1, '✓ craft-notes:无 [note] 行不沉淀(不硬造低质笔记)')
+  }
+
+  // ③ 新建场景(touched 空,子 agent 走 write 不经 vfs)→ 按 note 行内 name 归属
+  {
+    const bind: any = { title: 't', components: [{ __pgId: 'c_a', name: 'beer', code: '<p/>' }, { __pgId: 'c_b', name: 'carousel', code: '<b/>' }] }
+    const { mw } = setup(bind)
+    const st = applyUpdate(createInitialState(), mw.beforeAgent!(createInitialState()) as any)  // __pgTouched 空 Set
+    ;(st as any).__pgFinalText.text = '已新建 carousel\n[note] carousel 用 translateX track + setInterval 3500ms,hover 暂停'
+    mw.afterAgent!(st)
+    assert(
+      !bind.components[0].__pgNotes && JSON.stringify(bind.components[1].__pgNotes) === JSON.stringify(['[note] carousel 用 translateX track + setInterval 3500ms,hover 暂停']),
+      '✓ craft-notes 新建场景:touched 空 → 按 note 行内 name(carousel)精确归属,不误挂到 beer',
+    )
+  }
+
+  // ④ FIFO ≤5 + 单条 200 字截断
+  {
+    const bind: any = { title: 't', components: [{ __pgId: 'c_a', name: 'a', code: '<p/>' }] }
+    const { vfsStore, mw } = setup(bind)
+    const st = runRound(mw, [{ path: 'html/c_a.html', content: '<p>x</p>' }], bind, vfsStore)
+    await mw.wrapToolCall!({ name: 'vfs_edit', args: { path: 'html/c_a.html' }, state: st } as any, mockNext)
+    const long = 'x'.repeat(260)
+    ;(st as any).__pgFinalText.text = ['n1', 'n2', 'n3', 'n4', 'n5', 'n6'].map((n) => `[note] ${n} ${long}`).join('\n')
+    mw.afterAgent!(st)
+    const notes: string[] = bind.components[0].__pgNotes
+    assert(notes.length === 5, '✓ craft-notes FIFO:6 条 → 保最近 5 条(shift 最旧)')
+    assert(notes[0].includes('n2') && notes[4].includes('n6'), '✓ craft-notes FIFO:保的是最新 5 条(n2..n6)')
+    assert(notes.every((n) => n.length <= 202 && n.endsWith('…')), '✓ craft-notes 截断:单条 >200 字截断加省略号')
+  }
+
+  // ⑤ augmentPrompt 地图注入 📝 笔记行 + 头部交接引导;无笔记组件不注
+  {
+    const bind: any = { title: 't', components: [
+      { __pgId: 'c_a', name: 'beer', code: '<p/>', __pgNotes: ['[note] 旧笔记', '[note] 液面 keyframes 4.2s 循环,装饰仅灯串+光斑'] },
+      { __pgId: 'c_b', name: 'banner', code: '<b/>' },
+    ] }
+    const { mw } = setup(bind)
+    mw.beforeAgent!(createInitialState())
+    const map = (mw as any).augmentPrompt!()
+    assert(map.includes('前任维护者交接'), '✓ craft-notes 注入:地图头含交接引导(设计决策/用户反馈/踩坑,改该组件时遵循)')
+    assert(map.includes('📝 笔记×2(最近):[note] 液面 keyframes 4.2s 循环,装饰仅灯串+光斑'), '✓ craft-notes 注入:有笔记组件加「📝 笔记×N(最近):最近 1 条」行')
+    const bLine = map.split('\n').find((l: string) => l.includes('banner'))!
+    assert(!bLine.includes('📝'), '✓ craft-notes 注入:无笔记组件不注 📝 行(零噪音)')
+  }
+
+  // ⑥ read 投影隐藏 __pgNotes(agent/主 agent 看不到 sidecar 原始字段;注入走 augmentPrompt 框架通道)
+  {
+    const bind: any = { title: 't', components: [{ __pgId: 'c_a', name: 'a', code: '<p/>', __pgNotes: ['[note] x'] }] }
+    const { tools } = setup(bind)
+    const t = byName(tools)
+    const r = await invoke(t['read'], { jsonPath: 'components.0' })
+    assert(!/pgNotes/.test(String(r)), '✓ craft-notes 隐藏:read 投影过滤 __pg*(__pgNotes 不进 agent 上下文)')
+  }
+
+  // ⑦ craftNotes:false → 零沉淀零注入(opt-out 完全关闭)
+  {
+    const bind: any = { title: 't', components: [{ __pgId: 'c_a', name: 'a', code: '<p/>', __pgNotes: ['[note] 已有'] }] }
+    const { vfsStore, mw } = setup(bind, { craftNotes: false })
+    const st = runRound(mw, [{ path: 'html/c_a.html', content: '<p>NEW</p>' }], bind, vfsStore)
+    await mw.wrapToolCall!({ name: 'vfs_edit', args: { path: 'html/c_a.html' }, state: st } as any, mockNext)
+    ;(st as any).__pgFinalText.text = 'done\n[note] 不应沉淀'
+    mw.afterAgent!(st)
+    assert(JSON.stringify(bind.components[0].__pgNotes) === JSON.stringify(['[note] 已有']), '✓ craftNotes:false → 不沉淀([note] 行被忽略)')
+    const map = (mw as any).augmentPrompt!()
+    assert(!map.includes('📝'), '✓ craftNotes:false → 地图不注入笔记行(零开销 opt-out)')
+  }
+
+  // ⑧ htmlSystemPrompt [note] 约定 + htmlOrchestratorPrompt ⑤ 历史偏好转述(提示词侧,craft-notes 配套)
+  {
+    const { createHtmlSubagent } = await import('../../sdk/htmlSubagent')
+    const cfg = createHtmlSubagent({ writablePaths: ['components'] })
+    assert(!!cfg.systemPrompt?.includes('[note]') && !!cfg.systemPrompt?.includes('交接笔记'), '✓ htmlSystemPrompt 含 [note] 交接笔记约定(收尾回复末尾附 1 行实现要点)')
+    const { htmlOrchestratorPrompt } = await import('../../presets')
+    assert(!!htmlOrchestratorPrompt('html').includes('历史偏好'), '✓ htmlOrchestratorPrompt 规格化含 ⑤ 历史偏好(聊天上下文偏好提炼附 task,新子 agent 无记忆全靠 task)')
   }
 }

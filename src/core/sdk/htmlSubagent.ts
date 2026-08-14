@@ -64,6 +64,12 @@ export interface CreateHtmlSubagentOptions {
   codeField?: string
   /** 自动注入主 agent 委派编排段(htmlOrchestratorPrompt(id),含正确 use_<id>);默认 true。false=不注入(高级用户自定义编排) */
   orchestratorPrompt?: boolean
+  /**
+   * 组件工匠笔记;默认 true:子 agent 收口回复 [note] 行沉淀为组件 __pgNotes(随 data 持久化),
+   * 下次委派同组件经文件地图注入("前任的交接":设计决策/用户反馈/踩坑)—— 同组件跨委派设计意图持续。
+   * false 关闭(零沉淀零注入)
+   */
+  craftNotes?: boolean
 }
 
 // ===== HTML systemPrompt(单模式:代码作为 data 资产 + vfs 工作副本) =====
@@ -100,6 +106,7 @@ ${kindRules}
 
 诚实交付:
 - 按用户需求产出完整 HTML 页面。若某需求无法实现,结论简短说明(不展开权衡、不解释渲染原理)。禁止假装实现了未做到的特性。
+- **收尾回复末尾附 1 行交接笔记**(给下次维护该组件的子 agent,框架会存进组件并自动转交):格式 \`[note] <一句话实现要点>\` —— 关键设计决策 / 用户偏好反馈 / 踩坑(如「[note] 液面用 height keyframes 4.2s 循环;装饰仅灯串+光斑 2 类」)。只写可复用的结论,一行内。
 
 工作方式:
 1. 中等任务(多组件 / 大段代码)先 write_todos 拆解:read 看现有结构 → 规划各组件 → 逐个改/建 → read 确认。**todo 工具约束**:write_todos 是整表替换(一次列全),update_todo 是增量(标完成/改状态);两者**不可在同一轮混用**(一轮内只用一种,否则被拒),别再同轮重试另一种;
@@ -115,6 +122,7 @@ ${kindRules}
    - **禁止在思考里手算实现细节**:CSS 选择器特异性、keyframe 百分比、timing 数学、crossfade 边界对齐 —— 这些**在代码里定**,写完跑 validate/看效果调,不在思考里逐条算。
    - **机械决定一次定**:写法选择(read 回读 vs 复制、vfs 草稿 vs 直写 data、并行 vs 串行)快速选一个,**不在思考里反复权衡 token 成本**(为之纠结反更费 token)。
    - **禁止在思考里整段写出完整代码草稿**:CSS/JS/HTML 代码只写进 write / vfs_write / vfs_edit 工具调用(代码只出现一次);思考里只做高层设计(结构 / 字段 / 方案选择),不要先逐行预写一遍代码再在工具里重复一遍 —— 那会让代码 token 翻倍。
+   - **终稿纪律(一次写成)**:动手前要点清单一次定稿(≤10 条:结构 + DOM 分层/z-index + 关键尺寸 + 动画时序),清单齐了**直接在工具调用里写终稿**;① 不先写一版再推翻重写第二版(整段重写 = 代码 token 翻倍,写前多花 30 秒把清单想齐);② 同一几何/层级约束(bottom 定位/遮挡/z-index)**只推演一次**,不重复推导第二遍;③ 写完发现小问题(遮挡/重叠/命名),只改那一处,不重写整段。
    - **代码字符串不纠结转义**:code / content 字段就是普通字符串,直接写完整代码文本(换行、引号照常写),不要纠结「\n」转义、单双引号、字面换行会不会被拒 —— 框架自动序列化,反复权衡纯属浪费 token。
    - 一次想清楚 → 动手 → 验证 → 收口。**思考是手段不是目的,产出代码才是**。`
 }
@@ -278,7 +286,7 @@ export function createHtmlSubagent(options: CreateHtmlSubagentOptions): Subagent
   const {
     writablePaths, codeVfsPrefix = 'html/', id = 'html', description, planning = true,
     summarization = true, maxToolRounds = 12, temperature = 0.4, skills, extraTools,
-    formatCheck = true, codeField = 'code', orchestratorPrompt = true,
+    formatCheck = true, codeField = 'code', orchestratorPrompt = true, craftNotes = true,
   } = options
   if (!writablePaths?.length) {
     throw new Error('[page-agent-sdk][createHtmlSubagent] writablePaths 必填(代码组件 data 区,如 ["components"])')
@@ -308,6 +316,6 @@ export function createHtmlSubagent(options: CreateHtmlSubagentOptions): Subagent
     maxToolRounds,
     tools: tools.length ? tools : undefined,
     // 框架内部标记:createChatSdk 装配期识别 → 注入 checkout/commit 钩子 + pgIdPaths + largeTextPaths + 强制 vfs
-    _codeAsset: { writablePaths, codeVfsPrefix, ext, codeField, ...(orchestratorPrompt ? { orchestratorPrompt: htmlOrchestratorPrompt(id) } : {}) },
+    _codeAsset: { writablePaths, codeVfsPrefix, ext, codeField, craftNotes, ...(orchestratorPrompt ? { orchestratorPrompt: htmlOrchestratorPrompt(id) } : {}) },
   }
 }

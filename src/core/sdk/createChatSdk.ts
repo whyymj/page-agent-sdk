@@ -1158,6 +1158,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       codeVfsPrefix: cc.codeVfsPrefix,
       ext: cc.ext,
       codeField: cc.codeField,
+      craftNotes: cc.craftNotes,
       onWarning: (msg) => console.warn(`[page-agent-sdk][code-asset] ${msg}`),
       getController: () => dataOpsController,
       vfsStore,

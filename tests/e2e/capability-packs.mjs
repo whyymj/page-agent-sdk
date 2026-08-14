@@ -194,6 +194,46 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:capability-packs] craft-notes 工匠笔记(子收口 [note] 行 → __pgNotes 沉淀 → 二次委派子上下文注入)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    // 两轮共享 stub 队列:①主委派 ②子 vfs_write ③子收口含 [note] ④主收口 ⑤主再委派 ⑥子再改 ⑦子收口再 [note] ⑧主收口
+    const llm = stubModel(
+      { toolCalls: [{ name: 'use_html', args: { task: '改横幅' } }] },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_banner.html', content: '<section>新横幅</section>' } }] },
+      { text: '已改\n[note] 横幅用 grid 两列,标题字号 28' },
+      { text: '完成' },
+      { toolCalls: [{ name: 'use_html', args: { task: '再改横幅文案' } }] },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_banner.html', content: '<section>再改</section>' } }] },
+      { text: '已再改\n[note] 文案改用短句风格' },
+      { text: '完成' },
+    )
+    const bind = { title: 't', components: [{ type: 'custom', name: 'banner', code: '<section>旧</section>', __pgId: 'c_banner' }] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-craftnotes', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
+    })
+    await sdk.mount()
+    await sdk.send('改横幅')
+    assert(
+      JSON.stringify(bind.components[0].__pgNotes) === JSON.stringify(['[note] 横幅用 grid 两列,标题字号 28']),
+      '✓ craft-notes 沉淀:子 agent 收口 [note] 行 → 组件 __pgNotes(随 data bind 持久化)',
+    )
+    await sdk.send('再改横幅文案')
+    assert(
+      JSON.stringify(bind.components[0].__pgNotes) === JSON.stringify(['[note] 横幅用 grid 两列,标题字号 28', '[note] 文案改用短句风格']),
+      '✓ craft-notes 累积:二次委派 [note] append(FIFO,前任交接保留)',
+    )
+    // 二次委派的子 agent 上下文(augmentPrompt 地图)含 📝 笔记行(systemPrompts 收集每次 model 调用的 system)
+    assert(
+      llm.systemPrompts.some((s) => s.includes('📝 笔记×1(最近):[note] 横幅用 grid 两列,标题字号 28')),
+      '✓ craft-notes 注入:二次委派子 agent 的组件代码文件地图含 📝 笔记行(经 augmentPrompt,非 read 泄露)',
+    )
+    sdk.unmount()
+  }
+
   console.log('[e2e:capability-packs] 子 agent reasoning 转发(思考过程可见 → stream onEvent 收到 subagent reasoning)')
   {
     const { stubModel } = await import('./_stub-model.mjs')
@@ -401,6 +441,60 @@ export async function run() {
     assert(bind.components[0].code === '<section class="pg-hero"><h1>啤酒节</h1></section>', '✓ ⑥ 纯代码组件 code 由主 agent 直接 write(降级模式,无 vfs/verify)')
     assert(bind.components[1].title === '干杯', '✓ ⑥ 普通组件(banner)同由主 agent write')
     assert(!llm.systemPrompts.some((s) => s.includes('use_html')), '✓ ⑥ 降级模式主 agent 不委派(全程无 use_html 工具,自己 write code)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:capability-packs] 无 html agent 复杂多组件操作:建页 + 调序 + 改纯代码 + 移入容器(降级直写,无 vfs/门禁)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    // schema:普通 navbar/banner + 纯代码 custom + 容器 container(children 一层嵌套叶子组件)
+    const navbarS = z.object({ type: z.literal('navbar'), title: z.string() })
+    const bannerS = z.object({ type: z.literal('banner'), title: z.string(), color: z.string().optional() })
+    const customS = z.object({ type: z.literal('custom'), name: z.string().optional(), code: z.string() })
+    const leafS = z.discriminatedUnion('type', [navbarS, bannerS, customS])
+    const nodeS = z.discriminatedUnion('type', [navbarS, bannerS, customS, z.object({ type: z.literal('container'), name: z.string().optional(), children: z.array(leafS) })])
+    const heroCodeV1 = '<section class="hero"><h1>青岛啤酒节</h1></section>'
+    const heroCodeV2 = '<section class="hero"><h1>干杯青岛</h1><p>2026 夏季</p></section>'
+    const cdCode = '<div class="countdown">距开幕 3 天</div>'
+    const llm = stubModel(
+      // ── 轮 1:建复杂页面(4 组件:普通×2 + 纯代码×2,主 agent 逐个 write)──
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.0', value: { type: 'navbar', title: '啤酒节导航' } } } }] },
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.1', value: { type: 'banner', title: '干杯', color: '#F7C948' } } } }] },
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.2', value: { type: 'custom', name: 'hero', code: heroCodeV1 } } } }] },
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.3', value: { type: 'custom', name: 'countdown', code: cdCode } } } }] },
+      { text: '已建 4 组件(导航 + 横幅 + 2 个纯代码)' },
+      // ── 轮 2:复杂改操作(read 刷基线 → patches 原子批:调序 + 改纯代码 code + 倒计时移入容器 + 删原位)──
+      { toolCalls: [{ name: 'read', args: { jsonPath: 'components' } }] },
+      { toolCalls: [{ name: 'write', args: { patches: [
+        { op: 'set', jsonPath: 'components.0', value: { type: 'banner', title: '干杯', color: '#F7C948' } },
+        { op: 'set', jsonPath: 'components.1', value: { type: 'navbar', title: '啤酒节导航' } },
+        { op: 'set', jsonPath: 'components.2.code', value: heroCodeV2 },
+        { op: 'set', jsonPath: 'components.4', value: { type: 'container', name: 'stage', children: [{ type: 'custom', name: 'countdown', code: cdCode }] } },
+        { op: 'remove', jsonPath: 'components.3' },
+      ] } }] },
+      { text: '已调换导航/横幅顺序、更新 hero 代码、倒计时移入 stage 容器' },
+    )
+    const bind = { components: [] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-orch-noagent-complex', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ components: z.array(nodeS) }), bind, description: '测试' },
+    })
+    await sdk.mount()
+    assert(sdk.inspect().systemPrompt.includes('直接 write'), '✓ ⑧ 无 agent+复杂 schema(含容器嵌套)→ 降级编排仍自动注入')
+    assert(!sdk.inspect().tools.some((t) => t.name === 'use_html'), '✓ ⑧ 工具面无 use_html(未配 createHtmlSubagent)')
+    // 轮 1:多组件建页(普通 + 纯代码混合)
+    await sdk.send('建一个青岛啤酒节页面:导航、横幅、hero 纯代码、倒计时纯代码')
+    assert(bind.components.length === 4, `✓ ⑧ 复杂建页:主 agent 逐个 write 落 4 组件(实际 ${bind.components.length})`)
+    assert(bind.components[2].code === heroCodeV1 && bind.components[3].code === cdCode, '✓ ⑧ 2 个纯代码组件 code 均由主 agent 直写落地')
+    // 轮 2:调序 + 改纯代码 + 层级移动(patches 原子批)
+    await sdk.send('导航和横幅调换顺序;hero 标题改成「干杯青岛」并加副标;把倒计时移进一个 stage 容器')
+    assert(bind.components.length === 4, `✓ ⑧ 移入容器后顶层仍 4 组件(remove 原位 + append 容器,实际 ${bind.components.length})`)
+    assert(bind.components[0].type === 'banner' && bind.components[1].type === 'navbar', '✓ ⑧ 调序成功(navbar↔banner 交换)')
+    assert(bind.components[2].code === heroCodeV2, '✓ ⑧ 纯代码组件增量改 code(set components.2.code,无需重传整对象)')
+    assert(bind.components[3].type === 'container' && bind.components[3].children?.[0]?.name === 'countdown' && bind.components[3].children[0].code === cdCode, '✓ ⑧ 层级移动:countdown 移入 container.children 且 code 保留')
+    assert(!llm.systemPrompts.some((s) => s.includes('use_html')), '✓ ⑧ 复杂场景全程无委派(主 agent 自己完成,无子 agent)')
+    assert(bind.components.every((c) => !('__pgId' in c)), '✓ ⑧ 降级模式无 __pgId 注入(codeAsset 中间件未装配,与委派模式差异)')
     sdk.unmount()
   }
 

@@ -97,6 +97,13 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert(validateTool?.name === 'validate_code', '✓ validate_code 工具经中间件注入')
   assert(cfg.systemPrompt?.includes('validate_code'), '✓ systemPrompt 引导 validate_code 自检')
   assert(cfg.systemPrompt?.includes('完整、自包含'), '✓ systemPrompt 含完整页面级契约(不再 v-html 片段契约)')
+  // 终稿纪律(thinking-taming ③补强,真 LLM 实测:思考里写两版完整代码 + 同一几何约束重复推导 3 遍,代码 token 翻倍)
+  assert(
+    cfg.systemPrompt?.includes('终稿纪律') &&
+      cfg.systemPrompt?.includes('只推演一次') &&
+      cfg.systemPrompt?.includes('不先写一版再推翻重写第二版'),
+    '✓ systemPrompt 含终稿纪律(要点清单一次定稿 → 直写终稿;同一约束不重复推导;不整段重写)',
+  )
 
   // validate_code:content 模式(直接校验传入内容)
   const rBad = await invoke(validateTool, { content: '<div>x' })
