@@ -45,6 +45,17 @@ export function stripStainlessFetch(url: string | URL | Request, init?: RequestI
 }
 
 /**
+ * baseUrl 容错归一:相对路径(如 '/llm/v1',浏览器端经 vite/网关同源代理绕 CORS 的官方推荐用法)补 location.origin
+ * 成绝对 URL —— openai/anthropic SDK 的 buildURL 直接 new URL(baseURL+path),相对路径抛 Invalid URL(整个会话不可用)。
+ * 纯函数;非浏览器环境 / 已是绝对路径原样返回。
+ */
+export function normalizeBaseUrl(baseUrl: string | undefined): string | undefined {
+  if (!baseUrl || !baseUrl.startsWith('/')) return baseUrl
+  if (typeof location === 'undefined' || !location.origin) return baseUrl  // SSR/Node:无 origin 可补,原样(由调用方抛错)
+  return `${location.origin}${baseUrl}`
+}
+
+/**
  * 同步构造 OpenAI 协议 LLM(供 setLlm 等同步契约场景)。
  * 仅 openai 分支;Anthropic 无同步构造(动态 import 本质 async)。
  */
@@ -55,7 +66,7 @@ export function constructOpenLlmSync(cfg: LLMConfig, opts: ConstructOpts = {}): 
     temperature: opts.temperature ?? cfg.temperature,
     maxTokens: opts.maxTokens ?? cfg.maxTokens,
     configuration: {
-      ...(cfg.baseUrl ? { baseURL: cfg.baseUrl } : {}),
+      ...(cfg.baseUrl ? { baseURL: normalizeBaseUrl(cfg.baseUrl) } : {}),
       fetch: stripStainlessFetch,
       ...cfg.extraConfig,  // 集成方 fetch/headers 等覆盖默认(含整体替换 fetch)
     },
@@ -83,7 +94,7 @@ export async function constructLlmFromConfig(cfg: LLMConfig, opts: ConstructOpts
     temperature: opts.temperature ?? cfg.temperature,
     maxTokens: opts.maxTokens ?? cfg.maxTokens,
     // anthropicApiUrl = baseUrl(Anthropic SDK 的 baseURL 别名);clientOptions 透传 extraConfig(fetch/headers 等)
-    ...(cfg.baseUrl ? { anthropicApiUrl: cfg.baseUrl } : {}),
+    ...(cfg.baseUrl ? { anthropicApiUrl: normalizeBaseUrl(cfg.baseUrl) } : {}),
     ...(cfg.extraConfig ? { clientOptions: cfg.extraConfig } : {}),
   })
 }

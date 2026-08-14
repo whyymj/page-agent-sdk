@@ -9,7 +9,7 @@ export { z } from 'zod'
 // 代理连接模块(防 apiKey 泄露:proxy 代理模式 / direct 直连模式)
 export { createProxyLlm } from './llm/proxyLlm'
 export type { ProxyLlmMode, ProxyLlmOptions } from './llm/proxyLlm'
-export { constructLlmFromConfig, constructOpenLlmSync } from './llm/constructLlm'
+export { constructLlmFromConfig, constructOpenLlmSync, normalizeBaseUrl, stripStainlessFetch } from './llm/constructLlm'
 export type { ConstructOpts } from './llm/constructLlm'
 export { extractTextDelta, extractReasoningDelta, extractUsage, normalizeUsage } from './utils/contentParts'
 // SDK 命令式入口(主入口:注入 mountChatDialog → 含 UI;headless 子路径 index.headless.ts 不注入 → 不含 UI)
@@ -42,7 +42,7 @@ export type { SubagentOptions, SubagentLlmConfig, SubagentConfig, SubagentsContr
 // 能力包(专用子 agent 工厂):RAG 多源检索(createRagSubagent)+ HTML 代码组件生成(createHtmlSubagent)
 export { createRagSubagent } from './sdk/ragSubagent'
 export type { RagHit, RagRetrieveOptions, RagRetriever, RagLoader, CreateRagSubagentOptions } from './sdk/ragSubagent'
-export { createHtmlSubagent, createHtmlFormatCheck } from './sdk/htmlSubagent'
+export { createHtmlSubagent, createHtmlFormatCheck, htmlFragmentSkill } from './sdk/htmlSubagent'
 export type { CreateHtmlSubagentOptions, HtmlFormatCheckOptions } from './sdk/htmlSubagent'
 export { validateHtmlFormat, HTML_VOID_TAGS } from './tools/htmlValidate'
 export type { HtmlFormatIssue } from './tools/htmlValidate'

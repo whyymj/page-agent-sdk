@@ -7,14 +7,14 @@
  * Agent 经 write 改 page.title / page.components(增删改组件 / 调 props / 调 style)→ 左侧 PageRenderer 响应式更新(本 demo 保留 reactive 展示 Vue 响应式模式)。
  */
 import { reactive, onMounted, onUnmounted, ref } from 'vue'
-import { createChatSdk, createHtmlSubagent, defineSkill, systemPromptHelpers, type ChatSdk } from '../../src/core'
+import { createChatSdk, createHtmlSubagent, defineSkill, htmlFragmentSkill, type ChatSdk } from '../../src/core'
 import { useAgentConfig } from './useAgentConfig'
 import PageRenderer from './PageRenderer.vue'
 import DevNav from '../_shared/DevNav.vue'
 import EditableBanner from '../_shared/EditableBanner.vue'
 import DynamicReconfigPanel from './DynamicReconfigPanel.vue'
 import PageConfigPanel from './PageConfigPanel.vue'
-import { initialPage, pageSchema, complexBuilderSkillContent } from './pageSchema'
+import { initialPage, pageSchema, complexBuilderSkillContent, arkUiSpecContent } from './pageSchema'
 import { generateHugePage } from './hugePage'
 import { generateDeepNestedPage } from './deepNestedPage'
 const cfg = useAgentConfig()
@@ -128,14 +128,29 @@ onMounted(() => {
     },
     skills: [
       defineSkill({
+        // UI 规范双挂(主 + html 子):主 agent 知规范才能在委派 task 里给准确视觉锚(hex 取自规范而非自造)
+        name: 'ark-ui-spec',
+        description: '方舟平台 UI 规范:色板 hex/间距栅格/字号/组件形态约束。涉及视觉/配色决策或委派代码组件时先读',
+        getContent: () => arkUiSpecContent,
+      }),
+      defineSkill({
         name: 'complex-builder',
         description: '编辑组件拼装的复杂页面(window.page,含 container/section/grid 容器可嵌套 children)。用户要求改左侧页面(增删改组件 / 调 props / 调样式 / 容器内嵌套)时使用',
         getContent: () => complexBuilderSkillContent,
       }),
     ],
-    // 预声明子 agent:createHtmlSubagent 接管 custom 纯代码组件(code 字段 → vfs 工作副本 + checkout/commit 自动搬运)
-    // writablePaths 省略(3.6+):装配期从 schema 自动推断出 ['components']
-    subagents: [createHtmlSubagent()],
+    // HTML 代码子 agent:零配置可省(3.9 自动装配);此处显式声明演示「挂 UI 规范 skill」的定制路径 ——
+    // skills 完全覆盖默认,须并回内置 htmlFragmentSkill(生成规范/安全底线),否则丢规范
+    subagents: [createHtmlSubagent({
+      skills: [
+        defineSkill({
+          name: 'ark-ui-spec',
+          description: '方舟平台 UI 规范:色板 hex/间距栅格/字号/组件形态约束(优惠券撕边/倒计时/徽标)。生成或修改 custom 代码组件前必读',
+          getContent: () => arkUiSpecContent,
+        }),
+        htmlFragmentSkill,  // 内置生成规范(安全底线/可访问性/形态规则),覆盖默认时必须并回
+      ],
+    })],
     onEvent: (e) => { if (e.type === 'focus_chip_click') onFocusChipClick(e.path) }, // chip 点击 → 滚动到组件 + 边框闪
     debug: true,
     dialog: {

@@ -223,8 +223,29 @@ export function useChat(
     }
   }
 
+  /** 把消息里所有遗留 running 的步骤(含子 agent children 递归)收口为 error —— finishRound 兜底扫尾 */
+  function settleRunningSteps(messages: { role?: string; steps?: ToolStep[] }[]): void {
+    const settle = (steps: ToolStep[] | undefined): void => {
+      if (!steps?.length) return
+      for (const s of steps) {
+        if (s.status === 'running') {
+          s.status = 'error'
+          if (!s.result) s.result = '(本轮已结束,该步骤未收到结果 —— 子 agent 中断/异常)'
+        }
+        if (s.children?.length) settle(s.children)
+      }
+    }
+    // 只扫本轮:从末尾找最后一条 assistant(历史轮早被各自 finishRound 扫过)
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant') { settle(messages[i].steps); break }
+    }
+  }
+
   /** 一轮结束收口:持久化 + 关 loading + 排队续跑(生成中用户又发了消息,可能多条 → 依次自动执行,每条是独立后续任务) */
   async function finishRound() {
+    // 兜底收口遗留 running 步骤(真 LLM 实测发现):子 agent 中途异常(如网络断在 LLM 流上)时,
+    // 其 tool_call 子步骤没有配对 tool_result 事件 → status 永停 'running'(UI spinner 永转 + 外部 idle 判定失效)
+    settleRunningSteps(state.messages)
     // 持久化当前轮(失败/慢不阻塞排队续跑 —— onPersist 抛错时仍 shift 续跑下一轮,防生成中排队被持久化故障卡死)
     try { await onPersist?.(state.messages) } catch { /* onPersist 抛错忽略,不阻塞续跑 */ }
     state.loading = false

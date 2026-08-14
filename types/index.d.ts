@@ -21,6 +21,10 @@ export interface ConstructOpts {
 }
 /** 同步构造 OpenAI 协议 LLM(仅 openai 分支;Anthropic 无同步构造,用 constructLlmFromConfig) */
 export declare function constructOpenLlmSync(cfg: LLMConfig, opts?: ConstructOpts): import('@langchain/core/language_models/chat_models').BaseChatModel;
+/** baseUrl 容错归一:相对路径('/llm/v1' 同源代理用法)补 location.origin 成绝对 URL(openai/anthropic SDK 的 new URL 不收相对路径);非浏览器/绝对路径原样 */
+export declare function normalizeBaseUrl(baseUrl: string | undefined): string | undefined;
+/** 默认 fetch 包装:剥 x-stainless-* 遥测头(严格 CORS 网关预检兼容);集成方 extraConfig.fetch 可覆盖 */
+export declare function stripStainlessFetch(url: string | URL | Request, init?: RequestInit): Promise<Response>;
 /** 按 provider 分支构造 LLM(openai 同步 / anthropic 动态 import @langchain/anthropic);缺省 provider → openai */
 export declare function constructLlmFromConfig(cfg: LLMConfig, opts?: ConstructOpts): Promise<import('@langchain/core/language_models/chat_models').BaseChatModel>;
 /** 从流式 chunk 提取文本 delta(兼容 OpenAI string content 与 Anthropic parts 数组) */
@@ -1454,6 +1458,8 @@ export interface HtmlFormatCheckOptions {
 }
 /** HTML 格式 verify check(beforeReturn 门禁):扫 state.files 代码文件,不通过回灌 feedback 自纠 */
 export declare function createHtmlFormatCheck(opts?: HtmlFormatCheckOptions): VerifyCheck;
+/** 内置完整 HTML 生成规范 skill(createHtmlSubagent 默认装;传自定义 skills 覆盖默认时,显式并回此 skill 保住生成规范/安全底线) */
+export declare const htmlFragmentSkill: SkillSpec;
 
 // checkpoint / dataOps / permissions
 export interface CheckpointDeps { [k: string]: any }

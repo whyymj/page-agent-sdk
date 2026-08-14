@@ -9,7 +9,7 @@
  */
 import { shallowRef, triggerRef } from 'vue'
 import { ChatOpenAI } from '@langchain/openai'
-import { stripStainlessFetch } from '../llm/constructLlm'  // 兜底构造(散字段,子 agent 路径)同样剥 x-stainless-* 头
+import { stripStainlessFetch, normalizeBaseUrl } from '../llm/constructLlm'  // 兜底构造(散字段,子 agent 路径)同样剥 x-stainless-* 头 + 相对 baseUrl 归一
 import {
   HumanMessage,
   AIMessage,
@@ -63,13 +63,30 @@ export function detectGarbledToolCall(content: string): boolean {
   //  - <｜｜?DSML｜｜?>:DeepSeek-v4 DSML(内部 function-calling 格式)标记,长链下易退化泄漏
   //  - <｜tool[_a-z]*｜>:DeepSeek tool 段标记变体(<｜tool｜>/<｜tool_begin｜> 等)
   //  - <invoke name=> / <tool_call> / <function_call>:通用伪 XML 工具调用
-  return /<｜tool_calls｜>|<｜｜[^>]*tool_call|<｜｜?DSML|<｜tool[_a-z]*｜>|<invoke\s+name=|<\/?tool_call>|<function_call>/i.test(content)
+  return /<｜tool_calls｜>|<｜｜[^>]*tool_call|<｜｜?DSML|<｜｜?tool[_a-z]*｜?>|<invoke\s+name=|<\/?tool_call>|<function_call>/i.test(content)
+}
+
+/** 过渡性收口模式:模型中途输出计划性表态就停(实测 deepseek-v4-flash:「好的,我先看看…再委派生成」调研完即收口)。导出供测试 */
+const TRANSITIONAL_RE = /(我先|让我先|我先看|先看看|先了解|先加载|先查阅|稍后|接下来我|我将先|等我|查完.{0,12}再|看完.{0,12}再|了解.{0,8}再)/
+/** 完成标记:含这些视为真实收口(总结/汇报),不回灌 */
+const DONE_VERB_RE = /(已完成|已生成|已修改|已创建|已添加|已删除|已更新|已调整|已处理|已委派|已配置|已切换|成功|完成[。!?]|搞定了|做好了)/
+/**
+ * 检测「过程性收口」:本轮已执行过工具(说明任务进行中)但最终文本是过渡性计划表态而非完成汇报 ——
+ * 回灌让模型继续执行,防「调研完说稍后就停」(flash 实测:委派编排任务被「我先看看…再委派生成」收口,任务零落地)。
+ * 保守判定:短文本(≤160 字)+ 命中过渡模式 + 无完成动词;误判代价仅一轮回灌(有界 ≤2 次)。
+ */
+export function detectTransitionalReply(content: string): boolean {
+  if (!content) return false
+  const text = content.trim()
+  if (text.length > 160) return false  // 长文多为真总结
+  if (DONE_VERB_RE.test(text)) return false
+  return TRANSITIONAL_RE.test(text)
 }
 
 /** 强守卫标记(DeepSeek 内部 token,模型正文不会随意产生)—— fix-write-safety-bypass P0-2:
  *  parseGarbledToolCalls 仅当 content 匹配到强守卫标记才自动解析执行;纯伪 XML `<invoke>`(无守卫)→ 返回 null,
  *  交 garbled-retry 回灌让模型用标准 function calling 重发,防「模型贴的示例 / 用户让示范写法」被当真执行写入数据。 */
-const DSML_GUARD_RE = /<｜tool_calls｜>|<｜｜[^>]*tool_call|<｜｜?DSML|<｜tool[_a-z]*｜>/i
+const DSML_GUARD_RE = /<｜tool_calls｜>|<｜｜[^>]*tool_call|<｜｜?DSML|<｜｜?tool[_a-z]*｜?>/i
 
 /** 剥离代码围栏(```...```)区块内容 —— fix-write-safety-bypass P0-2:模型在正文贴的工具调用示例多在围栏内,不应当真执行。 */
 function stripCodeFences(content: string): string {
@@ -87,8 +104,13 @@ export function parseGarbledToolCalls(content: string): { id: string; name: stri
   if (!content || !detectGarbledToolCall(content)) return null
   // fix-write-safety-bypass(P0-2):① 剥离代码围栏(模型贴的示例不当真执行);② 仅强守卫标记(DeepSeek 内部 token)才解析执行,
   // 无守卫的纯伪 XML `<invoke>` → null(交 garbled-retry 回灌让模型用标准 function calling 重发,防示例被当真写入数据)
-  const stripped = stripCodeFences(content)
+  let stripped = stripCodeFences(content)
+  // 守卫判定用原串(单竖线变体 <｜DSML｜/<｜tool｜> 也算强守卫)
   if (!DSML_GUARD_RE.test(stripped)) return null
+  // 变体剥离(真 LLM 实测):flash 泄漏形态可为单竖线 `<｜DSML｜invoke>`/`<｜DSML｜/parameter>` ——
+  // 直接删掉单竖线标记前缀,归一成纯 XML 形态(<invoke>/<parameter>/</parameter>)走原解析
+  // (修前:闭合标记形态对不上 → 解析 null → 重试耗尽 → DSML 文本当结论返回主 agent,子 agent 工具白做)
+  stripped = stripped.replace(/<｜(?!｜)[^｜<>]*?｜>/g, '')
   const invokeRe = /<(?:｜｜?DSML｜｜?)?\s*invoke\s+name=["']([^"']+)["'][^>]*>/gi
   const starts: { name: string; tagStart: number; after: number }[] = []
   let m: RegExpExecArray | null
@@ -96,10 +118,10 @@ export function parseGarbledToolCalls(content: string): { id: string; name: stri
     starts.push({ name: m[1], tagStart: m.index, after: invokeRe.lastIndex })
   }
   if (!starts.length) return null
-  const closeInvokeRe = /<\/(?:｜｜?DSML｜｜?)?\s*invoke\s*>/i
-  const paramRe = /<(?:｜｜?DSML｜｜?)?\s*parameter\s+name=["']([^"']+)["'][^>]*>([\s\S]*?)<\/(?:｜｜?DSML｜｜?)?\s*parameter\s*>/gi
+  const closeInvokeRe = /<\/?\s*(?:｜｜?DSML｜｜?)?\/?\s*invoke\s*>/i
+  const paramRe = /<(?:｜｜?DSML｜｜?)?\s*parameter\s+name=["']([^"']+)["'][^>]*>([\s\S]*?)<\/?\s*(?:｜｜?DSML｜｜?)?\/?\s*parameter\s*>/gi
   const openParamRe = /<(?:｜｜?DSML｜｜?)?\s*parameter\s+name=["'][^"']+["'][^>]*>/gi
-  const closeParamRe = /<\/(?:｜｜?DSML｜｜?)?\s*parameter\s*>/gi
+  const closeParamRe = /<\/?\s*(?:｜｜?DSML｜｜?)?\/?\s*parameter\s*>/gi
   const calls: { id: string; name: string; args: Record<string, unknown> }[] = []
   for (let i = 0; i < starts.length; i++) {
     const segEnd = i + 1 < starts.length ? starts[i + 1].tagStart : stripped.length
@@ -367,7 +389,7 @@ export function createAgent(options: CreateAgentOptions) {
     model,
     temperature,
     maxTokens: resolvedMaxTokens,
-    configuration: { ...(baseUrl ? { baseURL: baseUrl } : {}), fetch: stripStainlessFetch, ...extraConfig },
+    configuration: { ...(baseUrl ? { baseURL: normalizeBaseUrl(baseUrl) } : {}), fetch: stripStainlessFetch, ...extraConfig },
     ...(extraBody ? { modelKwargs: extraBody } : {}),
   })
   let llmWithTools = allTools.length > 0 ? (llm.bindTools?.(allTools) ?? llm) : llm
@@ -463,7 +485,22 @@ export function createAgent(options: CreateAgentOptions) {
     }
     let stream: AsyncIterable<AIMessageChunk> | undefined
     try {
-      stream = await withRetry(() => streamer.stream(req.messages, { signal: inner.signal }), retryOpts)
+      // P1-7b(真 LLM 实测补漏):stream「启动」Promise 本身也要有闸 —— streamer.stream() 挂在等响应头
+      // (modelverse 假死:fetch 默认无超时)时永不 resolve/reject,stall 看门狗(包的是已返回的迭代器)根本没开始
+      // → 子 agent/主 agent 永挂(use_html 委派实测挂 17 分钟)。与 stall 同阈值同语义(超时 → StreamStalledError,
+      // status=408 不当网络错空烧重试;abort 清理)
+      let launchTimer: ReturnType<typeof setTimeout> | undefined
+      try {
+        stream = await withRetry(() => {
+          clearTimeout(launchTimer)  // 重试间隙清旧计时器
+          return Promise.race([
+            streamer.stream(req.messages, { signal: inner.signal }),
+            new Promise<never>((_, rej) => {
+              launchTimer = setTimeout(() => rej(new StreamStalledError(stallMs || DEFAULT_STREAM_STALL_MS)), stallMs || DEFAULT_STREAM_STALL_MS)
+            }),
+          ])
+        }, retryOpts)
+      } finally { clearTimeout(launchTimer) }
     } catch (err) {
       // 启动阶段 abort:带空 partial(等同未开始);其他错误透传(withRetry 已对可重试类重试过)
       if (isAbort(err, signal)) return { message: new AIMessage(''), toolCalls: [], content: '', aborted: true }
@@ -654,6 +691,8 @@ export function createAgent(options: CreateAgentOptions) {
     let formatRetries = 0 // 格式异常自纠计数:模型把工具调用写成文本(伪 XML/标签)时回灌反馈重生成,限次防死循环
     let pendingFormatRetry = false // 上一轮触发了格式自纠(已 push feedback 待 LLM 重发):让 while 暂时绕过 rounds 预算给重试机会——重试是格式修正、非工具轮次,不该被 maxToolRounds 挡。实测痛点:DSML 在 rounds 耗尽后出现,重试被 while 挡致未发生 → 仍静默死亡。maxIterations(maxToolRounds*3) 仍作死循环硬上限
     const maxFormatRetries = 2
+    const maxTransitionalRetries = 2  // 过程性收口回灌上限(flash 提前收口实测;误判代价仅一轮回灌)
+    let transitionalRetries = 0
     try {
       while ((rounds < maxToolRounds || pendingFormatRetry) && iterations < maxIterations) {
         iterations++ // 总循环计数(含自纠轮),触顶 maxIterations 强制退出防死循环
@@ -722,6 +761,16 @@ export function createAgent(options: CreateAgentOptions) {
               const msg = `模型连续 ${maxFormatRetries} 次输出无法解析的工具调用格式(DSML/伪标签),任务可能未完成。请重试或换模型。`
               log('error', { stage: 'garbled_exhausted', retries: formatRetries, content: response.content.slice(0, 200) })
               onEvent({ type: 'error', message: msg, severity: 'observable', code: 'GARBLED_TOOL_CALL_EXHAUSTED', context: { content: response.content.slice(0, 200) } } as any)
+            }
+            // 过程性收口回灌(flash 实测):本轮已执行过工具(rounds>0 = 任务进行中)且最终文本是过渡性计划表态
+            // (「我先看看…稍后委派」)而非完成汇报 —— 回灌让模型继续执行,限次防死循环;
+            // pendingFormatRetry=true 同款语义:绕过 rounds 预算给重试机会(此轮非工具轮次)
+            if (!garbled && rounds > 0 && transitionalRetries < maxTransitionalRetries && detectTransitionalReply(response.content)) {
+              transitionalRetries += 1
+              pendingFormatRetry = true
+              log('middleware', { stage: 'transitional_retry', attempt: transitionalRetries, content: response.content.slice(0, 160) })
+              currentMessages.push(new HumanMessage('⚠️ 你刚才输出的是计划/过渡性表述(如「我先看看」「稍后委派」),任务尚未完成。请立即继续执行 —— 调用所需工具把任务做完,全部完成后再给出总结回复。'))
+              continue
             }
             // beforeReturn 钩子(正序):agent 返回前可拦截自纠(回灌 user 消息继续循环)。
             // garbled 时不跑 verify(garbled content 跑 verify 无意义);预算检查前置(verifyAttempts < maxVerifyAttempts):避免预算耗尽仍跑钩子(尤其 adversarial 子 agent 烧 token),框架级防御不靠中间件自觉

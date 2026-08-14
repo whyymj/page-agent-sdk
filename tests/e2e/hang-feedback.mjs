@@ -83,5 +83,45 @@ export async function run() {
     sdk.unmount()
   }
 
+
+  console.log('[e2e:hang-feedback] 过程性收口回灌(flash 实测:中途输出「我先看看…稍后委派」即停 → 回灌继续执行)')
+  {
+    // 队列:①read 调研 ②过渡性收口(实测样本)③回灌后 write 落地 ④真总结
+    const llm = stubModel(
+      { toolCalls: [{ name: 'read', args: { jsonPath: 'title' } }] },
+      { text: '好的,我先看看当前页面数据,再进行修改。' },
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'title', value: '新标题' } } }] },
+      { text: '已把标题改成「新标题」,任务完成。' },
+    )
+    const bind = { title: '旧标题' }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-transitional-retry', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string() }), bind, description: '测试' },
+    })
+    await sdk.mount()
+    await sdk.send('改标题')
+    assert(bind.title === '新标题', '✓ 过程性收口被回灌:过渡性文本后任务继续执行落地(原:调研完即收口,任务零完成)')
+    const last = sdk.messages[sdk.messages.length - 1]
+    assert(last.role === 'assistant' && last.content.includes('已完成') || (last.content ?? '').includes('已把'), '✓ 最终回复是真总结(非过渡性文本)')
+    // 连续过渡性收口耗尽(≤2 次回灌)后放行,不死循环
+    const llm2 = stubModel(
+      { toolCalls: [{ name: 'read', args: { jsonPath: 'title' } }] },
+      { text: '我先看看。' },
+      { text: '稍后我再处理。' },
+      { text: '接下来我会继续。' },
+    )
+    const sdk2 = createChatSdk({
+      ui: false, id: 'e2e-transitional-exhaust', storage: false, llm: llm2,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' }, description: '测试' },
+    })
+    await sdk2.mount()
+    let done2 = ''
+    try { done2 = await sdk2.send('改标题') } catch { done2 = '(throw)' }
+    assert(typeof done2 === 'string' && done2.length > 0, '✓ 过渡性收口回灌耗尽(2 次)后放行最终文本,不死循环不永挂')
+    sdk.unmount(); sdk2.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

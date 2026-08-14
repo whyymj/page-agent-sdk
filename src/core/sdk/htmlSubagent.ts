@@ -92,7 +92,7 @@ function htmlSystemPrompt(prefix: string): string {
 
 两条工作路径:
 - **修改已有组件**(改颜色/文案/布局等):必经 vfs —— 上下文有「组件代码文件地图」(name → vfs 路径),按 name 找到对应文件直接 vfs_edit 增量改目标片段 → validate_code 自检;框架自动回写 data.code。勿直接 write data.code 改已有组件(绕过 vfs/verify,且无增量友好);文件未检出时先 vfs_write 创建
-- **新建组件**:write({ patch:{ op:'set', jsonPath:'components.N', value:{...} } }) —— value 按 data schema **全字段写**(含必填字段如 type/name,code 正文;缺必填字段会被 schema 拒)。先 read 看现有组件结构照抄字段名,再写;框架自动补 __pgId。**固定流程**:直接 write data → validate_code({jsonPath:'components.N.code'}) 自检(从 data 读刚写的 code,零重传 content)→ read 确认;**不必手动 vfs_write 建工作副本**(框架下次委派自动 checkout;仅当本次委派内还要继续精修它,才 vfs_write 建副本再 vfs_edit)。**校验方式**:新建组件用 jsonPath(零重传)/ 修改组件用 path(vfs 文件)/ content 仅兜底;**禁止在思考里权衡「content 太长 / 要不要重传 / 先 vfs_write 再 by path」**,选对应方式一次校验即收口(为之纠结反费更多 token,真实复盘子 agent 曾在此循环 10+ 回合致整页超时)。**code 字段直接写完整代码字符串,换行/引号照常写,无需手工 JSON 转义**
+- **新建组件**:write({ patch:{ op:'set', jsonPath:'components.N', value:{...} } }) —— value 按 data schema **全字段写**(含必填字段如 type/name,code 正文;缺必填字段会被 schema 拒)。调研**只看一个样本**:read({jsonPath:'components', offset:0, limit:1}) 取首个元素照抄字段名即可(**禁止分页逐个翻完整数组**,大数组翻页纯烧轮次;也不要 describe_data/schema_data 反复查);N = 数组长度(追加到末尾,read 返回的 total/length 即是)。框架自动补 __pgId。**固定流程**:直接 write data → validate_code({jsonPath:'components.N.code'}) 自检(从 data 读刚写的 code,零重传 content)→ read 确认;**不必手动 vfs_write 建工作副本**(框架下次委派自动 checkout;仅当本次委派内还要继续精修它,才 vfs_write 建副本再 vfs_edit)。**校验方式**:新建组件用 jsonPath(零重传)/ 修改组件用 path(vfs 文件)/ content 仅兜底;**禁止在思考里权衡「content 太长 / 要不要重传 / 先 vfs_write 再 by path」**,选对应方式一次校验即收口(为之纠结反费更多 token,真实复盘子 agent 曾在此循环 10+ 回合致整页超时)。**code 字段直接写完整代码字符串,换行/引号照常写,无需手工 JSON 转义**
 
 焦点精修(若继承到主 agent 焦点):
 - 上下文若提示「当前精修目标」(如 components.2(banner)),说明主 agent 聚焦了某组件 → 你**只能改该焦点组件**的代码文件(vfs 文件 ${prefix}<焦点组件 __pgId>.${ext});改其他组件的代码文件会被 PATH_DENIED 硬拦
@@ -142,7 +142,7 @@ const HTML_FRAGMENT_SKILL_DOC = `# HTML 完整页面生成规范
 
 ## 两条工作路径
 - 修改已有组件:必经 vfs —— 按上下文「组件代码文件地图」(name → vfs 路径)定位文件,vfs_edit 增量改 → validate_code;勿直接 write data.code;文件未检出先 vfs_write 创建
-- 新建组件:write({patch:{op:'set',jsonPath:'components.N',value:{...}}}) —— value 按 schema 全字段写(必填字段如 type 不能漏;先 read 看现有组件结构照抄字段名),框架补 __pgId。固定流程 write → validate_code({jsonPath:'components.N.code'})(零重传 content)→ read 确认,**不手动 vfs_write 建副本**(框架下次委派自动 checkout)。code 字段直接写完整代码字符串,换行/引号照常写,无需手工 JSON 转义
+- 新建组件:write({patch:{op:'set',jsonPath:'components.N',value:{...}}}) —— value 按 schema 全字段写(必填字段如 type 不能漏;调研只 read({jsonPath:'components',offset:0,limit:1}) 看一个样本照抄字段名,勿分页翻全量数组),框架补 __pgId。固定流程 write → validate_code({jsonPath:'components.N.code'})(零重传 content)→ read 确认,**不手动 vfs_write 建副本**(框架下次委派自动 checkout)。code 字段直接写完整代码字符串,换行/引号照常写,无需手工 JSON 转义
 
 ## 焦点精修(继承主 agent 焦点时)
 - 上下文提示「当前精修目标」(如 components.2(banner))→ 只改该焦点组件的代码文件;改其他组件会被 PATH_DENIED 硬拦

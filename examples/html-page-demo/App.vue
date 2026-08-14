@@ -13,7 +13,7 @@
  * - 布局仿首页(page-demo):全屏左右双栏,左预览 / 右对话框,对话框默认 dark 主题(方舟专题色板)
  */
 import { reactive, ref, computed, onMounted, onUnmounted } from 'vue'
-import { createChatSdk, createHtmlSubagent, systemPromptHelpers, type ChatSdk } from '../../src/core'
+import { createChatSdk, systemPromptHelpers, type ChatSdk } from '../../src/core'
 import { z } from 'zod'
 import DevNav from '../_shared/DevNav.vue'
 import PickOverlay from '../_shared/PickOverlay.vue'
@@ -154,10 +154,11 @@ onMounted(() => {
     maxToolRounds: 25,  // 多组件逐个委派需更多轮次(每组件≈委派+read 2 轮);默认 10 仅够~5 组件,抬到 25 给 ~10 组件空间
     storage: 'memory',
     data: { schema: pageSchema, bind: pageBind, description: '页面(components 支持 custom 代码组件;code 字段是资产)' },
+    // ★ HTML 代码子 agent 零配置(3.9+):schema 含「数组元素带 code 字段」→ createChatSdk 装配期自动装配默认
+    //   createHtmlSubagent()(writablePaths 推断 + 委派编排 + vfs + 格式校验 + 增量 commit 全套);需定制再显式声明
+
     // ★ 单模式(code-as-data-asset):代码作 data.code 资产,vfs 作工作副本,框架自动 checkout/commit;formatCheck 默认开
     // dialog.theme 默认 dark(首页方舟专题色板),无需显式配置
-    // writablePaths 省略(3.6+):装配期从 schema 自动推断(components 数组元素含 code 字段 → ['components'])
-    subagents: [createHtmlSubagent()],
     dialog: {
       title: 'HTML 页面生成(代码作 data 资产)',
       placeholder: '让 agent 生成页面(如「生成一个产品落地页」)…',

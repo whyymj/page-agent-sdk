@@ -38,9 +38,11 @@
 
 > **2026-08-14 发布 3.8.0**(minor):`prompt-tool-review` 实施完成并归档 —— ① **patch op `move`**(数组元素同数组重排/跨数组移动一步原子,value=目标路径;目标数组不存在自动建;过白名单;`moveByPath` 导出);② 提示词审查修复:draftWrite simple 守卫(修「提示词教 LLM 调不存在工具」Bug)/ spawn 提示补 writablePaths+spawn_agents / reliableWriteRules 补冲突行为第 6 条 / htmlSystemPrompt 措辞。selftest 1957 / e2e 583 / browser 53。见 [`archive/2026-08-14-prompt-tool-review/`](./archive/2026-08-14-prompt-tool-review/)。
 
+> **2026-08-14 发布 3.9.0**(minor):`auto-html-agent` 实施完成并归档 —— ① **HTML 子 agent 自动装配**(无显式声明 + schema 含 code 数组 → 装配期自动注册默认 `createHtmlSubagent()`,委派编排 + vfs + 格式校验 + 增量 commit 全套;**无开关**(用户拍板主场景只有 HTML);显式声明优先不重复;推断不出的形态(顶层 code 字段/开放 schema)走降级直写);② **storage 默认 'memory'**(未传 = 纯内存多会话,零落盘;false 显式关闭);③ **presets.pageBuilder 简化**(自动装配接管,preset 只剩身份 prompt,getter 防突变退役);④ 同批:examples 优化(rag 双模式合并)+ patch op `move` + CA 并发修复(per-call context 通道)。selftest 1957 / e2e 590 / browser 54。见 [`archive/2026-08-14-auto-html-agent/`](./archive/2026-08-14-auto-html-agent/)。
+
 ## 进行中
 
-- [`2026-08-14-auto-html-agent/`](./2026-08-14-auto-html-agent/)(**已实施待发布**,minor,M):HTML 子 agent**自动装配默认开**(浏览器端页面搭建主场景开箱即用)—— 无显式 html 子 agent + schema 含 code 数组 → 装配期自动注册默认 `createHtmlSubagent()`(委派编排 + vfs + 格式校验 + 增量 commit);无开关(用户拍板主场景只有 HTML,不需要关闭);显式声明优先不重复;推断不出的形态(顶层 code 字段/开放 schema)走降级直写。selftest 1957 / e2e 589。
+(无活跃 change)
 
 ---
 

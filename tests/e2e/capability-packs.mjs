@@ -15,7 +15,7 @@ export async function run() {
   assert(typeof createHtmlSubagent === 'function', 'createHtmlSubagent 导出为 function')
   const sdkExports = await import('../../dist/page-agent-sdk.js')
   assert(sdkExports.ragSearchSkill === undefined, 'SDK 不导出 ragSearchSkill(纯分发 + 工厂内部装)')
-  assert(sdkExports.htmlFragmentSkill === undefined, 'SDK 不导出 htmlFragmentSkill(纯分发 + 工厂内部装)')
+  assert(typeof sdkExports.htmlFragmentSkill === 'object', 'SDK 导出 htmlFragmentSkill(自定义 skills 覆盖默认时并回内置生成规范)')
 
   console.log('[e2e:capability-packs] createRagSubagent → use_rag 委派工具 + 中间件')
   {
@@ -602,6 +602,42 @@ export async function run() {
       assert(!sdk4.inspect().tools.some((t) => t.name === 'use_html'), '✓ ⑩ 无 code schema → 零变化(纯数据应用不自动装配)')
       sdk4.unmount()
     }
+  }
+
+  console.log('[e2e:capability-packs] UI 规范 skill 链路(自定义 skills 覆盖默认并回 htmlFragmentSkill;子 agent 生成前 load_skill 按需拉规范)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    const llm = stubModel(
+      { toolCalls: [{ name: 'use_html', args: { task: '按方舟 UI 规范改优惠券卡片:主色用规范 hex,顶部撕边' } }] },
+      { toolCalls: [{ name: 'load_skill', args: { name: 'ark-ui-spec' } }] },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_coupon.html', content: '<div class="cpn-coupon" style="background:#7063E7;border-radius:12px">优惠券</div>' } }] },
+      { text: '已改\n[note] 撕边用 repeating-linear-gradient 12px;主色 #7063E7' },
+      { text: '完成' },
+    )
+    // 走修改路径:预置组件(含 __pgId)→ 框架 checkout 到 vfs → 子 vfs_write 工作副本 → afterAgent commit 回写 data.code
+    const bind = { components: [{ type: 'custom', name: 'coupon', code: '<div class="cpn-coupon">旧优惠券</div>', __pgId: 'c_coupon' }] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-ui-spec-skill', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: {
+        schema: z.object({ components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }),
+        bind, description: '测试',
+      },
+      subagents: [createHtmlSubagent({
+        formatCheck: false,
+        skills: [
+          { name: 'ark-ui-spec', description: '方舟 UI 规范:色板 hex/间距/形态约束。生成 custom 组件前必读', getContent: () => '# 方舟平台 UI 规范\n- 主色:#7063E7' },
+        ],
+      })],
+    })
+    await sdk.mount()
+    await sdk.send('生成优惠券卡片')
+    // load_skill 被调(send 模式子事件不外发,经 debugLogs 断言;子日志带 source 前缀转发到主)
+    const toolNamesSeen = sdk.debugLogs.value.filter((l) => l.type === 'tool_call').map((l) => l.data?.name).filter(Boolean)
+    assert(toolNamesSeen.includes('load_skill'), '✓ ⑪ UI 规范 skill:子 agent 生成前 load_skill 按需拉规范全文(不常驻上下文)')
+    assert(bind.components[0].code.includes('#7063E7') && bind.components[0].code.includes('cpn-coupon'), '✓ ⑪ 规范色值 #7063E7 落进组件 code(vfs 工作副本 commit 回写)')
+    assert(Array.isArray(bind.components[0]?.__pgNotes) && bind.components[0].__pgNotes.length > 0, '✓ ⑪ [note] 交接笔记沉淀(__pgNotes)')
+    sdk.unmount()
   }
 
   console.log('[e2e:capability-packs] 有 html agent 但 orchestratorPrompt:false(不注入委派编排;opt-out)')

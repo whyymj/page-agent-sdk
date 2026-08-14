@@ -14,9 +14,12 @@ export interface DemoAgentConfig {
 }
 
 export function useAgentConfig(): DemoAgentConfig {
+  const rawBase = import.meta.env.VITE_AI_BASE_URL || ''
   return {
     apiKey: import.meta.env.VITE_AI_API_KEY || '',
-    baseUrl: import.meta.env.VITE_AI_BASE_URL || undefined,
+    // 相对路径(如 /llm/v1,走 vite dev 代理绕 CORS)补 location.origin 成绝对 URL ——
+    // openai/anthropic SDK 的 buildURL 直接 new URL(baseURL+path),相对路径抛 Invalid URL
+    baseUrl: rawBase && rawBase.startsWith('/') ? `${location.origin}${rawBase}` : (rawBase || undefined),
     model: import.meta.env.VITE_AI_MODEL || 'gpt-3.5-turbo',
     temperature: Number(import.meta.env.VITE_AI_TEMPERATURE) || 0.3,
     maxTokens: import.meta.env.VITE_AI_MAX_TOKENS ? Number(import.meta.env.VITE_AI_MAX_TOKENS) : undefined,

@@ -15,6 +15,13 @@
 - **examples 优化**:① rag-demo 与 rag-subagent-demo 合并为单 demo 双模式(A memory 异步注入 / B createRagSubagent 检索子 agent,顶部切换重建 agent;共享 mock 知识库不再重复内联);② complex-demo / html-page-demo 的 `createHtmlSubagent()` 去掉显式 `writablePaths`(演示 3.6+ 装配期推断最小形态);③ minimal-demo 头部补 `presets.pageBuilder` 一行式指引
 ### Added
 - **patch op `move`(移动/重排数组元素一步完成)**:`{op:'move', jsonPath:'components.2', value:'components.0'}` —— 同数组即重排(替代双 set 交换,索引易错),跨数组即移动(替代 append+remove 两步非原子);目标可为数组本身(追加;不存在且父级为对象时自动建数组)或数组内下标(插入,越界 clamp);目标下标按移除源后解释;仅支持数组元素;目标路径同样过 schema 白名单;进 patches 原子批。新导出 `moveByPath` 纯函数
+### Fixed(真 LLM 实测,续)
+- **DSML 单竖线变体解析**:flash 泄漏形态 `<｜DSML｜invoke>`(单竖线)+ 对称闭合 `<｜DSML｜/parameter>`(原正则只认双竖线 + XML 闭合)→ detect 命中但 parse null → 重试耗尽 → **DSML 文本当结论返回主 agent,子 agent 工具白做**。修:守卫判定后剥离单竖线标记归一纯 XML 形态 + 闭合正则宽化(两种闭合形态都支持);截断保护不回归
+- **编排视觉锚引用规范**:task 规格化的视觉锚 hex **取自平台 UI/设计规范 skill 的定义值**(有规范类 skill 先 load 再引用,勿凭页面观察自造近似色)—— 实测主 agent 自造 #667eea 与规范 #7063E7 冲突
+### Fixed(真 LLM 实测三连修,flash + modelverse 场景)
+- **stream 启动闸(P1-7b)**:`streamer.stream()` 启动 Promise 包 race 超时(与 `streamStallMs` 同阈值 90s)—— 等响应头阶段假死(fetch 默认无超时)时流停滞看门狗(只包已返回的迭代器)不覆盖,子 agent use_html 委派实测挂 17 分钟;超时抛 `StreamStalledError`(status=408 不空烧重试,abort 清理)
+- **子步骤永 running 兜底扫尾**:子 agent 中断(网络断在 LLM 流)时其 tool_call 子步骤无配对 tool_result → status 永停 running(UI spinner 永转);useChat finishRound 一轮结束统一把遗留 running(含 children 递归)置 error 带说明
+- **过程性收口回灌(`detectTransitionalReply` 导出)**:本轮已执行过工具且最终文本是过渡性计划表态(实测 flash 样本「好的,我先看看…再委派生成」调研完即收口,任务零落地)→ 有界回灌(≤2 次,绕 rounds 预算同 garbled-retry 语义)让模型继续执行;保守判定(≤160 字 + 过渡模式 + 无完成动词)防误伤
 ### Fixed
 - **draftWrite 提示词与工具面不一致(simple 模式教 LLM 调不存在的工具)**:SIMPLE_HIDDEN 滤除 draft_write/draft_commit 但 usageHints 照常注入用法 → 补 `!simple` 守卫
 ### Changed

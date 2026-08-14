@@ -9,3 +9,7 @@
 
 - [x] B1 presets.pageBuilder 简化:删 subagents getter(自动装配接管),只剩场景化身份 prompt;presets e2e getter 断言删
 - [x] B2 storage 默认 'memory':resolveStorage 未传 = 纯内存会话(多会话开箱即用);false 显式关闭;storage e2e 未开启场景补显式 false + 默认行为断言
+
+## 阶段 C:发布
+
+- [x] C1 已随 3.9.0 发布
