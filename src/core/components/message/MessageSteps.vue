@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ToolStep } from '../../types'
+import SubReasonDetails from './SubReasonDetails.vue'
 
 const props = defineProps<{ steps: ToolStep[] }>()
 
@@ -11,7 +12,7 @@ function statusLabel(status: 'running' | 'done' | 'error'): string {
 
 /** 相邻同名工具合并:仅合并连续同名,count>1 显示 ×N;不相邻的同名工具分别成组。状态聚合(有 error→error,有 running→running,否则 done),children 合并,耗时求和 */
 function groupedSteps(steps: ToolStep[]) {
-  const groups: { name: string; count: number; hasRunning: boolean; hasError: boolean; children: ToolStep[]; totalMs: number; subReason?: string }[] = []
+  const groups: { name: string; count: number; hasRunning: boolean; hasError: boolean; children: ToolStep[]; totalMs: number; subReason?: string; subReasonFull?: string }[] = []
   for (const s of steps) {
     const last = groups.length ? groups[groups.length - 1] : null
     if (last && last.name === s.name) {
@@ -21,6 +22,7 @@ function groupedSteps(steps: ToolStep[]) {
       if (s.durationMs) last.totalMs += s.durationMs
       if (s.children?.length) last.children.push(...s.children)
       if (s.subReason) last.subReason = (last.subReason || '') + s.subReason
+      if (s.subReasonFull) last.subReasonFull = (last.subReasonFull || '') + s.subReasonFull
     } else {
       groups.push({
         name: s.name,
@@ -30,6 +32,7 @@ function groupedSteps(steps: ToolStep[]) {
         children: s.children?.length ? [...s.children] : [],
         totalMs: s.durationMs ?? 0,
         subReason: s.subReason,
+        subReasonFull: s.subReasonFull,
       })
     }
   }
@@ -40,10 +43,25 @@ function groupedSteps(steps: ToolStep[]) {
     children: e.children,
     durationMs: e.totalMs || undefined,
     subReason: e.subReason,
+    subReasonFull: e.subReasonFull,
   }))
 }
 
 const groups = computed(() => groupedSteps(props.steps))
+
+/** 是否子 agent 委派工具(use_* 前缀,如 use_html / use_rag)。子 agent 委派下方会有「思考中…」块,与普通工具视觉区分 */
+function isSubagentTool(name: string): boolean {
+  return name.startsWith('use_')
+}
+
+/** 耗时展示:≥1000ms 用 s 单位(如 1234 → 1.2s),以下精确 ms。子 agent 长任务动辄数十秒,纯 ms 数字过长 */
+function formatDuration(ms: number): string {
+  if (ms >= 1000) {
+    const s = ms / 1000
+    return s >= 10 ? `${Math.round(s)}s` : `${s.toFixed(1)}s`
+  }
+  return `${ms}ms`
+}
 </script>
 
 <template>
@@ -52,18 +70,13 @@ const groups = computed(() => groupedSteps(props.steps))
       <div class="step-head">
         <span class="status-dot" :class="step.status"></span>
         <span class="step-name">{{ step.name }}</span>
+        <span v-if="isSubagentTool(step.name)" class="subagent-badge" title="子 agent 委派(独立上下文,只回结论)">🤖 子</span>
         <span v-if="step.count > 1" class="step-count">×{{ step.count }}</span>
         <span class="step-status" :class="step.status">{{ statusLabel(step.status) }}</span>
-        <span v-if="step.durationMs != null && step.status !== 'running'" class="step-duration">{{ step.durationMs }}ms</span>
+        <span v-if="step.durationMs != null && step.status !== 'running'" class="step-duration">{{ formatDuration(step.durationMs) }}</span>
       </div>
-      <!-- 子 agent 思考过程(reasoning 增量累积;默认折叠,spawn 进行中显示"思考中…") -->
-      <details v-if="step.subReason" class="step-sub-reason">
-        <summary class="sub-reason-head">
-          <span class="status-dot sm" :class="step.status === 'running' ? 'running' : 'ok'"></span>
-          <span class="sub-reason-label">{{ step.status === 'running' ? '思考中…' : '思考过程' }}</span>
-        </summary>
-        <div class="sub-reason-body">{{ step.subReason }}</div>
-      </details>
+      <!-- 子 agent 思考过程(reasoning 增量累积;运行中字符计数+脉冲+自动滚底,完成后折叠回看) -->
+      <SubReasonDetails v-if="step.subReason" :sub-reason="step.subReason" :sub-reason-full="step.subReasonFull" :status="step.status" />
       <!-- 子 agent 工作进度(嵌套展示;紫色系与主工具区分;相邻同名工具经 groupedSteps 合并为 ×N,与主 agent 一致) -->
       <div v-if="step.children && step.children.length" class="step-children">
         <div class="step-children-label">🧬 子 agent 进度</div>
@@ -89,20 +102,13 @@ const groups = computed(() => groupedSteps(props.steps))
 .step-status.running { color: var(--cs-warn); background: rgba(var(--cs-warn-rgb), 0.12); }
 .step-status.error { color: var(--cs-err); background: rgba(var(--cs-err-rgb), 0.12); }
 .step-duration { font-size: 10px; color: var(--cs-step-meta); font-family: 'SF Mono', Monaco, Consolas, monospace; }
+/* 子 agent 委派工具标记(use_*):区分普通工具;紫色系呼应「🧬 子 agent 进度」子块 */
+.subagent-badge { font-size: 9px; font-weight: 600; padding: 0 5px; border-radius: 4px; background: rgba(108, 92, 231, 0.14); color: var(--cs-sub-text); line-height: 1.6; letter-spacing: 0.2px; white-space: nowrap; }
 .step-children { padding: 4px 8px 4px 10px; border-left: 2px solid var(--cs-sub-border); border-radius: 0 6px 6px 0; background: var(--cs-sub-bg); display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
 .step-children-label { font-size: 10px; font-weight: 600; color: var(--cs-sub-text); letter-spacing: 0.3px; }
 .step-child { display: inline-flex; align-items: center; gap: 5px; padding: 1px 4px; border-radius: 6px; font-size: 10px; color: var(--cs-sub-text); }
 .step-child .step-name { color: var(--cs-sub-text); font-weight: 400; }
 .step-child .step-status.running { color: var(--cs-sub-text); background: rgba(108, 92, 231, 0.12); }
-
-/* 子 agent 思考过程折叠块(紫色系,与子 agent 进度一致;summary 点击展开看 reasoning 全文) */
-.step-sub-reason { margin-top: 4px; border-left: 2px solid var(--cs-sub-border); border-radius: 0 6px 6px 0; background: var(--cs-sub-bg); }
-.sub-reason-head { display: flex; align-items: center; gap: 5px; padding: 3px 8px; cursor: pointer; user-select: none; font-size: 10px; color: var(--cs-sub-text); font-weight: 600; list-style: none; }
-.sub-reason-head::-webkit-details-marker { display: none; }
-/* 展开箭头(▸ → 展开旋转 90°),给出明确可点击的视觉提示 */
-.sub-reason-head::before { content: '▸'; display: inline-block; font-size: 9px; color: var(--cs-sub-text); transition: transform 0.15s ease; }
-.step-sub-reason[open] .sub-reason-head::before { transform: rotate(90deg); }
-.sub-reason-body { padding: 4px 10px 6px; border-top: 1px solid var(--cs-sub-border); font-size: 10px; line-height: 1.5; color: var(--cs-sub-text); white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto; }
 .status-dot.ok { background: var(--cs-ok); }
 
 /* 状态色块(base + 变体;本组件内 status-dot 出现在 step-head / step-child) */

@@ -45,6 +45,23 @@ export const presets: Record<string, Partial<ChatSdkOptions>> = {
  *   import { systemPromptHelpers } from 'page-agent-sdk'
  *   createChatSdk({ systemPrompt: `你是 JSON 操作助手。\n${systemPromptHelpers.reliableWriteRules}`, ... })
  */
+/**
+ * HTML 页面搭建主 agent 委派编排(按子 agent id 动态生成,use_<id> 工具名正确)。
+ * 单一数据源:createHtmlSubagent 默认自动注入此段(orchestratorPrompt:true);systemPromptHelpers.htmlPageOrchestrator 为 id='html' 静态快照。
+ * 集成方自定义 id(如 'hero')时,createHtmlSubagent 自动生成含正确 use_hero 的编排 —— 写死 use_html 的静态片段会误导主 agent 调不存在的工具。
+ */
+export function htmlOrchestratorPrompt(id: string): string {
+  const use = `use_${id}`
+  return [
+    '【产物形态】每个组件是完整、自包含的 HTML 页面(含 style/script,可独立成页);你只负责委派和收尾,不关心宿主如何渲染(v-html / iframe / SFC 是集成方的事)。',
+    `【主 agent 职责边界(硬规则)】禁止直接 read/write 代码组件的 code 字段(read 只得 <code Nkb> 摘要,看不懂细节没用;write 绕过 vfs/verify 无格式校验,危险)。所有代码生成/修改/排查必经 ${use} 子 agent:① read 看组件元信息(name/type/props 非 code)② 委派 ${use}(task 写清改什么 + 转述用户反馈/现象)③ 收尾核对。不自己改代码、不自己排查代码细节。`,
+    `【多组件逐个委派(防上下文污染)】一次要多个组件:① write_todos 列出(每项 name + 要点)② 逐个委派 —— 每组件一次 ${use},task 只写该组件(name + 要点 + 主题/风格),勿一次委派多个(同一子 agent 共享上下文生成多个 → class/样式冲突污染)③ 每次返回 read 核对(确认已生成 + 名称对)+ update_todo 标完成 ④ 主题/风格在每次 task 里转述(每个子 agent 全新上下文,不知其他组件)。`,
+    `【委派 task 规格化(收窄子 agent 决策,防开放任务致装饰穷举)】委派 ${use} 的 task 必须含:① 组件定位(by name)② 视觉风格(配色/质感/字体)③ 内容(文案/数据/图)④ 交互意图(动效/状态/触发);**不含技术实现**(SVG vs CSS / keyframes vs transition 归子 agent 选)。❌「生成啤酒杯动画」→ ✅「啤酒杯倒酒(beer):金黄啤酒从上方倒入透明杯,深绿背景,液体循环下落 2s,hover 杯子放大」。规格简练(4 要素各半句),远省子 agent 思考 token。`,
+    `【修改/排查类请求】无需出方案:先 read 定位目标组件,委派 ${use} 排查/修改(task 写清改哪个组件 by name + 用户反馈/现象 + 期望)。`,
+    '【预算将尽暂停】组件很多、接近工具轮次上限不要硬扛:完成手头这个后报告「已生成 K/N,还剩 M 个」,等用户确认后从 todos 剩余项继续(勿重复已完成)。',
+  ].join('\n')
+}
+
 export const systemPromptHelpers = {
   /**
    * 可靠写入规则 —— 教 LLM「改前先读真实值、动态场景先查、字段以 describe 为准、写错看校验错误重试」。
@@ -58,6 +75,34 @@ export const systemPromptHelpers = {
     '3. 不确定某字段结构时,read({ jsonPath }) 返回含格式说明,字段以返回为准;',
     '4. 写入若被 schema 校验拒绝(返回结构化错误含字段名与期望类型),按错误修正后重试,不要放弃;',
     '5. 优先用 write 的 patch 增量改(只发改动,如 write({ value, patch:{ op, jsonPath } })),避免整体重传大 JSON 被截断。',
+  ].join('\n'),
+
+  /**
+   * HTML 页面搭建主 agent 编排规则(htmlOrchestratorPrompt('html') 静态快照,单一数据源)。
+   * 用 createHtmlSubagent 且关闭自动注入(orchestratorPrompt:false),或自定义编排时,把这段拼进自己的 systemPrompt。
+   */
+  htmlPageOrchestrator: htmlOrchestratorPrompt('html'),
+
+  /**
+   * HTML 页面搭建「先出方案再生成」—— 产品决策(新建/创意类先给 2~3 套方案问用户,而非直接生成)。
+   * 默认不并进 htmlPageOrchestrator(不同集成方偏好不同);要「先问再生成」体验时自行拼接。
+   */
+  htmlPageProposeFirst: [
+    '【新建/创意类请求】先用简短文字给出 2~3 套方案(每套一两句风格/配色/结构要点),询问用户选哪套;选定前不要委派生成代码、不要写 components。',
+    '【方案切换】已生成某套方案后改选另一套:不重新罗列,直接依据之前描述委派 use_html 重新生成并覆盖相应组件。',
+  ].join('\n'),
+
+  /**
+   * HTML 页面搭建「主 agent 自己写」降级编排(未注册 html 子 agent 时)。
+   * 触发:createChatSdk 装配期检测「无 html 子 agent + schema 有 code 字段」自动注入 + warn(精确 ZodObject / z.array(z.object) / discriminatedUnion 可识别);
+   *   开放 schema(z.any())静态扫不到时,集成方主动 spread 此片段(opt-in,同 htmlPageProposeFirst 用法)。
+   * 无 html 子 agent → 无 vfs 工作副本 / 无 verify 门禁,code 是普通 schema 字段,主 agent 直接 write。
+   */
+  htmlDirectWriteFallback: [
+    '【纯代码组件 · 你直接写】当前未配备 html 子 agent,纯代码组件的 code 字段由你直接 write(普通字段,经 schema 校验 + 乐观锁 + 快照栈,与改其他字段无异;无 vfs 工作副本 / 无格式校验门禁)。',
+    '【HTML 生成规范】code 必须是完整、自包含的 HTML 页面(含 <style>/<script>,可独立成页):标签正确闭合、style/script 集中放置(如 <head> 内)、class 加前缀防冲突;可引外部 JS/CSS(CDN/字体)。安全底线:禁 eval/new Function、不引可疑外部脚本、不访问 document.cookie 等敏感属性。',
+    '【修改而非重写】改已有 code:先 read({jsonPath}) 取当前 code → 基于当前值增量改(只动要改的部分,如换配色/文案/某段结构),不要整体重写整个 code(易丢已有内容、token 浪费)。',
+    '【质量自检】无格式校验门禁,写完自查标签闭合 / 结构完整;code 进 data 由集成方渲染层(v-html/iframe)呈现。如需代码资产机制(vfs 工作副本 + 格式校验 + 增量 commit),注册 createHtmlSubagent。',
   ].join('\n'),
 } as const
 

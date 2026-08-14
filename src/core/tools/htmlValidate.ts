@@ -1,18 +1,21 @@
 /**
- * HTML 格式校验(纯函数)—— 标签闭合 + v-html 片段契约
+ * HTML 格式校验(纯函数)—— 结构合法性(标签闭合等)
  *
  * 供 createHtmlSubagent 格式校验链(validate_code 工具自检 + verify beforeReturn 门禁)
  * 与集成方渲染层纵深防御复用(导出 validateHtmlFormat)。
+ *
+ * 定位:html agent 生成**完整页面级 HTML**,改造(抽 body / 包组件 / v-html 片段化等)由下游
+ * 插件/tool 做。故本校验**只管结构合法性**,不再施加片段/v-html 限制(DOCTYPE/html/head/body/script 均允许)。
  *
  * 为什么自写标签栈扫描而不用浏览器 DOMParser:
  *  - DOMParser 'text/html' 太宽容(自动补全未闭合标签,检不出遗漏)
  *  - DOMParser 'application/xml' 太严格(HTML5 void 标签如 <br> 会误报)
  *
- * 校验规则:
+ * 校验规则(只校验结构):
  *  1. 标签配对闭合(栈扫描;void 元素与 /> 自闭合豁免;属性引号内 > 不误判)
- *  2. script/style 为 raw text 元素(内容不解析);片段模式(script 非 SFC 块)额外禁 <script>
- *  3. 片段契约(渲染产物经 v-html 等注入):禁 <!DOCTYPE> 与 <html>/<head>/<body> 外围标签
- *  4. 注释必须闭合
+ *  2. script/style 为 raw text 元素(内容不解析,只校验闭合)
+ *  3. 注释必须闭合
+ *  4. 多余的闭合标签(无匹配开标签)检出
  */
 
 /** HTML void 元素(无需闭合标签) */
@@ -24,30 +27,22 @@ export const HTML_VOID_TAGS = new Set([
 /** raw text 元素(内容不解析为标签,直到同名闭合标签) */
 const RAW_TEXT_TAGS = new Set(['script', 'style'])
 
-/** 文档级外围标签(v-html 片段注入场景禁止) */
-const DOC_TAGS = new Set(['html', 'head', 'body'])
-
 /** 格式问题条目 */
 export interface HtmlFormatIssue {
   /** 行号(1 基) */
   line: number
-  /** 问题码:UNCLOSED_TAG / STRAY_CLOSE_TAG / UNCLOSED_COMMENT / DOCTYPE_IN_FRAGMENT / DOC_TAG_IN_FRAGMENT / SCRIPT_IN_FRAGMENT */
+  /** 问题码:UNCLOSED_TAG / STRAY_CLOSE_TAG / UNCLOSED_COMMENT(只校验结构合法性;DOCTYPE/html/head/body/script 不再拦 —— 完整页面级 HTML,改造由下游插件/tool 做) */
   code: string
   /** 可直接回灌 LLM 的修正指引 */
   message: string
 }
 
-export interface ValidateHtmlFormatOptions {
-  /** Vue SFC 模式:允许 <script>(SFC 自有 <script setup> 块);默认 false = 纯 HTML 片段(v-html 注入场景,禁 <script>) */
-  sfc?: boolean
-}
-
 /**
- * 校验 HTML/Vue SFC 源码格式,返回问题列表(空数组 = 通过)。
+ * 校验 HTML 源码格式(只校验结构合法性:标签闭合等),返回问题列表(空数组 = 通过)。
  * 纯函数、无 DOM 依赖(node/浏览器通用;selftest 覆盖)。
+ * 注:script/DOCTYPE/html/head/body 均允许(完整页面级;改造由下游插件/tool 做)。
  */
-export function validateHtmlFormat(source: string, opts: ValidateHtmlFormatOptions = {}): HtmlFormatIssue[] {
-  const sfc = opts.sfc === true
+export function validateHtmlFormat(source: string): HtmlFormatIssue[] {
   const issues: HtmlFormatIssue[] = []
   const n = source.length
   if (!source.trim()) return issues
@@ -83,13 +78,9 @@ export function validateHtmlFormat(source: string, opts: ValidateHtmlFormatOptio
       continue
     }
 
-    // <! 开头非注释声明(DOCTYPE 等)
+    // <! 开头非注释声明(DOCTYPE 等)—— 完整页面正常含 DOCTYPE,不再拦(片段专属检查已移除)
     if (source[lt + 1] === '!') {
       const gt = source.indexOf('>', lt)
-      const decl = source.slice(lt, gt < 0 ? n : gt + 1)
-      if (/^<!doctype/i.test(decl)) {
-        issues.push({ line: lineAt(lt), code: 'DOCTYPE_IN_FRAGMENT', message: '<!DOCTYPE> 不应出现(渲染产物经 v-html 注入,只输出内容片段)' })
-      }
       i = gt < 0 ? n : gt + 1
       continue
     }
@@ -146,18 +137,10 @@ export function validateHtmlFormat(source: string, opts: ValidateHtmlFormatOptio
       continue
     }
 
-    // 文档级外围标签(sfc/html 均禁:渲染产物经 v-html 注入,模板内同样不该有)
-    if (DOC_TAGS.has(name)) {
-      issues.push({ line: lineAt(lt), code: 'DOC_TAG_IN_FRAGMENT', message: `<${name}> 不应出现(v-html 注入场景只输出内容片段,不要 html/head/body 外围)` })
-    }
-
     if (HTML_VOID_TAGS.has(name) || selfClose) continue
 
-    // raw text 元素:内容整体跳过(不解析);片段模式禁 <script>
+    // raw text 元素(script/style):内容整体跳过不解析(只校验闭合)。script 有无由用户声明,不再拦
     if (RAW_TEXT_TAGS.has(name)) {
-      if (name === 'script' && !sfc) {
-        issues.push({ line: lineAt(lt), code: 'SCRIPT_IN_FRAGMENT', message: '<script> 禁用(v-html 注入不执行脚本,且有安全风险)' })
-      }
       const closeRe = new RegExp(`</${name}\\s*>`, 'i')
       const m = closeRe.exec(source.slice(i))
       if (!m) {

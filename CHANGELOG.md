@@ -6,6 +6,62 @@
 
 > ℹ️ 本段累积了 2.23.0 → 2.24.1 多个已发布版本的内容(harden-eval-sandbox / main-flow-audit / context-inspector / arch-review P1 / demo 主题 / session-history / 串行化 / simplify-toolset 等),待按 git tag 逐条归入对应版本段(已知文档债,本次未拆)。
 
+### Added
+- **createHtmlSubagent 可配置 code 字段(`codeField`)+ 主 agent 编排自适应注入**(open-schema):`codeField`(默认 `'code'`,嵌套 jsonPath 如 `'props.html_code'` 适配开放 schema 多组件平台;「是否代码组件」= 该路径有 string)+ 装配期命中校验(组件数>0 全员未命中 → onWarning 防填错静默失败);编排**零配置自适应**(有 html 子 agent → 自动注入委派编排 `htmlOrchestratorPrompt(id)`(custom code 不 read 不 write 全权 `use_<id>`)/ 无 agent + schema 有 code 字段 → 自动注入 `htmlDirectWriteFallback` 自己写 + warn / 开放 schema `z.any()` 扫不到 → 集成方 opt-in spread);opt-out `orchestratorPrompt:false`;`htmlOrchestratorPrompt(id)` 导出(动态 `use_<id>`,`systemPromptHelpers.htmlPageOrchestrator` 为其 `'html'` 静态快照,单一数据源)
+- **html 子 agent 过度思考治理**(thinking-taming,真 LLM 实测驱动):① 主 agent 委派 task 规格化(4 要素:定位/视觉/内容/交互,不含技术实现,收窄子 agent 决策空间)② `validate_code` 支持 `jsonPath`(从 data 读 code 校验,零重传 content;**schema 描述/字段顺序/实现 if 链三处优先级统一为 jsonPath 首选** —— 真 LLM 实测发现 schema 反向引导会覆盖 prompt)③ 写前简述(1-2 句方案 → 实现 → 照做)
+- **complex-demo e2e 组件操作场景**(+3):调换顺序(`write` patches 批量 set 交换)/ 改层级(组件移进容器 `props.children`)/ 聚焦改纯代码(addFocus → use_html 委派 → 子 `vfs_write` 越界 `PATH_DENIED` 回灌 / 焦点文件放行)
+
+### Fixed
+- **schema_data 栈溢出**:容器组件 `children: z.array(PageComponent)` 自引用(z.lazy 递归)致 `describeSchemaNode` 无限递归栈溢出(真 LLM 实测 round 2 暴露)→ depth>15 + visited WeakSet 双截断(向后兼容)
+- **complex-demo custom 组件 UI 拾取失效**:sandbox iframe 吞 click(事件委托 `closest('[data-path]')` 命不中)→ wrapper div + iframe `pointer-events:none`(click 透 wrapper 命中 data-path,可两步拾取)
+- **编排双重注入**:html-page-demo / complex-demo 手动 spread `htmlPageOrchestrator` + 框架自动注入 = 编排段重复注入 → 删手动 spread(自动注入覆盖)
+
+### Tests
+- selftest 1905 / e2e 556 / browser 51(+ complex-demo 组件操作 3 场景)
+
+## [3.3.0]
+
+### Changed
+- **对话框默认主题改 dark**:不传 `dialog.theme` 即首页方舟专题色板(深色紫调);显式 `theme:'light'` 回退浅色。统一所有 demo 观感(用户反馈:聊天框应默认首页样式)
+- **html-page-demo 全屏双栏布局**:仿首页 `100vw×100vh` flex,大预览撑满 + 对话框 100%(替代 480px 小框)
+
+### Added
+- **robot/user SVG 头像**:替代 emoji 头像,`AvatarIcon` 组件内联 SVG 随库打包,`fill=currentColor` 可主题化(新增 `--cs-avatar-fg`/`--cs-avatar-user-fg`)
+- **组件代码文件地图**(修 `__pgId` 映射摩擦):`codeAssetMiddleware.augmentPrompt` 每轮注入 `name → vfs 路径` 映射表到子 agent system prompt,按 name 直接定位代码文件(存量随机 id + 新建组件都覆盖);主 agent 不污染
+
+## [3.2.0]
+
+### Added
+- **code-as-data-asset focus vfs 守卫**:补 `focus.ts` 排除 vfs 的缝隙 —— 子 agent 继承主焦点后改代码,只能 `vfs_edit` 焦点组件文件(`__pgId` 归属判定),越界 `PATH_DENIED` 回灌自纠。「点选组件 → 对话精修」硬约束基础
+- **html-page-demo 多组件 + 点击 focus 精修**:预览组件列表切换、点击组件 `setFocus`、新建自动选最新
+- **子 agent 提示词 focus 段**:`htmlSystemPrompt` + html-builder/fragment skill 引导子 agent 聚焦时直接改对、不浪费轮次
+
+### Removed
+- 删 `html-subagent-demo`(sfc 形态不渲染、展示弱),html-page-demo 统一代表 createHtmlSubagent
+
+## [3.1.0]
+
+### Added
+- **子 agent 思考过程可见**:子 `reasoning` 经 `subagent` 事件(`kind=reasoning`)转发到主 UI,spawn 步骤折叠展示(运行中"思考中…" / 完成"思考过程");子工具 ×N 合并(与主 agent 一致);收口后细节截短留预览
+- **html-page-demo 多方案流程**:新建类请求先文字出 2-3 方案,选定才生成(避免预览反复);方案切换按描述重生成
+
+### Fixed
+- **approval-bar 统一滚动区**:随消息一起滚动,超高内容不再被裁剪(修前固定遮挡)
+
+## [3.0.0] — breaking major(code-as-data-asset)
+
+### Changed(breaking)
+- **createHtmlSubagent 单模式**:代码作为 `data.code` 资产(进服务端 DB),vfs 作编辑工作副本;框架 `beforeAgent` checkout(data.code→vfs 按 `__pgId`)/ `afterAgent` commit(vfs→data.code 增量,直改 bind 不进快照栈)自动搬运,主 agent 透明(主 scope read 见 `<code Nkb>` 摘要)
+- **`__pgId` 无感注入**:schema extend 加 / read 深投影隐藏 `__pg*` / 写 path guard 拒 / persist 透明带(组件稳定映射键)
+- **去 `onComplete`/`codeRef`/`codeSnapshots`**:框架 afterAgent 自动 commit,集成方无需回调
+
+### Added
+- **格式校验链**(`formatCheck` 默认开):`validate_code` 自检工具 + verify beforeReturn 门禁(标签闭合 + v-html 片段契约,回灌自纠,`maxVerifyAttempts` 2 兜底);导出纯函数 `validateHtmlFormat` / 工厂 `createHtmlFormatCheck`
+- `codeKind:'sfc'`(默认 Vue SFC)/ `'html'`(v-html 片段:无外围标签、禁 script)
+
+### Removed(breaking)
+- 旧 `codeRef` 引用模型 + `onComplete` 回调 + `codeSnapshots`(被单模式 code-as-data-asset 取代)
+
 ### Added(多焦点聚焦 multi-focus + 输入框 chip + chip 点击回调 · focus-multi)
 - **多焦点聚焦**:focus 从单焦点(Focus 单个)升级为多焦点(Focus[] 数组),可同时聚焦多个组件精修。场景:批量改多个相关组件(导航栏 + 页脚)。
 - **API(兼容旧 + 新增)**:`setFocus(focus)` 替换全部(兼容旧覆盖语义)/ `addFocus(focus)` 累积(去重 by path)/ `removeFocus(path)` 移除单个 / `clearFocus()` 清空 / `getFocus()` 返首个(兼容)/ `getFocuses()` 全量数组。`setFocus`/`addFocus` 4 道校验复用(抽 `validateFocusInput`);旧代码零改(getFocus/setFocus 兼容)。

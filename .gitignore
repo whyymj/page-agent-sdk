@@ -34,3 +34,11 @@ doc/
 test-results/
 openspec/
 .env
+
+# 根目录个人草稿/笔记(误提交防护)
+test.md
+test2.md
+notes.md
+
+# 真 LLM 测试临时脚本/日志(本地用,不进 git)
+_real-llm-*

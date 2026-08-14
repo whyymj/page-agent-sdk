@@ -2,7 +2,7 @@
  * sec-67:capability-packs(专用子 agent 工厂 + 子 agent 架构扩展)
  * - 架构扩展:SubagentConfig.allowedTools/middleware/summarization(经两工厂返回结构验证)
  * - createRagSubagent:返回结构 / search_docs(stub retriever)/ load_doc / 抛错降级 / 空命中 / 全无知识源抛错 / 配置覆盖 / useVfs allowedTools / 默认 rag-search skill
- * - createHtmlSubagent:返回结构 / todos middleware / allowedTools vfs(含 vfs_rm)/ 不含 draft_write / summarization 默认开 / planning:false / writablePaths 必填 / codeVfsPrefix / 默认 html-builder skill
+ * - createHtmlSubagent:返回结构 / todos middleware / allowedTools vfs(含 vfs_rm)/ 不含 draft_write / summarization 默认开 / planning:false / writablePaths 必填 / codeVfsPrefix / 默认 html-fragment skill
  */
 import { createRagSubagent } from '../../sdk/ragSubagent'
 import { createHtmlSubagent } from '../../sdk/htmlSubagent'
@@ -77,8 +77,8 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert(hcfg.maxToolRounds === 12, '✓ maxToolRounds 默认 12(中等任务)')
   assert(hcfg.systemPrompt?.includes('html/'), '✓ systemPrompt 含 codeVfsPrefix(html/,工作副本引导)')
   assert(!hcfg.systemPrompt?.includes('codeRef') && hcfg.systemPrompt?.includes('数据资产'), '✓ systemPrompt 单模式(砍 codeRef;代码作为 data.code 资产 + vfs 工作副本)')
-  assert((hcfg as any)._codeAsset?.writablePaths?.length === 1 && (hcfg as any)._codeAsset?.ext === 'vue', '✓ _codeAsset 标记设(createChatSdk 装配识别 → checkout/commit + pgIdPaths/largeTextPaths)')
-  assert(hcfg.skills?.length === 1 && hcfg.skills[0].name === 'html-builder', '✓ 默认装 html-builder skill')
+  assert((hcfg as any)._codeAsset?.writablePaths?.length === 1 && (hcfg as any)._codeAsset?.ext === 'html', '✓ _codeAsset 标记设(createChatSdk 装配识别 → checkout/commit + pgIdPaths/largeTextPaths)')
+  assert(hcfg.skills?.length === 1 && hcfg.skills[0].name === 'html-fragment', '✓ 默认装 html-fragment skill(单模式完整页面级)')
 
   // middleware 含 todos(getPlanPhase 是 createTodosMiddleware 特有)
   assert(!!hcfg.middleware && hcfg.middleware.length > 0, '✓ middleware 默认装(planning:true)')

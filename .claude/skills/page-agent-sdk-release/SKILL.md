@@ -29,6 +29,7 @@ Personal notes (`doc/待确认问题.md`) are gitignored (untracked) — Gitee o
    - `doc/README.md` (zh) / `doc/README.en.md` (en) — doc index
    - `doc/usage-guide.md` (zh) / `doc/usage-guide.en.md` (en) — usage guide
    - `CLAUDE.md` — internal dev guide/architecture
+   - `CHANGELOG.md` — add this version's entry (Keep a Changelog style; new version section under `[Unreleased]`, categorize Added/Changed/Fixed/Removed)
    - Keep language toggle links bidirectional.
 3. **Bump version**: `npm version patch|minor|major --no-git-tag-version` (semver: minor for new API, major for breaking, patch for fix). Never republish the same version.
 4. **Build + self-test**: `npm run build` (= `build:lib` + `build:iife`) then `npm test` then `npm run test:e2e` (uses built `dist`). **Assertion counts must match the current `CLAUDE.md` → "测试流程" (1097 / 286)**. Run `npm pack --dry-run` to confirm the tarball excludes `.env` / `src` / `examples` / notes.

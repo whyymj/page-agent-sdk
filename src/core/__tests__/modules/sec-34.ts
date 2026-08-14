@@ -126,11 +126,26 @@ export async function run(ctx: TestCtx): Promise<void> {
     const mw = createTodosMiddleware()
     const tools = byName(mw.tools!)
     const st = createState()
-    mw.beforeModel!({ messages: [], state: st }) // 重置 writeTodosThisRound=0
+    mw.beforeModel!({ messages: [], state: st }) // 重置 lastTodoKindThisRound=null
     // 同轮第一个:write_todos(经 wrapToolCall,next 执行工具)
     await mw.wrapToolCall!({ id: 'c1', name: 'write_todos', args: { todos: [{ content: 'A', status: 'pending' }] }, state: st } as ToolCallContext, async (c: ToolCallContext) => ({ content: await tools['write_todos'].invoke(c.args), status: 'done' }))
-    // 同轮第二个:update_todo → writeTodosThisRound>1 → 拒(不调 next)
+    // 同轮第二个:update_todo → 混用(不同工具)→ 拒(不调 next)
     const r2 = await mw.wrapToolCall!({ id: 'c2', name: 'update_todo', args: { id: 't-1', status: 'completed' }, state: st } as ToolCallContext, async () => ({ content: 'should not reach', status: 'done' }))
-    assert(/不应在一轮中并行\/混用/.test(r2.content) && r2.status === 'error', '✓ 同轮 write_todos + update_todo 混用 → 第二个被拒(error,整表替换与增量语义冲突)')
+    assert(/不应在一轮中混用/.test(r2.content) && r2.status === 'error', '✓ 同轮 write_todos + update_todo 混用 → 第二个被拒(error,整表替换与增量语义冲突)')
+  }
+
+  // === 同轮多个 update_todo → 放行(幂等独立,收尾批量标完成不再误拒) ===
+  {
+    const mw = createTodosMiddleware()
+    const tools = byName(mw.tools!)
+    const st = createState()
+    // 先 write_todos 建 3 项(直接 invoke,不经 wrapToolCall)
+    await invoke(tools['write_todos'], { todos: [{ content: 'A', status: 'in_progress' }, { content: 'B', status: 'pending' }, { content: 'C', status: 'pending' }] })
+    mw.beforeModel!({ messages: [], state: st }) // 重置本轮计数器
+    const exec = async (c: ToolCallContext) => ({ content: await tools['update_todo'].invoke(c.args), status: 'done' as const })
+    const r1 = await mw.wrapToolCall!({ id: 'c1', name: 'update_todo', args: { id: 't-1', status: 'completed' }, state: st } as ToolCallContext, exec)
+    const r2 = await mw.wrapToolCall!({ id: 'c2', name: 'update_todo', args: { id: 't-2', status: 'completed' }, state: st } as ToolCallContext, exec)
+    const r3 = await mw.wrapToolCall!({ id: 'c3', name: 'update_todo', args: { id: 't-3', status: 'completed' }, state: st } as ToolCallContext, exec)
+    assert(r1.status === 'done' && r2.status === 'done' && r3.status === 'done', '✓ 同轮多个 update_todo → 全部放行(幂等独立,收尾批量标完成不再误拒)')
   }
 }

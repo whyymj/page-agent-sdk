@@ -397,6 +397,15 @@ const skeletonSchema = z.object({
   }).describe('骨架屏配置'),
 })
 
+/** custom:纯代码组件(完整自包含 HTML 页面,经 use_html 子 agent 生成;code 作为 data 资产,框架 checkout/commit 自动搬运) */
+const customSchema = z.object({
+  type: z.literal('custom'),
+  ...baseProps,
+  name: z.string().optional().describe('组件名(子 agent 据此在「组件代码文件地图」定位;建议唯一)'),
+  code: z.string().describe('完整 HTML 代码正文(资产,随 data json 持久化;由 use_html 子 agent 生成/修改,主 agent 禁直接改)'),
+  props: z.record(z.string(), z.any()).optional().describe('透传参数(可选,集成方渲染层用)'),
+})
+
 /** 组件联合(by type 区分,含容器,递归)。z.lazy 递归需显式标注类型避免 TS 循环推断 */
 export const componentSchema: z.ZodType<PageComponent> = z.lazy(() => z.discriminatedUnion('type', [
   headingSchema, richTextSchema, productGridSchema, imageSchema,
@@ -407,6 +416,7 @@ export const componentSchema: z.ZodType<PageComponent> = z.lazy(() => z.discrimi
   selectSchema, stepperSchema, breadcrumbSchema, videoSchema, noticeBarSchema,
   iconSchema, tagSchema, priceSchema,
   badgeSchema, progressSchema, skeletonSchema,
+  customSchema,
 ]))
 
 /** 递归类型需手动声明(z.infer 无法推导 z.lazy 自引用) */
@@ -427,6 +437,7 @@ export type PageComponent =
   | z.infer<typeof videoSchema> | z.infer<typeof noticeBarSchema>
   | z.infer<typeof iconSchema> | z.infer<typeof tagSchema> | z.infer<typeof priceSchema>
   | z.infer<typeof badgeSchema> | z.infer<typeof progressSchema> | z.infer<typeof skeletonSchema>
+  | z.infer<typeof customSchema>
 
 /** 整页 schema */
 export const pageSchema = z.object({
@@ -596,6 +607,9 @@ export const complexBuilderSkillContent = `# 复杂页面构建 Skill(window.pag
 - breadcrumb:props={ items[{label,link?}] } 面包屑
 - video:props={ src, poster?, autoplay?, controls? } 视频
 - noticeBar:props={ text, scrollable? } 公告栏
+
+纯代码组件(本平台支持,经 use_html 子 agent 生成):
+- custom:{ name?, code }(根级 code = 完整自包含 HTML 页面,含 style/script 可独立成页)。**路由**:custom 的 code 字段 → 必经 use_html 子 agent 委派(生成/修改/排查);custom 的其他属性(name/style/visible 等)+ 所有非 custom 组件 → 主 agent 直接 write。
 
 children 是组件数组,可任意嵌套(支持多层),用 jsonPath 增量操作(如 props.children.0.props.text)。
 

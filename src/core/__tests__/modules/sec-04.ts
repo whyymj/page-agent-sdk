@@ -60,6 +60,6 @@ export async function run(ctx: TestCtx): Promise<void> {
     const next = async () => ({ content: 'ok', status: 'done' as const })
     await mw.wrapToolCall!({ id: '1', name: 'write_todos', args: {}, state: createState() }, next)
     const r2 = await mw.wrapToolCall!({ id: '2', name: 'write_todos', args: {}, state: createState() }, next)
-    assert(/并行/.test(r2.content) && r2.status === 'error', '并行 write_todos 被拒')
+    assert(/不应在一轮中调用多次/.test(r2.content) && r2.status === 'error', '并行 write_todos 被拒(整表替换一轮多次无意义)')
   }
 }

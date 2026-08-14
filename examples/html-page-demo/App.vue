@@ -2,7 +2,8 @@
 /**
  * HTML 页面生成 demo(createHtmlSubagent 单模式 code-as-data-asset):
  *
- * - 子 agent 生成 v-html 注入用的 HTML 片段(无 <html>/<head>/<body>/DOCTYPE 外围,片段禁 <script>)
+ * - 子 agent 生成完整、自包含的 HTML 页面(默认含 style+script 标签,可独立成页)
+ * - 预览用 <iframe :srcdoc> 渲染(sandbox 隔离 + 执行 script,轮播/特效等交互真实跑起来;v-html 不执行 script)
  * - 代码作为 data 资产:components[].code 字段(进服务端 DB),UI 直接绑 data.code 响应式渲染(无需镜像字段)
  * - vfs 作编辑工作副本:框架 beforeAgent checkout(data.code→vfs 按 __pgId)/ afterAgent commit(vfs→data.code 增量)自动搬运,主 agent 透明
  * - 格式校验链(formatCheck 默认开):validate_code 自检工具 + verify beforeReturn 门禁(回灌自纠)
@@ -11,10 +12,11 @@
  * - 多组件 + 焦点精修:点选预览区组件 → setFocus(components.<origIdx>) → 子 agent 继承焦点,只能改该组件代码(focus vfs 守卫硬约束,越界 PATH_DENIED);聚焦模式不能新建,新建前 clearFocus
  * - 布局仿首页(page-demo):全屏左右双栏,左预览 / 右对话框,对话框默认 dark 主题(方舟专题色板)
  */
-import { reactive, ref, computed, watch, watchEffect, onMounted, onUnmounted } from 'vue'
-import { createChatSdk, createHtmlSubagent, type ChatSdk } from '../../src/core'
+import { reactive, ref, computed, onMounted, onUnmounted } from 'vue'
+import { createChatSdk, createHtmlSubagent, systemPromptHelpers, type ChatSdk } from '../../src/core'
 import { z } from 'zod'
 import DevNav from '../_shared/DevNav.vue'
+import PickOverlay from '../_shared/PickOverlay.vue'
 
 let agent: ChatSdk | null = null
 
@@ -54,34 +56,68 @@ const customComps = computed(() => {
   })
   return list
 })
-// 选中预览的组件(customComps 下标);越界回退到最后一个(组件被删/新增后保持有效)
-const selectedKey = ref(0)
-const userPinned = ref(false)  // 用户手动点选过后锁定,后续新建不再自动覆盖选中
-// 新增组件(长度增加)且用户未锁定 → 自动切到最新(复刻旧 previewComp 取最后:生成后预览自动显示新组件)
-watch(() => customComps.value.length, (n, old) => {
-  if (!userPinned.value && n > old) selectedKey.value = n - 1
+// 两步拾取(同首页 page-demo):点组件 = 选中(浮层 + 「加入聊天」按钮);点按钮 = 加入焦点(addFocus)
+const selectedPath = ref<string | null>(null)
+// 选中组件在 customComps 中的下标(由 selectedPath 派生;驱动预览高亮 + comp-tab active + 源代码 tab 内容)
+const selectedKey = computed(() => {
+  if (!selectedPath.value) return -1
+  const m = /^components\.(\d+)$/.exec(selectedPath.value)
+  if (!m) return -1
+  return customComps.value.findIndex((c) => c.origIdx === Number(m[1]))
 })
-watchEffect(() => { if (selectedKey.value >= customComps.value.length) selectedKey.value = Math.max(0, customComps.value.length - 1) })
-const selected = computed(() => customComps.value[selectedKey.value] ?? null)
+const selected = computed(() => (selectedKey.value >= 0 ? customComps.value[selectedKey.value] ?? null : null))
 const previewComp = computed(() => selected.value?.comp ?? null)
-const previewName = computed(() => previewComp.value?.name ?? '')
 const previewHtml = computed(() => (previewComp.value ? String(previewComp.value.code) : ''))
 const previewSource = computed(() => previewHtml.value)
-// 当前聚焦的组件原始索引(本地镜像;点击组件 setFocus,clearFocus 清;🎯 标记用。ChatDialog focus chip ✕ 移除不同步,仅视觉)
-const focusedOrigIdx = ref(-1)
-// 选中组件 = 切换预览 + setFocus 精修目标(子 agent 继承焦点 → focus vfs 守卫硬约束只能改该组件代码,越界 PATH_DENIED)
-function selectComp(key: number) {
-  selectedKey.value = key
-  userPinned.value = true   // 用户手动锁定选中,后续新建组件不再自动覆盖
-  const item = customComps.value[key]
-  if (item) {
-    agent?.setFocus({ path: `components.${item.origIdx}`, label: item.comp.name ?? `组件${item.origIdx}` })
-    focusedOrigIdx.value = item.origIdx
+// iframe 自适应高度:保持 sandbox 隔离(无 allow-same-origin,父页面读不到 contentDocument)前提下,
+// 往 srcdoc 末尾注入「自量高」脚本 → iframe 内 postMessage 把 scrollHeight 报回父页面 → 按 origIdx 记高度绑定 iframe style。
+const iframeHeights = reactive<Record<number, number>>({})
+// SFC 限制:script setup 块内不能出现字面的「script 开/闭标签」(编译器按字符序列匹配闭合,反斜杠逃逸无效)。
+// 用字符串拼接拆开,运行时拼回,源码里不连续出现。
+const SCRIPT_OPEN = '<' + 'script>'
+const SCRIPT_CLOSE = '<' + '/script>'
+function wrapPreviewHtml(code: string, idx: number): string {
+  // 注入量高脚本(独立于 code,不污染 data.code):iframe 内 postMessage 把 scrollHeight 报回父页面按 origIdx 绑定高度。
+  // 只量一次(load + 两次 setTimeout 兜底图片/字体加载),不挂 ResizeObserver/resize —— 否则内容若用 vh 单位
+  // (如轮播 min-height:100vh)会形成「设高度→视口变→内容再变→再报告」的正反馈死循环,高度无限自增。
+  const probe =
+    '\n' + SCRIPT_OPEN +
+    '(function(){var send=function(){var h=Math.max(document.body?document.body.scrollHeight:0,document.documentElement?document.documentElement.scrollHeight:0);if(h>0){try{parent.postMessage({__htmlPreview:true,idx:' + idx + ',h:h},\'*\')}catch(e){}}};\n' +
+    'window.addEventListener(\'load\',send);\n' +
+    'if(document.readyState===\'complete\'){send()}setTimeout(send,200);setTimeout(send,600)})();' +
+    SCRIPT_CLOSE
+  return code + probe
+}
+// 父页面监听量高消息:按 origIdx 记录高度(加 idx 范围 + 高度上限防异常值撑爆布局)
+function onPreviewMessage(e: MessageEvent) {
+  const d = e.data as { __htmlPreview?: boolean; idx?: number; h?: number } | null
+  if (!d || d.__htmlPreview !== true) return
+  const { idx, h } = d
+  if (typeof idx === 'number' && idx >= 0 && typeof h === 'number' && h > 0 && h < 20000) {
+    iframeHeights[idx] = h
   }
 }
+// 当前聚焦的组件 path 集合(经 focus_change 事件与 SDK 双向同步;支持多焦点,每个聚焦组件显 🎯)
+const focusedPaths = ref<Set<string>>(new Set())
+const isFocused = (origIdx: number) => focusedPaths.value.has(`components.${origIdx}`)
+// 预览容器 ref(PickOverlay 两步拾取浮层的定位根:querySelector [data-path])
+const previewRef = ref<HTMLElement>()
+// 视图 tab:预览 / 源代码 / 主 data
+const viewMode = ref<'preview' | 'code' | 'data'>('preview')
+// 第 1 步:点组件(comp-tab 或预览块)= 选中(不聚焦;显示浮层 + 「加入聊天」按钮)
+function onSelect(path: string) {
+  selectedPath.value = path
+}
+// 第 2 步:点「加入聊天」按钮 = 加入焦点(multi-focus 累积,同首页;子 agent 继承焦点只能改这些组件代码)
+function onFocus(path: string) {
+  const m = /^components\.(\d+)$/.exec(path)
+  const idx = m ? Number(m[1]) : -1
+  const comp = pageBind.components[idx] as any
+  agent?.addFocus({ path, label: comp?.name ? String(comp.name) : path })
+  selectedPath.value = null  // 加入后清选中态(浮层消失,对话框 chip 接管)
+}
 function clearCompFocus() {
-  agent?.clearFocus()
-  focusedOrigIdx.value = -1
+  agent?.clearFocus()  // focusedPaths 经 focus_change 事件同步
 }
 
 // mock 服务端 DB(本地内存):演示 data json(含 code + 框架注入的 __pgId)往返持久化
@@ -109,21 +145,20 @@ onMounted(() => {
       baseUrl: import.meta.env.VITE_AI_BASE_URL,
       model: import.meta.env.VITE_AI_MODEL,
     },
+    // ★ 编排段由 createHtmlSubagent 装配期自动注入(orchestratorPrompt 默认 true),勿手动 spread htmlPageOrchestrator(会双重注入);
+    // 此处只留业务身份 + opt-in 片段(先出方案 htmlPageProposeFirst)+ 焦点精修特有规则。
     systemPrompt:
       '你是页面搭建助手,管理多个纯代码组件(data.components 数组,每个 custom 组件有 name + code 字段)。\n' +
-      '【新建/创意类请求】(如「生成一个落地页」「做个专题页」):先用简短文字给出 2~3 套方案(每套一两句风格/配色/结构要点),询问用户选哪一套。**选定前不要委派生成代码、不要写 components**。用户选定后委派 use_html 子 agent 生成该方案代码;若是多区块页面,task 里列清各组件(name + 要点),子 agent 逐个 write **追加**进 components(勿覆盖已有组件)。\n' +
-      '【明确/修改类请求】(如「把 hero 标题改成 XXX」「主色调改橙色」):无需出方案,直接处理。先 read data 看现有 components,task 里明确告知子 agent 改哪个组件(按 name,如「改 hero 组件的标题」);子 agent 经 vfs_edit 增量改工作副本,框架自动回写 data.code。\n' +
-      '【焦点精修】若当前已聚焦某个组件(用户在预览区点选了组件,你会看到精修目标提示),对话默认针对该焦点组件:task 里指明「只改 <焦点组件 name>」。子 agent 受焦点硬约束,只能改该组件的代码文件,改其他组件会被 PATH_DENIED 拦截。**聚焦模式下不能新建组件**(会被拦),新建前先让用户取消聚焦。\n' +
-      '【方案切换】已生成某套方案后改选另一套:不重新罗列方案,直接依据之前的方案描述委派 use_html 重新生成目标方案代码并覆盖相应组件。生成前一句话复述「将生成方案N:<风格要点>」。\n' +
+      systemPromptHelpers.htmlPageProposeFirst + '\n' +
+      '【焦点精修】若当前聚焦某组件,对话默认针对该焦点组件:task 里指明「只改 <焦点组件 name>」,子 agent 受硬约束只能改该组件代码(越界 PATH_DENIED)。聚焦时仍可新建组件(尾部追加放行),但精修类请求优先聚焦。\n' +
       '完成后告知用户预览已更新。',
+    maxToolRounds: 25,  // 多组件逐个委派需更多轮次(每组件≈委派+read 2 轮);默认 10 仅够~5 组件,抬到 25 给 ~10 组件空间
     storage: 'memory',
     data: { schema: pageSchema, bind: pageBind, description: '页面(components 支持 custom 代码组件;code 字段是资产)' },
-    // ★ 单模式(code-as-data-asset):代码作 data.code 资产,vfs 作工作副本,框架自动 checkout/commit
-    //   去 onComplete(框架 afterAgent 自动 commit vfs→data.code);codeKind:'html'(v-html 片段)+ formatCheck 默认开
+    // ★ 单模式(code-as-data-asset):代码作 data.code 资产,vfs 作工作副本,框架自动 checkout/commit;formatCheck 默认开
     // dialog.theme 默认 dark(首页方舟专题色板),无需显式配置
     subagents: [createHtmlSubagent({
       writablePaths: ['components'],
-      codeKind: 'html',
     })],
     dialog: {
       title: 'HTML 页面生成(代码作 data 资产)',
@@ -131,18 +166,28 @@ onMounted(() => {
     },
   })
 
-  // hook 仅取 validate_code 校验状态(辅助展示;主预览数据流走 data bind,不经 hook)
+  // hook:① validate_code 校验状态(辅助展示)② focus_change 同步 🎯 镜像(对话框 chip ✕ 移除焦点也同步)
   agent.hook((e) => {
     const ev = e as any
-    if (ev.type === 'subagent' && ev.kind === 'tool_result' && ev.name === 'validate_code') {
+    if (ev.type === 'round_start') {
+      validateStatus.value = ''  // 每轮归零:避免上一轮 validate_code 中间态 ❌ 残留(子 agent 修好后可能不再复查,靠 verify 门禁放行)
+    } else if (ev.type === 'subagent' && ev.kind === 'tool_result' && ev.name === 'validate_code') {
       validateStatus.value = String(ev.result ?? '')
+    } else if (ev.type === 'focus_change') {
+      focusedPaths.value = new Set((ev.focuses as Array<{ path: string }>).map((x) => x.path))
     }
   })
 
   agent.mount('#chat-root')
+
+  // iframe 自适应高度:监听子 iframe 量高消息(经 postMessage 报回,保 sandbox 隔离)
+  window.addEventListener('message', onPreviewMessage)
 })
 
-onUnmounted(() => agent?.unmount())
+onUnmounted(() => {
+  window.removeEventListener('message', onPreviewMessage)
+  agent?.unmount()
+})
 
 const SUGGESTIONS = ['生成一个产品落地页', '做一个年货节专题页', '把主色调改成橙色']
 function sendSuggestion(text: string) {
@@ -153,45 +198,70 @@ function sendSuggestion(text: string) {
 <template>
   <DevNav />
   <div class="layout">
-    <!-- 左栏:预览(全屏高度,组件切换栏 + 大预览 + 折叠面板) -->
+    <!-- 左栏:组件切换栏 + 视图 tab(预览/源代码/主 data)+ 内容区 -->
     <aside class="pane pane-left">
       <div class="pane-head">
         <h1>HTML 页面生成(单模式:代码作 data 资产)</h1>
         <p class="hint">
-          <code>use_html</code> 子 agent 生成 v-html 片段,代码作 <code>components[].code</code> 资产。
-          <strong>点选组件即聚焦</strong>(🎯),对话只精修该组件(focus vfs 守卫硬约束);聚焦模式不能新建,先「取消聚焦」。
+          <code>use_html</code> 子 agent 生成完整 HTML 页面,代码作 <code>components[].code</code> 资产。
+          <strong>点选组件即聚焦</strong>(🎯),对话只精修该组件(focus vfs 守卫);聚焦时仍可新建组件(尾部追加)。
+        </p>
+        <p class="hint">
+          ✅ 预览用 <code>&lt;iframe :srcdoc&gt;</code> 渲染(sandbox 隔离 + 执行 <code>&lt;script&gt;</code>),轮播/特效等交互真实跑起来。产物是完整可运行页面,生产经插件/tool 改造成组件/独立页。
         </p>
         <div class="suggestions">
           <button v-for="s in SUGGESTIONS" :key="s" class="chip" @click="sendSuggestion(s)">{{ s }}</button>
         </div>
-        <!-- 多组件切换栏:点击 = 选中预览 + setFocus 精修(子 agent 继承焦点,只能改该组件代码,越界 PATH_DENIED) -->
+        <!-- 组件切换栏:点击 = 选中(第 1 步,显示浮层 + 「加入聊天」按钮);🎯 标已聚焦组件 -->
         <div class="comp-tabs" v-if="customComps.length">
           <button v-for="(c, key) in customComps" :key="c.origIdx"
-            class="comp-tab" :class="{ active: key === selectedKey }"
-            @click="selectComp(key)">
+            class="comp-tab" :class="{ active: key === selectedKey, focused: isFocused(c.origIdx) }"
+            @click="onSelect(`components.${c.origIdx}`)">
             {{ c.comp.name || `组件${c.origIdx}` }}
-            <span class="focus-mark" v-if="focusedOrigIdx === c.origIdx">🎯</span>
+            <span class="focus-mark" v-if="isFocused(c.origIdx)">🎯</span>
           </button>
         </div>
         <p class="hint preview-meta">
-          <span v-if="focusedOrigIdx === selected?.origIdx" class="focus-info">已聚焦 · 对话只精修该组件</span>
-          <button v-if="focusedOrigIdx >= 0" class="link-btn" @click="clearCompFocus">取消聚焦</button>
-          <span v-if="validateStatus" class="validate" :class="validateStatus.includes('✅') ? 'ok' : 'bad'">
-            {{ validateStatus.includes('✅') ? '✅ 格式校验通过' : '❌ 校验有问题(自纠中)' }}
+          <span v-if="selected && isFocused(selected.origIdx)" class="focus-info">已聚焦 · 对话只精修该组件</span>
+          <span v-else-if="focusedPaths.size" class="focus-info">已聚焦 {{ focusedPaths.size }} 个组件</span>
+          <button v-if="focusedPaths.size" class="link-btn" @click="clearCompFocus">取消聚焦</button>
+          <span v-if="validateStatus" class="validate" :class="validateStatus.includes('✅') ? 'ok' : 'bad'" :title="validateStatus">
+            {{ validateStatus.includes('✅') ? '✅ 格式校验通过' : '❌ 校验有问题(自纠中,悬停看详情)' }}
           </span>
         </p>
+        <!-- 视图 tab:预览 / 源代码 / 主 data -->
+        <div class="view-tabs">
+          <button class="view-tab" :class="{ active: viewMode === 'preview' }" @click="viewMode = 'preview'">预览</button>
+          <button class="view-tab" :class="{ active: viewMode === 'code' }" @click="viewMode = 'code'">源代码</button>
+          <button class="view-tab" :class="{ active: viewMode === 'data' }" @click="viewMode = 'data'">主 data</button>
+        </div>
       </div>
-      <!-- 大预览:v-html 渲染 data.code(撑满剩余高度) -->
-      <div class="preview" v-html="previewHtml"></div>
+      <!-- 内容区:按视图 tab 切换(撑满剩余高度) -->
+      <div class="pane-content">
+        <!-- 预览:整页堆叠(所有组件纵向;点组件块 = 选中第 1 步 → 浮层「加入聊天」按钮 → 第 2 步聚焦)。
+             每个组件用 <iframe :srcdoc> 渲染完整页面级 HTML(sandbox 隔离 + 执行 script,v-html 不执行 script → 轮播/特效跑不起来) -->
+        <div v-if="viewMode === 'preview'" ref="previewRef" class="preview">
+          <div v-if="!customComps.length" class="preview-empty">尚无代码;点上方建议或发消息触发 use_html</div>
+          <div v-for="(c, key) in customComps" :key="c.origIdx"
+            class="preview-comp" :class="{ selected: key === selectedKey, focused: isFocused(c.origIdx) }"
+            :data-path="`components.${c.origIdx}`"
+            :title="`点击选中 ${c.comp.name || '组件' + c.origIdx}(再加入聊天聚焦)`"
+            @click="onSelect(`components.${c.origIdx}`)">
+            <iframe class="preview-iframe"
+              :srcdoc="wrapPreviewHtml(String(c.comp.code), c.origIdx)"
+              :style="{ height: (iframeHeights[c.origIdx] || 420) + 'px' }"
+              sandbox="allow-scripts allow-modals allow-popups allow-forms"
+              title="组件预览"></iframe>
+          </div>
+        </div>
+        <!-- 源代码:选中组件的 code -->
+        <pre v-else-if="viewMode === 'code'" class="code-pane">{{ previewSource || '(无选中组件,左侧预览点选一个)' }}</pre>
+        <!-- 主 data:components JSON -->
+        <pre v-else class="data-pane">{{ JSON.stringify(pageBind.components, null, 2) }}</pre>
+      </div>
+      <!-- 两步拾取浮层(同首页 page-demo:选中组件显示边框 + 「加入聊天」按钮 → addFocus) -->
+      <PickOverlay :selected-path="selectedPath" :container="previewRef ?? null" @focus="onFocus" />
       <div class="pane-foot">
-        <details class="code-view" v-if="previewSource">
-          <summary>查看代码片段({{ previewName }} · data.code)</summary>
-          <pre>{{ previewSource }}</pre>
-        </details>
-        <details class="data-view">
-          <summary>主 data:components({{ pageBind.components.length }})</summary>
-          <pre>{{ JSON.stringify(pageBind.components, null, 2) }}</pre>
-        </details>
         <div class="persist">
           <span class="hint">mock 服务端 persist:</span>
           <button class="chip sm" @click="saveToServer">💾 保存</button>
@@ -334,14 +404,30 @@ function sendSuggestion(text: string) {
 .validate.bad {
   color: #ff7043;
 }
-/* 大预览:撑满左栏剩余高度 */
-.preview {
-  flex: 1;
-  min-height: 0;
-  margin: 10px 0;
-  background: #fff;
-  border-radius: 8px;
-  overflow: auto;
+/* 视图 tab(预览/源代码/主 data) */
+.view-tabs { display: flex; gap: 4px; margin-top: 6px; }
+.view-tab { border: 1px solid rgba(255, 255, 255, 0.16); background: var(--ark-panel); color: var(--ark-muted); border-radius: 6px 6px 0 0; padding: 3px 12px; font-size: 11px; cursor: pointer; }
+.view-tab:hover { color: var(--ark-fg); }
+.view-tab.active { background: var(--ark-bg); color: var(--ark-accent); border-bottom-color: transparent; font-weight: 600; }
+/* 内容区:撑满左栏剩余高度;视图 tab 切换内容 */
+.pane-content { flex: 1; min-height: 0; display: flex; flex-direction: column; margin-top: 8px; }
+/* 预览:整页堆叠(撑满内容区;点块 = 第 1 步选中 → PickOverlay 浮层「加入聊天」→ 第 2 步聚焦) */
+.preview { flex: 1; min-height: 0; background: #fff; border-radius: 0 8px 8px 8px; overflow: auto; padding: 8px; }
+.preview-empty { padding: 40px; text-align: center; color: #9ca3af; font-size: 13px; }
+.preview-comp { cursor: pointer; border: 2px dashed transparent; border-radius: 6px; transition: border-color 0.15s; margin-bottom: 8px; }
+/* iframe 渲染完整页面级 HTML(sandbox 隔离 + 执行 script)。
+   高度自适应:注入脚本 postMessage 报 scrollHeight 回父页面按 origIdx 绑定(默认 420px 兜底);
+   无 allow-same-origin(安全隔离,P0-2)下靠 postMessage 量高,不破坏隔离 */
+.preview-iframe { display: block; width: 100%; border: none; background: #fff; border-radius: 4px; transition: height 0.15s ease; }
+.preview-comp:hover { border-color: rgba(100, 91, 255, 0.35); }
+.preview-comp.selected { border-color: #645bff; }  /* 第 1 步选中(紫虚线;PickOverlay 浮层接管边框) */
+.preview-comp.focused { border-style: solid; border-color: #10b981; box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2); }  /* 已聚焦(绿) */
+.comp-tab.focused { border-color: #10b981; color: #10b981; }
+/* 源代码 / 主 data pane(pre 撑满内容区,滚动) */
+.code-pane, .data-pane {
+  flex: 1; min-height: 0; margin: 0; padding: 12px; background: var(--ark-bg); border-radius: 0 8px 8px 8px;
+  font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; overflow: auto; color: var(--ark-fg);
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
 }
 .pane-foot {
   flex-shrink: 0;
@@ -349,30 +435,6 @@ function sendSuggestion(text: string) {
   gap: 12px;
   align-items: flex-start;
   flex-wrap: wrap;
-}
-.code-view,
-.data-view {
-  flex: 1;
-  min-width: 220px;
-}
-.code-view summary,
-.data-view summary {
-  font-size: 12px;
-  color: var(--ark-muted);
-  cursor: pointer;
-}
-.code-view pre,
-.data-view pre {
-  margin: 6px 0 0;
-  padding: 8px;
-  background: var(--ark-bg);
-  border-radius: 6px;
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  max-height: 160px;
-  overflow-y: auto;
-  color: var(--ark-fg);
 }
 .persist {
   display: flex;

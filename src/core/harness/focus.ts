@@ -20,6 +20,7 @@ import type { Middleware, ToolCallContext, ToolExecResult } from './middleware'
 import type { Focus } from './state'
 import type { ZodType } from 'zod'
 import { getSchemaAtPath } from '../tools/schemaUtils'
+import { getByPath } from '../tools/jsonUtils'
 import { extractSchemaHint } from '../presets'
 
 /**
@@ -61,6 +62,22 @@ function isUnderFocus(scope: string, focusPath: string): boolean {
   return scope === focusPath || scope.startsWith(focusPath + '.')
 }
 
+/**
+ * scope 是否为「尾部追加」:<arrayPath>.<N>,bind 中 arrayPath 是数组且 N >= 当前长度。
+ * 追加新元素到数组末尾,不改动已有元素 → 不破坏焦点子树(聚焦模式下允许新建组件等场景)。
+ * 仅认直接数组索引(components.5);更深路径(components.5.code)不认(patch 写不存在的元素本就失败)。
+ */
+function isTailAppend(scope: string, bind: unknown): boolean {
+  if (!bind || typeof bind !== 'object') return false
+  const dot = scope.lastIndexOf('.')
+  if (dot < 0) return false
+  const arrPath = scope.slice(0, dot)
+  const idxStr = scope.slice(dot + 1)
+  if (!/^\d+$/.test(idxStr)) return false  // 非数字索引不算
+  const arr = getByPath(bind, arrPath)
+  return Array.isArray(arr) && Number(idxStr) >= arr.length
+}
+
 /** Focus 中间件控制器(闭包操作 + 供 createChatSdk 暴露 + agent 工具调用) */
 export interface FocusController {
   /**
@@ -88,12 +105,22 @@ export interface FocusController {
 export interface FocusMiddlewareOptions {
   /** 取当前主数据 schema 的 getter(适配 sdk.setData 运行时替换;取子树视野用;path 校验在 createChatSdk 层) */
   getSchema: () => ZodType | null | undefined
+  /** 取当前主数据 bind 的 getter(尾部追加分判:isTailAppend 需读数组实际长度;主/子 focus mw 都传) */
+  getBind?: () => unknown
   /** 构造时初始焦点数组(子 agent 继承主 agent 多焦点用;主 agent 不传,靠 addFocus/setFocus 后续设) */
   initialFocuses?: Focus[]
+  /**
+   * 焦点变更回调(所有 mutation 入口统一触发:setFocus/addFocus/removeFocus/clearFocus/reset)。
+   * createChatSdk 注入 → emit focus_change 事件(集成方/demo 同步本地焦点镜像,如预览区 🎯 标记);
+   * 子 agent 的 focus 中间件不传(只继承不突变,不发事件)。
+   */
+  onChange?: (focuses: Focus[]) => void
 }
 
 export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware & FocusController {
   let focuses: Focus[] = opts.initialFocuses ? [...opts.initialFocuses] : []
+  /** mutation 后统一通知(副本防外部 mutate) */
+  const notify = () => opts.onChange?.([...focuses])
 
   const mw: Middleware & FocusController = {
     name: 'focus',
@@ -129,6 +156,7 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
       next: (ctx: ToolCallContext) => Promise<ToolExecResult>,
     ) => {
       // 范围收紧(strict):聚焦时写工具的 jsonPath 必须在【任一】焦点子树内,全不在才 PATH_DENIED 回灌 LLM 自纠
+      // 例外:尾部追加(<arrayPath>.<N>,N>=数组长度)放行 —— 追加新元素不破坏焦点子树(聚焦模式可新建组件)
       if (focuses.length) {
         const labels = focuses.map((f) => (f.label ? `${f.path}(${f.label})` : f.path)).join(', ')
         const deny = (scope: string): ToolExecResult => ({
@@ -142,7 +170,7 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
           const scopes = extractScopes(ctx.args)
           if (!scopes.length) return deny('(整体数据)')
           for (const scope of scopes) {
-            if (!focuses.some((f) => isUnderFocus(scope, f.path))) return deny(scope)
+            if (!focuses.some((f) => isUnderFocus(scope, f.path)) && !isTailAppend(scope, opts.getBind?.())) return deny(scope)
           }
           return next(ctx)
         }
@@ -152,7 +180,7 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
           // 原「空 scopes 放行」与 strict 承诺冲突 —— 整体写无法校验子树归属 = 越界
           if (!scopes.length) return deny('(整体数据)')
           for (const scope of scopes) {
-            if (!focuses.some((f) => isUnderFocus(scope, f.path))) return deny(scope)
+            if (!focuses.some((f) => isUnderFocus(scope, f.path)) && !isTailAppend(scope, opts.getBind?.())) return deny(scope)
           }
         }
       }
@@ -160,6 +188,7 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
     },
     setFocus: (f) => {
       focuses = f ? [f] : []
+      notify()
     },
     getFocus: () => focuses[0],
     getFocuses: () => [...focuses],
@@ -168,15 +197,19 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
       const idx = focuses.findIndex((x) => x.path === f.path)
       if (idx >= 0) focuses[idx] = f
       else focuses.push(f)
+      notify()
     },
     removeFocus: (path) => {
       focuses = focuses.filter((f) => f.path !== path)
+      notify()
     },
     clearFocus: () => {
       focuses = []
+      notify()
     },
     reset: () => {
       focuses = []
+      notify()
     },
   }
   return mw

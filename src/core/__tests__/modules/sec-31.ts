@@ -5,7 +5,7 @@ import {
   describeSchemaNode, renderSchemaHint, renderSchemaOverview,
 } from '../../tools/schemaUtils'
 import { buildSystemPrompt, buildDataPrompt, DEFAULT_SYSTEM_PROMPT } from '../../sdk/promptBuilder'
-import { systemPromptHelpers, extractSchemaHint } from '../../presets'
+import { systemPromptHelpers, extractSchemaHint, htmlOrchestratorPrompt } from '../../presets'
 import { createDataOps } from '../../tools/dataOps'
 
 /**
@@ -100,6 +100,52 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert(
     buildSystemPrompt({ systemPrompt: 'X', appendReliableWriteRules: false }) === 'X',
     'buildSystemPrompt → appendReliableWriteRules:false 不追加',
+  )
+
+  // === htmlPageOrchestrator / htmlPageProposeFirst 片段(add-html-orchestrator-prompt) ===
+  assert(
+    systemPromptHelpers.htmlPageOrchestrator.includes('use_html') &&
+      systemPromptHelpers.htmlPageOrchestrator.includes('职责边界') &&
+      systemPromptHelpers.htmlPageOrchestrator.includes('逐个委派'),
+    '✓ htmlPageOrchestrator → 非空且含关键编排规则(职责边界 / use_html / 逐个委派)',
+  )
+  assert(
+    systemPromptHelpers.htmlPageProposeFirst.includes('2~3 套') &&
+      systemPromptHelpers.htmlPageProposeFirst.includes('方案切换') &&
+      systemPromptHelpers.htmlPageProposeFirst !== systemPromptHelpers.htmlPageOrchestrator,
+    '✓ htmlPageProposeFirst → 独立片段(先出方案 + 方案切换),不与 orchestrator 混装',
+  )
+  assert(
+    buildSystemPrompt({ systemPrompt: '你是页面搭建助手。\n' + systemPromptHelpers.htmlPageOrchestrator }).includes('职责边界'),
+    '✓ htmlPageOrchestrator → 可安全拼进自定义 systemPrompt(经 buildSystemPrompt 不破坏)',
+  )
+
+  // === html-subagent-open-schema:同源化(htmlOrchestratorPrompt 函数 + 静态快照)+ htmlDirectWriteFallback 降级片段 ===
+  assert(
+    htmlOrchestratorPrompt('html') === systemPromptHelpers.htmlPageOrchestrator,
+    '✓ 同源化:htmlOrchestratorPrompt("html") === htmlPageOrchestrator 静态快照(单一数据源,防两套文案漂移)',
+  )
+  assert(
+    htmlOrchestratorPrompt('hero').includes('use_hero') && !htmlOrchestratorPrompt('hero').includes('use_html') &&
+      htmlOrchestratorPrompt('hero').includes('职责边界'),
+    '✓ 自定义 id:htmlOrchestratorPrompt("hero") 含 use_hero(动态工具名),不含 use_html,编排内容一致(自定义 id 不误导)',
+  )
+  assert(
+    typeof systemPromptHelpers.htmlDirectWriteFallback === 'string' &&
+      systemPromptHelpers.htmlDirectWriteFallback.includes('直接 write') &&
+      systemPromptHelpers.htmlDirectWriteFallback.includes('无 vfs') &&
+      systemPromptHelpers.htmlDirectWriteFallback !== systemPromptHelpers.htmlPageOrchestrator,
+    '✓ htmlDirectWriteFallback → 降级编排片段(主 agent 自己写 code,无 vfs/verify),独立于委派编排',
+  )
+
+  // === thinking-taming ①:委派 task 规格化(htmlOrchestratorPrompt 含规格条,收窄子 agent 决策)===
+  assert(
+    systemPromptHelpers.htmlPageOrchestrator.includes('规格化') &&
+      systemPromptHelpers.htmlPageOrchestrator.includes('视觉风格') &&
+      systemPromptHelpers.htmlPageOrchestrator.includes('交互意图') &&
+      systemPromptHelpers.htmlPageOrchestrator.includes('❌') &&
+      systemPromptHelpers.htmlPageOrchestrator.includes('✅'),
+    '✓ 委派 task 规格化:htmlPageOrchestrator 含规格条(4 要素 定位/视觉/内容/交互 + ❌/✅ 示例,不含技术实现)',
   )
 
   // buildDataPrompt

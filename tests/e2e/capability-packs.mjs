@@ -15,7 +15,7 @@ export async function run() {
   assert(typeof createHtmlSubagent === 'function', 'createHtmlSubagent 导出为 function')
   const sdkExports = await import('../../dist/page-agent-sdk.js')
   assert(sdkExports.ragSearchSkill === undefined, 'SDK 不导出 ragSearchSkill(纯分发 + 工厂内部装)')
-  assert(sdkExports.htmlBuilderSkill === undefined, 'SDK 不导出 htmlBuilderSkill(纯分发 + 工厂内部装)')
+  assert(sdkExports.htmlFragmentSkill === undefined, 'SDK 不导出 htmlFragmentSkill(纯分发 + 工厂内部装)')
 
   console.log('[e2e:capability-packs] createRagSubagent → use_rag 委派工具 + 中间件')
   {
@@ -57,7 +57,7 @@ export async function run() {
     assert(!threw, 'sdk.vfsWrite(字符串)调用不抛')
     try { sdk.vfsWrite('docs/cfg.json', { theme: 'dark' }) } catch { threw = true }
     assert(!threw, 'sdk.vfsWrite(对象)调用不抛(JSON.stringify)')
-    // vfsRead:只读读取 vfs 文件(集成方渲染层按 codeRef 取代码);写入后读回一致
+    // vfsRead:只读读取 vfs 文件;写入后读回一致
     assert(typeof sdk.vfsRead === 'function', 'sdk.vfsRead 为 function')
     assert(sdk.vfsRead('docs/hero.md') === '组件文档内容', 'sdk.vfsRead 读回 vfsWrite 写入的字符串内容')
     assert(sdk.vfsRead('docs/cfg.json') === '{"theme":"dark"}', 'sdk.vfsRead 读回 vfsWrite 对象 JSON.stringify 结果')
@@ -71,23 +71,16 @@ export async function run() {
     const __dirname = dirname(fileURLToPath(import.meta.url))
     const root = resolve(__dirname, '../..')
     const ragSkill = resolve(root, 'skills/rag-search/SKILL.md')
-    const htmlSkill = resolve(root, 'skills/html-builder/SKILL.md')
     const htmlFragSkill = resolve(root, 'skills/html-fragment/SKILL.md')
     assert(existsSync(ragSkill), 'skills/rag-search/SKILL.md 存在')
-    assert(existsSync(htmlSkill), 'skills/html-builder/SKILL.md 存在')
     assert(existsSync(htmlFragSkill), 'skills/html-fragment/SKILL.md 存在')
     if (existsSync(ragSkill)) {
       assert(readFileSync(ragSkill, 'utf8').includes('name: rag-search'), 'rag-search SKILL.md frontmatter name')
     }
-    if (existsSync(htmlSkill)) {
-      const c = readFileSync(htmlSkill, 'utf8')
-      assert(c.includes('name: html-builder'), 'html-builder SKILL.md frontmatter name')
-      assert(c.includes('代码资产模型'), 'html-builder SKILL.md 含 code 资产模型约定(单模式)')
-    }
     if (existsSync(htmlFragSkill)) {
       const c = readFileSync(htmlFragSkill, 'utf8')
       assert(c.includes('name: html-fragment'), 'html-fragment SKILL.md frontmatter name')
-      assert(c.includes('v-html'), 'html-fragment SKILL.md 含 v-html 片段契约')
+      assert(c.includes('完整、自包含'), 'html-fragment SKILL.md 含完整页面级契约(单模式,不再 v-html 片段)')
     }
     const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'))
     assert(JSON.stringify(pkg.files).includes('skills'), 'package.json files 含 skills/')
@@ -118,10 +111,10 @@ export async function run() {
     // 导出面:纯函数校验器 + verify check 工厂(dist 可用)
     assert(typeof validateHtmlFormat === 'function', 'validateHtmlFormat 导出为 function')
     assert(typeof createHtmlFormatCheck === 'function', 'createHtmlFormatCheck 导出为 function')
-    assert(validateHtmlFormat('<div><p>x</p></div>').length === 0, 'validateHtmlFormat → 合法片段通过')
-    const iss = validateHtmlFormat('<!DOCTYPE html><div>x')
-    assert(iss.some((i) => i.code === 'DOCTYPE_IN_FRAGMENT'), 'validateHtmlFormat → DOCTYPE 报片段契约违背')
-    assert(iss.some((i) => i.code === 'UNCLOSED_TAG'), 'validateHtmlFormat → 未闭合标签检出')
+    assert(validateHtmlFormat('<div><p>x</p></div>').length === 0, 'validateHtmlFormat → 合法 HTML 通过')
+    assert(validateHtmlFormat('<!DOCTYPE html><html><body><div>x</div></body></html>').length === 0, 'validateHtmlFormat → 完整文档(DOCTYPE+html/body)通过(不再拦片段契约)')
+    const iss = validateHtmlFormat('<div>x')
+    assert(iss.some((i) => i.code === 'UNCLOSED_TAG'), 'validateHtmlFormat → 未闭合标签检出(结构校验保留)')
     const chk = createHtmlFormatCheck({ vfsPrefix: 'html/' })
     const bad = chk({ messages: [], state: { files: { 'html/a.html': { content: '<div>x', updatedAt: 1 } } } })
     assert(bad.ok === false && bad.feedback.includes('a.html'), 'createHtmlFormatCheck → 问题文件 ok:false 带路径')
@@ -133,8 +126,8 @@ export async function run() {
     assert(fc.maxVerifyAttempts === 2, 'formatCheck 默认开 → maxVerifyAttempts 2(子 agent 自纠兜底)')
     const fcOff = createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })
     assert(!fcOff.middleware?.some((m) => m.name === 'verify') && fcOff.maxVerifyAttempts === undefined, 'formatCheck:false → 无校验链')
-    const fcHtml = createHtmlSubagent({ writablePaths: ['components'], codeKind: 'html' })
-    assert(fcHtml.systemPrompt?.includes('v-html') && fcHtml.skills?.[0]?.name === 'html-fragment', "codeKind:'html' → v-html 片段契约 prompt + html-fragment skill")
+    const fcHtml = createHtmlSubagent({ writablePaths: ['components'] })
+    assert(fcHtml.systemPrompt?.includes('完整、自包含') && fcHtml.skills?.[0]?.name === 'html-fragment', '单模式 → 完整页面级 prompt(默认含 script)+ html-fragment skill')
   }
 
   console.log('[e2e:capability-packs] verify 门禁运行时(子 agent 写坏代码 → 回灌自纠 → 修正后放行)')
@@ -193,7 +186,7 @@ export async function run() {
       ui: false, id: 'e2e-cap-commit', storage: false, llm,
       capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
       data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
-      subagents: [createHtmlSubagent({ writablePaths: ['components'], codeKind: 'html', formatCheck: false })],
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
     })
     await sdk.mount()
     await sdk.send('改横幅')
@@ -219,7 +212,7 @@ export async function run() {
       ui: false, id: 'e2e-cap-reasoning', storage: false, llm,
       capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
       data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
-      subagents: [createHtmlSubagent({ writablePaths: ['components'], codeKind: 'html', formatCheck: false })],
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
     })
     await sdk.mount()
     await sdk.stream([{ role: 'user', content: '生成横幅', timestamp: Date.now() }], (e) => { if (e.type === 'subagent') subEvents.push(e) })
@@ -251,7 +244,7 @@ export async function run() {
       ui: false, id: 'e2e-cap-focusvfs', storage: false, llm,
       capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
       data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
-      subagents: [createHtmlSubagent({ writablePaths: ['components'], codeKind: 'html', formatCheck: false })],
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
     })
     await sdk.mount()
     const fr = sdk.setFocus({ path: 'components.0', label: 'hero' })
@@ -281,7 +274,7 @@ export async function run() {
       ui: false, id: 'e2e-cap-focusvfs-nofocus', storage: false, llm,
       capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
       data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
-      subagents: [createHtmlSubagent({ writablePaths: ['components'], codeKind: 'html', formatCheck: false })],
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
     })
     await sdk.mount()
     // 不 setFocus → 子 agent 无焦点 → 守卫放行任意 vfs 代码文件(原行为零回归)
@@ -310,16 +303,165 @@ export async function run() {
       ui: false, id: 'e2e-cap-assetmap', storage: false, llm,
       capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
       data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
-      subagents: [createHtmlSubagent({ writablePaths: ['components'], codeKind: 'html', formatCheck: false })],
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
     })
     await sdk.mount()
     await sdk.send('改 hero 标题')
     const withMap = llm.systemPrompts.filter((s) => s.includes('组件代码文件地图'))
     assert(withMap.length >= 1, '✓ 组件代码文件地图注入子 agent system prompt(augmentPrompt;子 agent 按 name 直接定位 vfs 文件)')
-    assert(withMap.some((s) => s.includes('hero → html/c_hero.html') && s.includes('banner → html/c_banner.html')), '✓ 地图含全部组件 name → vfs 路径(含预设 __pgId,无需猜随机 id)')
+    assert(withMap.some((s) => s.includes('hero [0] → html/c_hero.html') && s.includes('banner [1] → html/c_banner.html')), '✓ 地图含全部组件 name [索引] → vfs 路径(含预设 __pgId,F3 索引消除重名歧义)')
     // 主 agent 不装 codeAsset 中间件 → 主 agent 的 LLM 调用不含地图(不污染主上下文;主 agent 不碰代码文件)
     const mainOnly = llm.systemPrompts.filter((s) => s.includes('use_html') && !s.includes('vfs_write'))
     assert(mainOnly.length >= 1 && mainOnly.every((s) => !s.includes('组件代码文件地图')), '✓ 主 agent system prompt 不含地图(只进子 agent 上下文)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:capability-packs] 编排自适应注入(有 agent 委派 / 无 agent 降级 / opt-out / 自定义 id;html-subagent-open-schema)')
+  {
+    // ① 有 html agent → 主 systemPrompt 含委派编排(use_html + 职责边界),集成方零配置
+    const sdk1 = createChatSdk({
+      ui: false, id: 'e2e-orch-agent', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ components: z.array(z.object({ code: z.string() })) }), bind: { components: [] }, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
+    })
+    await sdk1.mount()
+    const sp1 = sdk1.inspect().systemPrompt
+    assert(sp1.includes('use_html') && sp1.includes('职责边界'), '✓ ① 有 html agent → 自动注入委派编排(含 use_html + 职责边界,集成方零配置)')
+    sdk1.unmount()
+
+    // ② 无 html agent + schema 有 code 字段 → 注入降级编排(直接 write / 无 vfs)+ warn
+    const sdk2 = createChatSdk({
+      ui: false, id: 'e2e-orch-fallback', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ components: z.array(z.object({ code: z.string() })) }), bind: { components: [] }, description: '测试' },
+    })
+    await sdk2.mount()
+    const sp2 = sdk2.inspect().systemPrompt
+    assert(sp2.includes('直接 write') && sp2.includes('无 vfs'), '✓ ② 无 agent+schema 有 code 字段 → 自动注入降级编排(主 agent 自己写,无 vfs/verify)+ warn')
+    assert(!sp2.includes('use_html'), '✓ ② 降级编排不含委派 use_html(无 agent)')
+    sdk2.unmount()
+
+    // ③ 无 html agent + 无 code 字段 → 不注入(纯数据应用零干扰)
+    const sdk3 = createChatSdk({
+      ui: false, id: 'e2e-orch-none', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), list: z.array(z.string()) }), bind: { title: 't', list: [] }, description: '测试' },
+    })
+    await sdk3.mount()
+    const sp3 = sdk3.inspect().systemPrompt
+    assert(!sp3.includes('use_html') && !sp3.includes('直接 write'), '✓ ③ 无 agent+无 code 字段 → 不注入编排(纯数据应用零干扰)')
+    sdk3.unmount()
+
+    // ④ opt-out(orchestratorPrompt:false)→ 有 agent 但不注入委派(高级用户自定义)
+    const sdk4 = createChatSdk({
+      ui: false, id: 'e2e-orch-optout', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ components: z.array(z.object({ code: z.string() })) }), bind: { components: [] }, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false, orchestratorPrompt: false })],
+    })
+    await sdk4.mount()
+    const sp4 = sdk4.inspect().systemPrompt
+    assert(!sp4.includes('职责边界'), '✓ ④ orchestratorPrompt:false → 不注入委派编排(opt-out)')
+    sdk4.unmount()
+
+    // ⑤ 自定义 id → 委派编排含 use_hero(动态工具名,非 use_html)
+    const sdk5 = createChatSdk({
+      ui: false, id: 'e2e-orch-id', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ components: z.array(z.object({ code: z.string() })) }), bind: { components: [] }, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false, id: 'hero' })],
+    })
+    await sdk5.mount()
+    const sp5 = sdk5.inspect().systemPrompt
+    assert(sp5.includes('use_hero') && !sp5.includes('use_html'), '✓ ⑤ 自定义 id(hero)→ 委派编排含 use_hero(动态工具名,不误导主 agent 调不存在的工具)')
+    sdk5.unmount()
+  }
+
+  console.log('[e2e:capability-packs] 无 html agent + 纯代码组件:主 agent 自己 write(降级编排;html-subagent-open-schema)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    const llm = stubModel(
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.0', value: { type: 'custom', name: 'hero', code: '<section class="pg-hero"><h1>啤酒节</h1></section>' } } } }] },
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.1', value: { type: 'banner', title: '干杯' } } } }] },
+      { text: '已生成 hero 纯代码 + banner 横幅' },
+    )
+    const bind = { components: [] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-orch-noagent', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ components: z.array(z.discriminatedUnion('type', [z.object({ type: z.literal('custom'), name: z.string().optional(), code: z.string() }), z.object({ type: z.literal('banner'), title: z.string() })])) }), bind, description: '测试' },
+    })
+    await sdk.mount()
+    const sp = sdk.inspect().systemPrompt
+    assert(sp.includes('直接 write') && sp.includes('无 vfs'), '✓ ⑥ 无 agent+schema 有 code 字段 → 注入降级编排(主 agent 自己写,零配置)')
+    assert(!sp.includes('use_html'), '✓ ⑥ 无 agent → 不含委派 use_html')
+    await sdk.send('生成 hero 纯代码组件 + banner')
+    assert(bind.components.length === 2, '✓ ⑥ 无 agent 多组件:主 agent 直接 write 生成 2 个组件(含纯代码 custom + 普通 banner)')
+    assert(bind.components[0].code === '<section class="pg-hero"><h1>啤酒节</h1></section>', '✓ ⑥ 纯代码组件 code 由主 agent 直接 write(降级模式,无 vfs/verify)')
+    assert(bind.components[1].title === '干杯', '✓ ⑥ 普通组件(banner)同由主 agent write')
+    assert(!llm.systemPrompts.some((s) => s.includes('use_html')), '✓ ⑥ 降级模式主 agent 不委派(全程无 use_html 工具,自己 write code)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:capability-packs] 有 html agent 但 orchestratorPrompt:false(不注入委派编排;opt-out)')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-orch-optout-full', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ components: z.array(z.object({ code: z.string() })) }), bind: { components: [] }, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false, orchestratorPrompt: false })],
+    })
+    await sdk.mount()
+    const sp = sdk.inspect().systemPrompt
+    assert(!sp.includes('职责边界'), '✓ ⑦ orchestratorPrompt:false → 不注入委派编排(集成方自定义编排)')
+    assert(!sp.includes('逐个委派'), '✓ ⑦ opt-out → 不含编排规则段')
+    assert(sdk.inspect().tools.some((t) => t.name === 'use_html'), '✓ ⑦ opt-out 仅关编排注入,use_html 委派工具仍可用(子 agent 装配不受影响)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:capability-packs] 多组件逐个委派(每组件独立子 agent,全新上下文防共享污染)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    // 场景:用户「生成2个组件:轮播 + 活动特效,世界杯主题」
+    // 主 agent 逐个委派(每组件一次 use_html → 独立子 agent,全新上下文,防 class/样式冲突污染)
+    const llm = stubModel(
+      // [0] 主:委派 use_html #1(轮播)
+      { toolCalls: [{ name: 'use_html', args: { task: '生成轮播组件,世界杯主题' } }] },
+      // [1] 子#1:write components.0(轮播)—— 独立子 agent,只写这一个
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.0', value: { type: 'custom', name: 'carousel', code: '<section class="wc-carousel"><h3>世界杯轮播</h3></section>' } } } }] },
+      // [2] 子#1:text 收口
+      { text: '已生成轮播' },
+      // [3] 主:委派 use_html #2(活动特效)—— 第二个独立子 agent,全新上下文(不知轮播的 code)
+      { toolCalls: [{ name: 'use_html', args: { task: '生成活动特效组件,世界杯主题,进球动效' } }] },
+      // [4] 子#2:write components.1(活动特效)
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.1', value: { type: 'custom', name: 'effect', code: '<section class="wc-effect"><h3>进球特效</h3></section>' } } } }] },
+      // [5] 子#2:text 收口
+      { text: '已生成特效' },
+      // [6] 主:text 收口
+      { text: '已完成 2 个组件(轮播 carousel + 活动特效 effect)' },
+    )
+    const bind = { title: 't', components: [] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-multi', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
+    })
+    await sdk.mount()
+    const reply = await sdk.send('生成2个组件:轮播 + 活动特效,世界杯主题')
+    // ① 两个组件都生成(各自独立子 agent 委派)
+    assert(bind.components.length === 2, `✓ 逐个委派:两个组件都追加进 components(实际 ${bind.components.length} 个)`)
+    assert(bind.components[0]?.name === 'carousel' && bind.components[1]?.name === 'effect', '✓ 两个组件名称正确(carousel + effect)')
+    // ② 两组件 code + __pgId(唯一)
+    assert(typeof bind.components[0]?.code === 'string' && bind.components[0].code.includes('世界杯轮播'), '✓ 组件 0(carousel)code 落地')
+    assert(typeof bind.components[1]?.code === 'string' && bind.components[1].code.includes('进球特效'), '✓ 组件 1(effect)code 落地')
+    assert(typeof bind.components[0]?.__pgId === 'string' && typeof bind.components[1]?.__pgId === 'string' && bind.components[0].__pgId !== bind.components[1].__pgId, '✓ 两组件 __pgId 唯一注入')
+    // ③ 逐个委派 = 2 个独立子 agent(观察层 history 记录每次 spawn)
+    assert(sdk.inspect().subagent.history.length === 2, `✓ 逐个委派:2 个独立子 agent(各全新上下文,防共享污染;history ${sdk.inspect().subagent.history.length})`)
+    // ④ 完整流程 7 次 model 调用(主委派1→子写1→子收口→主委派2→子写2→子收口→主收口)
+    assert(/完成/.test(reply), '✓ 主流程收口')
+    assert(llm.calls === 7, `✓ 完整流程 7 次 model 调用(实际 ${llm.calls})`)
     sdk.unmount()
   }
 

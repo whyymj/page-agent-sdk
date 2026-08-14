@@ -6,7 +6,7 @@
  * 容器内部再 import 本渲染器渲染 children,打破 A↔B 循环依赖。
  * 叶子组件静态 import;baseProps(id/style/visible/className)单独透传。
  */
-import { defineAsyncComponent, computed, type Component } from 'vue'
+import { defineAsyncComponent, computed, reactive, type Component } from 'vue'
 import HeadingComp from './components/HeadingComp.vue'
 import RichTextComp from './components/RichTextComp.vue'
 import ProductGridComp from './components/ProductGridComp.vue'
@@ -108,10 +108,47 @@ const compClass = computed<string[]>(() => {
   if (c.theme) cls.push(`theme-${c.theme}`)
   return cls
 })
+
+// custom 纯代码组件:iframe srcdoc 渲染(完整自包含 HTML 页面,script/style 可执行;sandbox 隔离)
+// 高度自适应:无 allow-same-origin(父读不到 contentDocument)→ srcdoc 注入量高脚本 postMessage 报回 →
+// 模块级共享高度表(递归渲染多实例,window 监听单次注册);key 用 path(唯一,容器 children 内亦有)
+const customHeights = reactive<Record<string, number>>({})
+const SCRIPT_OPEN = '<' + 'script>'   // SFC 转义:源码不连续出现 script 标签(编译器按字符序列匹配闭合)
+const SCRIPT_CLOSE = '<' + '/script>'
+function _onCustomMsg(e: MessageEvent) {
+  const d = e.data as { __customComp?: boolean; key?: string; h?: number } | null
+  if (!d || d.__customComp !== true) return
+  if (typeof d.key === 'string' && typeof d.h === 'number' && d.h > 0 && d.h < 20000) customHeights[d.key] = d.h
+}
+if (typeof window !== 'undefined' && !(window as any).__customCompListener) {
+  window.addEventListener('message', _onCustomMsg)
+  ;(window as any).__customCompListener = true
+}
+const customKey = computed(() => props.path || props.comp?.__pgId || props.comp?.name || 'unknown')
+const customHeight = computed(() => (customHeights[customKey.value] || 360) + 'px')
+function wrapCustomCode(code: string): string {
+  const key = JSON.stringify(customKey.value)
+  const probe =
+    '\n' + SCRIPT_OPEN +
+    '(function(){var k=' + key + ';var s=function(){var h=Math.max(document.body?document.body.scrollHeight:0,document.documentElement?document.documentElement.scrollHeight:0);if(h>0){try{parent.postMessage({__customComp:true,key:k,h:h},"*")}catch(e){}}};window.addEventListener("load",s);if(document.readyState==="complete"){s()}setTimeout(s,200);setTimeout(s,600)})();' +
+    SCRIPT_CLOSE
+  return code + probe
+}
 </script>
 
 <template>
-  <component
+  <!-- custom 纯代码组件:wrapper 接管点击命中 —— sandbox iframe 吞 click(无 allow-same-origin 不冒泡),
+       事件委托 closest('[data-path]') 命不中;iframe pointer-events:none → click 透到 wrapper 命中 data-path(可两步拾取);
+       动画仍跑(script 照常执行),hover 交互牺牲(纯预览展示) -->
+  <div v-if="comp.type === 'custom'" class="custom-comp-wrap" :data-path="path" :style="compStyle">
+    <iframe class="custom-comp-iframe"
+      :srcdoc="wrapCustomCode(comp.code || '')"
+      :style="{ height: customHeight }"
+      sandbox="allow-scripts allow-modals allow-popups allow-forms"
+    />
+  </div>
+  <!-- 其他组件:COMP_MAP 分发 -->
+  <component v-else
     :is="COMP_MAP[comp.type] ?? 'div'"
     v-bind="comp.props"
     :id="comp.id"
@@ -123,3 +160,8 @@ const compClass = computed<string[]>(() => {
     :data-path="path"
   />
 </template>
+
+<style scoped>
+.custom-comp-wrap { width: 100%; }
+.custom-comp-iframe { display: block; width: 100%; border: none; pointer-events: none; }  /* none:click 透到 wrapper(有 data-path)→ custom 可两步拾取 */
+</style>

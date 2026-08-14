@@ -66,8 +66,8 @@ export function renderTodos(todos: Todo[]): string | undefined {
     })
   }
   const rule = hasTier
-    ? '规则:write_todos 拆解(可带 parentId 表达层级、deps 表达依赖);有依赖的任务,deps 全 completed 后再标 in_progress;完成一个立即 update_todo({id, status:"completed"})。'
-    : '规则:开始前用 write_todos 拆解;首个任务标 in_progress;完成一个立即 update_todo({id, status:"completed"}) 标完成(不必重传整个清单);保持至少一个 in_progress 直到全部完成。'
+    ? '规则:write_todos 拆解(可带 parentId 表达层级、deps 表达依赖);有依赖的任务,deps 全 completed 后再标 in_progress;完成一个立即 update_todo({id, status:"completed"})。注意:write_todos(整表替换)与 update_todo(增量)不可同轮混用;批量标多个完成建议一次 write_todos 传完整数组(全 completed),不必逐个 update_todo。'
+    : '规则:开始前用 write_todos 拆解;首个任务标 in_progress;完成一个立即 update_todo({id, status:"completed"}) 标完成(不必重传整个清单);保持至少一个 in_progress 直到全部完成。注意:write_todos(整表替换)与 update_todo(增量)不可同轮混用;批量标多个完成建议一次 write_todos 传完整数组(全 completed),不必逐个 update_todo。'
   return [
     '## 当前任务清单(write_todos 整表替换 / update_todo 按 id 增量改单项)',
     lines.join('\n'),
@@ -89,6 +89,7 @@ export function createTodosMiddleware(
 } {
   let todos: Todo[] = ensureIds(initialTodos)
   let writeTodosThisRound = 0
+  let updateTodosThisRound = 0
   // 规划阶段防死循环状态机(与 maxIterations 总闸正交):首次 write_todos 进入,主数据写工具成功退出
   let inPlanning = false
   let planPhaseRounds = 0
@@ -171,17 +172,26 @@ export function createTodosMiddleware(
     beforeAgent: () => ({ todos }),
     beforeModel: () => {
       writeTodosThisRound = 0
+      updateTodosThisRound = 0
       if (inPlanning) planPhaseRounds++ // 规划阶段每轮计数(含 read/query/search 调研轮)
       return { todos } // 同步闭包 todos 进 state
     },
     augmentPrompt: () => renderTodos(todos),
     wrapToolCall: async (ctx, next) => {
-      // 拒一轮内 write_todos + update_todo 混用(整表替换与增量更新语义冲突);也拒同工具并行多次
+      // 规则:write_todos(整表替换)与 update_todo(增量改单项)不可同轮混用(语义冲突);
+      // 多 write_todos 拒(末次覆盖前者,无意义);多 update_todo 放行(幂等独立,收尾批量标完成是常态)。
       if (ctx.name === 'write_todos' || ctx.name === 'update_todo') {
-        writeTodosThisRound++
+        if (ctx.name === 'write_todos') writeTodosThisRound++
+        else updateTodosThisRound++
         if (writeTodosThisRound > 1) {
           return {
-            content: '错误:write_todos 与 update_todo 不应在一轮中并行/混用(整表替换与增量更新语义冲突)。请串行使用。',
+            content: '错误:write_todos(整表替换)不应在一轮中调用多次(末次覆盖前者,无意义)。一次传完整数组即可。',
+            status: 'error' as const,
+          }
+        }
+        if (writeTodosThisRound > 0 && updateTodosThisRound > 0) {
+          return {
+            content: '错误:write_todos(整表替换)与 update_todo(增量改单项)不应在一轮中混用,语义冲突。请只选一种:write_todos 传完整数组,或 update_todo 逐个改。',
             status: 'error' as const,
           }
         }

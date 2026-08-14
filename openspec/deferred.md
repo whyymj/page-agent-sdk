@@ -336,6 +336,23 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 
 ---
 
+### [2026-08-14] html 子 agent per-component 持久上下文 — ⏸ 暂缓
+
+**来源**:html-agent-thinking-taming 规划时评估(per-component 上下文保有 + sessionStorage 持久化,避免反复改同一组件时上下文丢失)。
+
+**核心理由(暂缓)**:
+- 治的是「记忆/连续性」(长周期精修),不是「过度思考」(thinking-taming 主题)。先把思考治好(①②③)再谈记忆。
+- 当前每次 use_html 全新上下文是**故意防污染**;代码现状已由 vfs + data.code 保有(vfs_read 可见),丢的只是前次"对话/思考"。
+- 恢复的前次上下文**含纠结过程**(撕边穷举的方案对比),①②③ 未治好前持久化它 = 持久化纠结,可能适得其反。
+- ①task 规格化后 task 自带规格,子 agent 需"前次对话"的场景大减 —— 多数情况 vfs_read + task 已够。
+- 复杂度高:runSubagent 按 __pgId 路由持久上下文 + sessionStorage 序列化 + 上下文膨胀/压缩 + 刷新后一致性(__pgId/sessionId/vfs 重建)。
+
+**重启触发条件**:①②③ 验证后,"反复精修同一组件、修改间有依赖"仍是真痛点(非 vfs_read + task 可覆盖)。
+
+**缩水替代**:①task 规格化(主 agent 每次给完整规格)+ vfs_read 现状,覆盖多数"跨委派连续性"需求。
+
+---
+
 ## 维护约定
 
 - 暂缓项**不进** `project.md`「进行中的 change」(避免占心智);本文件是唯一索引。

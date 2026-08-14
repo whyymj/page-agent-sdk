@@ -148,5 +148,28 @@ export async function run() {
   assert(sdkP.getFocuses().length === 2, 'persist: multi-focus switchSession 往返 → focuses 数组还原 2 个')
   sdkP.unmount()
 
+  console.log('[e2e:focus] focus_change 事件(所有 mutation 入口统一 emit;集成方/demo 同步本地焦点镜像)')
+  {
+    const events = []
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-focus-event', storage: false, llm: FAKE_LLM,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false, subagent: false },
+      data: { schema, bind: { title: 't', components: [{ type: 'x' }] }, description: '页面' },
+      onEvent: (e) => { if (e.type === 'focus_change') events.push(e) },
+    })
+    await sdk.mount()
+    sdk.setFocus({ path: 'components.0', label: '导航' })
+    sdk.addFocus({ path: 'title' })
+    sdk.removeFocus('components.0')
+    sdk.clearFocus()
+    // 每个 mutation 都触发一次 focus_change(收敛在 focusMw 层:API/工具/chip/reset 全覆盖)
+    assert(events.length === 4, `✓ focus_change 事件:setFocus/addFocus/removeFocus/clearFocus 各 emit 一次(共 ${events.length},预期 4)`)
+    assert(events[0].focuses.length === 1 && events[0].focuses[0].path === 'components.0', '✓ setFocus → focuses=[components.0]')
+    assert(events[1].focuses.length === 2, '✓ addFocus → focuses 累积到 2 个')
+    assert(events[2].focuses.length === 1 && events[2].focuses[0].path === 'title', '✓ removeFocus → 移除 components.0 剩 title')
+    assert(events[3].focuses.length === 0, '✓ clearFocus → focuses 清空')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

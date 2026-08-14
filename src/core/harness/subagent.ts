@@ -144,6 +144,8 @@ export interface SubagentOptions {
   getFocuses?: () => Focus[]
   /** 取主数据 schema getter(focus-auto-switch:子 focus 中间件做视野收敛 + path 校验用;透传主 liveData schema) */
   getSchema?: () => ZodType | null | undefined
+  /** 取主数据 bind getter(focus 尾部追加分判:isTailAppend 读数组实际长度;透传主 liveData bind) */
+  getBind?: () => unknown
   /** 子 agent 自定义中间件(如 createTodosMiddleware 给规划能力);装在 skills/递归/focus 之后,对齐主「内置→用户」序 */
   middleware?: Middleware[]
   /** 跨轮上下文压缩;true=默认索引摘要(零 LLM),或 SummarizationOptions 自配(含 llmInvoke 升级 LLM 摘要)。不传=不装 */
@@ -322,7 +324,7 @@ async function runSubagent(
   // focus-auto-switch:子 agent 继承主焦点(主聚焦 → 子默认同焦点,三层收敛;主未聚焦 → 空数组不装,零回归)
   const inheritedFocuses = opts.getFocuses?.() ?? []
   const childFocusMw = inheritedFocuses.length
-    ? createFocusMiddleware({ getSchema: opts.getSchema ?? (() => null), initialFocuses: inheritedFocuses })
+    ? createFocusMiddleware({ getSchema: opts.getSchema ?? (() => null), getBind: opts.getBind, initialFocuses: inheritedFocuses })
     : undefined
   // P1-15(fix-authorization-surface):vfs 桥接 —— 子 state.files 指向主 vfsStore.files,
   // 子 offload 大结果直落主共享池(子 vfs_* 回读不 404,主 agent 亦可读)
@@ -593,7 +595,7 @@ export interface SubagentConfig {
    * 注入 checkout/commit 钩子(beforeAgent data.code→vfs / afterAgent vfs→data.code 增量回写)+
    * dataOps 传 pgIdPaths + largeTextPaths + 强制 vfs。下划线前缀 = 框架内部,不进公开 API。
    */
-  _codeAsset?: { writablePaths: string[]; codeVfsPrefix: string; ext: 'vue' | 'html' }
+  _codeAsset?: { writablePaths: string[]; codeVfsPrefix: string; ext: 'html'; codeField: string; orchestratorPrompt?: string }
 }
 
 export interface SubagentsMiddlewareOptions {
@@ -605,6 +607,8 @@ export interface SubagentsMiddlewareOptions {
   getFocuses?: () => Focus[]
   /** 取主数据 schema getter(focus-auto-switch:透传给子 focus 中间件) */
   getSchema?: () => ZodType | null | undefined
+  /** 取主数据 bind getter(focus 尾部追加分判:透传给子 focus 中间件) */
+  getBind?: () => unknown
   debug?: boolean
   /** 观察层 tracker(同 SubagentOptions.tracker;createChatSdk 注入共享实例,两类委派统一观察) */
   tracker?: SubagentTracker

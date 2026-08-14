@@ -1,10 +1,10 @@
 /**
  * sec-72:HTML 格式校验(tools/htmlValidate + createHtmlSubagent 校验链)
  * - validateHtmlFormat:标签闭合(栈)/ void 元素 / 自闭合 / 引号内 > / 注释 / raw text(script、style)/
- *   片段契约(DOCTYPE、html/head/body、片段禁 script)/ sfc 模式 / 行号 / 嵌套错序
+ *   完整页面级(DOCTYPE、html/head/body/script 均允许;不再拦片段)/ 行号 / 嵌套错序
  * - createHtmlFormatCheck:verify beforeReturn 门禁(state.files 扫描 / 前缀过滤 / 无文件放行)
  * - createHtmlSubagent 校验链装配:formatCheck 默认开(validate_code 工具 + verify + maxVerifyAttempts 2)/
- *   formatCheck:false / codeKind:'html'(html-fragment skill + 片段契约 prompt)/ validate_code 三种调用模式
+ *   formatCheck:false / 单模式(html-fragment skill + 完整页面级 prompt)/ validate_code 三种调用模式
  */
 import { validateHtmlFormat } from '../../tools/htmlValidate'
 import { createHtmlFormatCheck, createHtmlSubagent } from '../../sdk/htmlSubagent'
@@ -48,36 +48,31 @@ export async function run(ctx: TestCtx): Promise<void> {
   const unclosedComment = validateHtmlFormat('<div><!-- oops</div>')
   assert(unclosedComment.some((i) => i.code === 'UNCLOSED_COMMENT'), '✓ 未闭合注释 → UNCLOSED_COMMENT')
 
-  // ===== raw text 元素(script/style)=====
-  assert(validateHtmlFormat('<script>if (a < b) { s = "</div>" }</script>', { sfc: true }).length === 0, '✓ sfc 模式 script 内容不解析(含 < 不误判)')
-  const fragScript = validateHtmlFormat('<div>x</div><script>alert(1)</script>')
-  assert(fragScript.some((i) => i.code === 'SCRIPT_IN_FRAGMENT'), '✓ 片段模式 <script> → SCRIPT_IN_FRAGMENT')
-  assert(validateHtmlFormat('<style>.a > .b { color: red }</style><div>x</div>').length === 0, '✓ 片段模式 <style> 允许且内容不解析')
+  // ===== raw text 元素(script/style):内容不解析只校验闭合;script 有无由用户声明(不再拦)=====
+  assert(validateHtmlFormat('<script>if (a < b) { s = "</div>" }</script>').length === 0, '✓ <script> 内容不解析(含 < / </div> 不误判);script 不再拦(完整页面级,由用户声明)')
+  assert(validateHtmlFormat('<div>x</div><script>alert(1)</script>').length === 0, '✓ 含 <script> → 通过(不再报 SCRIPT_IN_FRAGMENT;script 由用户声明)')
+  assert(validateHtmlFormat('<style>.a > .b { color: red }</style><div>x</div>').length === 0, '✓ <style> 允许且内容不解析')
   const unclosedStyle = validateHtmlFormat('<style>.a{}')
   assert(unclosedStyle.some((i) => i.code === 'UNCLOSED_TAG' && i.message.includes('<style>')), '✓ <style> 未闭合 → UNCLOSED_TAG')
 
-  // ===== 片段契约(v-html 注入)=====
+  // ===== 完整页面级(DOCTYPE/html/head/body 允许;改造由下游插件/tool 做)=====
   const doc = validateHtmlFormat('<!DOCTYPE html><html><head><title>t</title></head><body><div>x</div></body></html>')
-  assert(doc.some((i) => i.code === 'DOCTYPE_IN_FRAGMENT'), '✓ <!DOCTYPE> → DOCTYPE_IN_FRAGMENT')
-  assert(doc.filter((i) => i.code === 'DOC_TAG_IN_FRAGMENT').length === 3, '✓ html/head/body 外围标签各报 1 处 DOC_TAG_IN_FRAGMENT')
-  assert(validateHtmlFormat('<body>x</body>', { sfc: true }).some((i) => i.code === 'DOC_TAG_IN_FRAGMENT'), '✓ sfc 模式模板内同样禁外围标签')
+  assert(doc.length === 0, '✓ 完整 HTML 文档(DOCTYPE + html/head/body)→ 通过(不再报 DOCTYPE/DOC_TAG_IN_FRAGMENT)')
 
-  // ===== Vue SFC 整体 =====
-  const sfc = `<template>
-  <section class="hero">
-    <h1>{{ title }}</h1>
-    <img src="x.png">
-  </section>
-</template>
-<script setup>
-defineProps({ title: String })
-</script>
-<style scoped>
-.hero > h1 { color: red }
-</style>`
-  assert(validateHtmlFormat(sfc, { sfc: true }).length === 0, '✓ 合法 Vue SFC(sfc 模式)→ 通过')
-  const sfcBroken = sfc.replace('</section>', '')
-  assert(validateHtmlFormat(sfcBroken, { sfc: true }).some((i) => i.code === 'UNCLOSED_TAG' && i.message.includes('<section>')), '✓ SFC 模板内 <section> 未闭合 → 检出')
+  // ===== 完整页面级(含 script/style,单模式 HTML)=====
+  const fullPage = `<html>
+  <head><style>.hero > h1 { color: red }</style></head>
+  <body>
+    <section class="hero">
+      <h1>标题</h1>
+      <img src="x.png">
+    </section>
+    <script>console.log('hi')</script>
+  </body>
+</html>`
+  assert(validateHtmlFormat(fullPage).length === 0, '✓ 完整页面级 HTML(html/head/body + script/style)→ 通过(单模式不再拦)')
+  const fullPageBroken = fullPage.replace('</section>', '')
+  assert(validateHtmlFormat(fullPageBroken).some((i) => i.code === 'UNCLOSED_TAG' && i.message.includes('<section>')), '✓ 完整页面内 <section> 未闭合 → 检出')
 
   // ===== createHtmlFormatCheck(verify beforeReturn 门禁)=====
   console.log('\n[html-validate · createHtmlFormatCheck]')
@@ -101,7 +96,7 @@ defineProps({ title: String })
   const validateTool = cfg.middleware?.[1].tools?.[0] as any
   assert(validateTool?.name === 'validate_code', '✓ validate_code 工具经中间件注入')
   assert(cfg.systemPrompt?.includes('validate_code'), '✓ systemPrompt 引导 validate_code 自检')
-  assert(cfg.systemPrompt?.includes('v-html'), '✓ systemPrompt 含 v-html 片段契约')
+  assert(cfg.systemPrompt?.includes('完整、自包含'), '✓ systemPrompt 含完整页面级契约(不再 v-html 片段契约)')
 
   // validate_code:content 模式(直接校验传入内容)
   const rBad = await invoke(validateTool, { content: '<div>x' })
@@ -127,11 +122,11 @@ defineProps({ title: String })
   const cfg3 = createHtmlSubagent({ writablePaths: ['components'], planning: false, formatCheck: false })
   assert(!cfg3.middleware, '✓ planning:false + formatCheck:false → middleware 不装')
 
-  // codeKind:'html' → html-fragment skill + 片段契约 prompt
-  const cfg4 = createHtmlSubagent({ writablePaths: ['components'], codeKind: 'html' })
-  assert(cfg4.skills?.length === 1 && cfg4.skills[0].name === 'html-fragment', "✓ codeKind:'html' → 默认 html-fragment skill")
-  assert(cfg4.systemPrompt?.includes('html/hero.html') || cfg4.systemPrompt?.includes('.html'), "✓ codeKind:'html' → systemPrompt 引导 .html 文件")
-  assert(cfg4.skills?.[0].getContent?.().includes('v-html'), '✓ html-fragment skill 含 v-html 输出契约')
+  // 单模式(不再 codeKind):默认 html-fragment skill + 完整页面级 prompt
+  const cfg4 = createHtmlSubagent({ writablePaths: ['components'] })
+  assert(cfg4.skills?.length === 1 && cfg4.skills[0].name === 'html-fragment', '✓ 单模式 → 默认 html-fragment skill')
+  assert(cfg4.systemPrompt?.includes('.html'), '✓ 单模式 → systemPrompt 引导 .html 文件')
+  assert(cfg4.skills?.[0].getContent?.().includes('完整、自包含'), '✓ html-fragment skill 含完整页面输出契约')
   const cfg5 = createHtmlSubagent({ writablePaths: ['components'] })
-  assert(cfg5.skills?.[0].name === 'html-builder', "✓ codeKind 默认 'sfc' → html-builder skill")
+  assert(cfg5.skills?.[0].name === 'html-fragment', '✓ 单模式(去 codeKind/sfc)→ 默认 html-fragment skill')
 }

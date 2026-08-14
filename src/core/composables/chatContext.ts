@@ -140,9 +140,9 @@ export function createChatContext(opts: ChatContextOptions = {}): ChatContext {
     skillVisible.value = false
   }
 
-  // 思考过程折叠(按消息索引)
+  // 思考过程折叠(按消息索引);默认折叠(=== true 才展开)—— 思考过程不打扰用户,点击「展开」才看详情
   const reasoningExpanded = ref<Record<number, boolean>>({})
-  const isReasoningExpanded = (idx: number): boolean => reasoningExpanded.value[idx] !== false
+  const isReasoningExpanded = (idx: number): boolean => reasoningExpanded.value[idx] === true
   const toggleReasoning = (idx: number): void => {
     reasoningExpanded.value[idx] = !isReasoningExpanded(idx)
   }

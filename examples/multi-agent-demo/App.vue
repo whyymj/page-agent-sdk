@@ -57,7 +57,7 @@ const skills: Record<string, any> = {
 // 各 agent 的 schema(简短 zod,字段 .describe 自动注入 systemPrompt)
 import { z } from 'zod'
 const schemas: Record<string, any> = {
-  'multi-page': z.object({ title: z.string().describe('页面标题'), components: z.array(z.object({ type: z.string(), props: z.record(z.any()) })).describe('组件数组') }),
+  'multi-page': z.object({ title: z.string().describe('页面标题'), components: z.array(z.object({ type: z.string(), props: z.record(z.string(), z.any()) })).describe('组件数组') }),
   'multi-copy': z.object({ headline: z.string().describe('主标题'), subline: z.string().describe('副标题'), cta: z.string().describe('按钮文案'), tone: z.enum(['热情', '专业', '活泼', '稳重']).describe('语气') }),
   'multi-stats': z.object({ metrics: z.object({ gmv: z.number().describe('成交额'), orders: z.number().describe('订单数'), cvr: z.number().describe('转化率%') }), note: z.string().describe('分析结论') }),
 }

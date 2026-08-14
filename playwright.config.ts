@@ -16,7 +16,7 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 10_000 },
   use: {
-    baseURL: 'http://localhost:3000',
+    baseURL: 'http://localhost:5173',
     trace: 'on-first-retry',
     actionTimeout: 10_000,
   },
@@ -24,8 +24,10 @@ export default defineConfig({
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
   ],
   webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:3000',
+    // --port 5173 --strictPort:vite 固定 5173(占则报错而非跳端口);避 3000 被本机其他服务(如 user-bff)占用时
+    // reuseExistingServer 误把该服务当 dev server 复用,导致页面命中错误响应(.chat-dialog 不挂载)
+    command: 'npm run dev -- --port 5173 --strictPort',
+    url: 'http://localhost:5173',
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
     // 注入假 apiKey/model:browser E2E 用 page.route 拦截 chat/completions 返回 mock SSE,

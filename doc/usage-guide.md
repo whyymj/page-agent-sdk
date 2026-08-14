@@ -642,12 +642,15 @@ sdk.vfsWrite('docs/components/hero.md', 'Hero 组件用于首屏主视觉...')
 ```
 
 - **RAG**(检索型):`search_docs`(语义检索 retriever)/ `load_doc`(异步加载 loader)/ vfs 搜索 / `fetch_document`;只读;默认装 `rag-search` skill。`retriever`/`loader` 集成方注入(SDK 零数据源依赖,不绑向量库)。检索的大段文档**不污染主上下文**(只回结构化结论)
-- **HTML**(生成型,3.0 单模式 breaking):规划(`write_todos`/`update_todo`)+ **代码作为 data 资产**(`data.<writablePath>[i].code` 字段,随 data json 持久化进服务端 DB;UI 直接绑 `data.code` 响应式渲染)+ **vfs 作编辑工作副本** + 限定写(`writablePaths` path guard)。**框架自动 checkout/commit**(主 agent 透明):beforeAgent 把 `data.code` 按 `__pgId` 检出到 vfs(`html/<__pgId>.<vue|html>`,覆盖式刷新)→ 子 agent 在 vfs 改 → afterAgent 增量回写改过的 vfs → `data.code`(直改 bind,不经 write,不进快照栈)。默认开 `summarization`(频繁改代码累积快);按形态装 skill
-  - **两条工作路径**:① 新建组件 → 子 agent `write({patch:{op:'set',jsonPath:'components.N',value:{name,code,props}}})`,code 直接进 data(框架补 `__pgId`,不经 vfs/checkout/commit);② 修改组件 → 框架 checkout → 子 `vfs_read`+`vfs_edit` 增量改工作副本 → 框架 commit 回写(`codeRef` 不再需要)
+- **HTML**(生成型,3.0 单模式 breaking):规划(`write_todos`/`update_todo`)+ **代码作为 data 资产**(`data.<writablePath>[i].code` 字段,随 data json 持久化进服务端 DB;UI 直接绑 `data.code` 响应式渲染)+ **vfs 作编辑工作副本** + 限定写(`writablePaths` path guard)。**框架自动 checkout/commit**(主 agent 透明):beforeAgent 把 `data.code` 按 `__pgId` 检出到 vfs(`html/<__pgId>.html`,覆盖式刷新)→ 子 agent 在 vfs 改 → afterAgent 增量回写改过的 vfs → `data.code`(直改 bind,不经 write,不进快照栈)。默认开 `summarization`(频繁改代码累积快)
+  - **两条工作路径**:① 新建组件 → 子 agent `write({patch:{op:'set',jsonPath:'components.N',value:{name,code,props}}})`,code 直接进 data(框架补 `__pgId`,不经 vfs/checkout/commit);② 修改组件 → 框架 checkout → 子 `vfs_read`+`vfs_edit` 增量改工作副本 → 框架 commit 回写
   - **`__pgId` 框架无感注入**:集成商 schema 不声明;read 投影自动隐藏(`__pg*` 前缀);agent 写不进(path guard);persist 透明带(跨会话/跨设备稳定);vfs 文件名 = `codeVfsPrefix+__pgId+ext`
-  - **`codeKind`**:`'sfc'`(默认,Vue SFC,装 `html-builder` skill)/ `'html'`(纯 HTML 片段,v-html 注入场景:无 `<html>/<head>/<body>/DOCTYPE` 外围、片段禁 `<script>`,装 `html-fragment` skill)
-  - **输出格式校验**(`formatCheck`,默认开):① `validate_code` 自检工具(子 agent 生成/修改后自主调用;标签配对闭合 + 片段契约,带行号报错)② verify beforeReturn 门禁(返回前确定性扫 vfs 工作副本,不通过回灌 feedback 自纠,`maxVerifyAttempts:2` 兜底防循环)。校验器为纯函数 `validateHtmlFormat`(已导出,集成方渲染层可复用做纵深防御);`formatCheck:false` 关闭整条校验链
+  - **输出形态(单模式)**:生成**完整、自包含的 HTML 页面**(可独立成页);交互逻辑默认 `<script>`(仅当用户明确「不要 script」时不写)、CSS 集中放 `<style>` 块、可引外部 JS/CSS;改造(抽 body/包组件/片段化)由下游插件/tool 做,html agent 不关注宿主渲染方式(v-html/SFC/iframe)
+  - **输出格式校验**(`formatCheck`,默认开):① `validate_code` 自检工具(子 agent 生成/修改后自主调用;标签配对闭合等结构合法性,带行号报错)② verify beforeReturn 门禁(返回前确定性扫 vfs 工作副本,不通过回灌 feedback 自纠,`maxVerifyAttempts:2` 兜底防循环)。校验器为纯函数 `validateHtmlFormat`(已导出,集成方渲染层可复用做纵深防御);`formatCheck:false` 关闭整条校验链
   - **主 scope read 摘要**:主 agent read data 时,标记字段(`code`)摘要为 `<code Nkb>`(防代码正文灌主上下文);子 agent read 完整(改 code 需全文);集成方业务长文本不受影响
+  - **`codeField` 可配置(开放 schema 适配)**:code 字段位置默认 `'code'`(组件顶层),开放 schema 平台可配嵌套 jsonPath(如 `'props.html_code'`);「是否代码组件」= 该路径有 string(非代码组件自然跳过);装配期命中校验(组件数>0 且全员未命中 → console.warn,防填错路径静默失败)。例:`createHtmlSubagent({ writablePaths:['components'], codeField:'props.html_code' })`
+  - **主 agent 编排自适应注入(零配置)**:装配期自动检测 —— 有 html 子 agent → 主 agent systemPrompt 自动追加委派编排 `htmlOrchestratorPrompt(id)`(custom code 不 read 不 write 全权 `use_<id>` / 逐个委派防污染 / task 规格化 4 要素);无 html 子 agent + schema 有 code 字段 → 自动注入 `htmlDirectWriteFallback`(主 agent 自己 write code,无 vfs/verify)+ warn;开放 schema(`z.any()`)扫不到时集成方 opt-in spread。**勿手动 spread `htmlPageOrchestrator`**(自动注入已覆盖,双重注入浪费 token);opt-out `orchestratorPrompt:false`
+  - **模型建议(真 LLM 实测)**:html 代码生成推荐强指令遵循模型(deepseek-v4 / claude / gpt-4o);flash 类弱模型放大过度思考(装饰穷举 / token 纠结),高频/批量场景建议非 flash
   - **breaking 迁移(2.x → 3.0)**:① schema:`components[i]` 加 `code:z.string()`(替代 `codeRef`),去 `codeSnapshots` 镜像;② UI:绑 `data.components[i].code`(替代 `codeSnapshots[p]`);③ `createHtmlSubagent`:去 `onComplete`(框架 afterAgent 自动 commit);④ persist:整体 data json 发服务端(含 code + `__pgId`);⑤ 渲染层:遇 `type:'custom'` 读 `data.code` 渲染(不再 `codeRef`→vfs 取)
 - **底层:子 agent 架构扩展**:`SubagentConfig` 加 `allowedTools`(从主 allTools 拿 vfs/draft 工具)/ `middleware`(装规划中间件)/ `summarization`(跨轮压缩);`sdk.vfsWrite(path, content)` 异步注入 vfs。两包都基于这些扩展;集成方亦可直接用 `SubagentConfig` 三字段自配任意专用子 agent
 
@@ -1558,7 +1561,7 @@ sdk.clearFocus() // 退出精修,恢复全量可操作范围
 聚焦后三层收敛:
 - **目标提示**:每轮 systemPrompt 注入「## 当前精修目标:components.3(导航栏)。仅操作该子树」
 - **视野收敛**:只看到该组件子树的 schema 描述(`getSchemaAtPath` 取子树,`extractSchemaHint` 渲染),不看其他组件
-- **范围收紧(strict)**:写该子树之外(如 `components.0`)→ `PATH_DENIED` 越界错误回灌,agent 自纠;读工具不限制(用户仍需看全量上下文)
+- **范围收紧(strict)**:写该子树之外(如 `components.0`)→ `PATH_DENIED` 越界错误回灌,agent 自纠;读工具不限制(用户仍需看全量上下文)。**例外:尾部追加放行** —— 写 `<arrayPath>.<N>`(N ≥ 当前数组长度,即追加新元素)不破坏焦点子树,故聚焦模式下仍可新建组件(如聚焦 hero 时 `write components.2` 追加 banner)
 
 > **× code-as-data-asset 强化(子 agent 代码精修)**:用 `createHtmlSubagent` 时,子 agent 改代码走 `vfs_edit`(非数据写),`focus.ts` 的数据写拦截不覆盖 vfs,故 `codeAssetMiddleware` 在执行前补一道 **vfs 白名单**:子 agent(继承主焦点)只能 `vfs_edit` 焦点组件的代码文件(按 `__pgId` 归属判定),越界 `PATH_DENIED` —— 即使子 agent 误解也改不到别的组件代码。这是「点选组件 → 对话精修」的硬约束基础。焦点为整个数组 / 非代码字段时放行(无法精确到组件)。**聚焦模式下不能新建组件**(数据写被 focus.ts 拦),新建前先 `clearFocus`。完整示例见 `examples/html-page-demo`(预览区点选组件 → 🎯 聚焦 → 对话精修)。
 

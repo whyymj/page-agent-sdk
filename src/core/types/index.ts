@@ -10,8 +10,10 @@ export interface ToolStep {
   durationMs?: number
   /** 子 agent 的工具步骤(spawn_agent/spawn_agents 委派时,展示子 agent 工作进度) */
   children?: ToolStep[]
-  /** 子 agent(spawn)思考过程增量累积(reasoning 转发;展示子 agent "在想什么",默认折叠) */
+  /** 子 agent(spawn)思考过程增量累积(reasoning 转发;展示子 agent "在想什么",默认折叠);超 REASON_TAIL_CAP 截尾(仅留尾部) */
   subReason?: string
+  /** 子 agent 思考过程**完整**累积(不截尾;仅供复制全量排查,渲染不用它 → 不触发大字符串重排防卡死) */
+  subReasonFull?: string
 }
 
 export interface AgentMessage {
@@ -75,6 +77,7 @@ export type SdkEvent =
   | { type: 'trace'; spans: import('../harness/createAgent').TraceSpan[]; metrics: import('../harness/createAgent').TraceMetrics }
   | { type: 'context_trimmed'; dropped: { round: number; user: unknown; assistant: unknown[]; steps: unknown[] }[]; vfsResults: Record<string, string>; summary: string; reason: string }
   | { type: 'focus_chip_click'; path: string; label?: string }
+  | { type: 'focus_change'; focuses: import('../harness/state').Focus[] }
 
 /** token 用量(OpenAI 协议字段名) */
 export interface TokenUsage {

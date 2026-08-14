@@ -14,7 +14,8 @@ import type { VfsStore } from '../backends/vfs'
 import { normalize as normalizeVfsPath } from '../backends/vfs'
 import type { DataOpsController } from '../tools/dataOps'
 import type { Focus } from '../harness/state'
-import { getByPath } from '../tools/jsonUtils'
+import { getByPath, setByPath } from '../tools/jsonUtils'
+import { validateHtmlFormat } from '../tools/htmlValidate'
 
 /** state 上挂载的「本轮子 agent touch 过的 vfs 路径」(子 agent 私有 Set,经 applyUpdate 浅合并保留引用;并发 use_html 互不污染) */
 const TOUCHED = '__pgTouched'
@@ -24,36 +25,41 @@ export interface CodeAssetMiddlewareOptions {
   writablePaths: string[]
   /** vfs 工作副本路径前缀(同 htmlSubagent codeVfsPrefix;默认 'html/') */
   codeVfsPrefix: string
-  /** 代码文件扩展名('vue' | 'html';vfs 文件名 = codeVfsPrefix + __pgId + '.' + ext) */
-  ext: 'vue' | 'html'
+  /** 代码文件扩展名('html';vfs 文件名 = codeVfsPrefix + __pgId + '.' + ext) */
+  ext: 'html'
+  /** 代码字段相对组件的 jsonPath(默认 'code';开放 schema 嵌套如 'props.html_code')。「是否代码组件」= 该路径下有 string */
+  codeField?: string
+  /** 命中校验回调:组件数>0 且 codeField 全员未命中 string → 调一次(防集成方填错路径静默失败;不阻断 checkout) */
+  onWarning?: (msg: string) => void
   /** 主 dataOps controller getter(延迟引用:装配期 controller 尚未建,运行时取) */
   getController: () => DataOpsController | null | undefined
   /** 主 vfsStore(工作副本共享池;__pgId 文件名隔离;与子 agent vfs 工具同引用) */
   vfsStore: VfsStore
 }
 
-/** 从 vfs 工作副本路径提 __pgId(html/<__pgId>.vue → <__pgId>);非该前缀 / 空 id(html/.vue) → null */
+/** 从 vfs 工作副本路径提 __pgId(html/<__pgId>.html → <__pgId>);非该前缀 / 空 id(html/.html) → null */
 export function pgIdFromVfsPath(vfsPath: string, prefix: string): string | null {
   if (!vfsPath.startsWith(prefix)) return null
   const fname = vfsPath.slice(prefix.length)  // <__pgId>.ext
   const idx = fname.lastIndexOf('.')
-  const pgId = idx > 0 ? fname.slice(0, idx) : (idx === 0 ? '' : fname)  // idx===0:.vue → 空 id;idx<0:无扩展名取 fname
+  const pgId = idx > 0 ? fname.slice(0, idx) : (idx === 0 ? '' : fname)  // idx===0:.html → 空 id;idx<0:无扩展名取 fname
   return pgId || null
 }
 
-/** 扫 bind 的 writablePaths 数组,回调每个「有 __pgId 的对象元素」(供 checkout/commit 复用) */
+/** 扫 bind 的 writablePaths 数组,回调每个「有 __pgId 的对象元素」(供 checkout/commit/地图 复用;index 为组件在数组中的下标) */
 function forEachCodeItem(
   bind: unknown,
   writablePaths: string[],
-  cb: (item: Record<string, unknown>, wp: string) => void,
+  cb: (item: Record<string, unknown>, wp: string, index: number) => void,
 ): void {
   if (!bind || typeof bind !== 'object') return
   for (const wp of writablePaths) {
     const arr = getByPath(bind, wp)
     if (!Array.isArray(arr)) continue
-    for (const item of arr) {
+    for (let i = 0; i < arr.length; i++) {
+      const item = arr[i]
       if (item && typeof item === 'object' && typeof (item as Record<string, unknown>).__pgId === 'string') {
-        cb(item as Record<string, unknown>, wp)
+        cb(item as Record<string, unknown>, wp, i)
       }
     }
   }
@@ -107,19 +113,32 @@ function focusPathsToPgIds(
  *   design §2.3)+ 孤儿清理(data 没 __pgId 的 vfs 文件删,design §6.2)+ markDataDirty + recomputeBaseline(防主 agent autoLock 误冲突)。
  */
 export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Middleware {
-  const { writablePaths, codeVfsPrefix, ext, getController, vfsStore } = opts
+  const { writablePaths, codeVfsPrefix, ext, codeField = 'code', onWarning, getController, vfsStore } = opts
   return {
     name: 'code-asset-checkout-commit',
     beforeAgent: (state) => {
-      // ① checkout:data.code → vfsStore(按 __pgId,覆盖式刷新 = data 最新快照;子 agent vfs_edit 直接改 vfsStore 同引用)
+      // ① checkout:data[<codeField>] → vfsStore(按 __pgId,覆盖式刷新 = data 最新快照;子 agent vfs_edit 直接改 vfsStore 同引用)
       const ctrl = getController()
       const bind = ctrl?.get?.().bind
+      let codeTotal = 0, codeHit = 0
       forEachCodeItem(bind, writablePaths, (o) => {
-        if (typeof o.code === 'string') {
+        codeTotal++
+        const code = getByPath(o, codeField)
+        if (typeof code === 'string') {
+          codeHit++
           const vfsPath = `${codeVfsPrefix}${o.__pgId}.${ext}`
-          vfsStore.files[vfsPath] = { content: o.code, updatedAt: Date.now() }
+          vfsStore.files[vfsPath] = { content: code, updatedAt: Date.now() }
         }
       })
+      // 命中校验:有组件但全员未命中 codeField string → 多半集成方填错路径(静默失败极难排查)。onWarning 提示,不阻断 checkout
+      if (codeTotal > 0 && codeHit === 0 && onWarning) {
+        let sampleFields = ''
+        for (const wp of writablePaths) {
+          const arr = getByPath(bind, wp)
+          if (Array.isArray(arr) && arr.length) { sampleFields = Object.keys(arr[0] ?? {}).join(','); break }
+        }
+        onWarning(`codeField '${codeField}' 在当前 ${codeTotal} 个组件中均未命中 string 值。组件实际字段:[${sampleFields}]。若预期有代码组件请核对 codeField 路径;若当前确无代码组件可忽略。`)
+      }
       // ② 初始化本轮 touchedVfsPaths(子 agent 私有;经 applyUpdate 浅合并保留引用 → 并发 use_html 互不污染)
       // ③ 注入 vfsStore.files 引用到 state.files(verify 门禁扫 state.files 见 code 工作副本;与 vfs-bridge 同引用,覆盖无副作用)
       //    __pgTouched 是框架内部 state 扩展(类 __pgId);TS 上以 Partial<typeof state> 表达,运行时浅合并保留 Set 引用
@@ -131,14 +150,27 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
     augmentPrompt: () => {
       const bind = getController()?.get?.().bind
       const lines: string[] = []
-      forEachCodeItem(bind, writablePaths, (o) => {
-        const name = typeof o.name === 'string' && o.name ? o.name : '(未命名)'
+      let count = 0
+      forEachCodeItem(bind, writablePaths, (o, _wp, i) => {
+        count++
+        // F3: name 追加数组索引 [i],消除重名/空 name 歧义(主 agent 委派说 name 时,子 agent 按索引+name 精确定位)
+        const rawName = typeof o.name === 'string' && o.name ? o.name : ''
+        const label = rawName ? `${rawName} [${i}]` : `(未命名 [${i}])`
         const vfsPath = `${codeVfsPrefix}${o.__pgId}.${ext}`
         const checkedOut = !!vfsStore.files[vfsPath]
-        lines.push(`- ${name} → ${vfsPath}${checkedOut ? '' : '(尚未检出,先 vfs_write 创建)'}`)
+        lines.push(`- ${label} → ${vfsPath}${checkedOut ? '' : '(尚未检出,先 vfs_write 创建)'}`)
       })
       if (!lines.length) return undefined
-      return `## 组件代码文件地图(改组件时按 name 直接改对应 vfs 文件;框架自动 checkout/commit)\n${lines.join('\n')}`
+      // 追加起始索引(防子 agent 猜索引覆盖已有组件:write components.N 的 N 必须 = 当前数组长度)
+      let appendHint = ''
+      for (const wp of writablePaths) {
+        const arr = getByPath(bind, wp)
+        if (Array.isArray(arr)) {
+          appendHint = `\n新建组件追加索引:write({patch:{op:'set',jsonPath:'${wp}.${arr.length}',value:{...}}})(当前共 ${arr.length} 个,勿覆盖已有索引)`
+          break
+        }
+      }
+      return `## 组件代码文件地图(改组件时按 name 直接改对应 vfs 文件;框架自动 checkout/commit)\n${lines.join('\n')}${appendHint}`
     },
     wrapToolCall: async (ctx, next) => {
       const isVfsCodeOp = ctx.name === 'vfs_write' || ctx.name === 'vfs_edit' || ctx.name === 'vfs_rm'
@@ -191,7 +223,14 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
         if (touched.has(vfsPath)) {
           const f = vfsStore.files[vfsPath]
           if (f && typeof f.content === 'string') {
-            o.code = f.content  // 直改 bind(Vue 响应式触发 UI;不进快照栈)
+            // F2: commit 前校验结构合法性 —— 防 abort/timeout 路径 commit 未跑 verify beforeReturn 的半成品(未闭合标签等)。
+            // 正常路径 verify 门禁已用同校验器验过,此处必过(零误伤);仅兜底拦 abort/timeout 半成品,data.code 保持旧值。
+            const issues = validateHtmlFormat(f.content)
+            if (issues.length) {
+              console.warn(`[page-agent-sdk][code-asset] 跳过 commit 未通过校验的半成品(可能 abort/timeout 未跑完 verify):${vfsPath} - ${issues[0].message}(${issues[0].code})`)
+              return  // forEachCodeItem 回调内 return = 跳过当前组件 commit;dataPgIds 已加(孤儿清理仍认此组件)
+            }
+            setByPath(o, codeField, f.content)  // 直改 bind(Vue 响应式触发 UI;不进快照栈;按 codeField 写回嵌套字段)
           }
           // vfs_rm 删了文件:f 为空 → 不改 data.code(组件项还在;子 agent 意图删整个组件应 write del components.N,触发孤儿清理)
         }

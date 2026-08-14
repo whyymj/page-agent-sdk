@@ -94,10 +94,10 @@ export async function run(ctx: TestCtx) {
     assert(u.chat.state.error === null, '✓ undo(onUndo true) → state.error 清空')
   }
 
-  // ===== reasoning 折叠(默认展开;toggle 收起)=====
-  assert(c.isReasoningExpanded(0) === true, '✓ reasoning 默认展开(undefined)')
+  // ===== reasoning 折叠(默认折叠,不刷屏;toggle 展开)=====
+  assert(c.isReasoningExpanded(0) === false, '✓ reasoning 默认折叠(undefined → false,不刷屏)')
   c.toggleReasoning(0)
-  assert(c.isReasoningExpanded(0) === false, '✓ toggleReasoning(0) → 收起')
+  assert(c.isReasoningExpanded(0) === true, '✓ toggleReasoning(0) → 展开')
 
   // ===== isPendingAssistant(空 messages → false)+ formatTime =====
   assert(c.isPendingAssistant(0) === false, '✓ isPendingAssistant 空 messages → false')

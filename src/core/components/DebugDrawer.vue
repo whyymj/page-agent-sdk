@@ -158,6 +158,14 @@ const flowRounds = computed(() => {
 function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + '…' : s
 }
+/** 耗时展示:≥1000ms 用 s(如 1234 → 1.2s);子 agent 长任务动辄数十秒,纯 ms 数字过长 */
+function formatDuration(ms: number): string {
+  if (ms >= 1000) {
+    const s = ms / 1000
+    return s >= 10 ? `${Math.round(s)}s` : `${s.toFixed(1)}s`
+  }
+  return `${ms}ms`
+}
 /** trace(observability-tracing):spans + metrics 从 agentInfo.trace 读 */
 const traceSpans = computed<TraceSpan[]>(() => agentInfo.value?.trace?.spans ?? [])
 const traceMetrics = computed(() => agentInfo.value?.trace?.metrics)
@@ -260,7 +268,7 @@ function flowNodeDetail(lg: DebugLog): string {
                   <div v-for="s in traceSpans" :key="s.id" class="trace-span" :class="[s.type, s.status]">
                     <span class="span-ico">{{ spanIcon(s.type) }}</span>
                     <span class="span-name">{{ s.name }}</span>
-                    <span class="span-dur" v-if="s.durationMs">{{ s.durationMs }}ms</span>
+                    <span class="span-dur" v-if="s.durationMs">{{ formatDuration(s.durationMs) }}</span>
                     <span class="span-status" v-if="s.status === 'error'">❌</span>
                   </div>
                 </div>
@@ -322,7 +330,7 @@ function flowNodeDetail(lg: DebugLog): string {
                     <div class="sub-head">
                       <span class="sub-status" :style="{ background: (subStatusMeta[s.status] && subStatusMeta[s.status].color) || '#9ca3af' }">{{ (subStatusMeta[s.status] && subStatusMeta[s.status].label) || s.status }}</span>
                       <span class="sub-label">{{ s.label }}</span>
-                      <span v-if="s.durationMs != null" class="sub-dur">{{ s.durationMs }}ms</span>
+                      <span v-if="s.durationMs != null" class="sub-dur">{{ formatDuration(s.durationMs) }}</span>
                       <button v-if="s.steps.length" class="sub-toggle" @click="toggleSub(i)">{{ subExpanded.has(i) ? '收起' : '步骤' }}</button>
                     </div>
                     <div class="sub-task">{{ truncate(s.task, 80) }}</div>

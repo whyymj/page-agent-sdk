@@ -337,3 +337,77 @@ test.describe('complex-demo huge(1M 大页面 · ?huge=1)', () => {
     expect(calls(), 'huge read 1M 大 JSON 执行(agent 加载 + 读大对象胜任)').toBeGreaterThanOrEqual(1)
   })
 })
+
+test.describe('complex-demo: 组件操作(调换顺序 / 改层级 / 聚焦纯代码)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/examples/complex-demo/')
+    await page.waitForSelector('.chat-dialog')
+    await page.waitForSelector('textarea')
+  })
+
+  test('调换组件顺序:patches 批量 set 交换(write 无 move op,原子任一失败回滚)', async ({ page }) => {
+    // 取 components[0]/[1] 全量(深拷贝,防 reactive 引用),mock write patches 交换
+    const [c0, c1] = await page.evaluate(() => [
+      JSON.parse(JSON.stringify(window.page.components[0])),
+      JSON.parse(JSON.stringify(window.page.components[1])),
+    ])
+    const { calls } = await mockLlm(page, [
+      { tool_calls: [{ name: 'write', arguments: { patches: [
+        { op: 'set', jsonPath: 'components.0', value: c1 },
+        { op: 'set', jsonPath: 'components.1', value: c0 },
+      ] } }] },
+      { text: '已调换组件 0 和 1 的顺序' },
+    ])
+    await fillInput(page, '把第一个和第二个组件调换顺序')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    expect(await page.evaluate(() => window.page.components[0].type), 'components[0] = 旧 [1]').toBe(c1.type)
+    expect(await page.evaluate(() => window.page.components[1].type), 'components[1] = 旧 [0]').toBe(c0.type)
+  })
+
+  test('改层级:组件移进容器 children(append 到 props.children + del 顶层,嵌套)', async ({ page }) => {
+    const info = await page.evaluate(() => {
+      const containerIdx = window.page.components.findIndex((c) => Array.isArray(c.props?.children))
+      return { containerIdx, c2type: window.page.components[2]?.type, c2: JSON.parse(JSON.stringify(window.page.components[2])) }
+    })
+    expect(info.containerIdx, '初始页存在带 children 的容器组件').toBeGreaterThanOrEqual(0)
+    const { calls } = await mockLlm(page, [
+      { tool_calls: [{ name: 'write', arguments: { patch: { op: 'append', jsonPath: `components.${info.containerIdx}.props.children`, value: info.c2 } } }] },
+      { tool_calls: [{ name: 'write', arguments: { patch: { jsonPath: 'components.2' }, del: true } }] },
+      { text: '已把第三个组件移进容器做子组件' },
+    ])
+    await fillInput(page, '把第三个组件移进容器做子组件')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    // c2 已进某容器 children(del 顶层后索引偏移,按 type 在 children 中查)
+    const inContainer = await page.evaluate((t) => window.page.components.some(
+      (c) => Array.isArray(c.props?.children) && c.props.children.some((ch) => ch.type === t),
+    ), info.c2type)
+    expect(inContainer, '组件移进了容器 children(嵌套层级)').toBe(true)
+  })
+
+  test('聚焦改纯代码:造 custom → 两步拾取 → use_html 委派 → 子 vfs_write 越界 PATH_DENIED / 焦点文件放行', async ({ page }) => {
+    // 前置:evaluate 造一个 custom(初始页无 custom;带 __pgId 供 codeAsset checkout)
+    const beerPath = await page.evaluate(() => {
+      window.page.components.push({ type: 'custom', name: 'beer', code: '<section class="beer"><h1>old</h1></section>', __pgId: 'c_test_beer' })
+      return 'components.' + (window.page.components.length - 1)
+    })
+    // 聚焦 beer(经 sdk.addFocus;custom iframe 渲染无 [data-path],绕两步拾取 UI — 核心验证 focus + vfs 守卫)
+    await page.evaluate((p) => { (window as any).__sdk.addFocus({ path: p, label: 'beer' }) }, beerPath)
+    await expect(page.locator('.focus-chip')).toContainText(beerPath)
+    // mockLlm:主 use_html → 子 vfs_write 越界(c_other 非焦点 → PATH_DENIED 回灌)→ vfs_write 焦点(c_test_beer 放行)→ 子 text → 主 text
+    const { calls } = await mockLlm(page, [
+      { tool_calls: [{ name: 'use_html', arguments: { task: '把 beer 标题改成「干杯青岛」' } }] },
+      { tool_calls: [{ name: 'vfs_write', arguments: { path: 'html/c_other.html', content: '<section>越界</section>' } }] },
+      { tool_calls: [{ name: 'vfs_write', arguments: { path: 'html/c_test_beer.html', content: '<section class="beer"><h1>干杯青岛</h1></section>' } }] },
+      { text: '已改 beer 标题' },
+      { text: '完成聚焦精修' },
+    ])
+    await fillInput(page, '把 beer 标题改成干杯青岛')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    // custom.code 含新标题(子 vfs_write 焦点文件 → commit 回写 data.code)
+    const code = await page.evaluate(() => window.page.components.find((c) => c.name === 'beer')?.code ?? '')
+    expect(code, '焦点 custom.code 经子 vfs_write + commit 更新').toContain('干杯青岛')
+  })
+})

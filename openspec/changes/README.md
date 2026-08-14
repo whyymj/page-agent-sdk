@@ -30,7 +30,9 @@
 
 ## 进行中
 
-> (暂无进行中 change;`code-as-data-asset` 已发布 3.0.0 归档)
+> **2026-08-13 html-subagent-open-schema(已实施,待归档)**:createHtmlSubagent 适配开放 schema 多组件平台 —— ① `codeField` 可配置(替换硬编码 `.code`,支持嵌套 jsonPath 如 `props.html_code`,默认 `'code'` 保现状)+ 装配期命中校验(填错路径 onWarning 提示,不阻断);② 主 agent 编排**自适应注入**(有 html agent→委派:custom code 不 read 不 write 全权 use_<id> / 无 html agent+schema 有 code 字段→主 agent 自己写 `htmlDirectWriteFallback`+warn;集成方零配置,开放 schema opt-in spread,opt-out `orchestratorPrompt:false`)。同源化 `htmlOrchestratorPrompt(id)`(动态 use_<id>)+ 静态快照。minor(向后兼容)。selftest 1897 / e2e 547(+B6 编排注入)/ browser 48。见 [`2026-08-13-html-subagent-open-schema/`](./2026-08-13-html-subagent-open-schema/)。
+
+> **2026-08-14 html-agent-thinking-taming(已实施,待归档,commit a3f5d09)**:治理 html 子 agent 过度思考(complex-demo 真 LLM 实测:撕边穷举 / validate token 纠结 / 边写边纠结)—— ① 主 agent task 规格化(4 要素,真 LLM 验证**完全生效**)+ ② validate_code jsonPath(零重传;后续真 LLM 实测暴露根因 = 工具 schema 反向引导,已修:schema 描述/字段顺序/实现三处统一 jsonPath 首选)+ ③ 写前简述 + ④ 模型对比(文档 D 随 usage-guide 补)。真 LLM 多场景(A-E 新建/调换/层级/属性/聚焦)端到端全跑通。见 [`2026-08-14-html-agent-thinking-taming/`](./2026-08-14-html-agent-thinking-taming/)。
 
 ---
 

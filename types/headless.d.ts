@@ -48,6 +48,10 @@ export interface ToolStep {
   durationMs?: number;
   /** 子 agent 工具步骤(spawn 委派时展示子进度) */
   children?: ToolStep[];
+  /** 子 agent 思考过程累积(reasoning 转发;超长截尾仅留尾部);展示"在想什么" */
+  subReason?: string;
+  /** 子 agent 思考过程**完整**累积(不截尾;仅供复制全量排查,渲染不用它防卡死) */
+  subReasonFull?: string;
 }
 
 export interface AgentMessage {
@@ -105,7 +109,8 @@ export type SdkEvent =
   | { type: 'error'; message: string; severity?: 'recoverable' | 'fatal' | 'observable'; code?: string; context?: unknown }
   | { type: 'trace'; spans: TraceSpan[]; metrics: TraceMetrics }
   | { type: 'context_trimmed'; dropped: { round: number; user: unknown; assistant: unknown[]; steps: unknown[] }[]; vfsResults: Record<string, string>; summary: string; reason: string }
-  | { type: 'focus_chip_click'; path: string; label?: string };
+  | { type: 'focus_chip_click'; path: string; label?: string }
+  | { type: 'focus_change'; focuses: Focus[] };
 
 /** token 用量(OpenAI 协议字段名) */
 export interface TokenUsage {
@@ -954,7 +959,7 @@ export interface ChatSdk {
   importData(json: any, opts?: { validate?: boolean; emit?: boolean }): { ok: boolean; error?: string };
   /** 往 vfs 异步注入/更新文件(RAG 文档池 / HTML 代码等);content 字符串直存,对象 JSON.stringify。与 vfs_write 工具一致语义(集成方侧命令式入口) */
   vfsWrite(path: string, content: string | object): void;
-  /** 只读读取 vfs 文件内容(集成方渲染层按 data.codeRef 取代码渲染 custom 组件;文件不存在返 undefined)。与 vfs_read 工具一致语义,命令式入口(不经工具调用/无工具开销) */
+  /** 只读读取 vfs 文件内容(文件不存在返 undefined)。与 vfs_read 工具一致语义,命令式入口(不经工具调用/无工具开销) */
   vfsRead(path: string): string | undefined;
   /** 创建/注册受保护资源(返回 handle);需配 data.resources + vfsStore,否则抛错 */
   createResource(path: string, value?: unknown): string;
@@ -1206,7 +1211,15 @@ export declare const presets: Record<string, any>;
 export declare const systemPromptHelpers: {
   /** 可靠写入规则:改前先读、动态先 list、字段以 describe 为准、写错看校验错误重试、优先增量 patch */
   readonly reliableWriteRules: string;
+  /** HTML 页面搭建主 agent 编排规则(与 createHtmlSubagent 配套;职责边界 / 逐个委派 / 修改排查 / 预算暂停) */
+  readonly htmlPageOrchestrator: string;
+  /** HTML 页面搭建「先出方案再生成」(新建/创意类先给 2~3 套方案问用户;产品决策,opt-in 拼进 systemPrompt) */
+  readonly htmlPageProposeFirst: string;
+  /** HTML 页面搭建「主 agent 自己写」降级编排(未注册 html 子 agent;createChatSdk 自动注入或集成方 opt-in spread) */
+  readonly htmlDirectWriteFallback: string;
 };
+/** HTML 页面搭建主 agent 委派编排(按子 agent id 动态生成,use_<id> 正确;htmlPageOrchestrator 为 id='html' 静态快照) */
+export declare function htmlOrchestratorPrompt(id: string): string;
 /** 从 zod schema 提取字段说明(io 契约注入 systemPrompt 用);非 object schema 用 description 兜底 */
 export declare function extractSchemaHint(schema: any): string;
 export declare function createSessionStore(config?: StorageConfig): SessionStore;
@@ -1389,12 +1402,12 @@ export interface CreateHtmlSubagentOptions {
   temperature?: number;
   skills?: SkillSpec[];
   extraTools?: any[];
-  /** 代码形态:'sfc'(默认,Vue SFC)/ 'html'(纯 HTML 片段,v-html 注入场景) */
-  codeKind?: 'sfc' | 'html';
   /** 输出格式校验(validate_code 工具 + verify beforeReturn 门禁);默认 true */
   formatCheck?: boolean;
-  /** 子 agent 收口(afterAgent,verify 门禁通过后)一次性回调,传代码区全部文件 {path:content};集成方据此把代码同步进 data bind(响应式驱动渲染),无需 hook vfs 工具事件 */
-  onComplete?: (files: Record<string, string>) => void;
+  /** 代码字段相对组件的 jsonPath(默认 'code',支持嵌套如 'props.html_code');「是否代码组件」= 该路径下有 string */
+  codeField?: string;
+  /** 自动注入主 agent 委派编排段(含正确 use_<id>);默认 true,false=不注入 */
+  orchestratorPrompt?: boolean;
   [k: string]: any;
 }
 export declare function createRagSubagent(options: CreateRagSubagentOptions): SubagentConfig;
@@ -1402,16 +1415,12 @@ export declare function createHtmlSubagent(options: CreateHtmlSubagentOptions): 
 export interface HtmlFormatIssue {
   /** 行号(1 基) */
   line: number;
-  /** 问题码:UNCLOSED_TAG / STRAY_CLOSE_TAG / UNCLOSED_COMMENT / DOCTYPE_IN_FRAGMENT / DOC_TAG_IN_FRAGMENT / SCRIPT_IN_FRAGMENT */
+  /** 问题码:UNCLOSED_TAG / STRAY_CLOSE_TAG / UNCLOSED_COMMENT(只校验结构合法性;DOCTYPE/html/head/body/script 不再拦 —— 完整页面级 HTML,改造由下游插件/tool 做) */
   code: string;
   message: string;
 }
-export interface ValidateHtmlFormatOptions {
-  /** Vue SFC 模式:允许 <script>(SFC 自有块);默认 false = 纯 HTML 片段(禁 <script>) */
-  sfc?: boolean;
-}
-/** HTML 格式校验(标签闭合 + v-html 片段契约);纯函数,node/浏览器通用(集成方渲染层纵深防御可复用) */
-export declare function validateHtmlFormat(source: string, opts?: ValidateHtmlFormatOptions): HtmlFormatIssue[];
+/** HTML 格式校验(标签闭合等结构合法性);纯函数,node/浏览器通用(集成方渲染层纵深防御可复用) */
+export declare function validateHtmlFormat(source: string): HtmlFormatIssue[];
 /** HTML void 元素集合(无需闭合标签;validateHtmlFormat 用,集成方可复用) */
 export declare const HTML_VOID_TAGS: Set<string>;
 export interface HtmlFormatCheckOptions {

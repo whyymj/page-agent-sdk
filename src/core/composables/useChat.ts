@@ -16,6 +16,13 @@ import type { AgentMessage, AgentState, StreamHandler, ToolStep } from '../types
 import type { Focus } from '../harness/state'
 import { isAbort } from '../harness/retry'
 
+/**
+ * 思考过程(reasoning)渲染尾部上限:超出则只保留最近 N 字(滑窗)。
+ * 防 LLM 输出超长思考(实测 75000 字)时,每 delta 重渲染巨大字符串 → 主线程卡死页面无响应。
+ * reasoning 仅用于 UI 展示(不回灌 LLM),截尾无副作用;子 agent 另记 subReasonTotal(总数计数照涨)。
+ */
+const REASON_TAIL_CAP = 4000
+
 type FetchFn = (messages: AgentMessage[], signal?: AbortSignal) => Promise<string>
 type StreamFn = (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>
 
@@ -127,7 +134,8 @@ export function useChat(
               break
             case 'reasoning':
               if (pendingSep) { assistantMsg.reasoning += '\n'; pendingSep = false }
-              assistantMsg.reasoning += event.delta
+              // 截尾上限:防超长思考卡死(reasoning 仅 UI 展示,不回灌 LLM)
+              assistantMsg.reasoning = (assistantMsg.reasoning + event.delta).slice(-REASON_TAIL_CAP)
               break
             case 'text':
               if (pendingSep) { assistantMsg.content += '\n'; pendingSep = false }
@@ -155,8 +163,12 @@ export function useChat(
               const spawnStep = assistantMsg.steps[assistantMsg.steps.length - 1]
               if (!spawnStep) break
               // 子 agent 思考过程增量(reasoning)→ 累积到 spawnStep.subReason(UI 折叠展示"在想什么")
+              // subReason 截尾(防卡死);subReasonFull 存完整(不渲染,仅供复制全量排查)
               if (event.kind === 'reasoning') {
-                spawnStep.subReason = (spawnStep.subReason || '') + (event.delta || '')
+                const delta = event.delta || ''
+                spawnStep.subReasonFull = (spawnStep.subReasonFull || '') + delta
+                const next = (spawnStep.subReason || '') + delta
+                spawnStep.subReason = next.length > REASON_TAIL_CAP ? next.slice(-REASON_TAIL_CAP) : next
                 break
               }
               if (!spawnStep.children) spawnStep.children = []

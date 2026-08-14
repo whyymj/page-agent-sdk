@@ -97,9 +97,9 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(evalDefaultMode.status === 'done', 'focus eval_script 缺省 mode(query)→ 放行')
 
     // vfs 工具移出拦截面(P1-21/22 附带):vfs path 是工作区文件路径非数据 jsonPath,聚焦下不再误拦
-    const vfsW = await mw.wrapToolCall!({ name: 'vfs_write', args: { path: 'html/my-comp.vue', content: '<template/>' } } as any, callNext)
+    const vfsW = await mw.wrapToolCall!({ name: 'vfs_write', args: { path: 'html/my-comp.html', content: '<template/>' } } as any, callNext)
     assert(vfsW.status === 'done', 'focus vfs_write(工作区文件)→ 不拦(vfs path 非数据 scope)')
-    const vfsE = await mw.wrapToolCall!({ name: 'vfs_edit', args: { path: 'html/my-comp.vue', oldString: 'a', newString: 'b' } } as any, callNext)
+    const vfsE = await mw.wrapToolCall!({ name: 'vfs_edit', args: { path: 'html/my-comp.html', oldString: 'a', newString: 'b' } } as any, callNext)
     assert(vfsE.status === 'done', 'focus vfs_edit(工作区文件)→ 不拦')
 
     // 读工具不限制(用户仍需看全量上下文)
@@ -202,5 +202,29 @@ export async function run(ctx: TestCtx): Promise<void> {
     mw.addFocus({ path: 'components.2', label: '新标签' })
     assert(mw.getFocuses().length === 1, '✓ multi-focus addFocus 同 path → 去重更新(不新增)')
     assert(mw.getFocuses()[0].label === '新标签', '✓ multi-focus addFocus 同 path → 更新 label')
+  }
+
+  // ===== 尾部追加放行(focus 模式下新建组件不破坏焦点子树):getBind 判数组长度 =====
+  {
+    const schema = z.object({ components: z.array(z.object({ type: z.string() })) })
+    const bind = { components: [{ type: 'a' }, { type: 'b' }] }  // 长度 2
+    const mw = createFocusMiddleware({ getSchema: () => schema, getBind: () => bind })
+    mw.setFocus({ path: 'components.0' })  // 聚焦第 0 个
+    const callNext = async () => ({ content: 'ok', status: 'done' as const })
+
+    // 尾部追加 components.2(N=2 >= 长度 2)→ 放行(新建不影响焦点子树)
+    const append = await mw.wrapToolCall!({ name: 'write', args: { patch: { jsonPath: 'components.2', op: 'set', value: { type: 'c' } } } } as any, callNext)
+    assert(append.status === 'done', '✓ focus 尾部追加:write components.2(N>=数组长度)→ 放行(聚焦模式可新建组件)')
+    // 非尾部越界 components.1(N=1<2,且非焦点)→ PATH_DENIED
+    const middle = await mw.wrapToolCall!({ name: 'write', args: { patch: { jsonPath: 'components.1', op: 'set', value: { type: 'x' } } } } as any, callNext)
+    assert(middle.status === 'error' && middle.content.includes('PATH_DENIED'), '✓ focus 非尾部越界:write components.1(N<长度且非焦点)→ PATH_DENIED')
+    // patches 混合:焦点根 components.0 + 尾部 components.2 → 全放行
+    const mixed = await mw.wrapToolCall!({ name: 'write', args: { patches: [{ op: 'set', jsonPath: 'components.0', value: { type: 'a' } }, { op: 'set', jsonPath: 'components.2', value: { type: 'c' } }] } } as any, callNext)
+    assert(mixed.status === 'done', '✓ focus patches 混合:焦点根 + 尾部追加 → 全放行')
+    // 无 getBind → 尾部追加不识别(向后兼容:旧集成不传 getBind,行为不变,仍按越界拒)
+    const mwNoBind = createFocusMiddleware({ getSchema: () => schema })
+    mwNoBind.setFocus({ path: 'components.0' })
+    const noBind = await mwNoBind.wrapToolCall!({ name: 'write', args: { patch: { jsonPath: 'components.2', op: 'set', value: { type: 'c' } } } } as any, callNext)
+    assert(noBind.status === 'error', '✓ focus 无 getBind → 尾部追加不识别(向后兼容,旧集成行为不变)')
   }
 }

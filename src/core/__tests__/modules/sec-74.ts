@@ -8,6 +8,7 @@
  */
 import { z } from 'zod'
 import { createDataOps, supplementPgId, genPgId } from '../../tools/dataOps'
+import { extendSchemaWithPgId, schemaHasCodeField, describeSchemaNode } from '../../tools/schemaUtils'
 import type { TestCtx } from './_ctx'
 
 function makeOps(bind: Record<string, unknown>) {
@@ -91,5 +92,72 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 同 scope 连续写:afterWrite 补 __pgId 进 hash → setBaseline 含 __pgId → 下次 write autoLock 一致
     const r2 = await invoke(t['write'], { patch: { op: 'set', jsonPath: 'components.0.code', value: '<b/>' } })
     assert(!/VERSION_CONFLICT/.test(r2) && bind.components[0].code === '<b/>', '✓ afterWrite 后 hash 一致:同 scope 连续写永不冲突(__pgId 进 hash,setBaseline 重算)')
+  }
+
+  // ===== extendSchemaWithPgId:discriminatedUnion / union / object 三种 element(纯函数)=====
+  // 多类型组件平台(complex-demo)用 discriminatedUnion;旧逻辑只认 ZodObject → fallback 不 extend → __pgId 漂移
+  {
+    // ① discriminatedUnion:每个 option 都 extend __pgId,safeParse 不剥
+    const duSchema = z.object({
+      components: z.array(z.discriminatedUnion('type', [
+        z.object({ type: z.literal('banner'), code: z.string() }),
+        z.object({ type: z.literal('custom'), code: z.string() }),
+      ])),
+    })
+    const { schema: duExt, fallback: duFb } = extendSchemaWithPgId(duSchema, ['components'])
+    assert(duFb.length === 0, '✓ discriminatedUnion element 不再落 fallback(旧逻辑此处 fallback 致漂移)')
+    const du1 = (duExt as any).safeParse({ components: [{ type: 'custom', code: '<p/>', __pgId: 'c_keep' }] })
+    assert(du1.success && du1.data.components[0].__pgId === 'c_keep', '✓ discriminatedUnion extend 后 safeParse 不剥 __pgId(整对象替换防漂移)')
+    const du2 = (duExt as any).safeParse({ components: [{ type: 'banner', code: '<b/>', __pgId: 'c_b' }] })
+    assert(du2.success && du2.data.components[0].__pgId === 'c_b', '✓ discriminatedUnion 每个 option 都 extend(banner/custom 均不剥)')
+
+    // ② 普通 ZodUnion
+    const uSchema = z.object({ items: z.array(z.union([z.object({ a: z.string() }), z.object({ b: z.string() })])) })
+    const { schema: uExt, fallback: uFb } = extendSchemaWithPgId(uSchema, ['items'])
+    assert(uFb.length === 0, '✓ ZodUnion element 不落 fallback')
+    const pu = (uExt as any).safeParse({ items: [{ a: 'x', __pgId: 'c_u' }] })
+    assert(pu.success && pu.data.items[0].__pgId === 'c_u', '✓ ZodUnion extend 后 safeParse 不剥 __pgId')
+
+    // ③ 普通 ZodObject element 零回归(html-page-demo 场景,原行为)
+    const oSchema = z.object({ components: z.array(z.object({ name: z.string(), code: z.string() })) })
+    const { schema: oExt, fallback: oFb } = extendSchemaWithPgId(oSchema, ['components'])
+    assert(oFb.length === 0, '✓ 普通 ZodObject element 零回归(不落 fallback)')
+    const po = (oExt as any).safeParse({ components: [{ name: 'n', code: '<p/>', __pgId: 'c_o' }] })
+    assert(po.success && po.data.components[0].__pgId === 'c_o', '✓ ZodObject extend 后 safeParse 不剥 __pgId(原行为保持)')
+
+    // ④ element 非 object/union(record 等)→ fallback(不支持,向后兼容)
+    const rSchema = z.object({ meta: z.array(z.record(z.string())) })
+    const { fallback: rFb } = extendSchemaWithPgId(rSchema, ['meta'])
+    assert(rFb.length === 1 && rFb[0] === 'meta', '✓ record element 落 fallback(不支持,降级)')
+  }
+
+  // ===== schemaHasCodeField(html-subagent-open-schema:createChatSdk 装配期判「无 html 子 agent + schema 有 code 字段」→ 自动注入降级编排)=====
+  {
+    assert(schemaHasCodeField(z.object({ code: z.string() })), '✓ 顶层 code string 字段 → 命中')
+    assert(schemaHasCodeField(z.object({ components: z.array(z.object({ name: z.string(), code: z.string() })) })), '✓ 数组元素 object 含 code → 命中(多组件平台常见形态)')
+    assert(
+      schemaHasCodeField(z.object({ components: z.array(z.discriminatedUnion('type', [
+        z.object({ type: z.literal('custom'), code: z.string() }),
+        z.object({ type: z.literal('banner'), title: z.string() }),
+      ])) })),
+      '✓ z.array(discriminatedUnion) 任一 option 含 code → 命中(complex-demo 形态)',
+    )
+    assert(!schemaHasCodeField(z.object({ title: z.string(), list: z.array(z.string()) })), '✓ 无 code 字段 → 不命中(不误注入降级编排)')
+    assert(!schemaHasCodeField(z.any()), '✓ z.any() → 不命中(开放 schema 扫不到 → 集成方 opt-in spread htmlDirectWriteFallback)')
+    assert(!schemaHasCodeField(z.record(z.string())), '✓ z.record → 不命中(无 shape)')
+    assert(!schemaHasCodeField(null), '✓ null/无 schema → 不命中(健壮)')
+  }
+
+  // ===== describeSchemaNode 自引用 + 深度截断(schema_data 栈溢出修复:complex-demo 容器 children: z.array(PageComponent) 自引用致无限递归)=====
+  {
+    // z.lazy 自引用(模拟容器嵌套:getter 每次 new object,visited 不命中 → 靠 depth 截断)
+    const selfRef: any = z.lazy(() => z.object({ type: z.string(), children: z.array(selfRef).optional() }))
+    const desc = describeSchemaNode(selfRef)
+    assert(typeof desc === 'object' && !Array.isArray(desc), '✓ describeSchemaNode 自引用 schema(z.lazy)不栈溢出(depth + visited 双截断)')
+    // 超深 schema(depth>15 截断)
+    let deep: any = z.string()
+    for (let i = 0; i < 30; i++) deep = z.object({ nested: deep })
+    const deepDesc = describeSchemaNode(deep)
+    assert(typeof deepDesc === 'object', '✓ describeSchemaNode 超深 schema(30 层嵌套)不栈溢出(depth>15 截断)')
   }
 }

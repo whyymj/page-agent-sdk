@@ -19,7 +19,7 @@ defineEmits<{ (e: 'toggle'): void }>()
 .reasoning-header { display: flex; align-items: center; gap: 6px; padding: 6px 10px; cursor: pointer; user-select: none; font-size: 12px; color: var(--cs-reason-head); }
 .reasoning-title { font-weight: 600; }
 .reasoning-toggle { margin-left: auto; font-size: 12px; color: var(--cs-reason-toggle); }
-.reasoning-body { padding: 8px 10px; border-top: 1px solid var(--cs-reason-border); font-size: 12px; line-height: 1.6; color: var(--cs-reason-text); white-space: pre-wrap; word-break: break-word; }
+.reasoning-body { padding: 8px 10px; border-top: 1px solid var(--cs-reason-border); font-size: 12px; line-height: 1.6; color: var(--cs-reason-text); white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto; }
 /* 状态色块(reasoning 头部用 ok 绿点;.status-dot base 各组件 scoped 各自维护,不跨边界共享) */
 .status-dot { width: 8px; height: 8px; border-radius: 3px; flex-shrink: 0; background: var(--cs-step-meta); }
 .status-dot.ok { background: var(--cs-ok); }

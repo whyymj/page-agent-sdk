@@ -98,6 +98,52 @@ export function getSchemaAtPath(schema: ZodType, jsonPath: string): ZodType | nu
   return s ?? null
 }
 
+/** zod schema 是否为 string 类型(解包 optional/lazy 后判 _def.type / constructor name) */
+function isStringSchema(s: any): boolean {
+  const u = unwrapSchema(s)
+  return u?._def?.type === 'string' || u?.constructor?.name === 'ZodString'
+}
+
+/** 取数组元素 schema(非数组返 null) */
+function getArrayElementSchema(s: any): any | null {
+  const u = unwrapSchema(s)
+  if (u?._def?.type === 'array' || u?.constructor?.name === 'ZodArray') return u.element ?? null
+  return null
+}
+
+/** 数组元素 schema(object / union / discriminatedUnion 选项)是否含名为 code 的 string 字段 */
+function elementHasCodeField(elem: any): boolean {
+  const e = unwrapSchema(elem)
+  if (!e) return false
+  if (e.shape && typeof e.shape === 'object') {
+    const shape = typeof e.shape === 'function' ? e.shape() : e.shape
+    return 'code' in shape && isStringSchema(shape.code)
+  }
+  // union / discriminatedUnion(zod4 _def.type='union' / .options):任一 option 含 code 即命中
+  if (e._def?.type === 'union' || Array.isArray(e.options)) {
+    return (e.options ?? []).some((opt: any) => elementHasCodeField(opt))
+  }
+  return false
+}
+
+/**
+ * 静态扫描 schema 是否含名为 code 的 string 字段(顶层 或 数组元素对象内,含 union/discriminatedUnion 选项)。
+ * createChatSdk 装配期判定「无 html 子 agent + schema 有 code 字段」→ 自动注入主 agent 自己写编排(htmlDirectWriteFallback)+ warn。
+ * 精确 ZodObject / z.array(z.object) / discriminatedUnion 可识别;开放 schema(z.any()/z.record)扫不到 → 集成方 opt-in spread htmlDirectWriteFallback。
+ * 误判后果轻(多注入一段降级提示),故宁宽松。
+ */
+export function schemaHasCodeField(schema: any): boolean {
+  const top = unwrapSchema(schema)
+  if (!top || !top.shape || typeof top.shape !== 'object') return false
+  const shape = typeof top.shape === 'function' ? top.shape() : top.shape
+  for (const k of Object.keys(shape)) {
+    if (k === 'code' && isStringSchema(shape[k])) return true
+    const elem = getArrayElementSchema(shape[k])
+    if (elem && elementHasCodeField(elem)) return true
+  }
+  return false
+}
+
 /** 按 schema 投影对象(只保留 schema 声明字段,递归处理嵌套对象/数组元素;非 ZodObject 原样返回) */
 export function projectBySchemaDeep(obj: unknown, schema: ZodType | null): unknown {
   if (obj == null || typeof obj !== 'object' || !schema) return obj
@@ -201,7 +247,7 @@ function isUnboundedMax(v: any): boolean {
  * 结构化提取单个 zod 节点的约束。先解包 optional/default/nullable/catch/readonly/prefault/lazy/pipe 收集标记,
  * 再按核心类型(string/number/boolean/enum/literal/array/object/union/record)提取关键约束。
  */
-export function describeSchemaNode(schemaRaw: any): SchemaNodeDesc {
+export function describeSchemaNode(schemaRaw: any, visited: WeakSet<object> = new WeakSet(), depth = 0): SchemaNodeDesc {
   let optional = false
   let nullable = false
   let hasDefault = false
@@ -222,6 +268,10 @@ export function describeSchemaNode(schemaRaw: any): SchemaNodeDesc {
   }
   const type = s?._def?.type || 'unknown'
   if (!s?._def) warnZodCompatOnce()  // 非 zod schema(无 _def):dev 提醒版本不兼容,生产静默;返 type-only 兜底
+  // 深度 + 自引用双截断(防栈溢出):① depth>15 防任何深递归(z.lazy 每次 getter 可能 new 对象,visited 不命中)② visited 同引用循环(容器 children: z.array(PageComponent) 自引用)。查深层用 schema_data({jsonPath})
+  if (depth > 15) return { type, description: '↩ 深度截断(>15,防栈溢出;查深层用 schema_data({jsonPath}))' } as SchemaNodeDesc
+  if (s && typeof s === 'object' && visited.has(s)) return { type, description: '↩ 递归引用(容器 children 自引用,已截断防栈溢出)' } as SchemaNodeDesc
+  if (s && typeof s === 'object') visited.add(s)
   const d: SchemaNodeDesc = { type }
   if (optional) d.optional = true
   if (nullable) d.nullable = true
@@ -253,7 +303,7 @@ export function describeSchemaNode(schemaRaw: any): SchemaNodeDesc {
       break
     }
     case 'array': {
-      c.item = describeSchemaNode(s.element)
+      c.item = describeSchemaNode(s.element, visited, depth + 1)
       for (const ck of readCheckDefs(s)) {
         if (ck.check === 'min_length') c.minLength = ck.minimum
         else if (ck.check === 'max_length') c.maxLength = ck.maximum
@@ -263,16 +313,16 @@ export function describeSchemaNode(schemaRaw: any): SchemaNodeDesc {
     }
     case 'object': {
       const shape = typeof s.shape === 'function' ? s.shape() : s.shape
-      c.shape = Object.fromEntries(Object.entries(shape || {}).map(([k, v]) => [k, describeSchemaNode(v)]))
+      c.shape = Object.fromEntries(Object.entries(shape || {}).map(([k, v]) => [k, describeSchemaNode(v, visited, depth + 1)]))
       break
     }
     case 'union': {
-      const opts = (s._def?.options || []).map((o: any) => describeSchemaNode(o))
+      const opts = (s._def?.options || []).map((o: any) => describeSchemaNode(o, visited, depth + 1))
       if (opts.length) c.anyOf = opts
       break
     }
     case 'record':
-      if (s._def?.valueType) c.valueType = describeSchemaNode(s._def.valueType)
+      if (s._def?.valueType) c.valueType = describeSchemaNode(s._def.valueType, visited, depth + 1)
       break
     default:
       break
@@ -341,7 +391,7 @@ function renderSchemaFieldShallow(key: string, schemaRaw: any): string {
 /**
  * 给 schema 的 writablePaths 数组元素 extend `__pgId`(code-as-data-asset):让 __pgId 进 schema shape →
  * safeParse 不剥离(否则 zod strip 模式吞 __pgId)+ projectBySchemaDeep 见(__pg* 投影过滤单独挡)+ isPathAllowed 见白名单(__pg* 写单独拒)。
- * 集成商原 schema 不动(只框架内部用 extendedSchema)。仅支持顶层 writablePath(如 'components');嵌套('a.b')或 element 非 z.object → fallback。
+ * 集成商原 schema 不动(只框架内部用 extendedSchema)。支持顶层 writablePath(如 'components');element 为 ZodObject / discriminatedUnion / ZodUnion 均 extend(多类型组件平台);嵌套('a.b')或 element 非 object-union → fallback。
  * ⚠ 重建 array 丢失原 min/max/length 约束(组件数组通常无;有约束的场景后续增强)。纯函数,可单测。
  */
 export function extendSchemaWithPgId(rootSchema: ZodType, writablePaths: string[]): { schema: ZodType; fallback: string[] } {
@@ -359,8 +409,22 @@ export function extendSchemaWithPgId(rootSchema: ZodType, writablePaths: string[
     if (elemObj?.shape) {
       const newElem = (elemObj as any).extend({ __pgId: z.string().optional() })
       newShape[wp] = z.array(newElem)
+    } else if (Array.isArray(elemObj?.options)) {
+      // discriminatedUnion / ZodUnion:给每个 option extend __pgId,重建时保 discriminator,再包回 z.array。
+      // 多类型组件平台(如 complex-demo)用 discriminatedUnion 表达 N 种组件类型;旧逻辑只认 elemObj.shape
+      // (普通 ZodObject)→ 落 fallback 不 extend → __pgId 不进 schema → 整对象替换时 safeParse strip __pgId →
+      // vfs 映射错位、代码孤儿化(html-page-demo 用普通 object 故未暴露)。
+      // 注:zod 4 里 discriminatedUnion 的 _def.type 也是 'union',故用 _def.discriminator 区分(du 有、普通 union 无)。
+      const newOptions = (elemObj as any).options.map((opt: any) => {
+        const optObj = unwrapSchema(opt)
+        return optObj?.shape ? optObj.extend({ __pgId: z.string().optional() }) : opt
+      })
+      const newElem = (elemObj as any)._def?.discriminator !== undefined
+        ? z.discriminatedUnion((elemObj as any)._def.discriminator, newOptions)
+        : z.union(newOptions)
+      newShape[wp] = z.array(newElem)
     } else {
-      fallback.push(wp)                                        // element 非 object(union/discriminated/record 等)
+      fallback.push(wp)                                        // element 非 object/union(含非对象 option / record 等)
     }
   }
   return { schema: z.object(newShape as any), fallback }
