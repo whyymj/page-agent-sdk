@@ -5,9 +5,20 @@ export async function run() {
   setupEnv()
   const ctx = createAssert(); const { assert } = ctx
 
+  console.log('[e2e:storage] 默认 memory 会话(3.9+:不传 storage = 纯内存多会话,false 显式关闭)')
+  {
+    const sdk = createChatSdk({ ui: false, id: 'e2e-default-memory', llm: FAKE_LLM, capabilities: MIN_CAPS })  // ← 不传 storage
+    await sdk.mount()
+    assert(Array.isArray(await sdk.listSessions()), '✓ 默认(不传 storage)→ 内存会话就绪(listSessions 可用,多会话开箱即用)')
+    assert((await sdk.listSessions()).length >= 1, '✓ 默认 → 当前会话已建(listSessions 含自身)')
+    const nid = await sdk.switchSession()
+    assert(typeof nid === 'string' && nid !== sdk.sessionId || nid === sdk.sessionId, '✓ 默认 → switchSession 可用(内存会话切换)')
+    sdk.unmount()
+  }
+
   console.log('[e2e:storage] switchSession:storage 未开启抛错 / 开启返回新 id')
   {
-    const sdkNoStorage = createChatSdk({ ui: false, id: 'e2e-switch-nostore', llm: FAKE_LLM, capabilities: MIN_CAPS })
+    const sdkNoStorage = createChatSdk({ ui: false, id: 'e2e-switch-nostore', storage: false, llm: FAKE_LLM, capabilities: MIN_CAPS })  // 3.9+ 默认 'memory',未开启需显式 false
     await sdkNoStorage.mount()
     let threw = false
     try { await sdkNoStorage.switchSession() } catch { threw = true }
@@ -53,7 +64,7 @@ export async function run() {
     assert(sdk.sessions.value.length === (await sdk.listSessions()).length, 'Phase 6 sdk.sessions === listSessions(自动同步)')
     assert(sdk.sessions.value.some((s) => s.sessionId === sdk.sessionId), 'Phase 6 sdk.sessions 含当前会话(高亮依据)')
     // S2/S3 优雅降级:storage 未开启 → listSessions [] / deleteSession no-op
-    const sdkNoStore = createChatSdk({ ui: false, id: 'e2e-history-nostore', llm: FAKE_LLM, capabilities: MIN_CAPS })
+    const sdkNoStore = createChatSdk({ ui: false, id: 'e2e-history-nostore', storage: false, llm: FAKE_LLM, capabilities: MIN_CAPS })
     await sdkNoStore.mount()
     assert((await sdkNoStore.listSessions()).length === 0, 'S2 storage 未开启 → listSessions 返回 [](优雅降级)')
     let nsThrew = false

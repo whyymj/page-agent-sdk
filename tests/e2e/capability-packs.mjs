@@ -374,11 +374,12 @@ export async function run() {
     const sdk2 = createChatSdk({
       ui: false, id: 'e2e-orch-fallback', storage: 'memory', llm: FAKE_LLM,
       capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
-      data: { schema: z.object({ components: z.array(z.object({ code: z.string() })) }), bind: { components: [] }, description: '测试' },
+      // 顶层 code 字段(非数组):3.9 自动装配按「数组元素含 code」推断,此形态不触发 → 降级编排仍注入
+      data: { schema: z.object({ code: z.string() }), bind: { code: '<p>x</p>' }, description: '测试' },
     })
     await sdk2.mount()
     const sp2 = sdk2.inspect().systemPrompt
-    assert(sp2.includes('直接 write') && sp2.includes('无 vfs'), '✓ ② 无 agent+schema 有 code 字段 → 自动注入降级编排(主 agent 自己写,无 vfs/verify)+ warn')
+    assert(sp2.includes('直接 write') && sp2.includes('无 vfs'), '✓ ② 顶层 code 字段(非数组)→ 不自动装配,注入降级编排(主 agent 自己写,无 vfs/verify)+ warn')
     assert(!sp2.includes('use_html'), '✓ ② 降级编排不含委派 use_html(无 agent)')
     sdk2.unmount()
 
@@ -430,12 +431,13 @@ export async function run() {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-orch-noagent', storage: false, llm,
       capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
-      data: { schema: z.object({ components: z.array(z.discriminatedUnion('type', [z.object({ type: z.literal('custom'), name: z.string().optional(), code: z.string() }), z.object({ type: z.literal('banner'), title: z.string() })])) }), bind, description: '测试' },
+      // 开放 schema(z.any()):3.9 自动装配静态扫不出 code 数组 → 不装配、无降级注入,主 agent 自己写
+      data: { schema: z.any(), bind, description: '测试' },
     })
     await sdk.mount()
     const sp = sdk.inspect().systemPrompt
-    assert(sp.includes('直接 write') && sp.includes('无 vfs'), '✓ ⑥ 无 agent+schema 有 code 字段 → 注入降级编排(主 agent 自己写,零配置)')
-    assert(!sp.includes('use_html'), '✓ ⑥ 无 agent → 不含委派 use_html')
+    assert(!sp.includes('use_html'), '✓ ⑥ 开放 schema(z.any())→ 静态扫不出,不自动装配(use_html 不在)')
+    assert(!sp.includes('职责边界'), '✓ ⑥ 开放 schema → 无委派编排注入(主 agent 全权自己写)')
     await sdk.send('生成 hero 纯代码组件 + banner')
     assert(bind.components.length === 2, '✓ ⑥ 无 agent 多组件:主 agent 直接 write 生成 2 个组件(含纯代码 custom + 普通 banner)')
     assert(bind.components[0].code === '<section class="pg-hero"><h1>啤酒节</h1></section>', '✓ ⑥ 纯代码组件 code 由主 agent 直接 write(降级模式,无 vfs/verify)')
@@ -478,10 +480,11 @@ export async function run() {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-orch-noagent-complex', storage: false, llm,
       capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
-      data: { schema: z.object({ components: z.array(nodeS) }), bind, description: '测试' },
+      // 开放 schema(z.any()):静态扫不出 code 数组 → 3.9 自动装配不触发,主 agent 全权直写
+      data: { schema: z.any(), bind, description: '测试' },
     })
     await sdk.mount()
-    assert(sdk.inspect().systemPrompt.includes('直接 write'), '✓ ⑧ 无 agent+复杂 schema(含容器嵌套)→ 降级编排仍自动注入')
+    assert(!sdk.inspect().systemPrompt.includes('use_html'), '✓ ⑧ 开放 schema → 不自动装配(无委派编排注入,主 agent 全权直写)')
     assert(!sdk.inspect().tools.some((t) => t.name === 'use_html'), '✓ ⑧ 工具面无 use_html(未配 createHtmlSubagent)')
     // 轮 1:多组件建页(普通 + 纯代码混合)
     await sdk.send('建一个青岛啤酒节页面:导航、横幅、hero 纯代码、倒计时纯代码')
@@ -541,6 +544,63 @@ export async function run() {
       await sdk2.mount()
       assert(!sdk2.inspect().tools.some((t) => t.name === 'use_html'), '✓ ⑨ 未传 + 无 code schema → mount 成功 + html agent 被剔除(warn 降级,不崩集成)')
       sdk2.unmount()
+    }
+  }
+
+
+  console.log('[e2e:capability-packs] html 子 agent 自动装配(3.9 默认开:schema 有 code 数组零配置获委派编排;htmlAgent:false opt-out)')
+  {
+    // ① 零配置自动装配:无 subagents + code schema → use_html + 委派编排 + __pgId 机制链
+    const { stubModel } = await import('./_stub-model.mjs')
+    const llm = stubModel(
+      { toolCalls: [{ name: 'use_html', args: { task: '生成 hero 组件' } }] },
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.0', value: { type: 'custom', name: 'hero', code: '<section>hero</section>' } } } }] },
+      { text: '已生成' },
+      { text: '完成' },
+    )
+    const bind = { components: [] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-auto-html-ok', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: {
+        schema: z.object({ components: z.array(z.discriminatedUnion('type', [
+          z.object({ type: z.literal('banner'), title: z.string() }),
+          z.object({ type: z.literal('custom'), name: z.string().optional(), code: z.string() }),
+        ])) }),
+        bind, description: '测试',
+      },
+      // ← 无 subagents 声明:3.9 默认自动装配
+    })
+    await sdk.mount()
+    assert(sdk.inspect().tools.some((t) => t.name === 'use_html'), '✓ ⑩ 零配置自动装配:无 subagents + code schema → use_html 委派工具存在(浏览器端 HTML 主场景开箱即用)')
+    assert(sdk.inspect().systemPrompt.includes('use_html') && sdk.inspect().systemPrompt.includes('职责边界'), '✓ ⑩ 自动装配 → 委派编排注入完整')
+    await sdk.send('生成 hero 组件')
+    assert(bind.components.length === 1 && bind.components[0].code === '<section>hero</section>' && typeof bind.components[0].__pgId === 'string', '✓ ⑩ 自动装配全链路:委派 → 子 write 落 code → __pgId 注入')
+    sdk.unmount()
+    // ③ 显式优先不重复:显式 createHtmlSubagent 自定义 id → 用自定义 id,无重复 use_ 工具
+    {
+      const sdk3 = createChatSdk({
+        ui: false, id: 'e2e-auto-html-explicit', storage: 'memory', llm: FAKE_LLM,
+        capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+        data: { schema: z.object({ components: z.array(z.object({ code: z.string() })) }), bind: { components: [] }, description: '测试' },
+        subagents: [createHtmlSubagent({ id: 'hero', formatCheck: false })],
+      })
+      await sdk3.mount()
+      const tools3 = sdk3.inspect().tools
+      assert(tools3.some((t) => t.name === 'use_hero'), '✓ ⑩ 显式 createHtmlSubagent 优先:自定义 id 生效')
+      assert(!tools3.some((t) => t.name === 'use_html'), '✓ ⑩ 不重复装配(自动逻辑检测到显式 _codeAsset 即跳过)')
+      sdk3.unmount()
+    }
+    // ④ 无 code schema 零变化:纯数据应用不背 HTML 机制
+    {
+      const sdk4 = createChatSdk({
+        ui: false, id: 'e2e-auto-html-nocode', storage: 'memory', llm: FAKE_LLM,
+        capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+        data: { schema: z.object({ title: z.string() }), bind: { title: 'x' }, description: '测试' },
+      })
+      await sdk4.mount()
+      assert(!sdk4.inspect().tools.some((t) => t.name === 'use_html'), '✓ ⑩ 无 code schema → 零变化(纯数据应用不自动装配)')
+      sdk4.unmount()
     }
   }
 

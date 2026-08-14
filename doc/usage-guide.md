@@ -184,7 +184,7 @@ createChatSdk({
   schemaHint: { maxKeys?, maxChars? },               // 大 schema 分层披露阈值(2.20+;默认 15/4000,超阈值转顶层概览省 token);见 §6
 
   /* ===== 持久化与会话 ===== */
-  storage: 'indexed',           // 'indexed'/'session'/'local'/'memory'/配置对象/false(默认关闭)
+  storage: 'indexed',           // 'indexed'/'session'/'local'/'memory'/配置对象;3.9+ 默认 'memory'(纯内存多会话,不落盘);false 显式关闭
   session: { id?, autoResume?, title? },  // 会话控制
 
   /* ===== 容量与鲁棒性 ===== */
@@ -650,7 +650,7 @@ sdk.vfsWrite('docs/components/hero.md', 'Hero 组件用于首屏主视觉...')
   - **主 scope read 摘要**:主 agent read data 时,标记字段(`code`)摘要为 `<code Nkb>`(防代码正文灌主上下文);子 agent read 完整(改 code 需全文);集成方业务长文本不受影响
   - **`codeField` 可配置(开放 schema 适配)**:code 字段位置默认 `'code'`(组件顶层),开放 schema 平台可配嵌套 jsonPath(如 `'props.html_code'`);「是否代码组件」= 该路径有 string(非代码组件自然跳过);装配期命中校验(组件数>0 且全员未命中 → console.warn,防填错路径静默失败)。例:`createHtmlSubagent({ writablePaths:['components'], codeField:'props.html_code' })`
   - **`writablePaths` 装配期自动推断(3.6+,可省略)**:未传时 createChatSdk 装配期从 `data.schema` 顶层扫描「数组元素含 `codeField` string 字段」的路径自动回填(`inferWritablePaths`,console.info 留痕;显式传入优先跳过推断)。不支持推断的形态 → warn + throw 提示显式传参:开放 schema(`z.any()`/`z.record`)、嵌套容器(如 `sections[].children[]`)、点路径 codeField(`props.html_code` 嵌套结构)—— 宁失败不猜错路径(错误路径 = 框架扫描区整体落空)
-  - **主 agent 编排自适应注入(零配置)**:装配期自动检测 —— 有 html 子 agent → 主 agent systemPrompt 自动追加委派编排 `htmlOrchestratorPrompt(id)`(custom code 不 read 不 write 全权 `use_<id>` / 逐个委派防污染 / task 规格化 4 要素 + ⑤历史偏好转述);无 html 子 agent + schema 有 code 字段 → 自动注入 `htmlDirectWriteFallback`(主 agent 自己 write code,无 vfs/verify)+ warn;开放 schema(`z.any()`)扫不到时集成方 opt-in spread。**勿手动 spread `htmlPageOrchestrator`**(自动注入已覆盖,双重注入浪费 token);opt-out `orchestratorPrompt:false`
+  - **主 agent 编排自适应注入(零配置)**:装配期自动检测 —— 有 html 子 agent → 主 agent systemPrompt 自动追加委派编排 `htmlOrchestratorPrompt(id)`(custom code 不 read 不 write 全权 `use_<id>` / 逐个委派防污染 / task 规格化 4 要素 + ⑤历史偏好转述);无显式 html 子 agent + schema 含 code 数组 → **3.9+ 自动装配默认 `createHtmlSubagent()`**(info 留痕,无开关;显式 `createHtmlSubagent(...)` 优先不重复;推断不出的形态(顶层 code 字段/开放 schema)不装 → `htmlDirectWriteFallback` 主 agent 自己 write code 的降级 + warn);开放 schema(`z.any()`)扫不到时集成方 opt-in spread。**勿手动 spread `htmlPageOrchestrator`**(自动注入已覆盖,双重注入浪费 token);opt-out `orchestratorPrompt:false`
   - **组件工匠笔记 `craftNotes`(默认开)**:子 agent 收口回复末尾附 `[note] <一句话实现要点>` 行(htmlSystemPrompt 约定),框架 afterAgent 提取沉淀为组件 `__pgNotes`(FIFO ≤5 条 × 200 字,随 data json 进服务端 DB 跨会话持久);下次委派同组件时经「组件代码文件地图」注入最近 1 条(`📝 笔记×N`)—— 同组件跨委派**设计意图持续**("前任的交接":设计决策/用户偏好/踩坑),状态在数据里不在子 agent 实例里(与 code-as-data-asset 哲学同构)。`__pgNotes` 走 `__pg*` sidecar 机制(agent read 投影隐藏、写不进,框架独占);`craftNotes:false` 关闭(零沉淀零注入)
   - **模型建议(真 LLM 实测)**:html 代码生成推荐强指令遵循模型(deepseek-v4 / claude / gpt-4o);flash 类弱模型放大过度思考(装饰穷举 / token 纠结),高频/批量场景建议非 flash
   - **breaking 迁移(2.x → 3.0)**:① schema:`components[i]` 加 `code:z.string()`(替代 `codeRef`),去 `codeSnapshots` 镜像;② UI:绑 `data.components[i].code`(替代 `codeSnapshots[p]`);③ `createHtmlSubagent`:去 `onComplete`(框架 afterAgent 自动 commit);④ persist:整体 data json 发服务端(含 code + `__pgId`);⑤ 渲染层:遇 `type:'custom'` 读 `data.code` 渲染(不再 `codeRef`→vfs 取)
@@ -820,7 +820,7 @@ systemPrompt: '遇到多步骤任务(≥3 步)时,先用 write_todos 拆解成�
 
 ### 6.6 持久化与会话管理
 
-**开启**:给 `storage` 赋值即开启(默认关闭 = 纯内存):
+**开启**:给 `storage` 赋值即切换后端(3.9+ 默认 `'memory'` 纯内存多会话,不落盘;`false` 显式关闭;跨刷新持久化用 `'indexed'`):
 
 ```ts
 storage: 'indexed'                          // IndexedDB(推荐,容量大)
@@ -1704,7 +1704,7 @@ createChatSdk({ ...presets.pageBuilder, container: '#root', llm, data })  // 页
 createChatSdk({ ...presets.researcher, container, llm })                         // 并行调研
 createChatSdk({ ...presets.minimal, container, llm, data })               // 极简(关高级能力)
 ```
-可用预设:`pageBuilder`(读写主数据驱动页面;**3.6+ 默认带 HTML 代码子 agent** —— schema 有「数组元素含 code 字段」时自动获得委派编排 + code 资产机制(vfs 工作副本 + 格式校验 + 增量 commit),无 code 数组自动剔除不影响纯数据页面;显式传 `subagents` spread 覆盖即替换)、`researcher`(spawn_agents 并行调研)、`minimal`(关闭所有高级能力,省 token)。
+可用预设:`pageBuilder`(3.9+ 仅场景化身份 prompt;HTML 代码子 agent 由 createChatSdk 装配期自动装配(schema 含 code 数组即装),preset 不再自带 subagents)、`researcher`(spawn_agents 并行调研)、`minimal`(关闭所有高级能力,省 token)。
 
 ### 8.5 服务端(Node.js)用法
 

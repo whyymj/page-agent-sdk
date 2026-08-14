@@ -5,9 +5,10 @@
 import type { ChatSdkOptions, DialogConfig } from './createChatSdk'
 import { createSessionStore, type SessionStore, type StorageBackendType, type StorageConfig } from '../backends/storage'
 
-/** 解析 storage 选项 → SessionStore | null(undefined/false/未传 关闭;字符串/对象 开启) */
+/** 解析 storage 选项 → SessionStore | null(3.9+ 默认 'memory':未传 = 纯内存会话(多会话切换,不落盘);false 显式关闭;字符串/对象 开启) */
 export function resolveStorage(storage: StorageBackendType | StorageConfig | false | undefined): SessionStore | null {
-  if (storage === undefined || storage === false) return null
+  if (storage === undefined) return createSessionStore({ backend: 'memory' })  // 默认内存会话(开箱即用多会话,零落盘副作用)
+  if (storage === false) return null
   if (typeof storage === 'string') return createSessionStore({ backend: storage })
   if (storage.enabled === false) return null
   return createSessionStore(storage)

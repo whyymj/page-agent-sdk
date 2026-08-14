@@ -40,7 +40,7 @@
 
 ## 进行中
 
-(无活跃 change)
+- [`2026-08-14-auto-html-agent/`](./2026-08-14-auto-html-agent/)(**已实施待发布**,minor,M):HTML 子 agent**自动装配默认开**(浏览器端页面搭建主场景开箱即用)—— 无显式 html 子 agent + schema 含 code 数组 → 装配期自动注册默认 `createHtmlSubagent()`(委派编排 + vfs + 格式校验 + 增量 commit);无开关(用户拍板主场景只有 HTML,不需要关闭);显式声明优先不重复;推断不出的形态(顶层 code 字段/开放 schema)走降级直写。selftest 1957 / e2e 589。
 
 ---
 

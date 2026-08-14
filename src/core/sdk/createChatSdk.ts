@@ -47,6 +47,7 @@ import { connectMcp, type McpServerConfig } from '../mcp/client'
 import { createSummarizationMiddleware } from '../harness/summarization'
 import { buildDataPrompt, buildSystemPrompt } from './promptBuilder'
 import { createCodeAssetMiddleware } from './codeAssetMiddleware'
+import { createHtmlSubagent } from './htmlSubagent'
 import { isChatModel, resolveLlm, deriveTitle } from './llmResolver'
 import { constructLlmFromConfig, constructOpenLlmSync } from '../llm/constructLlm'
 import { createConflictManager } from './conflictManager'
@@ -869,9 +870,22 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ? { ...options.data, description: options.data.description ?? '主数据对象' }
     : undefined
 
+  // HTML 子 agent 自动装配(3.9+,浏览器端页面搭建主场景开箱即用,无开关):
+  // 无显式 html 子 agent + subagent 能力开 + schema 推断命中「数组元素含 code 字段」→ 自动加一个默认
+  // createHtmlSubagent()(vfs 工作副本 + 格式校验 + 增量 commit + 委派编排全套,info 留痕)。
+  // 显式 createHtmlSubagent(...) 优先不重复装;无 code 数组(纯数据应用)零变化;
+  // 推断不出的形态(顶层 code 字段/开放 schema)不装 → 主 agent 自己写(降级直写编排)。
+  const autoHtmlAgent = !(options.subagents ?? []).some((s) => (s as SubagentConfig)._codeAsset)
+    && resolveCapabilities(options.capabilities).subagent
+  let declaredSubagents: SubagentConfig[] | undefined = options.subagents
+  if (autoHtmlAgent && finalDataConfig?.schema && inferWritablePaths(finalDataConfig.schema).length) {
+    declaredSubagents = [...(options.subagents ?? []), createHtmlSubagent()]
+    console.info('[page-agent-sdk] 检测到 schema 含代码组件数组(如 components[].code),已自动装配 HTML 代码子 agent(委派编排 + vfs 工作副本 + 格式校验 + 增量 commit)。需定制(codeField/formatCheck/craftNotes 等)请显式传 createHtmlSubagent(...)')
+  }
+
   // code-as-data-asset:检测 htmlSubagent 单模式(_codeAsset 标记)→ 提取 pgIdPaths(schema extend 加 __pgId + afterWrite 补)/ largeTextPaths(主 scope read 摘要挡代码灌主上下文)
   // 装配期识别(集成商 createHtmlSubagent 时设标记;本工厂调用时 data 尚未传,故延迟到此处)
-  const allCodeAssetConfigs = (options.subagents ?? []).filter(
+  const allCodeAssetConfigs = (declaredSubagents ?? []).filter(
     (s): s is SubagentConfig & { _codeAsset: NonNullable<SubagentConfig['_codeAsset']> } => !!s._codeAsset,
   )
   // writablePaths 装配期推断:工厂调用时 schema 尚未传,未传 writablePaths(空数组)在此回填。
@@ -897,8 +911,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const codeAssetConfigs = droppedCodeAsset.size ? allCodeAssetConfigs.filter((s) => !droppedCodeAsset.has(s)) : allCodeAssetConfigs
   // effective 列表 = 剔除被跳过子 agent 后的实际装配面(subagentsForAssemble / inspect 反射同源)
   const effectiveSubagents = droppedCodeAsset.size
-    ? (options.subagents ?? []).filter((s) => !droppedCodeAsset.has(s))
-    : options.subagents
+    ? (declaredSubagents ?? []).filter((s) => !droppedCodeAsset.has(s))
+    : declaredSubagents
   const hasCodeAsset = codeAssetConfigs.length > 0
   const codeAssetPgIdPaths = codeAssetConfigs.flatMap((s) => s._codeAsset.writablePaths)
   const codeAssetLargeTextPaths = codeAssetConfigs.flatMap((s) => s._codeAsset.writablePaths.map((wp) => `${wp}.${s._codeAsset.codeField}`))

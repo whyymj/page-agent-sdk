@@ -722,7 +722,7 @@ export interface ChatSdkOptions {
   /** agent 实例 id(多 agent 共存隔离;不传则随机生成并告警,刷新后无法恢复) */
   id?: string;
   /** 持久化:默认关闭;赋值后端字符串('indexed'/'session'/'local'/'memory')或配置对象开启;false 关闭 */
-  storage?: StorageBackendType | StorageConfig | false;
+  storage?: StorageBackendType | StorageConfig | false; // 3.9+ 默认 'memory'(纯内存多会话,不落盘);false 显式关闭;'indexed' 跨刷新
   /** 会话控制 */
   session?: SessionOptions;
   /** 共享上下文:默认 false;true 时同 id 复用同一核心(messages/agent/工作区) */

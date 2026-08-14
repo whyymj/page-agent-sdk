@@ -6,7 +6,12 @@
 
 > ℹ️ 本段累积了 2.23.0 → 2.24.1 多个已发布版本的内容(harden-eval-sandbox / main-flow-audit / context-inspector / arch-review P1 / demo 主题 / session-history / 串行化 / simplify-toolset 等),待按 git tag 逐条归入对应版本段(已知文档债,本次未拆)。
 
+### Added
+- **HTML 子 agent 自动装配(默认开,浏览器端页面搭建开箱即用)**:无显式 html 子 agent + subagent 能力开 + schema 含「数组元素带 code 字段」→ 装配期自动注册默认 `createHtmlSubagent()`(委派编排 + vfs 工作副本 + 格式校验 + 增量 commit 全套,console.info 留痕)。无开关(用户拍板主场景只有 HTML,不需要关闭);显式 `createHtmlSubagent(...)` 优先不重复装配;推断不出的形态(顶层 code 字段/开放 schema)不装 → 走「主 agent 自己写」降级直写。**行为变更提示**:此前依赖「数组 code 字段 + 主 agent 直写」的集成,现自动走委派(如需直写请改 schema 形态或显式自定义编排)
+
 ### Changed
+- **storage 默认 'memory'(开箱即用多会话)**:不传 `storage` = 纯内存会话(会话历史/切换 UI 可用,零落盘副作用);`false` 显式关闭;跨刷新持久化用 `'indexed'`。原「未传 = 关闭」语义的集成需显式 `storage: false`
+- **presets.pageBuilder 简化**:HTML 子 agent 由 createChatSdk 装配期自动装配(3.9),preset 不再自带 `subagents`(getter 防突变逻辑退役),只剩场景化身份 prompt(向后兼容,spread 行为不变)
 - **examples 优化**:① rag-demo 与 rag-subagent-demo 合并为单 demo 双模式(A memory 异步注入 / B createRagSubagent 检索子 agent,顶部切换重建 agent;共享 mock 知识库不再重复内联);② complex-demo / html-page-demo 的 `createHtmlSubagent()` 去掉显式 `writablePaths`(演示 3.6+ 装配期推断最小形态);③ minimal-demo 头部补 `presets.pageBuilder` 一行式指引
 ### Added
 - **patch op `move`(移动/重排数组元素一步完成)**:`{op:'move', jsonPath:'components.2', value:'components.0'}` —— 同数组即重排(替代双 set 交换,索引易错),跨数组即移动(替代 append+remove 两步非原子);目标可为数组本身(追加;不存在且父级为对象时自动建数组)或数组内下标(插入,越界 clamp);目标下标按移除源后解释;仅支持数组元素;目标路径同样过 schema 白名单;进 patches 原子批。新导出 `moveByPath` 纯函数

@@ -9,25 +9,18 @@
  * container / llm / data 等依赖集成方环境的选项仍由调用方提供。
  */
 import type { ChatSdkOptions } from './sdk/createChatSdk'
-import { createHtmlSubagent } from './sdk/htmlSubagent'
 import { renderSchemaOverview, renderSchemaShallow } from './tools/schemaUtils'
 
 export const presets: Record<string, Partial<ChatSdkOptions>> = {
   /**
    * 页面构建助手 —— Agent 读写主数据驱动页面(配合 data 声明 schema + bind)。
    *
-   * 默认带 HTML 代码子 agent(3.6+):schema 有「数组元素含 code 字段」时自动委派编排 + code 资产机制
-   * (vfs 工作副本 + 格式校验 + 增量 commit);schema 无 code 数组 → 装配期自动剔除(优雅降级,纯数据页面不受影响)。
-   * 显式传 subagents spread 覆盖 = 天然「用户自定义替换」。
+   * 3.9+ 简化:HTML 代码子 agent 由 createChatSdk 装配期自动装配(schema 含 code 数组即装,无开关),
+   * preset 不再自带 subagents(原 getter 每次新建的防突变逻辑随之退役);此处只剩场景化身份 prompt。
    */
   pageBuilder: {
     systemPrompt:
       '你是页面构建助手。按用户意图读写主数据(经 data 声明 + schema 校验),改完页面实时更新。',
-    // getter:每次取值(即每次 spread)新建一份 —— 装配期会就地回填 writablePaths(3.6 推断),
-    // 模块级共享单例会被多实例交叉污染(A 实例回填的路径泄漏给不同 schema 的 B 实例)
-    get subagents() {
-      return [createHtmlSubagent()]
-    },
   },
 
   /**

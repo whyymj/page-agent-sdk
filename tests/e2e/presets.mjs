@@ -29,8 +29,8 @@ export async function run() {
       ...presets.pageBuilder,
     })
     await sdk.mount()
-    assert(sdk.inspect().tools.some((t) => t.name === 'use_html'), '✓ pageBuilder + code schema → use_html 委派工具存在(默认 html agent 装配 + writablePaths 推断回填)')
-    assert(sdk.inspect().systemPrompt.includes('use_html'), '✓ pageBuilder + code schema → 委派编排注入')
+    assert(sdk.inspect().tools.some((t) => t.name === 'use_html'), '✓ pageBuilder + code schema → use_html 委派工具存在(3.9 装配期自动装配,preset 无需自带)')
+    assert(sdk.inspect().systemPrompt.includes('use_html'), '✓ pageBuilder + code schema → 委派编排注入(自动装配链)')
     sdk.unmount()
   }
 
@@ -46,14 +46,6 @@ export async function run() {
     assert(!sdk.inspect().tools.some((t) => t.name === 'use_html'), '✓ pageBuilder + 无 code schema → html agent 被剔除(mount 成功不 throw,纯数据页面零影响)')
     assert(!sdk.inspect().subagents?.some?.((s) => s.id === 'html') || true, '✓ 降级后 inspect 子 agent 面无残留(反射同 effective 列表)')
     sdk.unmount()
-  }
-
-  console.log('[e2e:presets] pageBuilder getter 防共享突变(两次 spread 取到独立 config)')
-  {
-    const a = presets.pageBuilder.subagents
-    const b = presets.pageBuilder.subagents
-    assert(a !== b && a[0] !== b[0], '✓ 每次 spread 新建 subagent config(装配期回填 writablePaths 不跨实例污染)')
-    assert(Array.isArray(a[0].writablePaths) && a[0].writablePaths.length === 0, '✓ 默认 config writablePaths 为空(待装配期推断)')
   }
 
   console.log('[e2e:presets] presets.minimal spread:capabilities 反映精简')
