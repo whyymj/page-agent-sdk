@@ -8,3 +8,7 @@
 - [x] B2 write/edit_data/eval patches op 枚举 + 描述;目标路径过 isPathAllowed
 - [x] C1 selftest +10(1957)/ e2e +3(583);usageHints 两分支补 move 说明
 - [x] D1 types/index.d.ts(EditOp + moveByPath 导出)+ CHANGELOG + 计数同步
+
+## 阶段 E:发布
+
+- [x] E1 已随 3.8.0 发布

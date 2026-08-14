@@ -134,7 +134,8 @@ onMounted(() => {
       }),
     ],
     // 预声明子 agent:createHtmlSubagent 接管 custom 纯代码组件(code 字段 → vfs 工作副本 + checkout/commit 自动搬运)
-    subagents: [createHtmlSubagent({ writablePaths: ['components'] })],
+    // writablePaths 省略(3.6+):装配期从 schema 自动推断出 ['components']
+    subagents: [createHtmlSubagent()],
     onEvent: (e) => { if (e.type === 'focus_chip_click') onFocusChipClick(e.path) }, // chip 点击 → 滚动到组件 + 边框闪
     debug: true,
     dialog: {

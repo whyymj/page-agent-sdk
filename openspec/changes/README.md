@@ -36,9 +36,11 @@
 
 > 2026-08-08 发布 **2.27.0**:`recall-and-trim-llm`(P1 召回 + trim LLM)+ `context-persist-resilience`(mission/workingMemory 持久化 + trim 收口 GC 归档)实施完成;`context-history-resilience` umbrella 归档(P1+A 收口;B 类决策 #2 维持「对话文本」模型;P2 其余 deferred)。已归档见 `archive/`。
 
+> **2026-08-14 发布 3.8.0**(minor):`prompt-tool-review` 实施完成并归档 —— ① **patch op `move`**(数组元素同数组重排/跨数组移动一步原子,value=目标路径;目标数组不存在自动建;过白名单;`moveByPath` 导出);② 提示词审查修复:draftWrite simple 守卫(修「提示词教 LLM 调不存在工具」Bug)/ spawn 提示补 writablePaths+spawn_agents / reliableWriteRules 补冲突行为第 6 条 / htmlSystemPrompt 措辞。selftest 1957 / e2e 583 / browser 53。见 [`archive/2026-08-14-prompt-tool-review/`](./archive/2026-08-14-prompt-tool-review/)。
+
 ## 进行中
 
-- [`2026-08-14-prompt-tool-review/`](./2026-08-14-prompt-tool-review/)(**已实施待发布**,minor,S):默认提示词审查修复(draftWrite simple 守卫修「提示词教 LLM 调不存在工具」Bug / spawn 提示补 writablePaths+spawn_agents / reliableWriteRules 补冲突行为第 6 条 / htmlSystemPrompt 措辞)+ **patch op `move`**(数组元素同数组重排/跨数组移动一步原子,value=目标路径;目标数组不存在自动建;过白名单;`moveByPath` 导出)。selftest 1957 / e2e 583。
+(无活跃 change)
 
 ---
 

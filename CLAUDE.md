@@ -32,7 +32,7 @@ npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
 npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,1957 项断言)
 npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,583 项;tests/e2e/<module>.mjs 按模块拆分)
-npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,53 项;tests/browser/<demo>.spec.ts)
+npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,54 项;tests/browser/<demo>.spec.ts)
 ```
 
 ## 环境配置
@@ -55,7 +55,7 @@ src/core/                       # 通用 SDK 核心(框架无关)
 ├── composables/                # useChat/useContextManager/useMarkdown/contextIndex/chatContext(provide/inject)
 ├── components/                 # ChatDialog(组合容器:provide ctx + 9 区块 slot)+ MessageContent/CodePreview/DebugDrawer/ChatHeader/ChatInput/QueuedBar/ApprovalBar/ConflictBar/FocusBar/SkillPanel/message/*
 └── presets.ts · types/index.ts · index.ts(主入口,注入 UI)· index.headless.ts(headless)
-examples/                       # 各 demo(minimal/page/complex/nested/dynamic/subagent/mcp/human-confirm/planner/toolsets/animation/multi-agent/proxy/customize/rag/html-page/rag-subagent/headless)每个自带 index.html + main.ts
+examples/                       # 各 demo(minimal/page/complex/nested/dynamic/subagent/mcp/human-confirm/planner/toolsets/animation/multi-agent/proxy/customize/rag(双模式)/html-page/headless)每个自带 index.html + main.ts
 doc/                            # architecture.md(①-⑮ 架构细节)+ README.md(索引)+ usage-guide/context-management/system-prompt
 demo/plain.html                 # 框架无关集成示例
 skills/                         # 分发给使用者的 Agent Skill(入 npm 包 files)
@@ -139,9 +139,9 @@ npm run build && npm run test:e2e    # node 跑 dist 产物,583 项
 
 #### 2.5 浏览器 E2E(改 UI/ChatDialog/dataOps 后必跑)
 ```bash
-npm run test:browser  # 53 项;也可 /browser-test 斜杠命令
+npm run test:browser  # 54 项;也可 /browser-test 斜杠命令
 ```
-**原理**:`tests/browser/_helpers.ts` 的 `mockLlm()` 用 `page.route()` 拦截 LLM API 端点,按脚本返回 SSE 流,使 agent ReAct 循环确定性走完,不依赖真 LLM。**双协议**:同时拦截 OpenAI 兼容(`**/chat/completions`)与 Anthropic Messages API(`**/v1/messages`),各返对应格式 SSE,共享 script 计数。spec 按 demo 拆分(page-demo 7 / complex-demo 12+ / nested 3 / error-recovery 2 / rag 2 / queue 3 / customize 7 / xss 2 / human-confirm 2 / html-page 7)。写新测试模板见 `.claude/skills/browser-e2e-testing/SKILL.md`。
+**原理**:`tests/browser/_helpers.ts` 的 `mockLlm()` 用 `page.route()` 拦截 LLM API 端点,按脚本返回 SSE 流,使 agent ReAct 循环确定性走完,不依赖真 LLM。**双协议**:同时拦截 OpenAI 兼容(`**/chat/completions`)与 Anthropic Messages API(`**/v1/messages`),各返对应格式 SSE,共享 script 计数。spec 按 demo 拆分(page-demo 7 / complex-demo 17 / html-page 8 / nested 3 / error-recovery 2 / rag 3 / queue 3 / customize 7 / xss 2 / human-confirm 2 / html-page 7)。写新测试模板见 `.claude/skills/browser-e2e-testing/SKILL.md`。
 
 #### 3. 浏览器手动验证(改 UI/示例后跑)
 `npm run dev` 逐个 demo 验证(见目录结构 examples 清单;各 demo 侧重点见 `doc/usage-guide.md`)。

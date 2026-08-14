@@ -156,9 +156,8 @@ onMounted(() => {
     data: { schema: pageSchema, bind: pageBind, description: '页面(components 支持 custom 代码组件;code 字段是资产)' },
     // ★ 单模式(code-as-data-asset):代码作 data.code 资产,vfs 作工作副本,框架自动 checkout/commit;formatCheck 默认开
     // dialog.theme 默认 dark(首页方舟专题色板),无需显式配置
-    subagents: [createHtmlSubagent({
-      writablePaths: ['components'],
-    })],
+    // writablePaths 省略(3.6+):装配期从 schema 自动推断(components 数组元素含 code 字段 → ['components'])
+    subagents: [createHtmlSubagent()],
     dialog: {
       title: 'HTML 页面生成(代码作 data 资产)',
       placeholder: '让 agent 生成页面(如「生成一个产品落地页」)…',

@@ -119,3 +119,41 @@ test.describe('rag-demo: memory 异步注入链路', () => {
     expect(firstReqJson).not.toContain('## 产品 FAQ')
   })
 })
+
+test.describe('rag-demo: 子 agent 模式(双模式合并,原 rag-subagent-demo)', () => {
+  test('场景3:切 B 模式 → 重建 agent + use_rag 委派链路 + 检索命中可视化', async ({ page }) => {
+    await page.goto('/examples/rag-demo/')
+    await page.waitForSelector('.chat-dialog')
+    await clearChat(page)
+
+    // 切到 B 模式(createRagSubagent)→ unmount + 重建(等新对话框标题出现)
+    await clickByText(page, 'B · createRagSubagent 检索')
+    await page.waitForFunction(() => {
+      const el = document.querySelector('.chat-dialog')
+      const title = document.querySelector('.header-title')
+      return !!el && !!(title && title.textContent && title.textContent.includes('subagent 模式'))
+    }, { timeout: 10_000 })
+
+    // B 模式面板:知识库内容可见;A 模式的 memory 状态条不可见
+    const kbPreview = await page.textContent('.kb-preview pre')
+    expect(kbPreview).toContain('## 产品 FAQ')
+    expect(await page.locator('.status').count(), 'B 模式不应有 memory 加载状态条').toBe(0)
+
+    // 对话:mock LLM 队列含子 agent 轮(主委派 use_rag → 子 search_docs → 子收口 → 主收口)
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'use_rag', arguments: { task: '查价格与退款政策' } }] },
+      { tool_calls: [{ name: 'search_docs', arguments: { query: '价格 退款', topK: 3 } }] },
+      { text: '检索到:基础版 ¥99/月;7 天内无理由退款。' },
+      { text: '基础版 ¥99/月,7 天无理由退款。' },
+    ])
+    await fillInput(page, '价格和退款政策是什么')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+
+    // 检索命中可视化:hook 捕获 search_docs 结果经 subagent 事件转发
+    await page.waitForFunction(() => {
+      const el = document.querySelector('.hits-preview pre')
+      return !!el && !!el.textContent && el.textContent.includes('¥99/月')
+    }, { timeout: 10_000 })
+  })
+})
