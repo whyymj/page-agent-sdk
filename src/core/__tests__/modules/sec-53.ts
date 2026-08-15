@@ -1,5 +1,5 @@
 import { constructLlmFromConfig, constructOpenLlmSync } from '../../llm/constructLlm'
-import { extractTextDelta, extractReasoningDelta, extractUsage } from '../../utils/contentParts'
+import { extractTextDelta, extractReasoningDelta, extractUsage, normalizeUsage } from '../../utils/contentParts'
 import { createAgent } from '../../harness/createAgent'
 import { createSubagentMiddleware } from '../../harness/subagent'
 import { BaseChatModel } from '@langchain/core/language_models/chat_models'
@@ -82,7 +82,19 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(extractUsage({ additional_kwargs: { usage: { total_tokens: 10 } } } as any)?.total_tokens === 10, 'extractUsage additional_kwargs.usage(OpenAI/DeepSeek)')
     assert(extractUsage({ response_metadata: { usage: { total_tokens: 20 } } } as any)?.total_tokens === 20, 'extractUsage response_metadata.usage(Anthropic)')
     assert(extractUsage({ response_metadata: { token_usage: { total_tokens: 30 } } } as any)?.total_tokens === 30, 'extractUsage response_metadata.token_usage(兼容)')
+    // usage_metadata(Anthropic 流式聚合后的 langchain 标准字段,input/output_tokens 命名;rag-demo 真 LLM 实测 usage 全 null 驱动)
+    assert(extractUsage({ usage_metadata: { input_tokens: 100, output_tokens: 40, total_tokens: 140 } } as any)?.input_tokens === 100, 'extractUsage usage_metadata(Anthropic 流式聚合)')
+    // 网关实测形态:response_metadata.usage 为空对象 {}(非 nullish,?? 链会短路)→ 必须跳过空候选落到 usage_metadata
+    assert(extractUsage({ response_metadata: { usage: {}, model_provider: 'anthropic' }, usage_metadata: { input_tokens: 2, output_tokens: 33, total_tokens: 35 } } as any)?.input_tokens === 2,
+      'extractUsage 空对象 response_metadata.usage 不短路 → 落到 usage_metadata(rag-demo 真 LLM 实测回归)')
+    assert(extractUsage({ response_metadata: { usage: {} } } as any) === undefined, 'extractUsage 全部候选为空对象 → undefined')
     assert(extractUsage({} as any) === undefined, 'extractUsage 无 usage → undefined')
+  }
+  {
+    // normalizeUsage:input_tokens/output_tokens(usage_metadata 命名)归一 → prompt/completion(rag-demo 真 LLM 实测驱动)
+    const nu = normalizeUsage({ usage_metadata: { input_tokens: 100, output_tokens: 40 } } as any)
+    assert(nu?.prompt_tokens === 100 && nu?.completion_tokens === 40 && nu?.total_tokens === 140, 'normalizeUsage usage_metadata(input/output_tokens)→ 归一 TokenUsage(total 缺省取和)')
+    assert(normalizeUsage({ usage_metadata: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } } as any) === null, 'normalizeUsage 全 0 → null')
   }
   {
     // 默认 fetch 包装剥 x-stainless-* 遥测头(严格 CORS 的 OpenAI 兼容网关白名单不含它们 → 浏览器预检失败;真 LLM 实测)

@@ -132,6 +132,41 @@ export async function run() {
     sdk2.unmount()
   }
 
+  console.log('[e2e:automation] indexed + checkpoint + automation 共存(batch 多任务间 checkpoint 自动保存 + 跨实例恢复)')
+  {
+    // F1:三特性共存 → batch 每任务前 checkpoint → 持久到 local 后端 → 新实例恢复 checkpoint 栈
+    // (makeStore 是 sessionStorage 式同步 stub,撑不起真 IDB 异步协议,故用 local 后端验证共存语义)
+    globalThis.localStorage = makeStore()
+    const sess = { id: 'e2e-indexed-cp-sess' }
+    const model1 = stubModel(
+      { text: '任务A完成', usage: { total_tokens: 300 } },
+      { text: '任务B完成', usage: { total_tokens: 250 } },
+      { text: '任务C完成', usage: { total_tokens: 200 } },
+    )
+    const sdk1 = createChatSdk({
+      ui: false, id: 'e2e-indexed-cp', storage: 'local', session: sess, llm: model1,
+      capabilities: { ...MIN_CAPS, automation: true }, autoTitle: false, checkpoint: true,
+    })
+    await sdk1.mount()
+    // batch 三个任务 → 每任务前自动 checkpoint → mount 完成后 flush 写 store
+    const results = await sdk1.batch(['任务A', '任务B', '任务C'])
+    assert(results.length === 3 && results.every((r) => r.ok === true), 'batch 三个任务 → 全部成功')
+    assert(sdk1.usage.total_tokens === 750, 'batch 后 usage 累计 750(300+250+200)')
+    await sdk1.unmount()
+    // 新实例同 id + 同 storage + 同 session → mount load 恢复 checkpoint 栈 + usage
+    const sdk2 = createChatSdk({
+      ui: false, id: 'e2e-indexed-cp', storage: 'local', session: sess, llm: stubModel({ text: '续跑' }),
+      capabilities: { ...MIN_CAPS, automation: true }, autoTitle: false, checkpoint: true,
+    })
+    await sdk2.mount()
+    assert(sdk2.listCheckpoints().length > 0, `storage+checkpoint+automation 共存:新实例 listCheckpoints 有值(checkpoint 栈恢复),实际 ${sdk2.listCheckpoints().length}`)
+    assert(sdk2.usage.total_tokens === 750, `storage+checkpoint+automation 共存:新实例 usage 连续恢复(total_tokens=750),实际 ${sdk2.usage.total_tokens}`)
+    let restoreOk = true
+    try { sdk2.restoreLastCheckpoint() } catch { restoreOk = false }
+    assert(restoreOk, 'storage+checkpoint+automation 共存:restoreLastCheckpoint 可用(恢复栈不抛错)')
+    sdk2.unmount()
+  }
+
   console.log('[e2e:automation] subagent-writable:spawn_agent 透传 writablePaths → 子 agent 写内成功 / 越界 PATH_OUT_OF_SCOPE')
   {
     // spawn_agent(subagent.ts:234 writablePaths 参数)→ runSubagent(:149 wrapWithPathGuard 包装写工具)

@@ -382,6 +382,17 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 4. **maxMemoryRounds 默认 30 下调**:OOM 层与 prompt 成本正交(trimMemoryMessages 与 summarization 独立);softCap 已从成本侧解决。**重启触发**:小窗口模型(<128K)实测内存压力。
 
 
+### [2026-08-16] 复审(rv-arch/rv-code/rv-sec)残余项 — ⏸ 暂缓
+
+**来源**:team-review-hardening 落地后的三路复审。已修:数组重排 __pgId 内容匹配回填(rv-code)/ 沙箱 __proto__·Reflect 补检(rv-sec)/ MCP 守卫竞态时序 e2e 锁定(rv-sec,验证为非问题)/ fetchDoc CSRF 文档提醒(rv-sec B1)。以下登记:
+
+1. **MCP 守卫 vs 用户 setTools 同名的边界语义**:集成方 setTools 覆盖内置工具是 2.23.0 显式设计(后注册覆盖 + collisions warn);MCP 侧守卫注入时现场构建不受影响。**触发**:若未来出现「集成方工具面也被恶意注入」的威胁模型再收紧。
+2. **inspect_env 深度脱敏增强**(rv-sec P2):Map/Set 形态 / value 启发式检测(sk-xxx 形态)。核心路径已覆盖,边缘场景收益低误伤高。
+3. **proxyLlm throwOnDirectInProduction 默认开**(rv-sec P2):行为变更,现默认 warn(向后兼容);文档已提示。
+4. **沙箱 Symbol.for/bind 变体**(rv-sec 提及,核实为伪风险):Symbol.for 取不到已锁函数;/bind( 常见于合法脚本误伤大。留档理由防重复排查。
+5. **并行写 beforeBind 快照交错**(rv-code,理论):默认串行无触发;并行写丢更新本就是已文档化已知限制(见 2026-08-15 审查暂缓项 #8)。
+6. **beforeBind 深拷贝成本优化**(rv-code 建议:浅拷贝):codeAsset 场景每写一次 deepClone;大 bind 下可评估按 pgIdPaths 局部拷贝。**触发**:大 schema 性能实测出现瓶颈。
+
 ## 维护约定
 
 - 暂缓项**不进** `project.md`「进行中的 change」(避免占心智);本文件是唯一索引。

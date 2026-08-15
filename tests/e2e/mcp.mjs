@@ -7,13 +7,14 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { setupEnv, createAssert, FAKE_LLM, MIN_CAPS, createChatSdk } from './_helpers.mjs'
 import { StubChatModel } from './_stub-model.mjs'
+import { z } from 'zod'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, '../..')
 
-/** 起 mock MCP server(tsx 跑 scripts/mcp-mock-server.ts;resolve = TCP 端口可连) */
-function startMockServer(port) {
-  const child = spawn(process.execPath, ['--import', 'tsx', 'scripts/mcp-mock-server.ts'], {
+/** 起 mock MCP server(tsx 跑指定脚本(默认 mock;C2 用 malicious 同名工具脚本);resolve = TCP 端口可连) */
+function startMockServer(port, script = 'scripts/mcp-mock-server.ts') {
+  const child = spawn(process.execPath, ['--import', 'tsx', script], {
     cwd: repoRoot,
     env: { ...process.env, MCP_PORT: String(port) },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -125,6 +126,97 @@ export async function run() {
     assert(msgs.includes('晴 ☀️'), 'agent 真实调用 MCP get_weather → mock server 返回「晴 ☀️」回灌消息')
     assert(stub.calls >= 2, 'ReAct 走完:工具调用轮 + 收口轮(≥2 次 model call)')
     sdk.unmount()
+  }
+
+  console.log('[e2e:mcp] C2 保留字保护:恶意 MCP server 暴露 write 工具 → 拒绝注入 + 正常工具照常')
+  {
+    const malicious = startMockServer(3195, 'scripts/mcp-malicious-server.ts')
+    await malicious.started
+
+    const bind = { x: 'old' }
+    const stub = new StubChatModel([
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'x', value: 'new' } } }] },
+      { text: '已改好' },
+    ])
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-mcp-reserved', storage: 'memory', llm: stub, capabilities: MIN_CAPS,
+      data: { schema: z.object({ x: z.string() }), bind },  // 构造期声明 data → 内置 write 工具存在
+      mcp: [{ transport: 'http', url: 'http://127.0.0.1:3195/mcp', name: 'malicious' }],
+    })
+    await sdk.mount()
+
+    // 轮询等后台握手注入(固定 sleep 不稳,同上方真实链路用例)
+    await (async () => {
+      for (let i = 0; i < 50; i++) {
+        if (sdk.inspect().tools.some((t) => t.name === 'safe_tool' || (t.source || '').startsWith('mcp:'))) return
+        await new Promise((r) => setTimeout(r, 100))
+      }
+    })()
+
+    const info = sdk.inspect()
+
+    // C2-①:内置 write 工具存在且来源为 builtin(未被 MCP 覆盖)
+    assert(info.tools.some((t) => t.name === 'write' && t.source === 'builtin'),
+      '内置 write 工具保持不变(source=builtin,保留字保护生效)')
+
+    // C2-②:无 mcp 来源的 write 工具(恶意 write 工具被拒绝注入)
+    const mcpWriteTools = info.tools.filter((t) => t.name === 'write' && t.source?.startsWith('mcp:'))
+    assert(mcpWriteTools.length === 0, '恶意 MCP write 工具被拒绝注入(不在 mcp 来源工具列表)')
+
+    // C2-③:正常工具(safe_tool)照常注入
+    assert(info.tools.some((t) => t.name === 'safe_tool' && t.source === 'mcp:malicious'),
+      '正常工具 safe_tool 照常注入(malicious server)')
+
+    // C2-④:验证内置 write 工具调用行为正常(构造期 data 的 bind)
+    await sdk.send('把 x 改成 new')
+    assert(bind.x === 'new', '内置 write 工具行为正常,agent 可修改数据')
+
+    // C2-⑤(rv-sec 复审:守卫竞态时序锁定):用户先 setTools 注册同名工具,后注入的 MCP 同名工具仍被拒
+    // (守卫的 reservedNames 是注入时现场构建,不吃陈旧快照)
+    {
+      const warned2 = []
+      const ow = console.warn
+      console.warn = (...a) => { warned2.push(a.join(' ')); ow(...a) }
+      try {
+        sdk.setTools([{ name: 'lookup', invoke: async () => 'user-tool', description: 'd', schema: { type: 'object', properties: {} } }])
+        const info2 = sdk.inspect()
+        assert(info2.tools.some((t) => t.name === 'lookup' && t.source === 'user'), '用户后注册工具正常进池(user 组覆盖语义)')
+        assert(info2.tools.every((t) => t.name !== 'read' || t.source !== 'mcp:malicious'), 'MCP 同名 read 仍被拒(与用户工具重名同样拦)')
+      } finally { console.warn = ow }
+    }
+
+    sdk.unmount()
+    malicious.stop()
+  }
+
+  console.log('[e2e:mcp] F4 双 server 一坏一好:好的工具照常注入,坏的降级不拖累')
+  {
+    const good = startMockServer(3196)
+    await good.started
+    const dead = await startDeadServer()
+    const stub = new StubChatModel([{ text: 'ok' }])
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-mcp-partial', storage: 'memory', llm: stub, capabilities: MIN_CAPS,
+      mcp: [
+        { transport: 'http', url: `http://127.0.0.1:${dead.port}/mcp`, name: 'dead', timeoutMs: 1200 },
+        { transport: 'http', url: 'http://127.0.0.1:3196/mcp', name: 'good' },
+      ],
+    })
+    await sdk.mount()
+    // 轮询等好 server 注入(dead 1.2s 后超时降级,不拖累 good)
+    let injected = false
+    for (let i = 0; i < 50; i++) {
+      if (sdk.inspect().tools.some((t) => t.source === 'mcp:good')) { injected = true; break }
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    assert(injected, '双 server 一坏一好:好 server 工具照常注入(get_weather/search/calc)')
+    await new Promise((r) => setTimeout(r, 1500))  // 等 dead 超时降级落定
+    const info = sdk.inspect()
+    assert(!info.mcp.servers.some((sv) => sv.name === 'dead'), '坏 server 握手超时 → 降级不进 servers(故障隔离)')
+    assert(info.tools.some((t) => t.source === 'mcp:good'), '坏 server 降级后,好 server 工具仍在(allSettled 隔离)')
+    sdk.unmount()
+    good.stop()
+    dead.stop()
   }
 
   // 收尾:关 server + 复位全局监听(挂死 server 上有 MCP client 的 pending 连接,close 回调永不来 —— 先 destroy 再 close)

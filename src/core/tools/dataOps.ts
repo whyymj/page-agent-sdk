@@ -27,7 +27,7 @@ import {
 import { getSchemaTopKeys, isPathAllowed, getSchemaAtPath, projectBySchemaDeep, describeSchemaNode, extendSchemaWithPgId } from './schemaUtils'
 import type { VfsStore } from '../backends/vfs'
 import type { ResourceProtectSpec, ProtectedCtx } from './resources'
-import { ResourceStore, renderReadPlaceholders, enforceSet, enforcePatches, matchProtectedEither, normalizePath } from './resources'
+import { ResourceStore, renderReadPlaceholders, enforceSet, enforcePatches, matchProtectedEither, normalizePath, deepEqual } from './resources'
 
 /** 单主对象配置 */
 export interface DataConfig {
@@ -161,11 +161,16 @@ export function commitSetToBind(args: {
   op?: 'set' | 'draft_commit'  // 默认 'set';draft_commit 用 'draft_commit'(快照/审计标记区分)
   /** 成功写入 bind 后回调(供 checkpoint 脏标记:dryRun 不触发,因 dryRun 在写入前早 return)。set_data/write(set)/draft_commit 共用此收敛点 */
   onWrite?: () => void
+  /** B __pgId 补齐回调(code-as-data-asset):成功写入后调,第二参为写前 bind 深快照(按位置回填原 __pgId 用);
+   * 参数化注入,无 codeAsset 场景 no-op(快照也只在回调存在时捕获,零成本开关) */
+  internalAfterWrite?: (bind: any, before: any) => void
   /** 受保护资源强制层(精确值保护);undefined 或空 → no-op(向后兼容)。dryRun 也走强制(预检即拦) */
   protectedCtx?: ProtectedCtx
 }): { ok: true; hash: string; data: unknown } | { ok: false; error: string } {
   const { bindRef, schema, allowKeys, snapshots, maxSnapshots, audit, dryRun, op = 'set', protectedCtx } = args
   let value = args.value
+  // B __pgId:写前深快照(仅配 internalAfterWrite 的 codeAsset 场景捕获,零成本开关)
+  const beforeBind = args.internalAfterWrite ? deepClone(bindRef) : null
   // 强制层(§7c F1):normalize(C1 回显 + verbatim 展开 + D1)+ freeze/verbatim 比对,先于 schema 校验
   if (protectedCtx) {
     const er = enforceSet({ value, ctx: protectedCtx })
@@ -198,6 +203,7 @@ export function commitSetToBind(args: {
   }
   audit({ op, value: res.data, timestamp: Date.now() })
   args.onWrite?.()  // 真正写入后通知(checkpoint 脏标记;dryRun 在上方早 return 不会触发)
+  args.internalAfterWrite?.(bindRef, beforeBind)  // B __pgId 补齐(成功路径,before 用于按位置回填原 id)
   return { ok: true, hash: hashValue(bindRef), data: res.data }
 }
 
@@ -223,10 +229,13 @@ export function applyPatchesToBind(args: {
   snapshotLabel?: string
   /** dryRun:预检走完整校验链但不落盘/不入快照/不 applyLive,返回 clone 供预览 */
   dryRun?: boolean
+  /** B __pgId 补齐回调(code-as-data-asset):成功写入后调,before = 写前深快照(按位置回填原 __pgId 用);与 commitSetToBind 同模式 */
+  internalAfterWrite?: (bind: any, before: any) => void
   /** 受保护资源强制层;undefined 或空 → no-op。在 patch 应用后、schema 校验前调用 */
   protectedCtx?: ProtectedCtx
 }): { ok: true; applied: { op: EditOp; jp: string; value: unknown }[]; clone: unknown } | { ok: false; error: string } {
   const { bindRef, patches, schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode = 'zod', snapshotLabel, dryRun, protectedCtx } = args
+  const beforeBind = args.internalAfterWrite ? deepClone(bindRef) : null  // B __pgId 写前快照
   const clone = deepClone(bindRef)
   const applied: { op: EditOp; jp: string; value: unknown }[] = []
   for (let i = 0; i < patches.length; i++) {
@@ -282,6 +291,7 @@ export function applyPatchesToBind(args: {
     if (allowKeys) safeMerge(bindRef as Record<string, any>, res.data)
     else restoreInPlace(bindRef as Record<string, unknown> | unknown[], res.data)
   }
+  args.internalAfterWrite?.(bindRef, beforeBind)  // B __pgId 补齐(成功路径,before 用于按位置回填原 id)
   markDataDirty?.()
   return { ok: true, applied, clone }
 }
@@ -373,7 +383,53 @@ function redactPgInPlace(obj: any): void {
 export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): StructuredToolInterface[] {
   // code-as-data-asset:pgIdPaths 触发 schema extend(加 __pgId → safeParse 不剥离)+ afterWrite(supplementPgId 补 __pgId)
   const pgIdPaths = opts.pgIdPaths ?? []
-  const internalAfterWrite = pgIdPaths.length ? (b: any) => supplementPgId(b, pgIdPaths) : undefined
+  // B __pgId 补齐(全写路径收敛点):① 写前快照回填原 __pgId(read 投影隐藏 → agent 整体替换的 value 不含,
+  // 不回填则映射键重生成,checkout/commit 按 __pgId 定位断链)。回填两段式(rv-code 复审:纯按位置在 move/重排
+  // 后会错配到不同组件):先按内容深度相等匹配(剥 __pgId 比较,未改元素无论挪到哪都找回自己的 id),未匹配项
+  // 再按位置兜底(改动元素改了内容但大概率还在原位)② supplementPgId 补全新增
+  const internalAfterWrite = pgIdPaths.length ? (b: any, before: any) => {
+    if (before && typeof before === 'object') {
+      for (const wp of pgIdPaths) {
+        const oldArr = getByPath(before, wp)
+        const newArr = getByPath(b, wp)
+        if (!Array.isArray(oldArr) || !Array.isArray(newArr)) continue
+        // 剥 __pgId 的比较副本(元素顶层的 __pgId 不参与内容相等判定)
+        const strip = (o: unknown) => {
+          if (!o || typeof o !== 'object') return o
+          const c = { ...(o as Record<string, unknown>) }
+          delete c.__pgId
+          return c
+        }
+        const used = new Set<number>()
+        // 第一段:内容相等匹配(重排安全;同内容多元素按首个未用命中,与 findStrippedKeys 同策略)
+        for (let j = 0; j < newArr.length; j++) {
+          const ne = newArr[j]
+          if (!ne || typeof ne !== 'object' || '__pgId' in (ne as object)) continue
+          for (let i = 0; i < oldArr.length; i++) {
+            if (used.has(i)) continue
+            const oe = oldArr[i] as any
+            if (!oe || typeof oe !== 'object' || !oe.__pgId) continue
+            if (deepEqual(strip(oe), strip(ne))) {
+              ;(ne as any).__pgId = oe.__pgId
+              used.add(i)
+              break
+            }
+          }
+        }
+        // 第二段:位置兜底(内容已改但未挪位的元素)
+        for (let i = 0; i < oldArr.length && i < newArr.length; i++) {
+          if (used.has(i)) continue
+          const oldId = (oldArr[i] as any)?.__pgId
+          const ne = newArr[i]
+          if (oldId && ne && typeof ne === 'object' && !('__pgId' in (ne as object))) {
+            ;(ne as any).__pgId = oldId
+            used.add(i)
+          }
+        }
+      }
+    }
+    supplementPgId(b, pgIdPaths)
+  } : undefined
   let schema: ZodType = pgIdPaths.length ? extendSchemaWithPgId(config.schema, pgIdPaths).schema : config.schema
   let bindRef: any = config.bind
   let description: string = config.description ?? '主数据对象'
@@ -514,6 +570,15 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     return null
   }
 
+  /**
+   * A1 写能力标注(team-review-hardening):授权面剥离(子 agent 装配 + spawn 自授)/ 组件锁主写守卫
+   * 三处统一按此判定 —— 单一真相源防硬编码清单漂移(历史两次漏 eval_script·restore_data)。
+   * 条件写用函数形态(eval_script 仅 mode:'transform');无法确定 args 的消费方按「是写」保守处理。
+   */
+  const markWrite = (t: unknown, cap: boolean | ((args: Record<string, unknown>) => boolean) = true): void => {
+    ;(t as { writeCapable?: unknown }).writeCapable = cap
+  }
+
   const describeData = tool(
     async () => [
       `说明: ${description}`,
@@ -556,7 +621,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (conflict !== null) return conflict
       const pr = maybeParseValue(value)
       if (pr.parseError) return jsonParseError('', value, pr.parseError)
-      const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit, onWrite: markDataDirty, protectedCtx })
+      const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit, onWrite: markDataDirty, internalAfterWrite, protectedCtx })
       if (!r.ok) return r.error
       setBaseline(r.hash, scope)
       return `已设置主数据 = ${safeStringify(r.data, 600)} (新 hash=${r.hash})${allowKeys ? '(白名单模式:仅更新 schema 声明字段,未声明字段保留)' : ''}`
@@ -571,6 +636,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       }),
     },
   )
+  markWrite(setData)
 
   const editData = tool(
     async (args, config) => {
@@ -595,7 +661,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (bindRef == null || typeof bindRef !== 'object') {
         return toolError({ code: 'NOT_OBJECT', message: `edit 仅适用于对象/数组主数据,当前是 ${bindRef === undefined ? 'undefined' : typeof bindRef}`, hint: '叶子(原始类型)请用 set_data 整体设置' })
       }
-      const r = applyPatchesToBind({ bindRef, patches: [{ op, jsonPath: jp, value }], schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'zod', protectedCtx })
+      const r = applyPatchesToBind({ bindRef, patches: [{ op, jsonPath: jp, value }], schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'zod', internalAfterWrite, protectedCtx })
       if (!r.ok) return r.error
       const a = r.applied[0]
       audit({ op: 'edit', detail: `${a.op}${jp ? '@' + jp : ''}`, value: a.value, timestamp: Date.now() })
@@ -623,6 +689,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       }),
     },
   )
+  markWrite(editData)
 
   const deleteData = tool(
     async ({ jsonPath, expectedHash }, config) => {
@@ -657,6 +724,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       }),
     },
   )
+  markWrite(deleteData)
 
   // snapshot_data / list_data_snapshots 已移除(simplify-toolset):被 history_data({ list: true }) 吸收;
   // 手动检查点改靠 set/edit/delete 自动快照(set/edit/delete 前自动存,restore_data 可回退)。
@@ -681,6 +749,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       schema: z.object({ id: z.number().int().optional().describe('指定快照序号;不传则回退最近一次') }),
     },
   )
+  markWrite(restoreData)
 
   const historyData = tool(
     async ({ id, jsonPath, list }) => {
@@ -799,7 +868,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         const result = res.result
         // 子树 transform:返回值作为 jsonPath 子树的新值(set 到子路径 + 整体 schema 校验)
         if (jp) {
-          const r = applyPatchesToBind({ bindRef, patches: [{ op: 'set', jsonPath: jp, value: result }], schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'schema_invalid', snapshotLabel: 'eval_transform_subtree', protectedCtx })
+          const r = applyPatchesToBind({ bindRef, patches: [{ op: 'set', jsonPath: jp, value: result }], schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'schema_invalid', snapshotLabel: 'eval_transform_subtree', internalAfterWrite, protectedCtx })
           if (!r.ok) return r.error
           audit({ op: 'edit', detail: `eval_transform_subtree @ ${jp}`, timestamp: Date.now() })
           setBaseline(hashValue(bindRef), scope)
@@ -812,7 +881,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           if (bindRef === null || typeof bindRef !== 'object') {
             return toolError({ code: 'LEAF_BIND', message: `主数据 bind 为原始类型(${bindRef === null ? 'null' : typeof bindRef}),eval transform(patches) 无法就地替换`, hint: '主数据 bind 必须为对象/数组;叶子值请用对象包裹或集成方通过 sdk.setData 替换 bind' })
           }
-          const r = applyPatchesToBind({ bindRef, patches: (result as any).patches, schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'schema_invalid', snapshotLabel: 'eval_transform', protectedCtx })
+          const r = applyPatchesToBind({ bindRef, patches: (result as any).patches, schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'schema_invalid', snapshotLabel: 'eval_transform', internalAfterWrite, protectedCtx })
           if (!r.ok) return r.error
           audit({ op: 'edit', detail: `eval_transform(${r.applied.length} patches)`, timestamp: Date.now() })
           setBaseline(hashValue(bindRef), scope)
@@ -858,6 +927,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       }),
     },
   )
+  markWrite(evalScript, (args) => (args as Record<string, unknown>)?.mode === 'transform')
 
   // ============ 高层直观工具:read / write(合并 describe+get / set+edit+delete+自动锁+自动快照) ============
   const readSlot = tool(
@@ -1015,7 +1085,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         const ok = deleteByPath(bindRef, patch.jsonPath)
         markDataDirty()
         audit({ op: 'delete', detail: patch.jsonPath, timestamp: Date.now() })
-        if (internalAfterWrite) { internalAfterWrite(bindRef); markDataDirty() }
+        if (internalAfterWrite) { internalAfterWrite(bindRef, null); markDataDirty() }
         setBaseline(hashValue(bindRef), scope)
         return ok ? `已删除主数据 @ ${patch.jsonPath}` : `主数据 @ ${patch.jsonPath} 不存在(无需删除)`
       }
@@ -1029,11 +1099,11 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           ? patchList
           : (patches && patches.length) ? patches
           : [{ op: patch!.op ?? 'set', jsonPath: patch!.jsonPath || '', value: payload }]
-        const r = applyPatchesToBind({ bindRef, patches: list, schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'zod', dryRun, protectedCtx })
+        const r = applyPatchesToBind({ bindRef, patches: list, schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'zod', dryRun, internalAfterWrite, protectedCtx })
         if (!r.ok) return r.error
         if (dryRun) return `dryRun(edit): ${r.applied.length} 个 patch 预检通过(schema 校验 OK)。预览结果:${safeStringify(r.clone, 600)}。未实际写入、未入快照。`
         audit({ op: 'edit', detail: `${r.applied.length} 个 patch${r.applied.length > 1 ? '(批量)' : ''}`, value: r.applied.map((a) => `${a.op}@${a.jp}`), timestamp: Date.now() })
-        if (internalAfterWrite) { internalAfterWrite(bindRef); markDataDirty() }
+        // B __pgId 补齐已由 internalAfterWrite 在 applyPatchesToBind 成功路径处理
         setBaseline(hashValue(bindRef), scope)
         redactPgInPlace(r.clone)
         return `已 write(edit) 主数据(${r.applied.length} 个 patch)。当前值:${safeStringify(r.clone, 600)} (新 hash=${hashValue(bindRef)})`
@@ -1044,10 +1114,10 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (pr.parseError) return jsonParseError('', payload, pr.parseError)
       const conflict = await handleConflict('set', effHash)
       if (conflict !== null) return conflict
-      const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit, dryRun, onWrite: markDataDirty, protectedCtx })
+      const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit, dryRun, onWrite: markDataDirty, internalAfterWrite, protectedCtx })
       if (!r.ok) return r.error
       if (dryRun) return `dryRun(set): schema 校验通过。预览新值:${safeStringify(r.data, 600)}。未实际写入、未入快照。`
-      if (internalAfterWrite) { internalAfterWrite(bindRef); markDataDirty() }
+      // B __pgId 补齐已由 internalAfterWrite 在 commitSetToBind 成功路径处理
       const __postHash = hashValue(bindRef)
       setBaseline(__postHash, scope)
       redactPgInPlace(r.data)
@@ -1075,6 +1145,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       }),
     },
   )
+  markWrite(writeSlot)
 
   const schemaData = tool(
     async ({ jsonPath }) => {
@@ -1162,7 +1233,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         const conflict = await handleConflict('set', effHash)
         if (conflict !== null) return conflict  // 冲突:草稿保留(未删),LLM 重 read 拿最新 hash 后再 commit
         // 复用 commitSetToBind(与 write(set)/set_data 共用:schema 校验 + 快照 + merge + audit);op='draft_commit' 标记快照/审计
-        const r = commitSetToBind({ bindRef, value: parsed, schema, allowKeys, snapshots, maxSnapshots, audit, op: 'draft_commit', onWrite: markDataDirty, protectedCtx })
+        const r = commitSetToBind({ bindRef, value: parsed, schema, allowKeys, snapshots, maxSnapshots, audit, op: 'draft_commit', onWrite: markDataDirty, internalAfterWrite, protectedCtx })
         if (!r.ok) return r.error  // schema 校验失败:草稿保留(不删),LLM 据错误修后重 commit
         setBaseline(r.hash, scope)
         delete store.files[key]  // 成功:清草稿
@@ -1178,6 +1249,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         }),
       },
     )
+    markWrite(draftCommit)
     draftTools.push(draftWrite, draftCommit)
   }
 
@@ -1242,6 +1314,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         }),
       },
     )
+    markWrite(rupdate)
     const rlist = tool(
       async () => {
         const list = resourceStore!.list()
@@ -1267,6 +1340,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         }),
       },
     )
+    markWrite(rdelete)
     resourceTools.push(rget, rupdate, rlist, rdelete)
   }
 

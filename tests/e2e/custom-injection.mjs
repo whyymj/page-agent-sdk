@@ -405,5 +405,28 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:custom-injection] memory 异步抛错 → 降级空串 + agent 不崩 + 后续正常')
+  {
+    // F3:memory: async () => { throw new Error('RAG fail') } → agent 不崩、memory 降级空串、后续 send 正常
+    const { stubModel } = await import('./_stub-model.mjs')
+    let callCount = 0
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-mem-err', storage: 'memory', llm: stubModel({ text: '回复正常' }, { text: '回复正常' }), autoTitle: false,  // 两次 send 各排一条;关自动标题防其吃掉队列
+      capabilities: { ...MIN_CAPS, memory: true },
+      memory: async () => { callCount++; throw new Error('RAG fail') },
+    })
+    await sdk.mount()
+    let threw = false
+    try { await sdk.send('测试') } catch { threw = true }
+    assert(!threw, 'memory 异步抛错 → agent 不抛错,继续运行')
+    assert(callCount > 0, 'memory 异步函数被调用(实际执行验证)')
+    const info = sdk.inspect()
+    assert(info.memory === '' || info.memory === undefined, 'memory 抛错 → 降级为空串(或 undefined),不残留错误信息')
+    // 后续 send 正常
+    const reply2 = await sdk.send('再测一次')
+    assert(String(reply2 ?? '').includes('回复正常'), 'memory 抛错后后续 send 正常工作')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

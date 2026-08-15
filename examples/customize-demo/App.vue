@@ -59,7 +59,8 @@ const showHistory = ref(false)
 const debugVisible = ref(false)
 let ctrl: AbortController | null = null
 
-onMounted(async () => {
+/** 创建并挂载 headless sdk(onMounted 初次 + 浏览器 E2E 重挂共用) */
+async function init() {
   const s = createChatSdk({
     id: 'customize-demo',
     ui: false,
@@ -83,6 +84,13 @@ onMounted(async () => {
   currentSid.value = s.sessionId
   // switchSession/onClear 后 SDK emit session_restored → 同步当前会话高亮
   s.hook((e) => { if (e.type === 'session_restored') currentSid.value = s.sessionId })
+}
+
+onMounted(async () => {
+  await init()
+  // 浏览器 E2E 采样口(tests/browser/lifecycle.spec.ts 流式 unmount/重挂验证;与 rag-demo __sdk 同模式)
+  ;(window as any).__sdk = sdk.value
+  ;(window as any).__remountSdk = async () => { await init(); (window as any).__sdk = sdk.value }
 })
 onUnmounted(() => { ctrl?.abort(); sdk.value?.unmount() })
 

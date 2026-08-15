@@ -60,6 +60,10 @@ export interface VfsStore {
   consumeDirty?: () => boolean
   /** 设置被引用保护集(harden-context-resilience P4:LRU 淘汰时跳过被消息引用的 large_results,防 vfs_read 404) */
   setProtectedRefs?: (refs: Set<string>) => void
+  /** path → 所属池(E4 超池预检用;userFiles/largeResults/drafts/resources) */
+  getPoolOf?: (path: string) => string
+  /** 池上限字节(E4 超池预检用) */
+  getPoolLimit?: (pool: string) => number
 }
 
 /**
@@ -190,6 +194,8 @@ export function createVfs(
     isDirty: () => _dirty,
     consumeDirty: () => { const d = _dirty; _dirty = false; return d },
     setProtectedRefs: (refs: Set<string>) => { _protectedRefs = refs },
+    getPoolOf: (path: string) => poolOf(path),
+    getPoolLimit: (pool: string) => poolMaxBytes[pool as VfsPoolKey] ?? DEFAULT_POOL_BYTES.userFiles,
   }
   if (persist) {
     store.hydrate = (incoming) => {
@@ -289,6 +295,19 @@ export function createVfsTools(store: VfsStore): StructuredToolInterface[] {
 
   const vfsWrite = tool(
     async ({ path, content, jsonString }) => {
+      const key = normalize(path)
+      // E4(code-review):单文件超所属池上限显式报错,不静默淘汰后被 enforceLimit 删
+      const poolLimit = store.getPoolLimit?.(store.getPoolOf?.(key) ?? 'userFiles') ?? 2 * 1024 * 1024
+      const contentBytes = encodeLength(content)
+      if (contentBytes > poolLimit) {
+        const poolName = store.getPoolOf?.(key) ?? 'userFiles'
+        return toolError({
+          code: 'VFS_POOL_LIMIT_EXCEEDED',
+          path,
+          message: `内容(${(contentBytes / 1024 / 1024).toFixed(2)}MB)超过 vfs 池 ${poolName} 上限(${(poolLimit / 1024 / 1024).toFixed(2)}MB)`,
+          hint: `请拆分内容为多个文件,或使用其他 vfs 池。默认池上限:large_results 4MB / drafts 2MB / userFiles 2MB / resources 4MB`,
+        })
+      }
       // jsonString=true:写入前校验 content 是合法 JSON(非法 VFS_JSON_INVALID,不写入)
       if (jsonString) {
         try {
@@ -297,7 +316,7 @@ export function createVfsTools(store: VfsStore): StructuredToolInterface[] {
           return toolError({ code: 'VFS_JSON_INVALID', path, message: `content 非合法 JSON: ${(e as Error).message}`, hint: 'jsonString=true 要求 content 是合法 JSON;检查引号/逗号/括号配对;或省略 jsonString 写纯文本' })
         }
       }
-      store.files[normalize(path)] = { content, updatedAt: now() }
+      store.files[key] = { content, updatedAt: now() }
       return `已写入 ${path}(${content.length} 字符)${jsonString ? '(JSON 校验通过)' : ''}`
     },
     {

@@ -528,16 +528,23 @@ export function createAgent(options: CreateAgentOptions) {
       // (modelverse 假死:fetch 默认无超时)时永不 resolve/reject,stall 看门狗(包的是已返回的迭代器)根本没开始
       // → 子 agent/主 agent 永挂(use_html 委派实测挂 17 分钟)。与 stall 同阈值同语义(超时 → StreamStalledError,
       // status=408 不当网络错空烧重试;abort 清理)
+      // E3(code-review):stallMs=0 语义应为真·关闭,而非被 falsy 判定回退到 DEFAULT_STREAM_STALL_MS(90s)
       let launchTimer: ReturnType<typeof setTimeout> | undefined
       try {
         stream = await withRetry(() => {
           clearTimeout(launchTimer)  // 重试间隙清旧计时器
-          return Promise.race([
-            streamer.stream(req.messages, { signal: inner.signal }),
-            new Promise<never>((_, rej) => {
-              launchTimer = setTimeout(() => rej(new StreamStalledError(stallMs || DEFAULT_STREAM_STALL_MS)), stallMs || DEFAULT_STREAM_STALL_MS)
-            }),
-          ])
+          const effectiveStallMs = stallMs > 0 ? stallMs : DEFAULT_STREAM_STALL_MS
+          const promise = streamer.stream(req.messages, { signal: inner.signal })
+          // 仅当 stallMs > 0 时才套 race 防启动挂死;0 = 完全关闭超时
+          if (stallMs > 0) {
+            return Promise.race([
+              promise,
+              new Promise<never>((_, rej) => {
+                launchTimer = setTimeout(() => rej(new StreamStalledError(effectiveStallMs)), effectiveStallMs)
+              }),
+            ])
+          }
+          return promise
         }, retryOpts)
       } finally { clearTimeout(launchTimer) }
     } catch (err) {
@@ -884,7 +891,17 @@ export function createAgent(options: CreateAgentOptions) {
             const t0 = Date.now()   // 独立计时(不依赖 tracing;span 仅 tracing 开启时才有 durationMs)
             onEvent({ type: 'tool_call', name: c.call.name, args: c.call.args })
             log('tool_call', { round: rounds + 1, name: c.call.name, args: c.call.args, id: c.id })
-            const result = await toolHandler(c.ctx)
+            let result: { content: string; status: 'done' | 'error' }
+            try {
+              result = await toolHandler(c.ctx)
+            } catch (err) {
+              // E1(arch P1-1):wrapToolCall 洋葱外层 catch → 普通Error转recoverable错误结果回灌
+              // (与 coreExecTool 内部 asAgentError(err,'recoverable') 语义对齐)
+              // abort 保留语义:不吞,直接抛(让外层 abort 检查处理)
+              if (isAbort(err, signal)) throw err
+              const agentErr = asAgentError(err, 'recoverable')
+              result = { content: `工具执行出错：${agentErr.message}`, status: 'error' }
+            }
             const durationMs = Date.now() - t0
             onEvent({ type: 'tool_result', name: c.call.name, result: result.content, status: result.status, durationMs })
             log('tool_result', { round: rounds + 1, name: c.call.name, result: result.content, status: result.status, durationMs })
@@ -926,8 +943,9 @@ export function createAgent(options: CreateAgentOptions) {
       // 保证最终一定有综合输出,而非白费全部工具产出后丢一句「请简化问题」
       const last = currentMessages[currentMessages.length - 1]
       if (last && typeOf(last) === 'tool') {
-        // 提示并入首部 system(单条 system 在首,避免尾部 system 消息被部分 API 拒收)
-        const rest = currentMessages.filter((m) => typeOf(m) !== 'system')
+        // E2(code-review):只移除首条 system(主 prompt),保留中部压缩摘要 SystemMessage(由 summarization 中间件注入)
+        // 旧实现 filter 掉所有 system → 长对话跨轮摘要首轮即剥光 → 从未送达模型(P0-1 修复的对立面)
+        const rest = currentMessages[0] && typeOf(currentMessages[0]) === 'system' ? currentMessages.slice(1) : currentMessages.slice()
         const wrapUpMessages = [
           new SystemMessage(
             buildSystemPrompt() + '\n\n工具调用次数已达上限,请基于已有工具结果直接给出最终回答,不要再调用工具。',

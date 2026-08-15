@@ -642,6 +642,7 @@ sdk.vfsWrite('docs/components/hero.md', 'Hero 组件用于首屏主视觉...')
 ```
 
 - **RAG**(检索型):`search_docs`(语义检索 retriever)/ `load_doc`(异步加载 loader)/ vfs 搜索 / `fetch_document`;只读;默认装 `rag-search` skill。`retriever`/`loader` 集成方注入(SDK 零数据源依赖,不绑向量库)。检索的大段文档**不污染主上下文**(只回结构化结论)
+- **`fetch_document` 安全提示**:URL 由 LLM 控制,同源请求默认带 cookie(浏览器 fetch 默认 `credentials:'same-origin'`)—— 文档内容以「不可信围栏」包裹防注入,但抓取本身可达任意同源 GET。敏感接口(如 `/api/user`)请服务端配 CSRF/鉴权校验,或 `capabilities:{fetch:false}` 关闭该工具。
 - **HTML**(生成型,3.0 单模式 breaking):规划(`write_todos`/`update_todo`)+ **代码作为 data 资产**(`data.<writablePath>[i].code` 字段,随 data json 持久化进服务端 DB;UI 直接绑 `data.code` 响应式渲染)+ **vfs 作编辑工作副本** + 限定写(`writablePaths` path guard)。**框架自动 checkout/commit**(主 agent 透明):beforeAgent 把 `data.code` 按 `__pgId` 检出到 vfs(`html/<__pgId>.html`,覆盖式刷新)→ 子 agent 在 vfs 改 → afterAgent 增量回写改过的 vfs → `data.code`(直改 bind,不经 write,不进快照栈)。默认开 `summarization`(频繁改代码累积快)
   - **两条工作路径**:① 新建组件 → 子 agent `write({patch:{op:'set',jsonPath:'components.N',value:{name,code,props}}})`,code 直接进 data(框架补 `__pgId`,不经 vfs/checkout/commit);② 修改组件 → 框架 checkout → 子 `vfs_read`+`vfs_edit` 增量改工作副本 → 框架 commit 回写
   - **`__pgId` 框架无感注入**:集成商 schema 不声明;read 投影自动隐藏(`__pg*` 前缀);agent 写不进(path guard);persist 透明带(跨会话/跨设备稳定);vfs 文件名 = `codeVfsPrefix+__pgId+ext`
@@ -1308,6 +1309,7 @@ createChatSdk({
 - **浏览器仅远程 transport**:`http`(fetch)/ `websocket`(原生 WebSocket)/ `sse`(eventsource);不支持 `stdio`(无 node)。
 - **动态加载**:仅配了 `mcp` 才加载 `@modelcontextprotocol/sdk`(optional peerDep;ESM/UMD 集成方按需装,IIFE 已打进)。
 - **故障隔离**:单 server 连接失败跳过 + `console.warn`,不影响主 agent 与其他 server。
+- **工具名保留字保护**:MCP 工具与内置/用户工具重名(如 `write`/`read`)时**拒绝注入**该工具 + `console.warn` 留痕(防被入侵 server 静默替换内置工具);同名不冲突的其余工具照常注入。
 - MCP 工具自动出现在 `agent.inspect()` 与 DebugDrawer「Agent 信息」tab。
 
 ### 6.9 onEvent 事件回调(订阅常用时机)

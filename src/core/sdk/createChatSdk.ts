@@ -1252,6 +1252,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         getBind: () => liveData()?.bind,
         writablePaths: codeAssetPgIdPaths,
         getLocked: () => componentLock!.locked(),
+        tools: allTools,  // A3 按标注判定写能力
       })
     : undefined
   const subagentsMw = useSubagent && subagentsForAssemble !== undefined
@@ -2283,13 +2284,25 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         core.mcpServers = []
         // 复用外层 mcpTools 数组(buildCore 作用域声明):旧实现在此用 const 声明同名局部变量遮蔽外层,
         // 致 push 进局部数组、rebuildExtraTools 读外层空数组 → MCP 工具从未注入 agent(主流程审查 P0-3)
+        /** C1(MCP 保留字保护):工具注入前查已注册非 mcp 来源工具名,冲突 → skip + warn */
+        const reservedNames = new Set<string>()
+        for (const t of allTools) {
+          const source = toolSources.get(t.name)
+          if (source && !source.startsWith('mcp:')) reservedNames.add(t.name)
+        }
         results.forEach((r, i) => {
           const cfg = options.mcp![i]
           const label = cfg.name ?? cfg.url
           if (r.status === 'fulfilled') {
             core.mcpServers.push({ name: label, url: cfg.url, toolCount: r.value.tools.length })
-            r.value.tools.forEach((t) => toolSources.set(t.name, `mcp:${label}`))
-            mcpTools.push(...r.value.tools)
+            r.value.tools.forEach((t) => {
+              if (reservedNames.has(t.name)) {
+                console.warn(`[page-agent-sdk][mcp] 工具 "${t.name}" 与内置工具重名,已拒绝注入(安全保留字保护)`)
+                return
+              }
+              toolSources.set(t.name, `mcp:${label}`)
+              mcpTools.push(t)
+            })
           } else {
             console.warn(`[page-agent-sdk][mcp] server ${label} 连接失败:`, r.reason)
           }
@@ -2385,7 +2398,8 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
       return
     }
     // mount 时传 container 覆盖 options.container(异步绑定:创建时可不传,mount 时才指定)
-    if (overrideContainer !== undefined) options.container = overrideContainer
+    // E6:局部变量覆盖,不回写 options(保持用户传入对象不变)
+    const container = overrideContainer !== undefined ? overrideContainer : options.container
 
     // 装 flush/visibility 兜底 handler(headless 与 UI 两模式共用;防丢 debounce 内的待写)
     const installFlush = () => {
@@ -2411,8 +2425,8 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
     }
 
     const el =
-      typeof options.container === 'string' ? document.querySelector(options.container) : options.container
-    if (!el) throw new Error(`createChatSdk: 挂载点未找到(${options.container})`)
+      typeof container === 'string' ? document.querySelector(container) : container
+    if (!el) throw new Error(`createChatSdk: 挂载点未找到(${container})`)
 
     // 委托 mounter 渲染 ChatDialog(主入口注入 mountChatDialog;props 透传 + 退出动画 + show/hide 均封装于 controller)
     dialogController = mounter({

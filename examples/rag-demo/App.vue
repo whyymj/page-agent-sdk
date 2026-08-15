@@ -298,6 +298,7 @@ async function rebuild() {
   if (!el) return
   agent = buildAgent()
   agent.mount(el)
+  ;(window as any).__sdk = agent // 真 LLM 回归脚本采样口(tests/runtime/rag-demo-real-llm.mjs;切模式后指向新 agent)
 }
 
 // 切模式 → 重建(各模式配置面不同,不能运行时切换)

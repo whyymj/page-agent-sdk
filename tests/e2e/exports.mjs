@@ -83,5 +83,18 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:exports] E6 mount() 不 mutate 用户 options')
+  {
+    const options = { container: '#original-container' }
+    const sdk = createChatSdk({
+      ...options,
+      ui: false, id: 'e2e-mount-no-mutate', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { planning: false, skills: false, vfs: false, summarization: false, memory: false, subagent: false, focus: false, workingMemory: false, missionAnchor: false, contextInspector: false, inspectEnv: false },
+    })
+    await sdk.mount('#override-container')
+    assert(options.container === '#original-container', 'mount() 后 options.container 保持原值(不回写用户对象)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

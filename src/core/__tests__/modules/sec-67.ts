@@ -62,6 +62,24 @@ export async function run(ctx: TestCtx): Promise<void> {
   const cfg6 = createRagSubagent({ retriever: stubRetriever, useVfs: false })
   assert(!cfg6.allowedTools, '✓ useVfs:false → 无 allowedTools')
 
+  // 提示词与工具面一致(rag-real-llm 修:没配的源不提,防 LLM 调不存在工具烧轮次)
+  {
+    // useVfs:false + 无 loader → prompt/skill 均不提 vfs_grep / load_doc(只提 search_docs + fetch_document)
+    assert(!cfg6.systemPrompt?.includes('vfs_grep'), '✓ useVfs:false → systemPrompt 不提 vfs_grep(与工具面一致)')
+    assert(!cfg6.systemPrompt?.includes('load_doc'), '✓ 无 loader → systemPrompt 不提 load_doc')
+    assert(cfg6.systemPrompt?.includes('search_docs'), '✓ 有 retriever → systemPrompt 提 search_docs')
+    const skillDoc6 = String(cfg6.skills![0].getContent())
+    assert(!skillDoc6.includes('vfs_grep') && !skillDoc6.includes('load_doc'), '✓ useVfs:false + 无 loader → skill 决策树不含 vfs/load')
+    assert(skillDoc6.includes('search_docs'), '✓ 有 retriever → skill 决策树含 search_docs')
+    // 全源形态(useVfs + retriever)→ prompt 含 vfs 优先引导
+    assert(cfg.systemPrompt?.includes('vfs_grep') && cfg.systemPrompt?.includes('search_docs'), '✓ 全源(useVfs+retriever)→ systemPrompt 含 vfs+search 引导')
+    // loader-only → 不提 search_docs,提 load_doc;自定义工具名同步透传
+    const cfgL = createRagSubagent({ loader: stubLoader, useVfs: false, searchToolName: 'lookup', loadToolName: 'fetch_doc_by_id' })
+    assert(!cfgL.systemPrompt?.includes('search_docs') && cfgL.systemPrompt?.includes('fetch_doc_by_id'), '✓ loader-only + 自定义工具名 → prompt 只提存在的源且用自定义名')
+    // 收尾纪律:「不要尝试未列出的工具」防 LLM 凭记忆调不存在工具
+    assert(cfg6.systemPrompt?.includes('未列出的工具'), '✓ systemPrompt 含「不要尝试未列出的工具」收尾纪律')
+  }
+
   // ===== createHtmlSubagent =====
   console.log('\n[capability-packs · createHtmlSubagent]')
   const hcfg = createHtmlSubagent({ writablePaths: ['components'] })

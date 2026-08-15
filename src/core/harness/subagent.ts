@@ -228,8 +228,21 @@ export function buildChildTools(
   ]
 }
 
-/** 子 agent 可获得写权限的工具(经 writablePaths path guard 包装后) */
-const SUB_WRITE_TOOLS = ['write', 'set_data', 'edit_data', 'delete_data', 'draft_commit']
+/**
+ * 判定工具是否为写能力(单一真相源:按工具定义点 writeCapable 标注)。
+ * 用于子 agent 授权面过滤与 spawn 自授剥离。
+ * 保守策略:函数形态标注(条件写)在「无法确定 args」时按可能为写处理(宁误拦不漏放)。
+ */
+export function isWriteCapableTool(t: StructuredToolInterface | string, args?: unknown): boolean {
+  const tool = typeof t === 'string' ? undefined : t
+  const wc = tool && ('writeCapable' in tool) ? (tool as any).writeCapable : undefined
+  if (typeof wc === 'boolean') return wc
+  if (typeof wc === 'function') {
+    // 条件写:有 args 时判定,无 args 时保守按写(子 agent 装配期无 args → 剥离防漏放)
+    return args !== undefined ? wc(args) : true
+  }
+  return false
+}
 
 /** 提取写工具 args 的所有 jsonPath(jsonPath / patch.jsonPath / patches[].jsonPath / path) */
 export function extractWritePaths(args: any): string[] {
@@ -320,9 +333,9 @@ async function runSubagent(
   let childTools = buildChildTools(getAllTools(), allow, opts.extraTools ?? [])
   // writablePaths(子 agent 写权限):写工具包 path guard 后加入(越界 PATH_OUT_OF_SCOPE;整体 set 禁)
   if (opts.writablePaths?.length) {
-    childTools = childTools.filter((t) => !SUB_WRITE_TOOLS.includes(t.name)) // 移除可能的原版写工具(防重复)
+    childTools = childTools.filter((t) => !isWriteCapableTool(t)) // A2 移除写工具(按标注单一真相源,防重复)
     const guardedWrites = getAllTools()
-      .filter((t) => SUB_WRITE_TOOLS.includes(t.name) && !isReservedFrameworkTool(t.name))
+      .filter((t) => isWriteCapableTool(t) && !isReservedFrameworkTool(t.name))
       .map((t) => wrapWithPathGuard(t, opts.writablePaths!))
     childTools = [...childTools, ...guardedWrites]
   }
@@ -503,9 +516,10 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
     async ({ prompt, role, tools, writablePaths, model }, config) => {
       // per-call signal/emit/logSink(CA 并发修复):并发委派各用各的,不再串到无关工具的值
       const call = callCtxOf(config)
-      // P1-16(fix-authorization-surface):spawn 自授 tools 剥离写工具 —— 写权限只能经 writablePaths(path guard)获得;
+      // A2 spawn 自授 tools 剥离写工具(按 writeCapable 标注)—— 写权限只能经 writablePaths(path guard)获得;
       // 框架/保留工具(use_*/spawn/load_skill 等)由 buildChildTools 装配期兜底排除
-      const granted = (tools ?? []).filter((t) => !SUB_WRITE_TOOLS.includes(t))
+      // 保守策略:条件写工具(eval_script)无 args 时按写剥离,spawn 自授不接受条件写(防漏放)
+      const granted = (tools ?? []).filter((t) => !isWriteCapableTool(t))
       const subOpts = granted.length || writablePaths?.length
         ? { ...opts, ...(granted.length ? { allowedTools: granted } : {}), ...(writablePaths?.length ? { writablePaths } : {}) }
         : opts

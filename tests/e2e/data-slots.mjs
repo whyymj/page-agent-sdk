@@ -117,5 +117,75 @@ export async function run() {
     assert(bind.components.length === 0, 'delete_data 连续删 → 2→1→0,length 一路递减无残留空位')
   }
 
+  console.log('[e2e:data] 空 schema + 非空 bind → read 返回空投影/ write 全拒(SCHEMA_INVALID 或 PATH_DENIED)')
+  {
+    // F5:data: { schema: z.object({}), bind: {...非空} } → read 返回空投影、write 任意路径 SCHEMA_INVALID/PATH_DENIED、不静默成功
+    const { stubModel } = await import('./_stub-model.mjs')
+    const bind = { title: '页', items: [{ id: 1 }], meta: { key: 'val' } }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-empty-schema', storage: 'memory', llm: stubModel(
+        // 第1轮:read → 返回空投影(空 schema 白名单,无字段可读)
+        { toolCalls: [{ name: 'read', arguments: {} }] },
+        // 第2轮:write 任意路径(title/items/meta) → SCHEMA_INVALID 或 PATH_DENIED 拒绝
+        { toolCalls: [{ name: 'write', arguments: { value: '新', patch: { op: 'set', jsonPath: 'title' } } }] },
+        { text: '操作完成' },
+      ),
+      capabilities: MIN_CAPS,
+      data: { schema: z.object({}), bind, description: '空 schema 测试' },
+    })
+    await sdk.mount()
+    // 验证 read 返回空投影(空 schema 白名单,无字段声明)
+    const readRes = await sdk.send('读取数据')
+    assert(typeof readRes === 'string', 'read 返回文本')
+    // 验证 write 被拒绝(空 schema 白名单,任意路径 PATH_DENIED)
+    const info = sdk.inspect()
+    // 数据未变(bind 保持原值)
+    assert(bind.title === '页' && bind.items.length === 1 && bind.meta.key === 'val', 'write 被拒绝 → bind 原值不变(title=页,items=1,meta.key=val)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:data] 空 schema 下 read 多路径 → 返回空投影(无字段声明不泄露)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    const bind = { x: 1, y: { nested: 'deep' } }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-empty-schema-read', storage: 'memory', llm: stubModel(
+        { toolCalls: [{ name: 'read', arguments: { jsonPaths: ['x', 'y'] } }] },
+        { text: '读完' },
+      ),
+      capabilities: MIN_CAPS,
+      data: { schema: z.object({}), bind },
+    })
+    await sdk.mount()
+    const reply = await sdk.send('读 x 和 y')
+    assert(typeof reply === 'string', 'read 返回文本')
+    // 验证 bind 未变(空 schema 不泄露数据)
+    assert(bind.x === 1 && bind.y.nested === 'deep', '空 schema read → bind 保持原值,不泄露')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:data] 空 schema 下 write 多路径 patches → 任一失败整批回滚')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    const bind = { a: 1, b: 2 }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-empty-schema-patches', storage: 'memory', llm: stubModel(
+        { toolCalls: [{ name: 'write', arguments: { value: { patches: [
+          { op: 'set', jsonPath: 'a', value: 10 },
+          { op: 'set', jsonPath: 'b', value: 20 },
+        ] } } }] },
+        { text: '写完' },
+      ),
+      capabilities: MIN_CAPS,
+      data: { schema: z.object({}), bind },
+    })
+    await sdk.mount()
+    const reply = await sdk.send('批量写')
+    assert(typeof reply === 'string', 'write patches 返回文本')
+    // 验证 bind 全未改(任一路径在空 schema 下都是 PATH_DENIED,整批回滚)
+    assert(bind.a === 1 && bind.b === 2, '空 schema write patches → 任一 PATH_DENIED 拒绝,整批回滚(bind.a=1,bind.b=2)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

@@ -49,11 +49,30 @@ export function extractReasoningDelta(chunk: AIMessageChunk): string {
 /**
  * 从响应消息提取 token usage。
  * - OpenAI/DeepSeek:`additional_kwargs.usage`
- * - Anthropic:`response_metadata.usage`(部分版本 `response_metadata.token_usage`)
+ * - Anthropic:流式聚合后标准字段 `usage_metadata`(input_tokens/output_tokens 命名);非流式 `response_metadata.usage`(部分版本 `token_usage`)
+ *
+ * 注:Anthropic 流式聚合消息的 `response_metadata.usage` 可能是**空对象 `{}`**(真 LLM 实测 modelverse),
+ * 非空值(nullish 链会短路)→ 候选逐个校验「至少含一个 token 数值字段」,空对象跳过继续找。
  */
 export function extractUsage(message: BaseMessage): any {
   const m = message as any
-  return m?.additional_kwargs?.usage ?? m?.response_metadata?.usage ?? m?.response_metadata?.token_usage ?? m?.response_metadata?.tokenUsage ?? undefined
+  const candidates = [
+    m?.additional_kwargs?.usage,
+    m?.usage_metadata,
+    m?.response_metadata?.usage,
+    m?.response_metadata?.token_usage,
+    m?.response_metadata?.tokenUsage,
+  ]
+  for (const c of candidates) {
+    if (c && typeof c === 'object' && hasTokenField(c as Record<string, unknown>)) return c
+  }
+  return undefined
+}
+
+/** usage 候选对象是否至少含一个 token 数值字段(prompt/completion/total 或 input/output 命名) */
+function hasTokenField(u: Record<string, unknown>): boolean {
+  const keys = ['prompt_tokens', 'completion_tokens', 'total_tokens', 'promptTokens', 'completionTokens', 'totalTokens', 'input_tokens', 'output_tokens', 'inputTokens', 'outputTokens']
+  return keys.some((k) => typeof u[k] === 'number' && u[k] > 0)
 }
 
 /**
@@ -64,8 +83,8 @@ export function normalizeUsage(message: BaseMessage): TokenUsage | null {
   const u = extractUsage(message)
   if (!u || typeof u !== 'object') return null
   const rec = u as Record<string, unknown>
-  const p = Number(rec.prompt_tokens ?? rec.promptTokens ?? 0) || 0
-  const c = Number(rec.completion_tokens ?? rec.completionTokens ?? 0) || 0
+  const p = Number(rec.prompt_tokens ?? rec.promptTokens ?? rec.input_tokens ?? rec.inputTokens ?? 0) || 0
+  const c = Number(rec.completion_tokens ?? rec.completionTokens ?? rec.output_tokens ?? rec.outputTokens ?? 0) || 0
   const t = Number(rec.total_tokens ?? rec.totalTokens ?? (p + c)) || 0
   if (!p && !c && !t) return null
   return { prompt_tokens: p, completion_tokens: c, total_tokens: t }

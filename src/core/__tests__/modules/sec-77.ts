@@ -87,7 +87,14 @@ export async function run(ctx: TestCtx) {
     const bind = { components: [{ name: 'navbar', __pgId: 'p0', code: 'a' }, { name: 'beer', __pgId: 'p1', code: 'b' }] }
     const lock = createComponentLock()
     await lock.acquire(['beer'], 'use_html-x1')
-    const mw = createComponentWriteGuardMiddleware({ getBind: () => bind, writablePaths: ['components'], getLocked: () => lock.locked() })
+    // A3:守卫按 writeCapable 标注判定写能力(工具定义点单源),测试传带标注的 stub
+    const toolsStub = [
+      { name: 'write', writeCapable: true },
+      { name: 'read' },
+      { name: 'eval_script', writeCapable: (args: Record<string, unknown>) => args?.mode === 'transform' },
+      { name: 'restore_data', writeCapable: true },
+    ]
+    const mw = createComponentWriteGuardMiddleware({ getBind: () => bind, writablePaths: ['components'], getLocked: () => lock.locked(), tools: toolsStub as any })
     const wrap = mw.wrapToolCall as (ctx: any, next: () => Promise<any>) => Promise<any>
     const next = async () => ({ content: 'ok', status: 'ok' as const })
     const mkCtx = (name: string, args: unknown) => ({ name, args, state: {} })

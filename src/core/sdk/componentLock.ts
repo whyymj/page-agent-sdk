@@ -13,6 +13,7 @@
  * 纯内存会话级状态,不持久化;全部纯函数可白盒自测。
  */
 import type { Middleware } from '../harness/middleware'
+import type { StructuredToolInterface } from '@langchain/core/tools'
 
 /** 组件锁接口(acquire 多组件原子:任一被占全失败且已取得的释放) */
 export interface ComponentLock {
@@ -145,9 +146,6 @@ export function hitsLockedPath(jsonPath: string, lockedPrefixes: string[]): bool
 
 // ===== 主 agent 写检查中间件(Q3b:与 focus strict 同一拦截模式)=====
 
-/** 主 agent 写工具集合(与 focus WRITE_TOOLS 同口径;子 agent 走自己的栈不受本守卫影响) */
-const WRITE_TOOLS = new Set(['write', 'set_data', 'edit_data', 'delete_data', 'draft_commit'])
-
 /** 提取写工具 args 的全部 jsonPath(write 高层嵌套:patch.jsonPath / patches[].jsonPath 同 focus extractScopes) */
 function extractWriteScopes(args: unknown): string[] {
   const a = (args ?? {}) as Record<string, any>
@@ -170,6 +168,8 @@ export interface ComponentWriteGuardOptions {
   getLocked: () => Record<string, string>
   /** 锁事件留痕(主 agent 写被拒时;经 logSink/debugLogs) */
   onReject?: (info: { paths: string[]; lockedPrefixes: string[]; owner: string }) => void
+  /** 全部工具列表(A3 按标注判定写能力) */
+  tools?: StructuredToolInterface[]
 }
 
 /**
@@ -177,14 +177,37 @@ export interface ComponentWriteGuardOptions {
  * recoverable 回灌(委派在途期间人工别经 agent 通道改同组件;人工直改 bind 不经此层,由 commit 期
  * hash 检测 keep_external 兜底)。边界:整体 set(无 jsonPath)且有在途锁 → 拒(merge 语义触碰全部);
  * dryRun 不拦(试运行无写入)。只装主 agent 栈(子 agent 有自己的栈与 path guard)。
+ * A3:改按 writeCapable 标注判定,eval_script 条件写判 mode==='transform',restore_data 锁内拒。
  */
 export function createComponentWriteGuardMiddleware(opts: ComponentWriteGuardOptions): Middleware {
   return {
     name: 'component-write-guard',
     wrapToolCall: async (ctx, next) => {
-      if (!WRITE_TOOLS.has(ctx.name)) return next(ctx)
+      // A3 按标注判定写能力
+      const tool = opts.tools?.find((t) => t.name === ctx.name)
+      const isWrite = tool && ('writeCapable' in (tool as any)) ? (
+        typeof (tool as any).writeCapable === 'function'
+          ? (tool as any).writeCapable(ctx.args)
+          : (tool as any).writeCapable === true
+      ) : false
+      if (!isWrite) return next(ctx)
+
       const args = (ctx.args ?? {}) as Record<string, unknown>
       if (args.dryRun === true) return next(ctx)  // 试运行无写入,不拦
+
+      // A3 restore_data 锁内拒(回退会覆盖被锁组件)
+      if (ctx.name === 'restore_data') {
+        const locked = opts.getLocked()
+        const names = Object.keys(locked)
+        if (names.length) {
+          opts.onReject?.({ paths: ['(快照回退)'], lockedPrefixes: [], owner: names.join(',') })
+          return {
+            content: `COMPONENT_LOCKED · 组件 [${names.join(', ')}] 正在被修改,快照回退会覆盖它们。请等本轮委派完成后再回退,或用增量操作只回退未锁定组件。`,
+            status: 'error' as const,
+          }
+        }
+      }
+
       const locked = opts.getLocked()
       const names = Object.keys(locked)
       if (!names.length) return next(ctx)

@@ -2,7 +2,38 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.15.0] - 2026-08-16
+
+### Fixed(rag-demo 真 LLM 回归驱动)
+- **Anthropic 流式 usage 丢失**:网关实测聚合消息的 `response_metadata.usage` 为**空对象 `{}`**(非 nullish,`??` 链短路)→ `usage_metadata` 兜底不可达,`sdk.usage`/usage 事件恒 0。修:`extractUsage` 改候选逐个校验「至少含一个 token 数值字段」(空对象跳过)+ `normalizeUsage` 补 `input/output_tokens` 归一;真 LLM 四场景复测 token 采集全部有值(修前全 null)
+- rag-demo 回归脚本自身:checks 引用未就绪字段(`d.tools`)致「零委派/委派」误判 → checks 前先算工具序列
+
+### Added(rag-demo 四模式真 LLM 回归)
+- **回归脚本 `tests/runtime/rag-demo-real-llm.mjs`**(Playwright 浏览器路径,Anthropic 协议):A memory 直答 / B mock 检索委派链路 / C 真实 MCP 优雅降级 / D MCP 直连诚实收口,四场景 checks 全绿 + usage/token 采集 + 断点续跑;rag-demo 补 `__sdk` 采样口(切模式后指向新实例)。内网 MCP 不可达时行为层验证:子 agent 如实报告 + 主 agent 诚实告知 + 零重试风暴
+
+### Fixed(五路审查驱动:team-review-hardening)
+- **写能力标注单一真相源**(治三处硬编码清单漂移同根复发):工具定义点 `writeCapable` 标注(布尔或 `(args)=>boolean` 条件形态),子 agent 装配剥离 / spawn 自授过滤 / 组件锁主写守卫三处消费统一按标注 —— 修 `SUB_WRITE_TOOLS` 漏 `eval_script(transform)`/`resource_update`/`resource_delete`/`restore_data` 的**子 agent 写面绕过**(HIGH:spawn 自授 eval_script 即获全量写能力)与 `WRITE_TOOLS` 同款**组件锁绕过**(委派在途时 eval_script(transform)/restore_data 可改被锁组件)
+- **__pgId 补齐全写路径**(HIGH):`supplementPgId` 原只覆盖 write 工具三意图,`set_data`/`edit_data`/`eval_script(transform)`/`draft_commit` 四写路径丢映射键 → checkout/commit 定位断链。修:`internalAfterWrite` 收敛进 `commitSetToBind`/`applyPatchesToBind` 成功路径(带写前深快照**按位置回填原 __pgId** + 新增元素生成)
+- **MCP 工具名保留字保护**(HIGH:被入侵/DNS 劫持 server 返回 `write`/`read` 同名工具经 dedupeTools「后注册覆盖」静默替换内置实现 → 主数据全文送远端):注入前查非 mcp 来源重名 → skip + warn 留痕,单工具冲突不拖累整 server
+- **沙箱静态扫描加固**:`"".constructor.constructor("...")()` 原型链取 Function 逃逸完全不拦 → 补 `constructor`/`getPrototypeOf`/`.prototype` 模式
+- **inspect_env 嵌套脱敏**:`inspect_env({key:'appConfig'})` 嵌套 `apiKey` 原样进 LLM 上下文 → `safeSerialize` 递归按敏感 key 正则打码 `[REDACTED]`(opts 开关只开 envTool 路径)
+- **wrapToolCall 异常契约**(arch P1-1):用户中间件抛普通 Error 即 fatal 整轮 → 洋葱外层收敛 recoverable 错误结果回灌(abort 不吞)
+- **wrap-up 收口丢压缩摘要**:收口轮 filter 掉全部 SystemMessage(与 P0-1 修复对立)→ 只去首条,中部摘要送达
+- **streamStallMs:0 启动闸失效**:`stallMs || DEFAULT` 的 0 是 falsy 回退 90s(文档承诺「设 0 关」失效)→ `>0` 判定真·关闭
+- **vfs 单文件超池静默淘汰**:3MB 写 2MB 池报「已写入」后 enforceLimit 即删(read NOT_FOUND)→ 写前预检显式报 `VFS_POOL_LIMIT_EXCEEDED`(附大小与拆分提示)
+- **deleteSession 与 debounce pending 竞态**:删除后 500ms 内 pending timer 触发 → 幽灵会话复活 → 删除前清该 sessionPrefix 命中的 pending/timers
+- **mount() 纯度**:`options.container = override` mutate 集成方对象 → 局部变量
+
+### Added(测试盲区补强,五路审查 coverage-gap Top5)
+- e2e automation:storage+checkpoint+automation 三特性共存(batch 间 checkpoint 持久 + 跨实例恢复)/ e2e mcp:**恶意同名工具拒绝注入**(真实 malicious server)+ **双 server 一坏一好故障隔离** / e2e custom-injection:memory 异步抛错降级不崩 / e2e data-slots:空 schema 全拒不静默 / browser **lifecycle.spec**(customize-demo 暴露 `__sdk`/`__remountSdk` 采样口):流式中 unmount 无 pageerror + 重挂无旧流复活 + 重挂后可继续对话
+
+### Tests
+- selftest 2106→**2177**(+sec-78 写标注完整性+__pgId 四路径 / sec-79 沙箱逃逸+嵌套脱敏 / sec-80 E4/E5 / sec-77 守卫按标注适配)/ e2e 666→**691** / browser 64→**67**
+
 ## [3.14.0] - 2026-08-15
+
+### Fixed(rag-demo 真 LLM 实测驱动)
+- **createRagSubagent 提示词与工具面不一致**:`RAG_SYSTEM_PROMPT` / rag-search skill 原为静态全文,无论实际配置都教子 agent「先 vfs_grep → search_docs → load_doc」—— `useVfs:false` / 未配 loader 的场景子 agent 没有这些工具,LLM 照 prompt 调用不存在的工具反复纠结烧轮次(实测 B 模式问「方舟是啥」浪费多轮)。修:systemPrompt 与 skill 全文按实际知识源(vfs/retriever/loader)动态生成,没配的源不提;自定义工具名(searchToolName/loadToolName)同步透传进 prompt;补「不要尝试未列出的工具」收尾纪律;导出的 `ragSearchSkill` 保持全源形态向后兼容
 
 ### Added(真实 MCP e2e + rag/mcp demo 四模式合并)
 - **真实 MCP e2e(`tests/e2e/mcp.mjs`,10 项)**:spawn 真实 mock MCP server(StreamableHTTP,tsx 子进程)走完整网络链路 —— `connectMcp` 握手 → 工具迟到注入 → agent ReAct 真调 `get_weather` → 结果回灌;附挂死 server 超时降级 / release 先行竞态 / 全程 `unhandledRejection` 零断言。区别于纯 stub:SDK 的 MCP client 与 MCP SDK server 真跑网络
@@ -13,7 +44,7 @@
 - **子 agent `llm.provider:'anthropic'` 透传丢失**:`SubagentLlmConfig` 声明 anthropic 协议时子 agent 仍按 OpenAI 协议发请求(报 404/400)。修:`runSubagent` 检测 provider 预构造 `ChatAnthropic` 实例注入(经 `constructLlmFromConfig` 动态 import);openai 路径维持同步散字段向后兼容;`task.model` 覆盖同步透传
 
 ### Tests
-- selftest 2092→**2098**(+6 子 agent anthropic 协议 fake-fetch 断言:/v1/messages 端点 + task.model 覆盖)/ e2e 655→**666**(+10 真实 MCP 链路 + inspect P0-3 改轮询适配后台注入)/ browser 63→**64**(+1 rag-demo D 模式 MCP 直连重建)
+- selftest 2092→**2106**(+6 子 agent anthropic 协议 fake-fetch 断言:/v1/messages 端点 + task.model 覆盖;+8 ragSubagent 提示词与工具面一致断言)/ e2e 655→**666**(+10 真实 MCP 链路 + inspect P0-3 改轮询适配后台注入)/ browser 63→**64**(+1 rag-demo D 模式 MCP 直连重建)
 
 ## [3.13.0] - 2026-08-15
 

@@ -577,7 +577,21 @@ export function createSessionStore(config: StorageConfig = {}): SessionStore {
       await maybeEvict() // flush 立即淘汰(pagehide 兜底场景)
     },
     async deleteSession(agentId, sessionId) {
-      await backend.clearPrefix(sessionPrefix(dbName, agentId, sessionId))
+      const prefix = sessionPrefix(dbName, agentId, sessionId)
+      // E5(code-review):删除前清掉该 sessionPrefix 命中的 pending/timers,防幽灵会话复活(debounce 写仍会触发)
+      for (const [k, p] of pending.entries()) {
+        if (k.startsWith(prefix)) {
+          p.resolve()
+          pending.delete(k)
+        }
+      }
+      for (const [k, t] of timers.entries()) {
+        if (k.startsWith(prefix)) {
+          clearTimeout(t)
+          timers.delete(k)
+        }
+      }
+      await backend.clearPrefix(prefix)
     },
     async createSession(agentId, title, sessionId) {
       const sid = sessionId ?? makeId()

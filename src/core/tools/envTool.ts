@@ -23,8 +23,10 @@ function isDomLike(v: object): boolean {
  * 安全序列化任意值(给 LLM 看):跳过 function/symbol/bigint/DOM 节点;WeakSet 防循环引用;
  * 限深度 + 键数(≤50)+ 字符串长度(≤maxLen);getter try/catch 防 getter 抛错中断。
  * 纯函数(不依赖 window),可单测。
+ *
+ * @param redactSensitive - 可选:嵌套 key 命中此 RegExp 时值替换为 '[REDACTED]'(默认 undefined,仅在 envTool 路径启用)
  */
-export function safeSerialize(value: unknown, depth = 3, maxLen = 2000, seen?: WeakSet<object>): unknown {
+export function safeSerialize(value: unknown, depth = 3, maxLen = 2000, seen?: WeakSet<object>, redactSensitive?: RegExp): unknown {
   if (value === null || value === undefined) return value
   if (typeof value === 'string') return value.length > maxLen ? value.slice(0, maxLen) + '…(已截断)' : value
   if (typeof value === 'number' || typeof value === 'boolean') return value
@@ -42,7 +44,7 @@ export function safeSerialize(value: unknown, depth = 3, maxLen = 2000, seen?: W
   const next = seen ?? new WeakSet<object>()
   next.add(obj)
   if (Array.isArray(value)) {
-    const arr = value.slice(0, 100).map((x) => safeSerialize(x, depth - 1, maxLen, next))
+    const arr = value.slice(0, 100).map((x) => safeSerialize(x, depth - 1, maxLen, next, redactSensitive))
     if (value.length > 100) arr.push(`…(共 ${value.length} 项,已截断)`)
     return arr
   }
@@ -53,7 +55,13 @@ export function safeSerialize(value: unknown, depth = 3, maxLen = 2000, seen?: W
     const k = keys[i]
     if (i >= 50) { out['…'] = `(共 ${keys.length} 键,已截断)`; break }
     try {
-      out[k] = safeSerialize((obj as Record<string, unknown>)[k], depth - 1, maxLen, next)
+      const v = (obj as Record<string, unknown>)[k]
+      // 敏感嵌套 key 脱敏(如 {apiKey:'sk-...'} → {apiKey:'[REDACTED]'})
+      if (redactSensitive?.test(k)) {
+        out[k] = '[REDACTED]'
+      } else {
+        out[k] = safeSerialize(v, depth - 1, maxLen, next, redactSensitive)
+      }
     } catch {
       out[k] = '(getter 抛错)'
     }
@@ -104,7 +112,7 @@ export const inspectEnvTool = tool(
       const w = (typeof window !== 'undefined' ? window : {}) as Record<string, unknown>
       const value = w[key]
       return JSON.stringify({
-        key, exists: value !== undefined, type: typeof value, value: safeSerialize(value),
+        key, exists: value !== undefined, type: typeof value, value: safeSerialize(value, 3, 2000, undefined, ENV_SENSITIVE_KEY_RE),
       }, null, 2)
     }
     return JSON.stringify(getEnvSummary(), null, 2)
