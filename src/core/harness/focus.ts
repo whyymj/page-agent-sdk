@@ -115,12 +115,34 @@ export interface FocusMiddlewareOptions {
    * 子 agent 的 focus 中间件不传(只继承不突变,不发事件)。
    */
   onChange?: (focuses: Focus[]) => void
+  /**
+   * 解焦指引(聚焦下 agent 被拒后如何解除焦点;提示词注入与 PATH_DENIED 文案按此分支,防引导调不存在的工具)。
+   * 用户实测(simple toolMode page-demo):文案引导「先 clear_focus」但 focus 工具仅 advanced 装载 →
+   * agent 声称清除焦点却无工具可调,硬写非焦点组件反复 PATH_DENIED。
+   * - 'tool'(默认):agent 有 focus 工具(advanced toolMode)→ remove_focus / clear_focus / 换焦点
+   * - 'ask-user':无工具,焦点由用户 UI 管理(simple/minimal 主 agent)→ 提示用户在输入框移除聚焦 chip
+   * - 'report-parent':子 agent(继承焦点,授权面永不带 focus 工具)→ 收口回复反馈需先取消焦点
+   */
+  unfocusGuidance?: 'tool' | 'ask-user' | 'report-parent'
 }
 
 export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware & FocusController {
   let focuses: Focus[] = opts.initialFocuses ? [...opts.initialFocuses] : []
   /** mutation 后统一通知(副本防外部 mutate) */
   const notify = () => opts.onChange?.([...focuses])
+  // 解焦指引文案(按 unfocusGuidance 分支;默认目标引导通用 —— 实测用户拾取按钮后说「文字红色」,agent 先误解为全页改)
+  const guidance = opts.unfocusGuidance ?? 'tool'
+  const defaultTarget = '用户未指明目标的指令默认作用于聚焦组件;'
+  const unfocusHint = guidance === 'tool'
+    ? '需改其他组件请先 remove_focus / clear_focus 或换焦点。'
+    : guidance === 'ask-user'
+      ? '焦点由用户在输入框设定与移除(聚焦 chip ✕);用户要求改其他组件时,提示用户移除聚焦后重试,勿尝试写焦点外(会被拒)。'
+      : '需改其他组件时,在收口回复中说明需先取消焦点(焦点由主会话管理),勿尝试越界写。'
+  const denyHint = guidance === 'tool'
+    ? '请先 remove_focus / clear_focus 或换焦点后重试。'
+    : guidance === 'ask-user'
+      ? '焦点由用户在输入框管理,请提示用户移除输入框中的聚焦 chip 后重试(当前模式无 focus 工具)。'
+      : '请只改焦点子树;需改其他组件时,在收口回复中说明需先取消焦点。'
 
   const mw: Middleware & FocusController = {
     name: 'focus',
@@ -134,7 +156,7 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
       const lines = [
         '## 当前精修目标',
         focuses.map((f) => `· ${f.path}${f.label ? `(${f.label})` : ''}`).join('\n'),
-        `仅操作上述 ${focuses.length} 个聚焦子树${focuses.length > 1 ? '之一' : ''},不要改动其他组件;需改其他组件请先 remove_focus / clear_focus 或换焦点。`,
+        `仅操作上述 ${focuses.length} 个聚焦子树${focuses.length > 1 ? '之一' : ''},${defaultTarget}不要改动其他组件;${unfocusHint}`,
       ]
       // 视野收敛:注入每个焦点子树 schema 描述(LLM 每轮看到所有焦点组件结构)
       const schema = opts.getSchema()
@@ -160,7 +182,7 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
       if (focuses.length) {
         const labels = focuses.map((f) => (f.label ? `${f.path}(${f.label})` : f.path)).join(', ')
         const deny = (scope: string): ToolExecResult => ({
-          content: `PATH_DENIED · 聚焦越界:当前聚焦 [${labels}],不可操作「${scope}」。请先 remove_focus / clear_focus 或换焦点后重试。`,
+          content: `PATH_DENIED · 聚焦越界:当前聚焦 [${labels}],不可操作「${scope}」。${denyHint}`,
           status: 'error' as const,
         })
         // P1-21(fix-authorization-surface):eval_script transform 可改写任意路径/整体数据(原不在 WRITE_TOOLS → 绕过)。

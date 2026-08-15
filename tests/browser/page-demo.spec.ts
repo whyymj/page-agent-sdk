@@ -240,4 +240,64 @@ test.describe('page-demo: read → write → read', () => {
     await page.click('[data-test="focus-clear"]')
     await expect(bar).toHaveCount(0)
   })
+
+  /**
+   * Bug 复现锁定(用户实测,page-demo 默认 simple toolMode):聚焦提示/越界文案引导调用不存在的 focus 工具。
+   * 根因:focus 中间件注入提示与 PATH_DENIED 文案无条件引导「先 remove_focus / clear_focus」,
+   * 但 focus 工具仅 advanced 装载 → simple 模式 agent 声称清除焦点却无工具可调,硬写反复 PATH_DENIED。
+   * 修复:createChatSdk 按 toolMode 传 unfocusGuidance('ask-user'),文案改为引导提示用户移除输入框 chip。
+   * 验证(ground truth = LLM 请求体):① system 含「当前精修目标」+「输入框」引导,不含 clear_focus/remove_focus;
+   * ② 越界写回灌的 tool 结果含 PATH_DENIED +「输入框」,不含 focus 工具名;③ 请求 tools 无 focus 工具。
+   */
+  test('focus(simple): 聚焦注入与 PATH_DENIED 文案引导「输入框」而非不存在的 focus 工具', async ({ page }) => {
+    // 聚焦 components.2(button「主要按钮」,有 label 字段可写;初始序:0 heading / 1 paragraph / 2 button)
+    await page.click('[data-path="components.2"]')
+    await page.click('.pick-overlay__btn')
+    await expect(page.locator('.focus-chip')).toBeVisible()
+
+    const requestBodies: any[] = []
+    page.on('request', (req) => {
+      if (req.method() === 'POST' && req.url().includes('chat/completions')) {
+        try { const body = req.postData(); if (body) requestBodies.push(JSON.parse(body)) } catch { /* ignore */ }
+      }
+    })
+    // 越界写一次(触发 PATH_DENIED ask-user 文案回灌)→ 聚焦内放行 → 完成
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'write', arguments: { patch: { op: 'set', jsonPath: 'components.3.label', value: '越界' } } }] },
+      { tool_calls: [{ name: 'write', arguments: { patch: { op: 'set', jsonPath: 'components.2.label', value: '聚焦内' } } }] },
+      { text: '已改。' },
+    ])
+    await fillInput(page, '把「次要按钮」文字改成「越界」')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+
+    // ① system 段:聚焦注入存在,引导「输入框」(ask-user),不提 focus 工具
+    const systems = requestBodies
+      .flatMap((b) => (b?.messages || []).filter((m: any) => m.role === 'system').map((m: any) => m.content))
+      .join('\n')
+    expect(systems, '聚焦段注入存在').toContain('当前精修目标')
+    expect(systems, 'simple 模式引导用户移除输入框 chip').toContain('输入框')
+    expect(systems, '不引导 clear_focus(simple 未装载)').not.toContain('clear_focus')
+    expect(systems, '不引导 remove_focus(simple 未装载)').not.toContain('remove_focus')
+
+    // ② 越界回灌的 tool 结果:PATH_DENIED +「输入框」提示,不含 focus 工具名
+    const toolContents = requestBodies
+      .flatMap((b) => (b?.messages || []).filter((m: any) => m.role === 'tool').map((m: any) => m.content))
+      .join('\n')
+    expect(toolContents, '越界写被拒').toContain('PATH_DENIED')
+    expect(toolContents, 'PATH_DENIED 文案引导输入框').toContain('输入框')
+    expect(toolContents, 'PATH_DENIED 文案不提 focus 工具').not.toContain('clear_focus')
+
+    // ③ 工具面:请求 tools 无 focus 工具(引导与工具面一致的另一侧锁定)
+    const toolNames = new Set(requestBodies.flatMap((b) => (b?.tools || []).map((t: any) => t.function?.name ?? t.name)))
+    expect(toolNames.has('clear_focus'), 'simple 不装载 clear_focus').toBe(false)
+    expect(toolNames.has('set_focus'), 'simple 不装载 set_focus').toBe(false)
+    expect(toolNames.has('read'), 'read 正常装载(工具面健全)').toBe(true)
+
+    // 数据侧:越界未生效,聚焦内生效
+    const c3 = await page.evaluate(() => (window as any).page.components[3].label)
+    expect(c3).not.toBe('越界')
+    const c2 = await page.evaluate(() => (window as any).page.components[2].label)
+    expect(c2).toBe('聚焦内')
+  })
 })

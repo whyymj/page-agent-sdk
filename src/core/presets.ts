@@ -53,15 +53,15 @@ export const presets: Record<string, Partial<ChatSdkOptions>> = {
  * 单一数据源:createHtmlSubagent 默认自动注入此段(orchestratorPrompt:true);systemPromptHelpers.htmlPageOrchestrator 为 id='html' 静态快照。
  * 集成方自定义 id(如 'hero')时,createHtmlSubagent 自动生成含正确 use_hero 的编排 —— 写死 use_html 的静态片段会误导主 agent 调不存在的工具。
  */
-export function htmlOrchestratorPrompt(id: string): string {
+export function htmlOrchestratorPrompt(id: string, codeField = 'code'): string {
   const use = `use_${id}`
   return [
     `【执行纪律(最重要)】收到代码组件任务后:**新建类直接委派**(追加组件无需通读/翻页现有数组,子 agent 自会采样一个组件看结构)→ 修改类才 read 定位(by name)→ 调 ${use} 委派 → read 核对 → 回复用户。**中间绝不输出过渡性文字** —— 「我先看看…」「稍后委派」「接下来我会…」这类计划性回复等于任务没做就结束了(回复即本轮终止);所有调研和委派在本轮内连续完成,完成后才回复总结。`,
     '【产物形态】每个组件是完整、自包含的 HTML 页面(含 style/script,可独立成页);你只负责委派和收尾,不关心宿主如何渲染(v-html / iframe / SFC 是集成方的事)。',
-    `【主 agent 职责边界(硬规则)】禁止直接 read/write 代码组件的 code 字段(read 只得 <code Nkb> 摘要没用;write 绕过 vfs/verify 危险)—— 生成/修改/排查 code 一律经 ${use},收尾 read 核对。`,
+    `【主 agent 职责边界(硬规则)】禁止直接 read/write 代码组件的 ${codeField} 字段(read 只得 <code Nkb> 摘要没用;write 绕过 vfs/verify 危险)—— 生成/修改/排查代码一律经 ${use},收尾 read 核对。`,
     `【多组件逐个委派(防上下文污染)】一次要多个组件:① write_todos 列出(每项 name + 要点)② 逐个委派 —— 每组件一次 ${use},task 只写该组件(name + 要点 + 主题/风格),勿一次委派多个(同一子 agent 共享上下文生成多个 → class/样式冲突污染)③ 每次返回 read 核对(确认已生成 + 名称对)+ update_todo 标完成 ④ 主题/风格在每次 task 里转述(每个子 agent 全新上下文,不知其他组件)。`,
     `【委派 task 规格化(收窄子 agent 决策,防开放任务致装饰穷举)】委派 ${use} 的 task 必须含:① 组件定位(by name)② 视觉风格(配色/质感/字体;**给 1-2 个具体视觉锚** —— 主色 hex **取自平台 UI/设计规范 skill 的定义值**(有规范类 skill 先 load 再引用其 hex,勿凭页面观察自造近似色;无规范才自定,如「金黄 #F7C948」)、主体占比(如「杯高约画布 60%」)或装饰密度(如「仅 2 类背景装饰」)—— 细节空间收窄,子 agent 不在装饰细节上展开推演)③ 内容(文案/数据/图)④ 交互意图(动效/状态/触发)⑤ 历史偏好(可选):聊天上下文中有与该组件相关的用户历史偏好/反馈(如「用户偏好深色系」「上轮嫌动画太快」),提炼一句附 task 末尾(新子 agent 无记忆,全靠 task);**不含技术实现**(SVG vs CSS / keyframes vs transition 归子 agent 选)。❌「生成啤酒杯动画」→ ✅「啤酒杯倒酒(beer):金黄啤酒 #F7C948 从上方倒入透明杯(杯高约画布 60%),深绿背景,液体循环下落 2s,hover 杯子放大」。规格简练(4 要素各半句),远省子 agent 思考 token。`,
-    `【委派失败重试】${use} 返回乱码/内部标记(如 <｜DSML｜)/空结论或报错 = 子 agent 异常,**重新委派一次**(task 附「上次失败,这次先把 code 写短些/分步」);连续两次失败才降级告知用户。**不要因此自己直接 write/edit code 字段**(绕过 vfs/格式校验,且你拿不到规范全文)。`,
+    `【委派失败重试】${use} 返回乱码/内部标记(如 <｜DSML｜)/空结论或报错 = 子 agent 异常,**重新委派一次**(task 附「上次失败,这次先把代码写短些/分步」);连续两次失败才降级告知用户。**不要因此自己直接 write/edit ${codeField} 字段**(绕过 vfs/格式校验,且你拿不到规范全文)。`,
     '【预算将尽暂停】组件很多、接近工具轮次上限不要硬扛:完成手头这个后报告「已生成 K/N,还剩 M 个」,等用户确认后从 todos 剩余项继续(勿重复已完成)。',
   ].join('\n')
 }
@@ -94,7 +94,7 @@ export const systemPromptHelpers = {
    */
   htmlPageProposeFirst: [
     '【新建/创意类请求】先用简短文字给出 2~3 套方案(每套一两句风格/配色/结构要点),询问用户选哪套;选定前不要委派生成代码、不要写 components。',
-    '【方案切换】已生成某套方案后改选另一套:不重新罗列,直接依据之前描述委派 use_html 重新生成并覆盖相应组件。',
+    '【方案切换】已生成某套方案后改选另一套:不重新罗列,直接依据之前描述重新委派生成并覆盖相应组件(委派工具见编排段 use_<id>)。',
   ].join('\n'),
 
   /**
@@ -104,10 +104,10 @@ export const systemPromptHelpers = {
    * 无 html 子 agent → 无 vfs 工作副本 / 无 verify 门禁,code 是普通 schema 字段,主 agent 直接 write。
    */
   htmlDirectWriteFallback: [
-    '【纯代码组件 · 你直接写】当前未配备 html 子 agent,纯代码组件的 code 字段由你直接 write(普通字段,经 schema 校验 + 乐观锁 + 快照栈,与改其他字段无异;无 vfs 工作副本 / 无格式校验门禁)。',
-    '【HTML 生成规范】code 必须是完整、自包含的 HTML 页面(含 <style>/<script>,可独立成页):标签正确闭合、style/script 集中放置(如 <head> 内)、class 加前缀防冲突;可引外部 JS/CSS(CDN/字体)。安全底线:禁 eval/new Function、不引可疑外部脚本、不访问 document.cookie 等敏感属性。',
-    '【修改而非重写】改已有 code:先 read({jsonPath}) 取当前 code → 基于当前值增量改(只动要改的部分,如换配色/文案/某段结构),不要整体重写整个 code(易丢已有内容、token 浪费)。',
-    '【质量自检】无格式校验门禁,写完自查标签闭合 / 结构完整;code 进 data 由集成方渲染层(v-html/iframe)呈现。如需代码资产机制(vfs 工作副本 + 格式校验 + 增量 commit),注册 createHtmlSubagent。',
+    '【纯代码组件 · 你直接写】当前未配备 html 子 agent,纯代码组件的代码字段(code,以 schema 声明为准)由你直接 write(普通字段,经 schema 校验 + 乐观锁 + 快照栈,与改其他字段无异;无 vfs 工作副本 / 无格式校验门禁)。',
+    '【HTML 生成规范】代码字段必须是完整、自包含的 HTML 页面(含 <style>/<script>,可独立成页):标签正确闭合、style/script 集中放置(如 <head> 内)、class 加前缀防冲突;可引外部 JS/CSS(CDN/字体)。安全底线:禁 eval/new Function、不引可疑外部脚本、不访问 document.cookie 等敏感属性。',
+    '【修改而非重写】改已有代码:先 read({jsonPath}) 取当前代码字段 → 基于当前值增量改(只动要改的部分,如换配色/文案/某段结构),不要整体重写整个代码字段(易丢已有内容、token 浪费)。',
+    '【质量自检】无格式校验门禁,写完自查标签闭合 / 结构完整;代码进 data 由集成方渲染层(v-html/iframe)呈现。如需代码资产机制(vfs 工作副本 + 格式校验 + 增量 commit),注册 createHtmlSubagent。',
   ].join('\n'),
 } as const
 

@@ -334,7 +334,8 @@ async function runSubagent(
   // focus-auto-switch:子 agent 继承主焦点(主聚焦 → 子默认同焦点,三层收敛;主未聚焦 → 空数组不装,零回归)
   const inheritedFocuses = opts.getFocuses?.() ?? []
   const childFocusMw = inheritedFocuses.length
-    ? createFocusMiddleware({ getSchema: opts.getSchema ?? (() => null), getBind: opts.getBind, initialFocuses: inheritedFocuses })
+    // unfocusGuidance 'report-parent':子 agent 授权面永不带 focus 工具(见保留工具排除表),文案引导「收口反馈」而非调工具
+    ? createFocusMiddleware({ getSchema: opts.getSchema ?? (() => null), getBind: opts.getBind, initialFocuses: inheritedFocuses, unfocusGuidance: 'report-parent' })
     : undefined
   // P1-15(fix-authorization-surface):vfs 桥接 —— 子 state.files 指向主 vfsStore.files,
   // 子 offload 大结果直落主共享池(子 vfs_* 回读不 404,主 agent 亦可读)

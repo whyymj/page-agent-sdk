@@ -1,5 +1,7 @@
 # 活跃 Changes 优先级索引
 
+> **2026-08-15 发布 3.11.0**(minor):`context-economy-phase2` 实施完成并归档 —— ① **`promptSoftCapTokens` 压缩触发成本上限**(token 阈值改 `min(窗口×ratio, softCap)`;窗口 ≥320K 默认 160K,显式 0 关;`resolvePromptSoftCap` 单一真源导出 + `inspect().compression` 反射);② **工具描述瘦身二批**(-40%,11 个工具,教程归 usageHints `!simple` 分支不双份);③ **agent 预算自感知**(零配置:轮次 70%/softCap 半程一行提示 + 同路径写失败 ≥2 提醒 + 计划版次计数)+ **`roundTokenBudget`** 单调用预算 opt-in;④ **真 LLM 复测修复 P0**:wrap-up/重试耗尽路径 DSML 泄漏剥离(`sanitizeGarbledContent` 导出 + observable error)+ headless send/batch error 事件外发(`makeStreamWatch`)。实测 S1 prompt **-40%**(502K→300K)、工具 **-44%**(27→15)。selftest 2011 / e2e 610 / browser 54。见 [`archive/2026-08-15-context-economy-phase2/`](./archive/2026-08-15-context-economy-phase2/)。
+
 > **2026-08-14 发布 3.7.0**(minor):`pagebuilder-default-html-agent` + `ca-concurrency-per-call-context` 实施完成并归档 —— ① **presets.pageBuilder 默认带 HTML 代码子 agent**(spread 一步 = 完整页面搭建能力;`subagents` 用 getter 每次新建防装配期回填 writablePaths 跨实例污染共享单例;显式传 subagents spread 覆盖即替换);② **writablePaths 推断失败语义 throw → warn + 优雅剔除**(schema 无 code 数组时 html agent 自动剔除不崩集成,编排注入自然走「无 html agent」分支);③ **CA 并发组 P2×2 清零**(per-call context 通道:中间件 `wrapToolCall` 写 `ctx.callConfig` → coreExecTool 经 RunnableConfig.configurable 透传到工具 fn 第二参 —— dataOps `__pgDataScope` 乐观锁 scope token(ambient 兜底,~24 处线程化)+ subagent `__pgSubagentCall` signal/emit/logSink(闭包单变量降 fallback);zod 重建 args 对象故 args 注入不可行;默认串行行为零变化)。selftest 1947 / e2e 580 / browser 53。见 [`archive/2026-08-14-pagebuilder-default-html-agent/`](./archive/2026-08-14-pagebuilder-default-html-agent/) + [`archive/2026-08-14-ca-concurrency-per-call-context/`](./archive/2026-08-14-ca-concurrency-per-call-context/)。
 
 > **2026-08-14 发布 3.6.0**(minor):`writablepaths-infer-mcp-timeout` 实施完成并归档 —— ① **createHtmlSubagent `writablePaths` 可选化**(未传时装配期 `inferWritablePaths` 从 schema 顶层扫「数组元素含 codeField string」路径回填,console.info 留痕;显式传入优先;开放 schema/嵌套容器/点路径 codeField 推断不出 → warn+throw 显式传,宁失败不猜错)集成降门槛:HTML 能力包最小配置 = `createHtmlSubagent()` 空调用;② **MCP callTool 超时闸**(`mcp[].callTimeoutMs` 默认 60s,独立于握手 15s;超时该次调用作废回灌 LLM 自纠不重试不断连;补 2.39.0 挂起收口三契约漏网项)。selftest 1944 / e2e 575 / browser 53。见 [`archive/2026-08-14-writablepaths-infer-mcp-timeout/`](./archive/2026-08-14-writablepaths-infer-mcp-timeout/)。
@@ -42,7 +44,7 @@
 
 ## 进行中
 
-- **2026-08-15 `context-economy-phase2`**(上下文经济性二阶段 + agent 自感知预算,目标 minor):承接 3.10.2 一阶段(S4 -19%)后的新瓶颈 —— S1 单场景 28 轮/507K prompt tokens(压缩触发太晚:flash 1M 窗口 × ratio 0.5 = 500K 才首压)。四线:① `promptSoftCapTokens` 成本维度触发(窗口 ≥320K 默认 softCap 160K,显式可覆盖/0 关);② 工具面瘦身二批(eval_script 505/draft_commit 379/set_data 312 等剩余长描述,教程归 usageHints);③ agent 自感知预算(轮次/token 消耗提示一行注入 + 写失败重复计数提醒 + 计划版次计数 + `roundTokenBudget` opt-in 单轮上限 —— 用户三项想法落地);④ 真 LLM 复测 S1/S7 对比基线。见 [`2026-08-15-context-economy-phase2/`](./2026-08-15-context-economy-phase2/)。
+(无)
 
 ---
 

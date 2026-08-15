@@ -5,7 +5,7 @@
  * - createHtmlSubagent:返回结构 / todos middleware / allowedTools vfs(含 vfs_rm)/ 不含 draft_write / summarization 默认开 / planning:false / writablePaths 必填 / codeVfsPrefix / 默认 html-fragment skill
  */
 import { createRagSubagent } from '../../sdk/ragSubagent'
-import { createHtmlSubagent } from '../../sdk/htmlSubagent'
+import { createHtmlSubagent, buildHtmlFragmentSkill, htmlFragmentSkill } from '../../sdk/htmlSubagent'
 import type { TestCtx } from './_ctx'
 
 export async function run(ctx: TestCtx): Promise<void> {
@@ -104,4 +104,43 @@ export async function run(ctx: TestCtx): Promise<void> {
   let hthrew = false
   try { createHtmlSubagent({ writablePaths: 'components' as unknown as string[] }) } catch { hthrew = true }
   assert(hthrew, '✓ writablePaths 非法类型(字符串)→ 工厂层抛错(fail-fast)')
+
+  // ===== 提示词命名参数化(prompt 不写死集成方字段名;code/html/innerHtml、components/blocks/sections 各异) =====
+  console.log('\n[capability-packs · createHtmlSubagent 提示词参数化]')
+  // codeField + 非默认数组路径 → systemPrompt/skill 示例路径全部跟随,不残留 components/code 写死
+  const pcfg = createHtmlSubagent({ codeField: 'props.html_code', writablePaths: ['blocks'] })
+  assert(pcfg.systemPrompt?.includes('props.html_code') && pcfg.systemPrompt?.includes('blocks.N'),
+    '✓ codeField+writablePaths 参数化 → systemPrompt 含 props.html_code / blocks.N')
+  assert(!pcfg.systemPrompt?.includes('components.N.code') && !pcfg.systemPrompt?.includes('data 的 code 字段'),
+    '✓ 参数化后 systemPrompt 不残留 components.N.code / 「data 的 code 字段」写死示例')
+  assert(pcfg.skills?.[0].getContent().includes('blocks.N') && pcfg.skills?.[0].getContent().includes('props.html_code'),
+    '✓ 默认 skill 内容同参数化(blocks.N + props.html_code)')
+  assert(pcfg.description?.includes('props.html_code'), '✓ 默认 description 含 codeField(props.html_code)')
+  assert(!pcfg.description?.includes('custom'), '✓ 默认 description 不写死 custom(字段名以 codeField 为准)')
+
+  // 默认参数快照:不传 → components + code
+  const dcfg = createHtmlSubagent({})
+  assert(dcfg.systemPrompt?.includes('components.N') && dcfg.systemPrompt?.includes('data 的 code 字段'),
+    '✓ 默认未传 writablePaths → 占位示例 components.N + 默认 codeField(向后兼容)')
+
+  // 装配期重建钩子:推断回填 root 后 systemPrompt/skill 按新 root 重建(createChatSdk 装配期调用)
+  ;(dcfg as any)._rebuildCodeAssetPaths('sections')
+  assert(dcfg.systemPrompt?.includes('sections.N') && !dcfg.systemPrompt?.includes('components.N'),
+    '✓ _rebuildCodeAssetPaths("sections") → systemPrompt 示例路径重建(不残留占位 components)')
+  assert(dcfg.skills?.[0].getContent().includes('sections.N') && !dcfg.skills?.[0].getContent().includes('components.N'),
+    '✓ 默认 skill 同步重建(sections.N)')
+
+  // 传自定义 skills → 重建只动 systemPrompt 不覆盖自定义 skill
+  const mySkill = { name: 'my-skill', description: 'x', getContent: () => 'my skill content' }
+  const scfg = createHtmlSubagent({ skills: [mySkill] })
+  ;(scfg as any)._rebuildCodeAssetPaths('sections')
+  assert(scfg.skills?.length === 1 && scfg.skills[0].name === 'my-skill',
+    '✓ 传自定义 skills → 重建钩子不覆盖自定义 skill')
+
+  // buildHtmlFragmentSkill 构造器导出:root/codeField 参数化(默认快照 htmlFragmentSkill 同 3.10.0 契约)
+  const bskill = buildHtmlFragmentSkill('sections', 'innerHtml')
+  assert(bskill.getContent().includes('sections.N') && bskill.getContent().includes('innerHtml'),
+    '✓ buildHtmlFragmentSkill("sections","innerHtml") → 内容参数化')
+  assert(htmlFragmentSkill.getContent() === buildHtmlFragmentSkill().getContent(),
+    '✓ htmlFragmentSkill = buildHtmlFragmentSkill() 默认快照(单一数据源)')
 }

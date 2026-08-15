@@ -194,7 +194,7 @@ createChatSdk({
   maxToolRounds: 10,            // 最多工具调用轮次(默认 10;只计真实工具轮,格式/verify 自纠不消耗;另有 maxIterations 总迭代硬上限防死循环)
   maxRetries: 2,                // 模型调用失败重试次数(默认 2;网络/429/5xx 重试)
   capabilities: { dataOps: true, fetch: true, planning: true, vfs: true, verify: true, domInspect: false, inspectEnv: true, draftWrite: false, workingMemory: true },  // 能力开关(默认全开;关掉省 token。dataOps/fetch 控制内置工具装载;verify 反向默认关需显式开;domInspect=get_dom 读渲染后 DOM(2.20+)默认关 opt-in;inspectEnv=inspect_env 读 window 环境/调试变量(2.20+)默认开排查用;draftWrite=draft_write/commit 分块构建大 JSON(2.20+)默认关 opt-in;workingMemory=跨压缩记忆(2.20+)默认开)
-  verify: { maxAttempts: 2 },        // 自检(需 capabilities.verify:true;check 省略→默认写后读回验证;见 6.10)
+  verify: { maxAttempts: 2 },        // 自检(传 check/maxAttempts/adversarial 任一即自动开,无需 capabilities.verify:true;check 省略→默认写后读回验证;见 6.10)
 
   /* ===== UI 与其他 ===== */
   streaming: true,              // 流式逐字输出(默认 true)
@@ -1110,13 +1110,15 @@ Agent 给出最终答**之前**,自动跑一次 `check` 验证结果;不通过�
 
 ```ts
 createChatSdk({
-  capabilities: { verify: true },      // 开启(默认关)
+  // capabilities: { verify: true },   // 可省 —— 传了 verify.check/maxAttempts/adversarial 任一即自动开启
   verify: {
     maxAttempts: 2,                     // 自纠上限(默认 2)
     // check: async ({ messages, state }) => ({ ok: true }),  // 自定义;省略 → 默认写后读回验证
   },
 })
 ```
+
+> **开启方式(3.11+ 简化)**:传 `verify.check` / `verify.maxAttempts` / `verify.adversarial` 任一即自动开启,无需再配 `capabilities.verify: true`。`capabilities.verify: false` 显式关闭可阻止自动开;`verify.enabled: false` 优先级最高。
 
 **内置 check(默认)**:`createWriteBackCheck()` —— Agent 写了主数据(`write`/`set/edit/delete_data`)后,读回值确认写入生效 + 符合 schema。读回根对象自动取 `data.bind`(经 getter,适配 `sdk.setData` 运行时替换 bind;旧 windowProps 模式回退 `window`):
 - **写后读回**:set/edit 后读回为空 → 「未生效」反馈;读回不符合 schema → 反馈

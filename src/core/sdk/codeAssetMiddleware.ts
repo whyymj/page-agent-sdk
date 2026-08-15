@@ -220,7 +220,7 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
           break
         }
       }
-      return `## 组件代码文件地图(改组件时按 name 直接改对应 vfs 文件;框架自动 checkout/commit)${craftNotes ? '\n📝 笔记 = 前任维护者交接(设计决策/用户反馈/踩坑),改该组件时遵循' : ''}\n${lines.join('\n')}${appendHint}`
+      return `## 组件代码文件地图(改组件时按 name 直接改对应 vfs 文件;框架自动 checkout/commit)${craftNotes ? '\n📝 笔记 = 前任维护者交接(设计决策/用户反馈/踩坑),改该组件时遵循;收口回复末行必须附一行 [note] 交接笔记(本组件本次的实现要点),框架存进组件转交下任' : ''}\n${lines.join('\n')}${appendHint}`
     },
     wrapToolCall: async (ctx, next) => {
       const isVfsCodeOp = ctx.name === 'vfs_write' || ctx.name === 'vfs_edit' || ctx.name === 'vfs_rm'
@@ -241,7 +241,7 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
             if (vfsPgId && !allowed.has(vfsPgId)) {
               const focusFiles = [...allowed].map((x) => `${codeVfsPrefix}${x}.${ext}`).join(', ')
               return {
-                content: `PATH_DENIED · vfs 越界:当前聚焦代码文件 [${focusFiles}],你要改的 "${p}" 不在其中。请只改焦点组件的代码文件;如需改其他组件,请让主 agent clear_focus / 换焦点后重试。`,
+                content: `PATH_DENIED · vfs 越界:当前聚焦代码文件 [${focusFiles}],你要改的 "${p}" 不在其中。请只改焦点组件的代码文件;如需改其他组件,请在收口回复中说明需先取消聚焦(焦点由主会话/用户管理,你无 focus 工具)后重试。`,
                 status: 'error' as const,
               }
             }

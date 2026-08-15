@@ -361,6 +361,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     mw.beforeAgent!(createInitialState())
     const map = (mw as any).augmentPrompt!()
     assert(map.includes('前任维护者交接'), '✓ craft-notes 注入:地图头含交接引导(设计决策/用户反馈/踩坑,改该组件时遵循)')
+    assert(map.includes('收口回复末行必须附一行 [note]'), '✓ craft-notes 注入:地图头含收口提醒(真 LLM 实测漏写率 3/4,per-round recency 通道强化)')
     assert(map.includes('📝 笔记×2(最近):[note] 液面 keyframes 4.2s 循环,装饰仅灯串+光斑'), '✓ craft-notes 注入:有笔记组件加「📝 笔记×N(最近):最近 1 条」行')
     const bLine = map.split('\n').find((l: string) => l.includes('banner'))!
     assert(!bLine.includes('📝'), '✓ craft-notes 注入:无笔记组件不注 📝 行(零噪音)')
@@ -393,6 +394,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     const { createHtmlSubagent } = await import('../../sdk/htmlSubagent')
     const cfg = createHtmlSubagent({ writablePaths: ['components'] })
     assert(!!cfg.systemPrompt?.includes('[note]') && !!cfg.systemPrompt?.includes('交接笔记'), '✓ htmlSystemPrompt 含 [note] 交接笔记约定(收尾回复末尾附 1 行实现要点)')
+    assert(!!cfg.systemPrompt?.includes('收口格式(必守') && /收口格式/.test(cfg.systemPrompt!.split('\n').slice(-6).join('\n')), '✓ htmlSystemPrompt 收口格式硬约束(prompt 末尾 recency 位,漏写率治理)')
     const { htmlOrchestratorPrompt } = await import('../../presets')
     assert(!!htmlOrchestratorPrompt('html').includes('历史偏好'), '✓ htmlOrchestratorPrompt 规格化含 ⑤ 历史偏好(聊天上下文偏好提炼附 task,新子 agent 无记忆全靠 task)')
   }

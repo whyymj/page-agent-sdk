@@ -273,6 +273,24 @@ export async function run() {
     assert(v?.maxAttempts === 3, 'verify.maxAttempts 反映配置(3)')
     assert(v?.adversarial === true, 'verify.adversarial 反映配置(true)')
     sdkOn.unmount()
+
+    // 配置意图推断(verify 两处配置统一):传 verify.check/maxAttempts/adversarial 任一 → 自动开,无需 capabilities.verify:true
+    const sdkInfer = createChatSdk({ ui: false, id: 'e2e-verify-infer', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS, verify: { maxAttempts: 3 } })
+    await sdkInfer.mount()
+    const vi = sdkInfer.inspect().verify
+    assert(vi?.enabled === true, '✓ verify 意图推断:传 verify.maxAttempts(未配 capabilities.verify)→ 自动开启')
+    assert(vi?.maxAttempts === 3, '✓ verify 意图推断:maxAttempts 反射(3)')
+    sdkInfer.unmount()
+    // 边界:capabilities.verify 显式 false → 不自动开(显式关闭优先)
+    const sdkBlock = createChatSdk({ ui: false, id: 'e2e-verify-block', storage: 'memory', llm: FAKE_LLM, capabilities: { ...MIN_CAPS, verify: false }, verify: { maxAttempts: 3 } })
+    await sdkBlock.mount()
+    assert(sdkBlock.inspect().verify?.enabled === false, '✓ verify 意图推断:capabilities.verify:false 显式关闭 → 不自动开(优先级最高)')
+    sdkBlock.unmount()
+    // 边界:verify.enabled:false 最高优先关闭(即使 capabilities.verify:true)
+    const sdkDisable = createChatSdk({ ui: false, id: 'e2e-verify-disable', storage: 'memory', llm: FAKE_LLM, capabilities: { ...MIN_CAPS, verify: true }, verify: { enabled: false } })
+    await sdkDisable.mount()
+    assert(sdkDisable.inspect().verify?.enabled === false, '✓ verify.enabled:false → 最高优先关闭(原行为零回归)')
+    sdkDisable.unmount()
   }
 
   console.log('[e2e:inspect] inspect().mcp 无 MCP 时为空数组')

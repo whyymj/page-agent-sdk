@@ -171,5 +171,25 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:focus] resetSession/switchSession 清焦点 + infoTick bump(修:清空对话后输入框聚焦 chip 残留旧焦点)')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-focus-reset', storage: 'memory', llm: FAKE_LLM,
+      capabilities: MIN_CAPS, data: { schema, bind: { title: 't', components: [{ type: 'x' }] }, description: '页面' },
+    })
+    await sdk.mount()
+    sdk.addFocus({ path: 'components.0', label: '按钮' })
+    const tickBefore = sdk.infoTick.value
+    sdk.resetSession()
+    assert(sdk.getFocuses().length === 0, '✓ resetSession → 焦点清空(getFocuses 空,聚焦态不泄漏进新会话)')
+    assert(sdk.infoTick.value > tickBefore, '✓ resetSession → infoTick bump(UI focuses chip computed 挂 infoTick,不 bump 则 chip 残留旧焦点)')
+    // switchSession 同契约(切走 = 焦点重置)
+    sdk.addFocus({ path: 'components.0' })
+    const tick2 = sdk.infoTick.value
+    await sdk.switchSession()
+    assert(sdk.getFocuses().length === 0 && sdk.infoTick.value > tick2, '✓ switchSession → 焦点重置 + infoTick bump(同 resetSession 契约)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

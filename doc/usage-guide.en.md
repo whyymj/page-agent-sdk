@@ -169,7 +169,7 @@ createChatSdk({
   approval: { tools: ['write'] },  // passive confirm whitelist (default off)
   checkpoint: true,                 // session-level rollback (default off)
 
-  // self-verify (needs capabilities.verify:true)
+  // self-verify (auto-enabled when check/maxAttempts/adversarial provided; capabilities.verify:false to force off)
   verify: { check?, maxAttempts?, adversarial? },  // check omitted → createWriteBackCheck
 
   // subagents
@@ -1350,7 +1350,7 @@ A: `id` must be a stable value (not omitted — random id can't resume). `storag
 A: Tool results > 6000 chars auto-offload to vfs (only preview + `vfs_read`/`vfs_grep` refs stay). `write` with `patch` to avoid re-sending whole JSON.
 
 **Q: `verify` not taking effect?**
-A: `verify` needs `capabilities.verify:true` (default off). `inspect().verify` shows load status.
+A: Verify is off by default (token cost). It auto-enables when you pass `verify.check` / `verify.maxAttempts` / `verify.adversarial`; explicit `capabilities.verify: false` blocks auto-enable, and `verify.enabled: false` forces off. `inspect().verify` shows load status.
 
 > More FAQs in the [Chinese guide §11](./usage-guide.md#11-常见问题与坑).
 

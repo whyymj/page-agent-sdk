@@ -130,6 +130,20 @@ export async function run(ctx: TestCtx): Promise<void> {
     const mwNone = createUsageHintsMiddleware({ planning: false, subagent: false, inspectEnv: false }, false)
     assert(mwNone.augmentPrompt?.(createState()) === undefined, '全关 → augmentPrompt 返回 undefined(不增上下文)')
 
+    // ===== 提示词与工具面一致性(同类坑:focus 引导 simple 下不存在的 clear_tool)=====
+    // simple:仅 read/write/query/search/eval/restore/history 装载 → 不教 schema_data 调用语法(advanced 专属,措辞明示未装载)
+    assert(!/schema_data\(\{jsonPath\}\)/.test(segFull), 'simple → 不教 schema_data 调用语法(advanced 专属未装载)')
+    assert(/schema_data\/diff_data/.test(segFull) && /未装载/.test(segFull), 'simple → schema/diff 以"需切 advanced"措辞提及')
+    // minimal:只 read/write → query/search/eval/history/restore/schema 全部不注入
+    const mwMin = createUsageHintsMiddleware({ planning: true, subagent: true }, true, 'minimal')
+    const segMin = mwMin.augmentPrompt?.(createState()) || ''
+    assert(!/query_data|search_data|eval_script|history_data|schema_data|restore_data|diff_data/.test(segMin), 'minimal → 不注入 query/search/eval/history/schema/restore/diff 用法(均未装载)')
+    assert(/\bread\b/.test(segMin) && /\bwrite\b/.test(segMin), 'minimal → 仍注入 read/write 用法(仅有的两个工具)')
+    // planning 开 + humanConfirm 关 → 不教 request_human_confirmation(工具未装载);开 → 教
+    assert(!/request_human_confirmation/.test(segFull), 'humanConfirm 关 → 不教 request_human_confirmation(未装载)')
+    const mwHC = createUsageHintsMiddleware({ planning: true, subagent: true, humanConfirm: true }, true)
+    assert(/request_human_confirmation/.test(mwHC.augmentPrompt?.(createState()) || ''), 'humanConfirm 开 → 注入 request_human_confirmation 引导')
+
     assert(mwFull.name === 'usageHints', '中间件 name=usageHints')
   }
 

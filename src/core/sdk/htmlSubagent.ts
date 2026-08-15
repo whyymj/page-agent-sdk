@@ -77,8 +77,10 @@ export interface CreateHtmlSubagentOptions {
 }
 
 // ===== HTML systemPrompt(单模式:代码作为 data 资产 + vfs 工作副本) =====
-
-function htmlSystemPrompt(prefix: string): string {
+// 示例路径全部参数化(codeField / root=首个 writablePath):集成方字段命名各异(code/html/innerHtml、
+// components/blocks/sections),prompt 写死示例会反向误导 LLM 照抄不存在的路径。root 未传 writablePaths
+// 时先用 'components' 占位,装配期推断回填后经 _rebuildCodeAssetPaths 重建。
+function htmlSystemPrompt(prefix: string, codeField: string, root: string): string {
   const ext = 'html'
   const kindRules = `- 输出形态:完整、自包含的 HTML 页面(.${ext},可独立成页)`
   return `你是纯代码组件生成专家。可用工具:vfs_write / vfs_edit / vfs_rm(写/改/删代码工作副本 vfs ${prefix}) / vfs_read + vfs_grep(读 vfs) / validate_code(代码格式自检) / write(写 data,writablePaths 限定;set/patch 增量或整体) / read / write_todos + update_todo(规划)。
@@ -86,16 +88,16 @@ function htmlSystemPrompt(prefix: string): string {
 收 task 规格照做(减少你自己的思考纠结):task 含视觉(配色/质感)+ 内容(文案/数据)+ 交互(动效/触发)规格时,**照规格实现**(技术实现 SVG vs CSS / keyframes vs transition 自行选成熟模式,不穷举);task 缺规格(主 agent 漏写)时,按字面意图选**一个简单方案**直接实现,不纠结「该用什么风格」—— 主 agent 掌整页主题协调,你负责落地。
 
 代码作为数据资产(重要):
-- 代码正文是 data 的 code 字段(资产,随 data json 进服务端 DB);UI 直接绑 data.code 渲染
-- vfs 是编辑工作副本:框架在每次委派开始时自动把 data.code 检出到 vfs(${prefix}<__pgId>.${ext}),你改 vfs,委派结束框架自动把改过的 vfs 增量回写 data.code
+- 代码正文是 data 的 ${codeField} 字段(资产,随 data json 进服务端 DB);UI 直接绑 data.${codeField} 渲染
+- vfs 是编辑工作副本:框架在每次委派开始时自动把 data.${codeField} 检出到 vfs(${prefix}<__pgId>.${ext}),你改 vfs,委派结束框架自动把改过的 vfs 增量回写 data.${codeField}
 - __pgId 是框架管的内部字段(组件稳定映射键):read 看不到、write 写不进,你别碰
 
 两条工作路径:
-- **修改已有组件**(改颜色/文案/布局等):必经 vfs —— 上下文有「组件代码文件地图」(name → vfs 路径),按 name 找到对应文件直接 vfs_edit 增量改目标片段 → validate_code 自检;框架自动回写 data.code。勿直接 write data.code 改已有组件(绕过 vfs/verify,且无增量友好);文件未检出时先 vfs_write 创建
-- **新建组件**:write({ patch:{ op:'set', jsonPath:'components.N', value:{...} } }) —— value 按 data schema **全字段写**(含必填字段如 type/name,code 正文;缺必填字段会被 schema 拒)。调研**只看一个样本**:read({jsonPath:'components', offset:0, limit:1}) 取首个元素照抄字段名即可(**禁止分页逐个翻完整数组**,大数组翻页纯烧轮次;也不要 describe_data/schema_data 反复查);N = 数组长度(追加到末尾,read 返回的 total/length 即是)。框架自动补 __pgId。**固定流程**:直接 write data → validate_code({jsonPath:'components.N.code'}) 自检(从 data 读刚写的 code,零重传 content)→ read 确认;**不必手动 vfs_write 建工作副本**(框架下次委派自动 checkout;仅当本次委派内还要继续精修它,才 vfs_write 建副本再 vfs_edit)。**校验方式**:新建组件用 jsonPath(零重传)/ 修改组件用 path(vfs 文件)/ content 仅兜底;**禁止在思考里权衡「content 太长 / 要不要重传 / 先 vfs_write 再 by path」**,选对应方式一次校验即收口(为之纠结反费更多 token,真实复盘子 agent 曾在此循环 10+ 回合致整页超时)。**code 字段直接写完整代码字符串,换行/引号照常写,无需手工 JSON 转义**
+- **修改已有组件**(改颜色/文案/布局等):必经 vfs —— 上下文有「组件代码文件地图」(name → vfs 路径),按 name 找到对应文件直接 vfs_edit 增量改目标片段 → validate_code 自检;框架自动回写 data.${codeField}。勿直接 write data.${codeField} 改已有组件(绕过 vfs/verify,且无增量友好);文件未检出时先 vfs_write 创建
+- **新建组件**:write({ patch:{ op:'set', jsonPath:'${root}.N', value:{...} } }) —— value 按 data schema **全字段写**(含全部必填字段 —— 字段名以样本为准照抄,如类型/名称,外加 ${codeField} 代码正文;缺必填字段会被 schema 拒)。调研**只看一个样本**:read({jsonPath:'${root}', offset:0, limit:1}) 取首个元素照抄字段名即可(**禁止分页逐个翻完整数组**,大数组翻页纯烧轮次;也不要 describe_data/schema_data 反复查);N = 数组长度(追加到末尾,read 返回的 total/length 即是)。框架自动补 __pgId。**固定流程**:直接 write data → validate_code({jsonPath:'${root}.N.${codeField}'}) 自检(从 data 读刚写的代码,零重传 content)→ read 确认;**不必手动 vfs_write 建工作副本**(框架下次委派自动 checkout;仅当本次委派内还要继续精修它,才 vfs_write 建副本再 vfs_edit)。**校验方式**:新建组件用 jsonPath(零重传)/ 修改组件用 path(vfs 文件)/ content 仅兜底;**禁止在思考里权衡「content 太长 / 要不要重传 / 先 vfs_write 再 by path」**,选对应方式一次校验即收口(为之纠结反费更多 token,真实复盘子 agent 曾在此循环 10+ 回合致整页超时)。**${codeField} 字段直接写完整代码字符串,换行/引号照常写,无需手工 JSON 转义**
 
 焦点精修(若继承到主 agent 焦点):
-- 上下文若提示「当前精修目标」(如 components.2(banner)),说明主 agent 聚焦了某组件 → 你**只能改该焦点组件**的代码文件(vfs 文件 ${prefix}<焦点组件 __pgId>.${ext});改其他组件的代码文件会被 PATH_DENIED 硬拦
+- 上下文若提示「当前精修目标」(如 ${root}.2),说明主 agent 聚焦了某组件 → 你**只能改该焦点组件**的代码文件(vfs 文件 ${prefix}<焦点组件 __pgId>.${ext});改其他组件的代码文件会被 PATH_DENIED 硬拦
 - 直接改焦点组件文件,不要尝试改其他组件(浪费轮次);聚焦模式下也不能新建组件(数据写被拦)—— 若 task 要新建,反馈主 agent 需先取消焦点
 
 代码形态规则:
@@ -110,7 +112,7 @@ ${kindRules}
 
 诚实交付:
 - 按用户需求产出完整 HTML 页面。若某需求无法实现,结论简短说明(不展开权衡、不解释渲染原理)。禁止假装实现了未做到的特性。
-- **收尾回复末尾附 1 行交接笔记**(给下次维护该组件的子 agent,框架会存进组件并自动转交):格式 \`[note] <一句话实现要点>\` —— 关键设计决策 / 用户偏好反馈 / 踩坑(如「[note] 液面用 height keyframes 4.2s 循环;装饰仅灯串+光斑 2 类」)。只写可复用的结论,一行内。
+- 收尾回复末尾附 1 行交接笔记(格式见文末「收口格式」,**必守**)。
 
 工作方式:
 1. 中等任务(多组件 / 大段代码)先 write_todos 拆解:read 看现有结构 → 规划各组件 → 逐个改/建 → read 确认。**todo 工具约束**:write_todos 是整表替换(一次列全),update_todo 是增量(标完成/改状态);两者**不可在同一轮混用**(一轮内只用一种,否则被拒),别再同轮重试另一种;
@@ -127,25 +129,28 @@ ${kindRules}
    - **机械决定一次定**:写法选择(read 回读 vs 复制、vfs 草稿 vs 直写 data、并行 vs 串行)快速选一个,**不在思考里反复权衡 token 成本**(为之纠结反更费 token)。
    - **禁止在思考里整段写出完整代码草稿**:CSS/JS/HTML 代码只写进 write / vfs_write / vfs_edit 工具调用(代码只出现一次);思考里只做高层设计(结构 / 字段 / 方案选择),不要先逐行预写一遍代码再在工具里重复一遍 —— 那会让代码 token 翻倍。
    - **终稿纪律(一次写成)**:动手前要点清单一次定稿(≤10 条:结构 + DOM 分层/z-index + 关键尺寸 + 动画时序),清单齐了**直接在工具调用里写终稿**;① 不先写一版再推翻重写第二版(整段重写 = 代码 token 翻倍,写前多花 30 秒把清单想齐);② 同一几何/层级约束(bottom 定位/遮挡/z-index)**只推演一次**,不重复推导第二遍;③ 写完发现小问题(遮挡/重叠/命名),只改那一处,不重写整段。
-   - **代码字符串不纠结转义**:code / content 字段就是普通字符串,直接写完整代码文本(换行、引号照常写),不要纠结「\n」转义、单双引号、字面换行会不会被拒 —— 框架自动序列化,反复权衡纯属浪费 token。
-   - 一次想清楚 → 动手 → 验证 → 收口。**思考是手段不是目的,产出代码才是**。`
+   - **代码字符串不纠结转义**:代码字段(${codeField})/ content 参数就是普通字符串,直接写完整代码文本(换行、引号照常写),不要纠结「\n」转义、单双引号、字面换行会不会被拒 —— 框架自动序列化,反复权衡纯属浪费 token。
+   - 一次想清楚 → 动手 → 验证 → 收口。**思考是手段不是目的,产出代码才是**。
+8. **收口格式(必守,最后一行)**:收口回复 = 简短结果总结 + **末行交接笔记** \`[note] <一句话实现要点>\` —— 关键设计决策 / 用户偏好 / 踩坑(如「[note] 液面用 height keyframes 4.2s 循环;装饰仅灯串+光斑 2 类」)。框架只识别末尾 [note] 行存进组件、自动转交下次维护该组件的子 agent;**漏写 = 下任失去交接**(真 LLM 实测漏写率 3/4,务必末行带上)。一行内,只写可复用结论。`
 }
 
 // ===== 内置 skill(完整 HTML 生成规范)=====
+// 示例路径参数化同 htmlSystemPrompt(集成方字段命名各异,勿写死);htmlFragmentSkill 为默认快照('components'/'code')。
 
-const HTML_FRAGMENT_SKILL_DOC = `# HTML 完整页面生成规范
+function htmlSkillDoc(root: string, codeField: string): string {
+  return `# HTML 完整页面生成规范
 
 ## 代码资产模型(重要)
-- 代码正文是 data 的 code 字段(资产,随 data json 进服务端 DB);UI 绑 data.code 渲染
-- vfs 是编辑工作副本:框架自动 checkout(data.code→vfs)/ commit(vfs→data.code),你只改 vfs
+- 代码正文是 data 的 ${codeField} 字段(资产,随 data json 进服务端 DB);UI 绑 data.${codeField} 渲染
+- vfs 是编辑工作副本:框架自动 checkout(data.${codeField}→vfs)/ commit(vfs→data.${codeField}),你只改 vfs
 - __pgId 框架管(read 看不到、write 写不进),别碰
 
 ## 两条工作路径
-- 修改已有组件:必经 vfs —— 按上下文「组件代码文件地图」(name → vfs 路径)定位文件,vfs_edit 增量改 → validate_code;勿直接 write data.code;文件未检出先 vfs_write 创建
-- 新建组件:write({patch:{op:'set',jsonPath:'components.N',value:{...}}}) —— value 按 schema 全字段写(必填字段如 type 不能漏;调研只 read({jsonPath:'components',offset:0,limit:1}) 看一个样本照抄字段名,勿分页翻全量数组),框架补 __pgId。固定流程 write → validate_code({jsonPath:'components.N.code'})(零重传 content)→ read 确认,**不手动 vfs_write 建副本**(框架下次委派自动 checkout)。code 字段直接写完整代码字符串,换行/引号照常写,无需手工 JSON 转义
+- 修改已有组件:必经 vfs —— 按上下文「组件代码文件地图」(name → vfs 路径)定位文件,vfs_edit 增量改 → validate_code;勿直接 write data.${codeField};文件未检出先 vfs_write 创建
+- 新建组件:write({patch:{op:'set',jsonPath:'${root}.N',value:{...}}}) —— value 按 schema 全字段写(必填字段不能漏,字段名以样本为准;调研只 read({jsonPath:'${root}',offset:0,limit:1}) 看一个样本照抄字段名,勿分页翻全量数组),框架补 __pgId。固定流程 write → validate_code({jsonPath:'${root}.N.${codeField}'})(零重传 content)→ read 确认,**不手动 vfs_write 建副本**(框架下次委派自动 checkout)。${codeField} 字段直接写完整代码字符串,换行/引号照常写,无需手工 JSON 转义
 
 ## 焦点精修(继承主 agent 焦点时)
-- 上下文提示「当前精修目标」(如 components.2(banner))→ 只改该焦点组件的代码文件;改其他组件会被 PATH_DENIED 硬拦
+- 上下文提示「当前精修目标」(如 ${root}.2)→ 只改该焦点组件的代码文件;改其他组件会被 PATH_DENIED 硬拦
 - 聚焦模式不能新建组件(数据写被拦),要新建先反馈主 agent 取消焦点
 
 ## 输出:完整、自包含、能独立成页的 HTML
@@ -169,13 +174,19 @@ const HTML_FRAGMENT_SKILL_DOC = `# HTML 完整页面生成规范
 ## 可访问性 + 语义化
 - 语义化标签(button / nav / section);图片 alt;交互可键盘聚焦
 - 颜色对比达标;不只用颜色传达信息`
-
-/** 内置 html 生成规范 skill(完整页面级 HTML;默认装进子 agent)。getContent 返回全文(不依赖外部文件) */
-export const htmlFragmentSkill: SkillSpec = {
-  name: 'html-fragment',
-  description: '完整 HTML 页面生成规范:代码作为 data 资产 / vfs 工作副本 / 完整自包含可独立成页 / script+CSS 集中放置 / 可引外部 JS/CSS / validate_code 自检 / 安全底线 / 可访问性',
-  getContent: () => HTML_FRAGMENT_SKILL_DOC,
 }
+
+/** 内置 html 生成规范 skill 构造器(示例路径按 root/codeField 参数化,集成方字段命名各异勿写死) */
+export function buildHtmlFragmentSkill(root = 'components', codeField = 'code'): SkillSpec {
+  return {
+    name: 'html-fragment',
+    description: '完整 HTML 页面生成规范:代码作为 data 资产 / vfs 工作副本 / 完整自包含可独立成页 / script+CSS 集中放置 / 可引外部 JS/CSS / validate_code 自检 / 安全底线 / 可访问性',
+    getContent: () => htmlSkillDoc(root, codeField),
+  }
+}
+
+/** 内置 html 生成规范 skill(完整页面级 HTML;默认装进子 agent;默认快照 root='components'/codeField='code')。getContent 返回全文(不依赖外部文件) */
+export const htmlFragmentSkill: SkillSpec = buildHtmlFragmentSkill()
 
 // ===== 格式校验链(validate_code 工具 + verify beforeReturn 门禁) =====
 
@@ -259,8 +270,9 @@ export function createHtmlValidateToolsMiddleware(vfsPrefix: string): Middleware
       name: 'validate_code',
       description: '校验 HTML 代码格式(标签闭合等结构合法性;DOCTYPE/html/head/body/script 均允许 —— 完整页面级)。生成/修改代码后必调;报错修正后复查直到通过。',
       schema: z.object({
-        jsonPath: z.string().optional().describe('首选。从 data 读 code 校验(如 components.2.code;新建组件 write 后用,零重传 content)'),
-        path: z.string().optional().describe('修改已有组件时校验 vfs 工作副本文件(如 html/hero.html)'),
+        // 描述不写死路径示例(集成方 codeField/数组路径各异,示例会反向引导照抄);vfsPrefix 工厂已知可示例
+        jsonPath: z.string().optional().describe('首选。从 data 读代码校验(传代码字段的 jsonPath;新建组件 write 后用,零重传 content)'),
+        path: z.string().optional().describe('修改已有组件时校验 vfs 工作副本文件(如 ' + vfsPrefix + 'hero.html)'),
         content: z.string().optional().describe('兜底。仅当 jsonPath/path 均不便时直传代码'),
       }),
     },
@@ -307,20 +319,30 @@ export function createHtmlSubagent(options: CreateHtmlSubagentOptions = {}): Sub
   // 注意:checkout/commit 钩子不由本工厂装(createChatSdk 装配期识别 _codeAsset 标记后追加 ——
   //   钩子需访问主 dataOpsController + vfsStore,本工厂调用时集成商尚未传 data,故延迟到装配期)
   const tools = extraTools ?? []
-  return {
+  // 示例路径参数:root = 首个 writablePath;未传(装配期推断)先用 'components' 占位,回填后经 _rebuildCodeAssetPaths 重建
+  const root = writablePaths?.[0] ?? 'components'
+  const usedDefaultSkill = skills === undefined
+  const cfg: SubagentConfig = {
     id,
-    description: description ?? '生成/修改纯代码组件(custom 代码)。代码作为 data 资产(code 字段进 DB),vfs 作工作副本;能规划(write_todos)+ 执行。需写代码组件或灵活定制时委派',
-    systemPrompt: htmlSystemPrompt(codeVfsPrefix),
-    writablePaths: writablePaths ?? [],                      // 写 data(code + 元信息,path guard);空=装配期推断回填
+    description: description ?? `生成/修改纯代码组件(代码作为 data 资产,代码字段 ${codeField} 随 data 持久化;vfs 作工作副本;能规划(write_todos)+ 执行)。需写代码组件或灵活定制时委派`,
+    systemPrompt: htmlSystemPrompt(codeVfsPrefix, codeField, root),
+    writablePaths: writablePaths ?? [],                      // 写 data(代码字段 + 元信息,path guard);空=装配期推断回填
     allowedTools: ['vfs_write', 'vfs_edit', 'vfs_rm', 'vfs_grep', 'vfs_read'],  // 代码工作副本 写/改/删/搜/读
     middleware: middleware.length ? middleware : undefined,  // 装 todos 规划 + 格式校验链(架构扩展)
     summarization: summarization === false ? undefined : summarization,  // 默认开跨轮压缩(架构扩展)
     maxVerifyAttempts: formatCheck ? FORMAT_CHECK_MAX_ATTEMPTS : undefined,  // verify 门禁自纠上限(beforeReturn)
     temperature,
-    skills: skills ?? [htmlFragmentSkill],  // 内置完整 HTML 生成规范 skill
+    skills: usedDefaultSkill ? [buildHtmlFragmentSkill(root, codeField)] : skills,  // 内置完整 HTML 生成规范 skill(示例路径参数化)
     maxToolRounds,
     tools: tools.length ? tools : undefined,
     // 框架内部标记:createChatSdk 装配期识别 → 注入 checkout/commit 钩子 + pgIdPaths + largeTextPaths + 强制 vfs
-    _codeAsset: { writablePaths: writablePaths ?? [], codeVfsPrefix, ext, codeField, craftNotes, ...(orchestratorPrompt ? { orchestratorPrompt: htmlOrchestratorPrompt(id) } : {}) },
+    _codeAsset: { writablePaths: writablePaths ?? [], codeVfsPrefix, ext, codeField, craftNotes, ...(orchestratorPrompt ? { orchestratorPrompt: htmlOrchestratorPrompt(id, codeField) } : {}) },
   }
+  // 装配期重建钩子(createChatSdk writablePaths 推断回填后调):更新 systemPrompt/skill 的示例路径,
+  // 防 'components' 占位示例误导非 components 命名(blocks/sections 等)的集成。仅内部使用(同 _codeAsset 标记模式)。
+  ;(cfg as any)._rebuildCodeAssetPaths = (r: string) => {
+    cfg.systemPrompt = htmlSystemPrompt(codeVfsPrefix, codeField, r)
+    if (usedDefaultSkill) cfg.skills = [buildHtmlFragmentSkill(r, codeField)]
+  }
+  return cfg
 }

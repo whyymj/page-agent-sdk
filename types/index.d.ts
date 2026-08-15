@@ -812,7 +812,7 @@ export interface ChatSdkOptions {
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number; timeoutMs?: number };
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[];
-  /** 自检:agent 返回前跑 check,不通过则 feedback 回灌自纠(默认关闭;需 capabilities.verify:true)。check 省略时默认 createWriteBackCheck 写后读回验证 */
+  /** 自检:agent 返回前跑 check,不通过则 feedback 回灌自纠(默认关闭)。传 check/maxAttempts/adversarial 任一即自动开启(无需再配 capabilities.verify:true;显式 false 或 enabled:false 可关)。check 省略时默认 createWriteBackCheck 写后读回验证 */
   verify?: { enabled?: boolean; check?: VerifyCheck; maxAttempts?: number; adversarial?: boolean };
   /** 人工确认:工具调用前弹确认框,用户「允许/拒绝」后才执行(默认关闭,不传 = 不装) */
   approval?: ApprovalOptions;
@@ -1474,7 +1474,9 @@ export interface HtmlFormatCheckOptions {
 }
 /** HTML 格式 verify check(beforeReturn 门禁):扫 state.files 代码文件,不通过回灌 feedback 自纠 */
 export declare function createHtmlFormatCheck(opts?: HtmlFormatCheckOptions): VerifyCheck;
-/** 内置完整 HTML 生成规范 skill(createHtmlSubagent 默认装;传自定义 skills 覆盖默认时,显式并回此 skill 保住生成规范/安全底线) */
+/** 内置完整 HTML 生成规范 skill 构造器(示例路径按 root/codeField 参数化,集成方字段命名各异勿写死;默认快照 root='components'/codeField='code') */
+export declare function buildHtmlFragmentSkill(root?: string, codeField?: string): SkillSpec;
+/** 内置完整 HTML 生成规范 skill(createHtmlSubagent 默认装;传自定义 skills 覆盖默认时,显式并回此 skill 保住生成规范/安全底线;默认快照 root='components'/codeField='code') */
 export declare const htmlFragmentSkill: SkillSpec;
 
 // checkpoint / dataOps / permissions

@@ -46,6 +46,9 @@ export interface BudgetHintOptions {
 export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined, hasDataOps: boolean, toolMode: 'simple' | 'advanced' | 'minimal' = 'simple', _hasResources?: boolean, budget?: BudgetHintOptions): Middleware {  // _hasResources 保留签名兼容(资源教程段已移至 resourcesPin,参数不再使用)
   const rc = resolveCapabilities(caps)  // 单一解析 capability 开关(humanConfirm/subagents 非 capability,caps 直接访问)
   const simple = toolMode !== 'advanced'
+  // minimal 只暴露 read/write(dataOps MINIMAL_ALLOWED):query/search/eval/history/schema_data 均未装载,不注入用法
+  // (提示词与工具面一致性;同类坑:focus 引导 simple 下不存在的 clear_focus)
+  const minimal = toolMode === 'minimal'
   return {
     name: 'usageHints',
     augmentPrompt: (state: HarnessState) => {
@@ -55,17 +58,22 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
         hints.push('  · 简单/明确任务(改单字段、调样式、查值)→ 直接 read/write 执行,不必 write_todos。')
         hints.push('  · 复杂任务(多步、大改、有歧义、不可逆)→ 先 write_todos 拆解,首个任务标 in_progress,逐项推进。')
         hints.push('  · 执行中发现步骤要改/补/细分 → 用 update_todo({id, content?, status?}) 按 id 增量改单项,不必重传整个清单。')
-        hints.push('  · 规划出多步方案若需用户拍板 → 先 request_human_confirmation 给方案选项,确认后再执行。')
+        // request_human_confirmation 仅 humanConfirm 能力开时装载;关闭时改引导文字征询,勿教调不存在的工具
+        if (caps?.humanConfirm) hints.push('  · 规划出多步方案若需用户拍板 → 先 request_human_confirmation 给方案选项,确认后再执行。')
+        else hints.push('  · 规划出多步方案若需用户拍板 → 以文字列出方案选项等用户回复,勿自行拍板。')
         hints.push('  · 规划阶段有轮次预算(maxPlanRevisions,默认 5):勿反复调研/改计划而不执行,规划充分后即开始 write 落地。')
       }
       if (hasDataOps) {
         if (simple) {
-          hints.push('读写主数据用 read/write(高层入口,自动乐观锁 + 自动快照)。read({jsonPath}) 读子路径当前值(返回含 hash,write 时自动比对,无需手动传);read() 不传读整个主数据 + 说明。write 改值两姿势:① 改单个字段/子路径用 write({patch:{op:"set", jsonPath:"路径.字段", value:新值}})——patch.value 就是该字段的新值(类型匹配:string 直传字符串、number 传数字、对象传对象),不要包成 {字段:值} 对象(字段名已在 jsonPath);也兼容 write({value:新值, patch:{op,jsonPath}}) 顶层 value(向后兼容,但优先 patch.value,避免与整体 set 的 value 混淆);② 替换整个对象用 write({value:{整个新对象}})。op:set 设值 / remove 删 / merge 合并对象 / append 追加数组 / move 移动数组元素(value=目标路径字符串:数组本身=追加到末尾、数组内下标=插到该位置;同数组即重排如组件调序,目标下标按移除源后解释,一步完成免双 set 交换);批量多改动 write({patches:[{op,jsonPath,value},...]});删子路径 write({patch:{jsonPath:"路径"}, del:true})。写入自动经 schema 校验(失败不写,按错误提示改值类型/形状后重试)+ 自动存快照(出错可用 restore_data 回退)。')
+          hints.push('读写主数据用 read/write(高层入口,自动乐观锁 + 自动快照)。read({jsonPath}) 读子路径当前值(返回含 hash,write 时自动比对,无需手动传);read() 不传读整个主数据 + 说明。write 改值两姿势:① 改单个字段/子路径用 write({patch:{op:"set", jsonPath:"路径.字段", value:新值}})——patch.value 就是该字段的新值(类型匹配:string 直传字符串、number 传数字、对象传对象),不要包成 {字段:值} 对象(字段名已在 jsonPath);也兼容 write({value:新值, patch:{op,jsonPath}}) 顶层 value(向后兼容,但优先 patch.value,避免与整体 set 的 value 混淆);② 替换整个对象用 write({value:{整个新对象}})。op:set 设值 / remove 删 / merge 合并对象 / append 追加数组 / move 移动数组元素(value=目标路径字符串:数组本身=追加到末尾、数组内下标=插到该位置;同数组即重排如组件调序,目标下标按移除源后解释,一步完成免双 set 交换);批量多改动 write({patches:[{op,jsonPath,value},...]});删子路径 write({patch:{jsonPath:"路径"}, del:true})。写入自动经 schema 校验(失败不写,按错误提示改值类型/形状后重试)+ 自动存快照' + (minimal ? '。' : '(出错可用 restore_data 回退)。'))
           hints.push('修改大对象/数组优先用 write 的 patch 增量(只发改动部分),避免整体重传被 max_tokens 截断致 JSON 不完整。')
           hints.push('读大数组(read 返回 hasMore=true)用 read({jsonPath,offset,limit}) 分页(offset+=limit 续读,默认 limit=50);一次读多个不相关子路径用 read({jsonPaths:[...]}) 省轮次;复杂 patches 改动先 write({patches,dryRun:true}) 预检(走完整校验不落盘)。')
-          hints.push('read/describe 返回按 schema 投影:仅 schema 声明的字段可见(未声明字段自动隐藏,防误操作);要操作某字段需集成方在 schema 声明,查任意路径完整约束用 schema_data({jsonPath})。')
-          hints.push('查历史快照值(看上一版长啥样 / 冲突诊断 / 用户问"刚才改了啥")用 history_data({id?,jsonPath?})(只读不改当前);对比当前与历史快照的差异需切 advanced 用 diff_data(返回结构化 path→from/to)。')
-          hints.push('在大数组里按条件筛选用 query_data(JSONPath,如 $.components[?(@.type=="card" && @.price<100)]),返回匹配元素 path/index;定位后用 write patch 改。找名字记不清的元素用 search_data(substring/regex/fuzzy)。批量过滤/映射/聚合/重写大数组用 eval_script(沙箱脚本,mode=query 只读/transform 落地)。')
+          hints.push('read/describe 返回按 schema 投影:仅 schema 声明的字段可见(未声明字段自动隐藏,防误操作);要操作某字段需集成方在 schema 声明。')
+          if (!minimal) {
+            // schema_data/diff_data 均 advanced 专属(SIMPLE_HIDDEN 滤除):措辞明示"需切 advanced",勿直接教调用
+            hints.push('查任意路径完整约束或对比快照差异需切 advanced 工具模式(schema_data/diff_data,当前未装载勿调用);查历史快照值(只读不改当前)用 history_data({id?,jsonPath?})。')
+            hints.push('在大数组里按条件筛选用 query_data(JSONPath,如 $.components[?(@.type=="card" && @.price<100)]),返回匹配元素 path/index;定位后用 write patch 改。找名字记不清的元素用 search_data(substring/regex/fuzzy)。批量过滤/映射/聚合/重写大数组用 eval_script(沙箱脚本,mode=query 只读/transform 落地)。')
+          }
         } else {
           hints.push('改主数据前先 get_data({jsonPath}) 读其当前真实值与 hash(返回末尾 hash=xxx),基于真实值改,不要凭记忆。写入(set/edit/delete)时回传 expectedHash=该 hash 启用乐观锁——若主数据在你 get 之后被外部代码/其他 agent/用户手动改过,会触发冲突:集成方若开启人工介入,工具会挂起等用户决定(保留外部/强制覆盖/回退),你应等待工具返回后按结果继续(保留外部→重新 get 再改;强制覆盖→已写入,继续;回退→已回退到历史快照,基于回退值重写);未开启人工介入时返回 VERSION_CONFLICT 不写入,重新 get 拿最新值与 hash 再改。')
           hints.push('不确定主数据字段结构时用 describe_data 查看说明。')
@@ -103,7 +111,9 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
         hints.push('【规划-反思-执行·路由】按任务性质选模式,不要对简单任务过度编排:')
         if (planners.length) {
           hints.push(`  · 创作/设计/开放性需求(如"设计主题风格""换个感觉")→ 先调 ${planners.map((s) => 'use_' + s.id).join('/')} 出 2-3 套方案(高温创意),`)
-          hints.push('    不要自己拍板;拿到方案后,若需用户拍板用 request_human_confirmation 弹选项。')
+          hints.push(caps?.humanConfirm
+            ? '    不要自己拍板;拿到方案后,若需用户拍板用 request_human_confirmation 弹选项。'
+            : '    不要自己拍板;拿到方案后以文字列出选项等用户回复(humanConfirm 未开,勿调不存在工具)。')
         }
         if (reflectors.length) {
           hints.push(`  · 严谨/易错/校验类 → 可先调 ${reflectors.map((s) => 'use_' + s.id).join('/')} 反思挑刺(低温审查),据反馈修订。`)

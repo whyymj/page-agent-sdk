@@ -29,7 +29,7 @@
 - **变更记录**(proposal / design / tasks):[`../openspec/changes/archive/`](../openspec/changes/archive/)
 - **项目指引 / 约定与坑**:[`../CLAUDE.md`](../CLAUDE.md)
 - **框架无关集成示例**:[`../demo/plain.html`](../demo/plain.html)
-- **自测**:`npm test`(`../src/core/__tests__/selftest.ts`,2011 项断言)+ `npm run test:e2e`(集成层 e2e,610 项)+ `npm run test:browser`(浏览器 E2E,54 项)
+- **自测**:`npm test`(`../src/core/__tests__/selftest.ts`,2042 项断言)+ `npm run test:e2e`(集成层 e2e,617 项)+ `npm run test:browser`(浏览器 E2E,56 项)
 
 ## 快速开始
 ```bash

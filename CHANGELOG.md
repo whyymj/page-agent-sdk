@@ -4,18 +4,86 @@
 
 ## [Unreleased]
 
-> ℹ️ 本段累积了 2.23.0 → 2.24.1 多个已发布版本的内容(harden-eval-sandbox / main-flow-audit / context-inspector / arch-review P1 / demo 主题 / session-history / 串行化 / simplify-toolset 等),待按 git tag 逐条归入对应版本段(已知文档债,本次未拆)。
+## [3.11.1] - 2026-08-15
 
-### Added(上下文经济性第二阶段 + agent 预算自感知)
+### Fixed(提示词与工具面一致性自查:prompt 不教未装载的工具;focus bug 同类排查)
+- **usageHints simple 分支教 `schema_data`**(advanced 专属被 SIMPLE_HIDDEN 滤除,**默认 simple 模式即中招**)→ 措辞改「需切 advanced(schema_data/diff_data,当前未装载勿调用)」
+- **minimal 模式整段共用 simple 提示**:教 query_data/search_data/eval_script/history_data/restore_data(均未装载,minimal 只有 read/write)→ 加 `minimal` 门控,仅保留 read/write 用法
+- **planning 段无条件教 `request_human_confirmation`**(humanConfirm 可关)→ 按 `caps.humanConfirm` 门控,关闭时改文字征询引导(2 处:planning 段 + 规划-反思路由段)
+- **resourcesPin 教 `resource_get/resource_update`**(resource_* 仅 advanced 暴露,配 `data.resources` + 默认 simple 即中招)→ `createResourcesPinMiddleware` 新增 `toolsExposed` 选项(createChatSdk 按 toolMode 传),未装载时明示「advanced 工具未装载勿调用」
+- **todos 规划超限回灌**教「用 write/set_data/edit_data 落地」→ 改「用 write 落地;advanced 模式亦可用 set_data/edit_data」
+- 排查确认无恙:`reliableWriteRules`(只提 read/write,全模式都有)/ usageHints 其余段(subagent/inspectEnv/domInspect/draft/focus 均按能力门控)/ checkpoint(无 prompt 注入)/ `chatContext` 挂 infoTick 的 computed 仅 focuses 一处(resetSession/switchSession 补 bump 后全路径覆盖)
+
+### Changed(verify 配置统一:两处配 → 一处配)
+- **传 `verify.check` / `verify.maxAttempts` / `verify.adversarial` 任一即自动开启 verify**(对齐 auto-html-agent 推断模式),无需再配 `capabilities.verify: true` —— 治「以为开了实际没开」的两处配置摩擦。优先级:`verify.enabled: false` > `capabilities.verify: false`(显式关闭阻止自动开)> 推断开启。误用 warn 同步更新(检测到 verify 配置但未装载时提示原因)。usage-guide 中英文同步
+
+### Fixed(用户实测:focus 引导与 UI 残留)
+- **聚焦文案引导调用不存在的工具(simple toolMode)**:focus 中间件的注入提示与 PATH_DENIED 文案无条件引导「先 remove_focus / clear_focus」,但 focus 工具仅 `toolMode:'advanced'` 装载 —— simple 模式(默认)主 agent 声称「先清除焦点」却无工具可调,只能硬写非焦点组件反复 PATH_DENIED(实测 page-demo:拾取按钮后要求文字红色,write 报错两次)。修:`createFocusMiddleware` 新增 `unfocusGuidance` 选项(`'tool'` 默认零回归 / `'ask-user'` 引导提示用户移除输入框聚焦 chip / `'report-parent'` 子 agent 引导收口反馈),createChatSdk 按 toolMode 自动分支,子 agent 装配点固定 `report-parent`;codeAssetMiddleware vfs 越界文案同步去工具指名
+- **聚焦注入补默认目标引导**:「用户未指明目标的指令默认作用于聚焦组件」——治实测「用户拾取按钮后说文字红色,agent 先误解为全页改」的意图漂移
+- **清空对话后输入框聚焦 chip 残留**:`resetSession` 调 `focusMw.reset()` 清了焦点但不 bump `infoTick`,chip 的 computed(挂 infoTick)不重算 → 旧焦点残留在输入框。修:`resetSession`/`switchSession` 统一补 `infoTick++`(与 setFocus/addFocus/removeFocus/clearFocus 契约对齐)
+
+### Fixed(提示词命名参数化:prompt 不写死集成方字段名)
+集成方字段命名各异(代码字段 code/html/innerHtml/嵌套 props.html_code,数组路径 components/blocks/sections),机制层早已参数化但 prompt 层写死示例会反向误导 LLM 照抄不存在的路径:
+- **`htmlSystemPrompt` 三参化(codeField/root)**:全部示例路径跟随实际配置(`data 的 ${codeField} 字段` / `jsonPath:'${root}.N'` / `validate_code({jsonPath:'${root}.N.${codeField}'})`);root 未传 writablePaths(3.9+ 自动装配主路径)先用 'components' 占位,**装配期推断回填后经 `_rebuildCodeAssetPaths` 钩子重建** systemPrompt + 默认 skill(与 `_codeAsset` 标记同模式;自定义 skills 不被覆盖)
+- **内置 skill builder 化**:`HTML_FRAGMENT_SKILL_DOC` 常量 → `htmlSkillDoc(root, codeField)` + 新导出 **`buildHtmlFragmentSkill(root?, codeField?)`** 构造器(`htmlFragmentSkill` 保留为默认快照,公共契约不变)
+- **`validate_code` schema 描述去写死路径**(jsonPath 描述不再带 components.2.code 示例;path 描述用工厂已知的 vfsPrefix)
+- **`htmlOrchestratorPrompt(id, codeField)` 第二参**:职责边界/委派失败重试段的「code 字段」跟随实际字段名;默认 description / `htmlPageProposeFirst` 方案切换 / `htmlDirectWriteFallback` 同步泛化(去 'custom'、去 use_html 写死)
+- 保留:`schemaHasCodeField` 硬编码 'code'(仅无子 agent 降级编排检测用,无 codeField 配置可挂;误检只少注入 fallback 无副作用)
+
+### Changed(craftNotes 收口纪律,真 LLM 实测驱动)
+- **子 agent `[note]` 交接笔记漏写治理(实测漏写率 3/4 → 治理后 1/1 沉淀)**:原指令埋在子 agent prompt 中段(recency 差)。双通道强化:① prompt 末尾新增「收口格式(必守)」硬约束(recency 位);② per-round augmentPrompt 文件地图头部注入收口提醒
+
+### Tests
+- selftest 2011→2042(verify/focus/craftNotes +9 → 工具面一致性 +9:sec-19 minimal 不注入未装载工具用法 + schema_data 措辞 + humanConfirm 门控 / sec-61 resourcesPin toolsExposed 门控 → 命名参数化 +13:sec-67 codeField/root 参数化 + 重建钩子 + buildHtmlFragmentSkill / sec-31 htmlOrchestratorPrompt codeField 参数化 + htmlPageProposeFirst 泛化)/ e2e 610→617 / browser 54→56(+2 focus bug 复现锁定:清空对话 chip 不残留[complex-demo] + simple 聚焦注入/PATH_DENIED 文案引导「输入框」且请求 tools 无 focus 工具[page-demo])
+
+## [3.11.0] - 2026-08-15
+
+### Added(上下文经济性二阶段 + agent 预算自感知)
 - **压缩触发成本上限 `promptSoftCapTokens`**:token 触发阈值改 `min(窗口 × ratio, softCap)`——大窗口模型(flash 类 1M)按 ratio 要烧几十万 token 才压缩,softCap 把「何时压缩」改成成本维度。解析单一真源 `resolvePromptSoftCap`(`src/core/composables/contextIndex.ts` 并导出):显式 >0 用该值 / 显式 0 = 关 / 未传且窗口 ≥320K → 默认 160_000(`SOFT_CAP_MIN_WINDOW`/`DEFAULT_PROMPT_SOFT_CAP` 一并导出)/ 其余不参与;`min` 语义只会更早触发、不影响小窗口模型原行为。生效值经 `inspect().compression = { contextWindow, summaryThresholdRatio, promptSoftCap }` 反射
 - **agent 预算自感知(零配置默认生效)**:① 消耗提示 —— 工具轮次达 `maxToolRounds` 70% 或本次任务累计 prompt token 达 softCap 一半时,system prompt 注入一行「⏳ 预算提示」(每任务一次,给收敛/汇报两出口);② 写失败提醒 —— 同一写路径连续 ≥2 次失败注入「先 read 重新核对 / restore_data 回退」(成功清零);③ 计划版次计数 —— `maxPlanRevisions` 超限回灌文本补「现在已是第 N 版计划」
 - **`roundTokenBudget`(单次调用 token 预算,opt-in 默认 0=关)**:单次 invoke 累计 total_tokens 超限 → 友好收口文本中断(不走 wrap-up 追加 LLM 调用防再烧;debugLogs 留痕 `round_token_budget_exceeded`;已完成部分保留可继续对话)。与 automation 的 `tokenBudget` 正交:后者跨会话累计需 `capabilities.automation`,本项单调用无条件可用
-### Changed(上下文经济性第二阶段)
+
+### Changed
 - **工具描述瘦身二批(-40%)**:eval_script(505→153 字符)/ draft_commit / set_data / draft_write / get_data / query_data / search_data / history_data / edit_data / inspect_env / get_dom 共 11 个工具描述按「何时用 + 关键参数」原则压缩,教程细节归 usageHints(`!simple` 分支,不双份);selftest 补语义锚点 + 长度上限回归断言(防一阶段反向锚定事故重演)
 
-### Fixed(3.11 真 LLM 复测:wrap-up/重试耗尽路径 DSML 泄漏剥离)
+### Fixed(真 LLM 复测:wrap-up/重试耗尽路径 DSML 泄漏剥离)
 - **wrap-up 收口泄漏未解析 DSML**:工具轮耗尽收口(wrap-up 裸 llm + 「工具已用尽直接作答」提示)时模型仍以文本输出工具调用(实测 S1:截断的 `use_html` 委派任务规格),原文不经 garbled 检测直接当最终答复返回 —— 对用户是乱码且暗示已执行,实为零执行。修:wrap-up 与主循环 garbled 重试耗尽路径统一走新导出 `sanitizeGarbledContent`(首个强守卫标记前 prose 保留、其后 DSML 块剥离;无剩余换诚实兜底文案)+ debugLogs 留痕(`garbled_wrapup`)+ observable error `GARBLED_TOOL_CALL_EXHAUSTED`
 - **headless send/batch 路径 observable error 事件不外发**:send 只传 approvalWatch 给 agent,agent stream 内的 observable error(GARBLED_TOOL_CALL_EXHAUSTED / ROUND_TOKEN_BUDGET_EXCEEDED 等)到不了 `options.onEvent` —— 集成方对「任务可能未完成」无感知。修:新增 `makeStreamWatch`(approval 自动拒 + error 类事件转发 emit;流式 delta 仍仅 stream 模式外发,契约不变)
+
+### Tests
+- selftest 2006→2011 / e2e 605→610 / browser 54;真 LLM 复测 S1 prompt **-40%**(502K→300K)、工具调用 **-44%**(27→15)
+
+## [3.10.2] - 2026-08-15
+
+### Changed(上下文经济性第一阶段,真 LLM 量化驱动;实测 prompt tokens -19%)
+- **usageHints 受保护资源教程段去重**(与 resourcesPin 每轮功能段重复注入,实测双份)
+- **编排提示段合并**(执行纪律/职责边界/修改类三段重叠 → 两段;视觉锚引用规范)
+- **write/query_data/edit_data 工具描述压缩**(-40%,教程细节归 usageHints)
+
+### Docs
+- UI 规范 skill 双挂模式文档
+
+## [3.10.1] - 2026-08-15
+
+### Added
+- 补 `detectTransitionalReply`/`detectGarbledToolCall` 公共导出(3.10.0 新增内部判定能力,集成方可复用)
+
+## [3.10.0] - 2026-08-15
+
+### Added
+- `htmlFragmentSkill` 导出(v-html 片段生成 skill,UI 规范 skill 双挂模式基础)
+
+### Changed
+- `normalizeBaseUrl` 相对路径容错
+
+### Fixed(真 LLM 五连修,flash + modelverse 场景)
+- **stream 启动闸(P1-7b)**:`streamer.stream()` 启动 Promise 包 race 超时(与 `streamStallMs` 同阈值 90s)—— 等响应头阶段假死(fetch 默认无超时)时流停滞看门狗(只包已返回的迭代器)不覆盖,子 agent use_html 委派实测挂 17 分钟;超时抛 `StreamStalledError`(status=408 不空烧重试,abort 清理)
+- **子步骤永 running 兜底扫尾**:子 agent 中断(网络断在 LLM 流)时其 tool_call 子步骤无配对 tool_result → status 永停 running(UI spinner 永转);useChat finishRound 一轮结束统一把遗留 running(含 children 递归)置 error 带说明
+- **过程性收口回灌(`detectTransitionalReply` 导出)**:本轮已执行过工具且最终文本是过渡性计划表态(实测 flash 样本「好的,我先看看…再委派生成」调研完即收口,任务零落地)→ 有界回灌(≤2 次,绕 rounds 预算同 garbled-retry 语义)让模型继续执行;保守判定(≤160 字 + 过渡模式 + 无完成动词)防误伤
+- **DSML 单竖线变体解析**:flash 泄漏形态 `<｜DSML｜invoke>`(单竖线)+ 对称闭合 `<｜DSML｜/parameter>`(原正则只认双竖线 + XML 闭合)→ detect 命中但 parse null → 重试耗尽 → **DSML 文本当结论返回主 agent,子 agent 工具白做**。修:守卫判定后剥离单竖线标记归一纯 XML 形态 + 闭合正则宽化(两种闭合形态都支持);截断保护不回归
+- **编排视觉锚引用规范**:task 规格化的视觉锚 hex **取自平台 UI/设计规范 skill 的定义值**(有规范类 skill 先 load 再引用,勿凭页面观察自造近似色)—— 实测主 agent 自造 #667eea 与规范 #7063E7 冲突
+
+## [3.9.0] - 2026-08-14
 
 ### Added
 - **HTML 子 agent 自动装配(默认开,浏览器端页面搭建开箱即用)**:无显式 html 子 agent + subagent 能力开 + schema 含「数组元素带 code 字段」→ 装配期自动注册默认 `createHtmlSubagent()`(委派编排 + vfs 工作副本 + 格式校验 + 增量 commit 全套,console.info 留痕)。无开关(用户拍板主场景只有 HTML,不需要关闭);显式 `createHtmlSubagent(...)` 优先不重复装配;推断不出的形态(顶层 code 字段/开放 schema)不装 → 走「主 agent 自己写」降级直写。**行为变更提示**:此前依赖「数组 code 字段 + 主 agent 直写」的集成,现自动走委派(如需直写请改 schema 形态或显式自定义编排)
@@ -24,47 +92,55 @@
 - **storage 默认 'memory'(开箱即用多会话)**:不传 `storage` = 纯内存会话(会话历史/切换 UI 可用,零落盘副作用);`false` 显式关闭;跨刷新持久化用 `'indexed'`。原「未传 = 关闭」语义的集成需显式 `storage: false`
 - **presets.pageBuilder 简化**:HTML 子 agent 由 createChatSdk 装配期自动装配(3.9),preset 不再自带 `subagents`(getter 防突变逻辑退役),只剩场景化身份 prompt(向后兼容,spread 行为不变)
 - **examples 优化**:① rag-demo 与 rag-subagent-demo 合并为单 demo 双模式(A memory 异步注入 / B createRagSubagent 检索子 agent,顶部切换重建 agent;共享 mock 知识库不再重复内联);② complex-demo / html-page-demo 的 `createHtmlSubagent()` 去掉显式 `writablePaths`(演示 3.6+ 装配期推断最小形态);③ minimal-demo 头部补 `presets.pageBuilder` 一行式指引
+
+## [3.8.1] - 2026-08-14
+
+### Changed
+- **examples 优化**:rag 双 demo 合并双模式 / createHtmlSubagent 空参演示推断 / pageBuilder 指引;browser 场景3(use_rag 委派链路)
+
+## [3.8.0] - 2026-08-14
+
 ### Added
 - **patch op `move`(移动/重排数组元素一步完成)**:`{op:'move', jsonPath:'components.2', value:'components.0'}` —— 同数组即重排(替代双 set 交换,索引易错),跨数组即移动(替代 append+remove 两步非原子);目标可为数组本身(追加;不存在且父级为对象时自动建数组)或数组内下标(插入,越界 clamp);目标下标按移除源后解释;仅支持数组元素;目标路径同样过 schema 白名单;进 patches 原子批。新导出 `moveByPath` 纯函数
-### Changed(上下文经济性第一阶段,真 LLM 量化驱动)
-- **usageHints 受保护资源教程段去重**(与 resourcesPin 每轮功能段重复注入,实测双份)
-- **编排提示段合并**(执行纪律/职责边界/修改类三段重叠 → 两段;视觉锚引用规范)
-- **write/query_data/edit_data 工具描述压缩**(-40%,教程细节归 usageHints;实测 S4 场景 prompt tokens -19%)
-### Fixed(真 LLM 实测,续)
-- **DSML 单竖线变体解析**:flash 泄漏形态 `<｜DSML｜invoke>`(单竖线)+ 对称闭合 `<｜DSML｜/parameter>`(原正则只认双竖线 + XML 闭合)→ detect 命中但 parse null → 重试耗尽 → **DSML 文本当结论返回主 agent,子 agent 工具白做**。修:守卫判定后剥离单竖线标记归一纯 XML 形态 + 闭合正则宽化(两种闭合形态都支持);截断保护不回归
-- **编排视觉锚引用规范**:task 规格化的视觉锚 hex **取自平台 UI/设计规范 skill 的定义值**(有规范类 skill 先 load 再引用,勿凭页面观察自造近似色)—— 实测主 agent 自造 #667eea 与规范 #7063E7 冲突
-### Fixed(真 LLM 实测三连修,flash + modelverse 场景)
-- **stream 启动闸(P1-7b)**:`streamer.stream()` 启动 Promise 包 race 超时(与 `streamStallMs` 同阈值 90s)—— 等响应头阶段假死(fetch 默认无超时)时流停滞看门狗(只包已返回的迭代器)不覆盖,子 agent use_html 委派实测挂 17 分钟;超时抛 `StreamStalledError`(status=408 不空烧重试,abort 清理)
-- **子步骤永 running 兜底扫尾**:子 agent 中断(网络断在 LLM 流)时其 tool_call 子步骤无配对 tool_result → status 永停 running(UI spinner 永转);useChat finishRound 一轮结束统一把遗留 running(含 children 递归)置 error 带说明
-- **过程性收口回灌(`detectTransitionalReply` 导出)**:本轮已执行过工具且最终文本是过渡性计划表态(实测 flash 样本「好的,我先看看…再委派生成」调研完即收口,任务零落地)→ 有界回灌(≤2 次,绕 rounds 预算同 garbled-retry 语义)让模型继续执行;保守判定(≤160 字 + 过渡模式 + 无完成动词)防误伤
+
 ### Fixed
 - **draftWrite 提示词与工具面不一致(simple 模式教 LLM 调不存在的工具)**:SIMPLE_HIDDEN 滤除 draft_write/draft_commit 但 usageHints 照常注入用法 → 补 `!simple` 守卫
+
 ### Changed
 - **spawn 委派提示更新**:补 writablePaths 授写说明 + spawn_agents 并行委派(注明并行不可授写,写操作由主 agent 收尾)
 - **reliableWriteRules 补第 6 条**:乐观锁冲突(VERSION_CONFLICT/挂起等用户)的行为预期,防 LLM 遇冲突放弃任务
 - htmlSystemPrompt 工具清单措辞修正(`write + set` → `write(set/patch)`)
+
+## [3.7.0] - 2026-08-14
+
+### Added
 - **presets.pageBuilder 默认带 HTML 代码子 agent**:`createChatSdk({ ...presets.pageBuilder, container, llm, data })` spread 一步 = 完整页面搭建能力(schema 有「数组元素含 code 字段」时自动获得委派编排 + code 资产机制;显式传 `subagents` spread 覆盖即替换);`subagents` 经 getter 每次取值新建 config(防装配期回填 writablePaths 跨实例污染共享单例)
 
 ### Changed
 - **writablePaths 推断失败语义:throw → warn + 剔除(优雅降级)**:schema 无 code 数组(如 pageBuilder 用在纯数据页面)时不再崩整个集成 —— 该 html 子 agent 被自动剔除,主 agent 编排注入自然走「无 html agent」分支(schema 另有顶层 code 字段则注入降级直写 fallback),console.warn 留痕;「宁失败不猜错路径」不受损(不猜路径,只不装不适用能力)
-- **CA 并发修复(audit P2×2 清零,per-call context 通道)**:`maxParallelTools>1` / 并行委派下的两处闭包单变量错乱修复 —— ① dataOps `activeScope` 并发交错(乐观锁基线读写错 scope)→ per-call scope token(`__pgDataScope` 经 RunnableConfig.configurable 透传,ambient 兜底);② subagent 中间件 `currentSignal/currentEmit/currentLogSink` 并发覆盖(M3,子 agent 继承无关工具的停止信号/进度 handler)→ `__pgSubagentCall` per-call 注入,闭包降 fallback。机制:中间件 `wrapToolCall` 写 `ctx.callConfig` → coreExecTool 经 `{ configurable }` 传到工具 fn 第二参(zod 校验重建 args 对象,args 注入通道不可行);默认串行(`maxParallelTools=1`)行为零变化`writablePaths` 改可选 —— 未传时 createChatSdk 装配期从 `data.schema` 顶层扫描「数组元素含 `codeField` string 字段」的路径自动回填(新导出纯函数 `inferWritablePaths`,console.info 留痕;显式传入优先跳过推断);推断不出的形态(开放 schema `z.any()`/`z.record`、嵌套容器如 `sections[].children[]`、点路径 codeField 嵌套结构)→ console.warn + throw 提示显式传参(宁失败不猜错路径)
+- **CA 并发修复(audit P2×2 清零,per-call context 通道)**:`maxParallelTools>1` / 并行委派下的两处闭包单变量错乱修复 —— ① dataOps `activeScope` 并发交错(乐观锁基线读写错 scope)→ per-call scope token(`__pgDataScope` 经 RunnableConfig.configurable 透传,ambient 兜底);② subagent 中间件 `currentSignal/currentEmit/currentLogSink` 并发覆盖(M3,子 agent 继承无关工具的停止信号/进度 handler)→ `__pgSubagentCall` per-call 注入,闭包降 fallback。机制:中间件 `wrapToolCall` 写 `ctx.callConfig` → coreExecTool 经 `{ configurable }` 传到工具 fn 第二参(zod 校验重建 args 对象,args 注入通道不可行);默认串行(`maxParallelTools=1`)行为零变化
+
+## [3.6.0] - 2026-08-14
+
+### Added
+- **createHtmlSubagent `writablePaths` 可选化(装配期推断,集成降门槛)**:未传时装配期从 `data.schema` 顶层扫描「数组元素含 `codeField` string 字段」的路径自动回填(新导出纯函数 `inferWritablePaths`,console.info 留痕;显式传入优先跳过推断);推断不出的形态(开放 schema `z.any()`/`z.record`、嵌套容器如 `sections[].children[]`、点路径 codeField 嵌套结构)→ 提示显式传参(宁失败不猜错路径;3.7.0 起该分支降级为 warn + 剔除不崩集成)
 - **MCP 工具调用超时闸**:单次 `callTool` 默认 60s(`mcp[].callTimeoutMs` 可调,独立于握手 `timeoutMs` 15s),server 挂起不再拖死 ReAct 轮 —— 超时该次调用作废(recoverable 回灌 LLM 自纠,不重试),连接不断后续调用复用;新导出 `withCallTimeout` 纯函数 + `DEFAULT_MCP_CALL_TIMEOUT_MS`;补 2.39.0「挂起收口三契约」漏网项
+
+## [3.5.0] - 2026-08-14
+
+### Added
 - **组件工匠笔记(`craftNotes`,默认开)**:html 子 agent 收口回复末尾 `[note] <一句话实现要点>` 行(htmlSystemPrompt 约定)→ 框架 afterAgent 沉淀为组件 `__pgNotes` sidecar(FIFO ≤5 条 × 200 字,随 data json 进服务端 DB 跨会话持久),下次委派同组件经「组件代码文件地图」注入最近 1 条(`📝 笔记×N`)—— 同组件跨委派**设计意图持续**(「前任的交接」:设计决策/用户偏好/踩坑),状态在数据里不在子 agent 实例里(与 code-as-data-asset 哲学同构);收口文本经 **wrapModelCall 捕获进 state `__pgFinalText`**(afterAgent 的 state.messages 只有初始 user 消息,beforeReturn 受 `maxVerifyAttempts>0` 门控,wrapModelCall 洋葱是唯一全路径覆盖点);`__pgNotes` 走 `__pg*` sidecar 机制(agent read 投影隐藏 / 写不进,框架独占);`createHtmlSubagent({ craftNotes:false })` 关闭(零沉淀零注入)
 - **主 agent 偏好转述**:委派 task 规格化补 ⑤ 要素(可选)—— 聊天上下文中有与该组件相关的用户历史偏好/反馈时提炼一句附 task 末尾(新子 agent 无记忆,偏好经 task 传递)
+- **无 html agent 复杂多组件 e2e 场景**:降级直写模式下主 agent 独立完成复杂页面操作(4 组件建页含 2 纯代码 / `write patches` 原子批调序 + 增量改 code + 组件移入容器嵌套 / 全程零委派 / 无 `__pgId` 注入差异断言),与委派模式行为对照锁定
 
 ### Changed
 - **html 子 agent 终稿纪律 + task 视觉锚**(真 LLM 思考日志实测驱动):htmlSystemPrompt 加终稿纪律(要点清单一次定稿 → 直写终稿 / 同一几何层级约束只推演一次 / 不整段重写;实测 beer-effect 思考里写两版完整代码 + 同一 bottom 推导 3 遍,代码 token 翻倍);htmlOrchestratorPrompt 视觉风格要素补视觉锚指引(主色 hex / 主体占比 / 装饰密度,收窄子 agent 装饰细节推演空间)
-
-### Added
-- **无 html agent 复杂多组件 e2e 场景**:降级直写模式下主 agent 独立完成复杂页面操作(4 组件建页含 2 纯代码 / `write patches` 原子批调序 + 增量改 code + 组件移入容器嵌套 / 全程零委派 / 无 `__pgId` 注入差异断言),与委派模式行为对照锁定
-
-### Fixed
-- **html-page-demo 预览块点击拾取失效**:sandbox iframe 吞 click 不冒泡回父页(点预览区组件块永远触发不了选中;e2e 之前点 tab 掩盖)→ 加 `.pick-capture` 透明捕获层(与首页两步拾取统一),已聚焦组件撤层放行 iframe 内交互;e2e test5 改走真实用户路径
-
-### Changed
 - **严格 CORS 网关开箱兼容**:constructLlm 默认注入 fetch 包装剥 openai SDK 自动附加的 `x-stainless-*` 遥测头(严格 CORS 的 OpenAI 兼容网关白名单不含 → 浏览器预检失败;主 agent 与子 agent 散字段兜底路径三处统一,真 LLM 抓包实测);集成方 `extraConfig` 可覆盖
 - **子 agent LLM 配置完整透传**:`createChatSdk` 传给 subagents 中间件的 `LLMConfig` 在子 agent 兜底散字段构造时丢 `extraConfig`/`extraBody` → 透传修复(修前集成方 headers/fetch/thinking 配置在子 agent 全失效)
 - **mcp-demo 双模式**:`.env` 配 `VITE_RAG_MCP_URL` 切 RAG 知识库模式(动态注入 rag_search/rag_ask/rag_documents),未配保持 mock 模式;内网地址只进 `.env` 不进源码
+
+### Fixed
+- **html-page-demo 预览块点击拾取失效**:sandbox iframe 吞 click 不冒泡回父页(点预览区组件块永远触发不了选中;e2e 之前点 tab 掩盖)→ 加 `.pick-capture` 透明捕获层(与首页两步拾取统一),已聚焦组件撤层放行 iframe 内交互;e2e test5 改走真实用户路径
 
 ### Tests
 - selftest 1931 / e2e 569 / browser 53(+ craft-notes selftest 19 项 / e2e 沉淀累积注入场景 / browser 工匠笔记场景 / 无 agent 复杂多组件 10 断言)
@@ -127,6 +203,93 @@
 ### Removed(breaking)
 - 旧 `codeRef` 引用模型 + `onComplete` 回调 + `codeSnapshots`(被单模式 code-as-data-asset 取代)
 
+## [2.43.0] - 2026-08-11
+
+### Added
+- **html agent 输出格式校验链**:html 子 agent 装配 `validate_code` 自检工具(`validateHtmlFormat` 结构校验:标签闭合/注释/多余闭合;DOCTYPE/html/head/body/script 均允许)+ verify beforeReturn 门禁(校验不过回灌自纠,`maxVerifyAttempts` 兜底)+ v-html 片段生成契约(3.4.0 `codeKind`/htmlFragmentSkill 的前身)
+
+### Changed
+- CLAUDE.md 瘦身:架构细节(流程图/数据槽深潜/能力全景)迁 `doc/architecture.md`,本文件只留不可违背契约
+
+## [2.42.0] - 2026-08-11
+
+### Added
+- **内置深色主题 `dialog.theme:'dark'`**(方舟专题设计稿 Figma 色板):ChatDialog `.cs-theme-dark` 色板块(#222 紫微光外框 / #353535 气泡+工具栏 / #7063E7 用户气泡 / 状态点 #00C562·#F04848 / 紫边输入框+渐变发送钮)+ DebugDrawer 同款内置主题(`csTheme` prop,ChatDialog 自动透传,`--dd-*` 全变量化)+「思考中」态设计稿化(主色方点脉冲)+ 历史下拉当前项整行主色。全部经 `--cs-*`/`--dd-*` 变量驱动,light 默认零回归,集成方可祖先覆盖自定义
+
+## [2.41.1] - 2026-08-11
+
+### Fixed
+- **DebugDrawer 日志列表生成期间实时刷新**(审计未编号 P1 残留清零):mountChatDialog/customize-demo 传 `.slice()` 新引用触发响应式更新 + browser 断言 ×2
+- **rag-demo Anthropic 协议修复**:根因 `@anthropic-ai/sdk` buildURL `new URL(baseURL+path)` 相对 baseUrl 抛 Invalid URL → dev 经 vite 代理且 baseUrl 用绝对 URL;apiKey 移出代码进 `.env`(`VITE_ANTHROPIC_*`);mockLlm 双协议拦截(chat/completions + /v1/messages)
+
+### Changed
+- CLAUDE.md 整理(87KB→33KB:保留全部规则/契约/坑,删版本演进叙事)
+
+## [2.41.0] - 2026-08-11
+
+### Fixed(审计 P1 最后一批六项,P1×27 至此清零)
+- **resetSession 收口统一**(P1-8/9):删 `!store` 早退,无 storage 也完整重置 mission/focus/todos 等内存态 + 收口挂起冲突(keep_external)+ 公开 `sdk.resetSession()`
+- **shareContext 串行闸上移 core**(P1-11):`runSerial`/`activeControllers` 建 core 级,双实例并发 send/switchSession 串行;生命周期收口中止共享 core 全部在途流
+- **白名单深投影统一**(P1-19):7 处根级读 `projectBySchemaDeep` 递归,嵌套未声明字段不再泄露(schema 白名单护城河唯一破口堵上)
+- **压缩 LLM 摘要异步化**(P1-25):模板先行 + 后台前缀缓存,首 token 零阻塞
+- **markdown 渲染节流 + hljs 尺寸闸**(P1-26):修流式 O(n²) 冻结
+
+## [2.40.0] - 2026-08-11
+
+### Added(主×子协同隔离,审计组 3 三项)
+- **per-scope 乐观锁基线**(P1-13):`baselines` Map + `controller.enterScope/exitScope`,子 agent dataOps 工具经 scope proxy 隔离 —— 子 read/write 不污染主基线,「同 scope 连续写永不互相冲突」回归测试锁定
+- **spawn_agents allSettled 逐任务结算**(P1-14):聚合 ✓/✗,单失败不拖垮整批
+- **子 usage 回传 core.usage**(P1-17a,`normalizeUsage` 纯函数共用)+ **子执行超时 `subagent.timeoutMs`**(P1-17b,opt-in,链式 abort)
+
+## [2.39.0] - 2026-08-11
+
+### Added(挂起与反馈收口三契约,审计组 1 七项)
+- **超时默认值表**:approval/humanConfirm 无响应方 30s 自动拒(`APPROVAL_AUTO_REJECTED`)/ MCP 握手 15s 降级 / skills fetch 30s / LLM 流停滞 90s 看门狗(`streamStallMs`,0 关)
+- **abort 收口**:`activeControllers` 注册表;send/batch 接 signal 可中断;unmount/switchSession/resetSession 先断全部在途流;stop() 清排队留痕
+
+### Changed
+- **兜底收口必留痕**(可见性契约:debugLogs + observable error)
+
+## [2.38.2] - 2026-08-11
+
+### Fixed(审计 P0 + 授权面加固,Q1-Q5 拍板落地)
+- **P0-1 子 agent 装配断层**:rag/html 能力包 `allowedTools` 指向的 vfs 工具恒不可见(合并池改 getter,含中间件工具)
+- 子栈继承主 permissions/approval(approval_request 直通主循环,P1-16)/ spawn 自授收紧 + 装配期源头 filter(P1-18)/ writablePaths guard 补根写拦截(P1-15)/ focus strict 兑现 + eval_script 拦截(P1-21/22)/ 子 offload 桥接主 vfs 共享池(P1-15b)
+
+## [2.38.1] - 2026-08-11
+
+### Fixed(审计无疑问 P1)
+- hook 流式事件 / WebStorage 守卫 / ZodArray 索引模式
+
+### Added
+- d.ts↔src 类型双向门禁(`npm run test:types-alignment`)
+
+## [2.38.0] - 2026-08-10
+
+### Added
+- **子 agent 观察层**:`createSubagentTracker` + `inspect().subagent.{active,history}` + `sdk.getActiveSubagents()`/`sdk.subagentHistory` + DebugDrawer「🤖 子 agent」tab。纯观察层,不改生命周期/事件链
+
+## [2.37.0] - 2026-08-10
+
+### Added
+- **能力包子 agent 工厂**:`createRagSubagent`(RAG 检索,只读)/ `createHtmlSubagent`(HTML 代码生成,代码→vfs)+ 子 agent 架构扩展(`allowedTools`/`middleware`/`summarization`)+ `sdk.vfsWrite` 命令式入口 + `rag-search`/`html-builder` skill + `rag-subagent-demo`/`html-subagent-demo` + augmentPrompt 委派引导
+
+## [2.36.0] - 2026-08-10
+
+### Added
+- **`page-agent-sdk/headless` 精简子路径**:纯核心不含 UI(ESM ~333KB vs 主包 ~789KB)。依赖反转 `_createChatSdk` 内部工厂 + 双入口(主入口注入 UI / headless 不注入),主包零变化
+
+## [2.35.0] - 2026-08-09
+
+### Added
+- **customize-demo**:headless 完整参考(低代码自定义 UI / 聚焦 / 聚焦历史 / 会话管理 / 调试抽屉)
+- 导出 `DebugDrawer`(headless 调试复用,纯 props:`logs`/`getInfo`/`infoTick`)+ 暴露 `afterRound`/`debugLogs`/`infoTick`
+
+### Removed
+- 删冗余 demo(toolsets-demo 等与现有 demo 重复项)
+
+## [2.34.0] - 2026-08-09
+
 ### Added(多焦点聚焦 multi-focus + 输入框 chip + chip 点击回调 · focus-multi)
 - **多焦点聚焦**:focus 从单焦点(Focus 单个)升级为多焦点(Focus[] 数组),可同时聚焦多个组件精修。场景:批量改多个相关组件(导航栏 + 页脚)。
 - **API(兼容旧 + 新增)**:`setFocus(focus)` 替换全部(兼容旧覆盖语义)/ `addFocus(focus)` 累积(去重 by path)/ `removeFocus(path)` 移除单个 / `clearFocus()` 清空 / `getFocus()` 返首个(兼容)/ `getFocuses()` 全量数组。`setFocus`/`addFocus` 4 道校验复用(抽 `validateFocusInput`);旧代码零改(getFocus/setFocus 兼容)。
@@ -154,12 +317,41 @@
 - 新增导出 8 原子组件 + chatContext 三件套 + `ChatDialogSections` 类型;`ChatDialogProps` 补全(6→34 字段);browser e2e 33→36(新增 `custom-dialog-demo.spec.ts`:sections 关 footer/queued 验证)。
 - **修复 pre-existing**:`playwright.config` 的 `gpt-3.5-turbo`(16K 上下文) 与 `MIN_CONTEXT_WINDOW`(200K,2.30.0 引入)冲突致 `createChatSdk` 启动 throw → `glm-5.2`(1M,mock 拦截不连真 LLM,model 名仅用于 modelCaps 解析)。
 
+## [2.33.0] - 2026-08-09
+
 ### Added(压缩决策 · agent-driven-compression)
 - **压缩 agent 自主决策压缩策略**(opt-in `capabilities.agentCompression`,requires summarization):summarization 中间件每轮先 `shouldTriggerCompression` gate(纯函数 token/轮数两模式,避免「开启后每条消息都 decide 烧 LLM」)→ `summaryLlm.decide` 两段式工具循环(bind `inspect_context` → 模型查上下文构成 → 输出决策 JSON)→ `compress(messages, decision)`;decide 失败 / 超时 / 模型不支持工具 → null 降级静态压缩(零阻塞,不丢压缩能力)。
 - **CompressDecision 双字段**:`keepRounds`(轮数模式 0-50)/ `windowRatio`(token 模式 0-1),`refine` 强制至少一个;决策覆盖切分 + 摘要 mode(index/llm)+ 召回 recallTopK(0 不召回)+ preserve(配置 ∪ preserveTools,扩展不减)。token 模式按 windowRatio 走累加循环保 token 封顶(不直接按 keepRounds 切,防大 JSON 压缩后仍超窗口),轮数模式补 older 空早退 + keepRounds≥1 下界(防贪省恒全压)。
 - **独立 `decisionTimeoutMs`(默认 6s)/ `decisionMaxTokens`(默认 2048)**:不复用 summaryTimeoutMs 15s(两段叠加阻塞首响应)/ summaryLlm 1024(截断 JSON safeParse 失败无谓降级)。
 - **decision 自动流到可观测**:`CompressionStats.decision` → `inspect().lastCompression` + `contextSnapshot.compression`(无需额外接线);DebugDrawer「📊 上下文」tab + 「🗜️ 上轮压缩」段显示「🤖 agent 决策」注记。
 - 新增导出 `CompressDecisionSchema` / `CompressDecision` / `shouldTriggerCompression`;selftest 1507→1550(sec-62~65)/ e2e 376→387(agent-compression.mjs)。
+
+## [2.32.1] - 2026-08-09
+
+### Fixed(placeholder-protected-read-write review 修复)
+- **H1 祖先 set 静默丢失受保护字段**:`normalizeAndCheck` 对 `valAt===undefined` 改为回填当前值(原 skip 在祖先 set 不含受保护子字段时静默丢失 hash/token,违背"精确值保护"承诺)
+- **H2 resource_update 不刷新乐观锁 hash**:`rupdate` 改 bind 后补 `lastReadHash = hashValue(bindRef)`(与其他写路径一致,防紧接 write `VERSION_CONFLICT` 让 LLM 困惑)
+- **M3 D1 复活已删字段**:`expandHandle` 在 `bindCur===undefined` 时返 `RESOURCE_NOT_FOUND`(原展开池旧值复活已删字段,§7c B4)
+- selftest 1480→1484(sec-58 H1/M3 + sec-60 H2)
+
+## [2.32.0] - 2026-08-09
+
+### placeholder-protected-read-write(占位符替换读写·精确值保护)
+- `data.resources: [{path, mode}]` 声明受保护字段:freeze(只读,精确值不入 LLM 消息流)+ verbatim(原样保留,防压缩丢字/防幻觉改错);**bind 恒持原始值,占位符只在读写边界替换**(hash/快照/乐观锁全零干扰)
+- read 受保护路径返占位符 `⟦frozen:path⟧`/`⟦res:handle⟧`;写侧强制层 = 独立纯函数 `enforceSet`/`enforcePatches`,经可选参 `protectedCtx` 注入 `commitSetToBind`/`applyPatchesToBind`/eval 整体替换**三处**,先于 schema 校验(含 C1 回显识别 / A2 定点展开 / D1 池值自愈 / C3 remove 拒 / C2 `patches[i]` 定位)
+- 资源工具 `resource_get`/`update`/`list`/`delete`(advanced,opt-in:配 `data.resources` + vfs)+ SDK API `createResource`/`getResource`/`updateResource`/`deleteResource`/`listResources`/`releaseResources`
+- vfs 第四池 `resources`(4MB,per-resource 文件,handle 路径派生短哈希)+ 跨压缩 pin(`resourcesPin` 中间件)+ skill `precise-value-protection`(`skills/` 分发)+ usageHints 资源段
+- 新增导出 `ResourceProtectSpec` 类型;全增量,默认零行为变化(未配 `data.resources` → no-op;freeze 无 vfs 也工作,verbatim 降级);selftest 1358→1480(sec-58/59/60/61)/ e2e 362→376(resources.mjs)。示例 `examples/precise-value-demo`。
+
+## [2.31.0] - 2026-08-08
+
+### Added(focus 自动切换 · focus-auto-switch)
+- **usageHints focus 引导(模块1)**:advanced + capabilities.focus 开 → 注入「上下文聚焦」段(局部任务→`set_focus` / 全局任务→不聚焦 / 完成→`clear_focus` / 先 read 定位 path),门控 `rc.focus && !simple`(同 set_focus 工具暴露)。`HintCapabilityFlags` 补 `focus?`。
+- **focus 持久化(模块2)**:`SnapshotKind` 加 `'focus'`(照抄 mission,泛 kind 迭代自动覆盖);createChatSdk `applySnapshot`(经 `getSchemaAtPath` 校验 path 失效丢弃=决策A,与 `sdk.setFocus` 单一真相)/ `persistRuntime`(`f ?? null` 覆盖清除)/ `switchSession` 切走前补存 三处;`SessionSnapshot.focus` 允许 `null`(清除标记,防 clearFocus 后旧值残留)。
+- **子 agent 继承(模块3)**:主 agent 聚焦 → `spawn_agent`/`spawn_agents`/预声明 `use_<id>` 子 agent 默认继承同一焦点(`createFocusMiddleware` `initialFocus` 构造参数,三层收敛);主未聚焦 → 子 agent 无 focus 中间件(零回归);`SubagentOptions.getFocus`/`getSchema` 透传主 `liveData` schema。
+- selftest 1342→1358(sec-56 usageHints 9 + sec-57 storage 4 + sec-54 initialFocus 3)/ e2e 353→362(focus 持久化 6 + subagents 装配 3);spawn 端到端(子 systemPrompt 含焦点)manual/deferred。
+
+## [2.30.0] - 2026-08-08
 
 ### Added(上下文健壮性 · harden-context-resilience)
 - **硬地板:contextWindow ≥200K**:启动 / `setLlm` / 子 agent 解析后,`contextWindow < 200000` → throw(排除 128K 档主流如老款 `deepseek`/`gpt-4o`/`glm-4.5`/`qwen-max`,SDK 默认 `deepseek-v4`/`glm-5.2`/`claude-*`/`kimi`/`qwen-1m`)。集成方换 ≥200K 模型或 `llm:{contextWindow}` 声明覆盖。`MIN_CONTEXT_WINDOW` 导出可调。
@@ -170,11 +362,7 @@
 - **预防口径**:H1 `trimContextIfNeeded` 改 token 口径 + 单轮 ≤60% 窗口复查;H2 `compress` 组装后算 totalTokens 仍超 warn。
 - 新增导出 `isContextLengthError` / `MIN_CONTEXT_WINDOW`;selftest 1295→1342 / e2e 349→353。
 
-### Added(focus 自动切换 · focus-auto-switch)
-- **usageHints focus 引导(模块1)**:advanced + capabilities.focus 开 → 注入「上下文聚焦」段(局部任务→`set_focus` / 全局任务→不聚焦 / 完成→`clear_focus` / 先 read 定位 path),门控 `rc.focus && !simple`(同 set_focus 工具暴露)。`HintCapabilityFlags` 补 `focus?`。
-- **focus 持久化(模块2)**:`SnapshotKind` 加 `'focus'`(照抄 mission,泛 kind 迭代自动覆盖);createChatSdk `applySnapshot`(经 `getSchemaAtPath` 校验 path 失效丢弃=决策A,与 `sdk.setFocus` 单一真相)/ `persistRuntime`(`f ?? null` 覆盖清除)/ `switchSession` 切走前补存 三处;`SessionSnapshot.focus` 允许 `null`(清除标记,防 clearFocus 后旧值残留)。
-- **子 agent 继承(模块3)**:主 agent 聚焦 → `spawn_agent`/`spawn_agents`/预声明 `use_<id>` 子 agent 默认继承同一焦点(`createFocusMiddleware` `initialFocus` 构造参数,三层收敛);主未聚焦 → 子 agent 无 focus 中间件(零回归);`SubagentOptions.getFocus`/`getSchema` 透传主 `liveData` schema。
-- selftest 1342→1358(sec-56 usageHints 9 + sec-57 storage 4 + sec-54 initialFocus 3)/ e2e 353→362(focus 持久化 6 + subagents 装配 3);spawn 端到端(子 systemPrompt 含焦点)manual/deferred。
+## [2.29.0] - 2026-08-08
 
 ### Added(上下文聚焦 · focus-context)
 - **上下文聚焦 Focus(指定组件精修)**:多组件页面精修其中一个时,聚焦后 agent 的**目标 / 视野 / 范围三层收敛**到单组件子树,避免改到别处。会话级焦点 `{ path, label? }`(path=jsonPath 锚点,如 `components.3`),opt-in(需 `setFocus` 才生效,默认不聚焦行为与现状完全一致,向后兼容)。
@@ -182,6 +370,8 @@
   - **三种触发**:① `sdk.setFocus`/`getFocus`/`clearFocus` API(集成方/宿主点击拾取);② agent 工具 `set_focus`/`clear_focus`(`toolMode:'advanced'` 暴露;simple/minimal 经 UI/宿主 API);③ ChatDialog 焦点条 chip(✕ 退出 · ▾ 编辑路径切换)。
   - `setFocus` 校验 path **类型合法**(`getSchemaAtPath` 命中;类型校验非数据存在性 —— 数组索引 `components.5` 类型合法可聚焦;前缀边界 `components.10` 不误匹配 `components.1`);`capabilities.focus` 默认开。新建 `harness/focus.ts`(`createFocusMiddleware`,mission 闭包工厂 + permissions wrapToolCall 拦截模式);`Focus` 类型导出。
   - 示例:`examples/complex-demo` 组件绑 `data-path` 点击拾取 → 聚焦精修(越界被拒)。selftest 1270→1295(sec-54 focus 三层 + 越界 + 批量 patches + 控制器);e2e 322→349(focus:setFocus/getFocus/clearFocus + inspect + 工具 + capabilities);browser 31→33(complex-demo 点组件→chip→✕ + 聚焦越界 PATH_DENIED 自纠放行)。
+
+## [2.28.0] - 2026-08-08
 
 ### Added(Anthropic 开箱 · anthropic-provider)
 - **Anthropic provider 开箱支持**:`LLMConfig.provider:'anthropic'` + 动态 import `@langchain/anthropic`,走 Claude 原生协议(覆盖 Claude 用户场景,与 DeepSeek/OpenAI 协议并列)。缺省 provider → openai(向后兼容,现有 DeepSeek/OpenAI 集成零改动)。新建 `src/core/llm/constructLlm.ts`:`constructLlmFromConfig`(async,provider 分支收口 6 处 `new ChatOpenAI`)+ `constructOpenLlmSync`(同步 openai 分支,供 `setLlm` 同步契约)。
@@ -192,8 +382,9 @@
 - 新增导出 `constructLlmFromConfig`/`constructOpenLlmSync`/`ConstructOpts` + `extractTextDelta`/`extractReasoningDelta`/`extractUsage`;selftest 1246→1270(sec-53 constructLlm provider 分支 + contentParts 纯函数 string/parts/thinking/usage 全覆盖);e2e 316→322(llm-provider:anthropic mount + setLlm throw + openai 路径)。
 
 ### Fixed
-- **css 产物名/exports 不一致修复**(pre-existing,2.24.1 起):build 经 `assetFileNames` 生成 `dist/style.css`,匹配 `package.json` exports `"./style.css"` + size-check。集成方 `import 'page-agent-sdk/style.css'` 不再 404。
 - **tsc 类型债清理**(context-persist/arch-review 改动遗留):mission mw `reset` 注解 / subagent `allTools` getter 闭包 narrow / `ChatSdk.inspectContext` interface / llmResolver title invoke `extractText(m)`→`m.content`。src `npx tsc` 0 error(发布门禁)。
+
+## [2.27.0] - 2026-08-08
 
 ### Added(长对话上下文韧性 P1 · recall-and-trim-llm)
 - **跨轮召回纳入工具结果**:关键词召回(`recallRounds`)此前只匹配对话文本(user/assistant content),不含工具结果 → 问「之前 read 出来的 X 是什么」搜不到,只能重新 read(浪费 token)。修复:召回匹配串纳入 `steps.result`(经 `plainSummary` 截断 120 字防大 result 撑爆),跨轮工具结果可被关键词命中。
@@ -204,6 +395,8 @@
 - **trim 收口:`context_trimmed` 归档事件 + vfs 孤儿 GC**:trim 删 older 轮前发 `context_trimmed` 事件(dropped 完整原文 + `vfsResults` 被删轮引用的 vfs 大结果原文 + summary,集成方可归档,不改默认 trim);删后可达性 GC(`extractVfsRefs` 扫剩余 messages 提 `large_results/` 引用 → `gcVfsLargeResults` 删不可达)。GC 触发:trim 后 / clear(resetSession `vfsStore.clear`)/ 加载(applySnapshot 兜底)。解 vfs 孤儿堆积 + 缓解引用悬空(被引用留,LRU 硬上限仍淘汰)。新增纯函数 `extractVfsRefs`/`gcVfsLargeResults`(`utils/vfsGc.ts`)。**澄清**:vfs 在 storage 开时已持久化(原 context-history-resilience B3「刷新即丢」断言错误,已修正)。
 - selftest 1239→1246(sec-32 vfsGc + sec-38 restore);e2e 312→316(storage mission 持久化往返)。
 
+## [2.26.0] - 2026-08-08
+
 ### Added(skill 脚本执行 · skill-external-scripts)
 - **动态 skill:`exec` 加载时执行 + `tools` 附带工具**。`SkillSpec` 新增两可选字段,把 skill 从「说明书」升级为「说明书 + 执行器」(全增量,现有 skill 零变):
   - **`exec` 钩子**:`{ code?, url?, context?, inject? }`,`load_skill` 时执行脚本 → 结果 append/prepend 注入全文(一次性上下文初始化,拿实时数据快照)。`context:'sandbox'`(默认,Worker 沙箱三层防护:静态扫描 + `lockSandboxGlobal` 锁网络层 + 超时);`context:'host'` 需 `capabilities.skillHostScript:true`(宿主全权 `AsyncFunction`,不经静态扫描,**仅集成方内联 code**、非 LLM/非远程;`url`+`host` 禁止)。
@@ -212,8 +405,12 @@
   - **沙箱引擎泛化**:抽出 `src/core/tools/sandbox.ts`(`createSandboxRunner` 柯里化),eval_script 与 skill exec 共用单一真相源;`dataSlotQuery.ts` 的 `runSandboxedScript`/`lockSandboxGlobal`/`EvalResult` re-export 保外部 import 零破坏。新增导出 `createSandboxRunner`/`SandboxResult`/`runHostScript`;新 capability `skillHostScript`(opt-in 默认关,requires `skills`)。
   - selftest 1208→1231(sec-21 createSandboxRunner + sec-05 exec/buildSkillContent/tools 注入 + sec-19 skillHostScript);e2e 309→312(custom-injection exec/tools 装配 + skillHostScript mount)。
 
+## [2.25.0] - 2026-08-08
+
 ### Changed(工具面精简 · simplify-toolset)
 - **移除冗余工具 + 补 `vfs_rm`**:① `snapshot_data` / `list_data_snapshots` 移除(被 `history_data({ list: true })` 吸收——列出快照时间线元信息,等价原 list_data_snapshots;手动检查点改靠 set/edit/delete 自动快照);② `get_data` 标 `@deprecated`(保留兼容,集成方改用 `read`——等价且支持 fields/depth/分页);③ 新增 `vfs_rm({ path })` 补 vfs「只进不出」删除闭环(`VFS_TOOL_NAMES` +1,含 drafts 草稿清理);④ usageHints 补「read 按 schema 投影隐藏未声明字段」+ 「get_dom 改完数据回看渲染」(domInspect 开时)提示。`toolMode` advanced 数据工具 16→14。selftest 1204→1208(sec-03 vfs_rm + sec-02 history list);e2e 311→309(inspect.mjs expectedDataTools 16→14)。
+
+## [2.24.1] - 2026-08-07
 
 ### Fixed(安全 · harden-eval-sandbox)
 - **eval_script 沙箱逃逸堵死**:`runSandboxedScript` 的 Worker 沙箱此前以**赋值覆盖**禁用网络/存储 API(`self.fetch=...`),可被 `delete self.fetch` 露出原生 fetch 外泄 transform 数据(逃逸链:原型链 `(function(){}).constructor` 取 Function → 跑任意码 → `delete self.fetch` 恢复原生 fetch → 外泄)。修复:禁用逻辑抽纯函数 `lockSandboxGlobal`(导出),用 `Object.defineProperty(configurable:false, writable:false)` 锁死 fetch/XHR/WebSocket/importScripts/indexedDB/caches/Worker/SharedWorker/EventSource/BroadcastChannel/sendBeacon —— delete/重新赋值均失败,原生 API 永久不可达;WORKER_PREAMBLE 经 `lockSandboxGlobal.toString()` 注入 Worker(单一真相源)。selftest sec-21 加纯函数锁验证;selftest 1196→1200。
@@ -230,32 +427,10 @@
 - selftest 1189→1201(sec-23 P0-1 摘要送达 + P1-d 迭代不重试白盒 + sec-51 escapeHtmlAttr + sec-21 lockSandboxGlobal);e2e 308→311(inspect.mjs P0-3 MCP 工具真注入,in-process server fixture);browser 28 全绿;`test:size` IIFE 阈值 1.7MB→1.9MB(dompurify +95KB)。
 - ⏸ 推后:css 产物名/exports 不一致(pre-existing,集成方 `import 'page-agent-sdk/style.css'` 会 404,另立)。(P1-d 流式重试去重 + eval_script 沙箱逃逸已实施,见上)
 
-### Added
-- **上下文检查(context-inspector)**:长对话/大 JSON 场景诊断刚需 —— 看上下文什么占了最多、离压缩阈值多远。新增:
-  - `analyzeContext(messages, opts)` 纯函数(导出):对「实际发给 LLM 的消息」分类切分 + token 估算,返回 `ContextSnapshot`(totalTokens/occupancy/categories/compression)。system 段按 augmentPrompt 标记前缀**定位**切分(## 可操作数据 / ## 能力使用提示 / ## 当前主线目标 / ## 工作记忆 / 摘要/召回段);工具结果计 ToolMessage.content + AIMessage.tool_calls.args。
-  - `createContextInspectorMiddleware` 中间件(导出):`wrapModelCall` 每轮快照(采集 replaceSystem + trim 后的最终消息),经闭包持有(不进 state —— wrapModelCall 无 state update 机制)。
-  - `sdk.inspectContext()` / `inspect().context`:读最近快照;`capabilities.contextInspector` 默认开(opt-out,纯计算零 LLM 成本),`false` → undefined。
-  - DebugDrawer「📊 上下文」tab:占用进度条(色阶绿/黄/红 + 阈值线)+ 分类横向 bar + 压缩信息。
-  - ⏸ 推后:ChatDialog 常驻进度条(每轮刷新需改 useChat 事件流,DebugDrawer tab + inspectContext API 已覆盖诊断需求)。
-- selftest 1165→1189(sec-50 analyzeContext 分类/标记定位/args/占比 + 中间件 wrapModelCall 快照);e2e 303→308(inspect.mjs inspectContext + inspect().context + capability 关)。
-
 ### Fixed
-- **arch-review P1-1 wrap-up 走中间件栈**:工具轮耗尽后的收口综合(wrap-up)此前直接调 `coreModelCall` 绕过中间件栈 → 收口轮 token 不计入 `sdk.usage`(sdk-events afterModel 漏计)+ automation `budget` 预算闸 + 用户自定义 `wrapModelCall`(埋点/缓存)在收口轮失效。修复:wrap-up 改走 `composeModelCall`(裸 llm 不绑工具防收口再触发工具调用)+ `runAfterModel`,与主循环 modelHandler 对齐(budget/用户中间件参与,收口 token 计入 usage)。不跑 beforeModel(收口轮不需 todos 推进,避免重渲染 system 覆盖收口提示)。budget 超限时 wrap-up 照常 aborted 中断(automation 语义,checkpoint 回退兜底)。
-- **arch-review P1-4 subagent 工具池 getter 化**:`createSubagentMiddleware`/`createSubagentsMiddleware` 此前捕获 `allTools` 装配期快照 → 运行时 `setTools`/`addTool`/MCP 动态加的工具对子 agent **不可见**。修复:`allTools` 接受 getter,createChatSdk 装配传 `() => allTools`,子 agent spawn 时取主 agent 最新工具集(与 dataOps `liveData()` / verify `root` getter 模式一致)。⏸ verify readonlyTools getter 化推后(verify+adversarial 双 opt-in,收益边缘)。
-- selftest 1161→1165(sec-23 加 P1-1 收口经中间件计数 + P1-4 subagent getter spy 白盒);e2e 303 不变。
+- **css 产物名/exports 不一致修复**(pre-existing,2.24.1 起):build 经 `assetFileNames` 生成 `dist/style.css`,匹配 `package.json` exports `"./style.css"` + size-check。集成方 `import 'page-agent-sdk/style.css'` 不再 404。
 
-### Added
-- **所有 demo 统一 Figma 深色紫主题**:新建 `examples/_shared/theme.css`(`--ark-*` 深色紫变量 + ChatDialog `--cs-*` 覆盖 + reset);16 demo main.ts import + App.vue 外层深色(模式 A 双栏 `.pane` / B 单栏 `.page` / C 全屏);EditableBanner `.editable-area` 改深。
-- **会话标题自动生成(session-history)**:历史列表显示**首条 user 消息内容**(截取 30 字),替代「会话 xxxxxx」。`store.updateTitle`(新)+ persistRuntime `deriveTitle`(纯函数,导出 + selftest sec-49)+ 变化才写 + switchSession/onClear 重置 lastTitle。
-- **ChatDialog 输入框 Figma**:`send-btn` 圆形(border-radius:50%)+ 「Enter 发送 · Shift+Enter 换行」提示 + footer/input 变量化(`var(--cs-bg)`/border var,深色主题不发白)。
-- selftest 1151→1159(sec-49 deriveTitle 8 断言);e2e 303 不变;browser 28 全绿(所有 demo 深色 + 输入框 + title 回归)。
-
-### Changed
-- **并发 send/switchSession/batch 串行化(arch-review P1-2)**:同一 sdk 实例的并发 `send`/`switchSession`/`batch` 此前无互斥 → A 生成中切 B 会共享闭包 state 竞态(state 串写 / data 并发改)。现在排队执行(一个完整跑完下一个才开始),即「一个会话操作 data 时,其他会话等它结束」—— 单实例同一时刻只服务一个会话。
-  - 提取纯函数 `createSerialRunner`(`utils/serialRunner.ts`,可单测防并发测试 flaky):Promise 链互斥,前一个无论成败都继续(不卡死后续),各 fn 结果/错误透传。
-  - `send`/`batch`/`switchSession` 经 `runSerial` 包装;`stream` 暂不串行(流式生命周期复杂,UI 走 useChat 已排队,后续评估)。
-  - 新增导出 `createSerialRunner`。
-- selftest 1145→1151(新建 sec-48 createSerialRunner 白盒:串行顺序/前一个 reject 不卡后续/并发按调用序/reject 透传);e2e 296 不变(串行化透明,无回归)。
+## [2.24.0] - 2026-08-07
 
 ### Added
 - **会话历史管理(`session-history-management`,ChatGPT 式新建/切换/历史列表)**:让集成方能实现「一个聊天框 + 顶部新建 + 历史列表切换」。对外暴露此前只在 store 层的会话能力:
@@ -267,6 +442,34 @@
 - **session-history-demo 重构(组件化 + Figma 设计)**:单文件 App.vue → 直接消费 sdk.sessions(去掉手动 useSessionHistory composable,状态下沉 SDK)+ 组件拆分(`ChatTopBar` 顶部栏 + `SessionHistoryPanel` 右侧弹出历史层)+ 深色紫主题(覆盖 ChatDialog `--cs-*` CSS 变量,无 theme prop)。架构优先:状态在 SDK,UI 组件化,App.vue 只组装。
 - selftest 1151 不变;e2e 296→303(storage Phase 6 sdk.sessions 响应式 + 边界:切回旧会话不重复/无重复 sid/deleteSession 自动 refresh);browser 28 不变(session-history-demo 3 项端到端组件化重构后仍绿)。
 
+### Added
+- **所有 demo 统一 Figma 深色紫主题**:新建 `examples/_shared/theme.css`(`--ark-*` 深色紫变量 + ChatDialog `--cs-*` 覆盖 + reset);16 demo main.ts import + App.vue 外层深色(模式 A 双栏 `.pane` / B 单栏 `.page` / C 全屏);EditableBanner `.editable-area` 改深。
+- **会话标题自动生成(session-history)**:历史列表显示**首条 user 消息内容**(截取 30 字),替代「会话 xxxxxx」。`store.updateTitle`(新)+ persistRuntime `deriveTitle`(纯函数,导出 + selftest sec-49)+ 变化才写 + switchSession/onClear 重置 lastTitle。
+- **ChatDialog 输入框 Figma**:`send-btn` 圆形(border-radius:50%)+ 「Enter 发送 · Shift+Enter 换行」提示 + footer/input 变量化(`var(--cs-bg)`/border var,深色主题不发白)。
+- selftest 1151→1159(sec-49 deriveTitle 8 断言);e2e 303 不变;browser 28 全绿(所有 demo 深色 + 输入框 + title 回归)。
+
+- 工具步骤耗时展示(`durationMs`,消息 action 计时)+ 修 browser 测试 autoTitle 干扰(测试隔离)
+### Added
+- **上下文检查(context-inspector)**:长对话/大 JSON 场景诊断刚需 —— 看上下文什么占了最多、离压缩阈值多远。新增:
+  - `analyzeContext(messages, opts)` 纯函数(导出):对「实际发给 LLM 的消息」分类切分 + token 估算,返回 `ContextSnapshot`(totalTokens/occupancy/categories/compression)。system 段按 augmentPrompt 标记前缀**定位**切分(## 可操作数据 / ## 能力使用提示 / ## 当前主线目标 / ## 工作记忆 / 摘要/召回段);工具结果计 ToolMessage.content + AIMessage.tool_calls.args。
+  - `createContextInspectorMiddleware` 中间件(导出):`wrapModelCall` 每轮快照(采集 replaceSystem + trim 后的最终消息),经闭包持有(不进 state —— wrapModelCall 无 state update 机制)。
+  - `sdk.inspectContext()` / `inspect().context`:读最近快照;`capabilities.contextInspector` 默认开(opt-out,纯计算零 LLM 成本),`false` → undefined。
+  - DebugDrawer「📊 上下文」tab:占用进度条(色阶绿/黄/红 + 阈值线)+ 分类横向 bar + 压缩信息。
+  - ⏸ 推后:ChatDialog 常驻进度条(每轮刷新需改 useChat 事件流,DebugDrawer tab + inspectContext API 已覆盖诊断需求)。
+- selftest 1165→1189(sec-50 analyzeContext 分类/标记定位/args/占比 + 中间件 wrapModelCall 快照);e2e 303→308(inspect.mjs inspectContext + inspect().context + capability 关)。
+
+### Changed
+- **并发 send/switchSession/batch 串行化(arch-review P1-2)**:同一 sdk 实例的并发 `send`/`switchSession`/`batch` 此前无互斥 → A 生成中切 B 会共享闭包 state 竞态(state 串写 / data 并发改)。现在排队执行(一个完整跑完下一个才开始),即「一个会话操作 data 时,其他会话等它结束」—— 单实例同一时刻只服务一个会话。
+  - 提取纯函数 `createSerialRunner`(`utils/serialRunner.ts`,可单测防并发测试 flaky):Promise 链互斥,前一个无论成败都继续(不卡死后续),各 fn 结果/错误透传。
+  - `send`/`batch`/`switchSession` 经 `runSerial` 包装;`stream` 暂不串行(流式生命周期复杂,UI 走 useChat 已排队,后续评估)。
+  - 新增导出 `createSerialRunner`。
+- selftest 1145→1151(新建 sec-48 createSerialRunner 白盒:串行顺序/前一个 reject 不卡后续/并发按调用序/reject 透传);e2e 296 不变(串行化透明,无回归)。
+
+### Fixed
+- **arch-review P1-1 wrap-up 走中间件栈**:工具轮耗尽后的收口综合(wrap-up)此前直接调 `coreModelCall` 绕过中间件栈 → 收口轮 token 不计入 `sdk.usage`(sdk-events afterModel 漏计)+ automation `budget` 预算闸 + 用户自定义 `wrapModelCall`(埋点/缓存)在收口轮失效。修复:wrap-up 改走 `composeModelCall`(裸 llm 不绑工具防收口再触发工具调用)+ `runAfterModel`,与主循环 modelHandler 对齐(budget/用户中间件参与,收口 token 计入 usage)。不跑 beforeModel(收口轮不需 todos 推进,避免重渲染 system 覆盖收口提示)。budget 超限时 wrap-up 照常 aborted 中断(automation 语义,checkpoint 回退兜底)。
+- **arch-review P1-4 subagent 工具池 getter 化**:`createSubagentMiddleware`/`createSubagentsMiddleware` 此前捕获 `allTools` 装配期快照 → 运行时 `setTools`/`addTool`/MCP 动态加的工具对子 agent **不可见**。修复:`allTools` 接受 getter,createChatSdk 装配传 `() => allTools`,子 agent spawn 时取主 agent 最新工具集(与 dataOps `liveData()` / verify `root` getter 模式一致)。⏸ verify readonlyTools getter 化推后(verify+adversarial 双 opt-in,收益边缘)。
+- selftest 1161→1165(sec-23 加 P1-1 收口经中间件计数 + P1-4 subagent getter spy 白盒);e2e 303 不变。
+
 ### Fixed
 - **checkpoint 栈切会话/清空残留(S1)**:开了 `checkpoint:true` 的集成方,`switchSession` 切新建会话(目标 snap 无 checkpoint)时 `applySnapshot` 的 importStack 受 `snap.checkpoints?.length` 门禁不触发,`onClear` 也无任何 checkpoint 重置 → 旧会话 checkpoint 栈残留 → 新会话 `restoreLastCheckpoint` / LLM `restore_last_checkpoint` 回退到**旧会话**的 messages+bind+vfs+todos(跨会话污染,比 P1-5 pin 段污染更严重)。修复:`switchSession` + `onClear` 加 `checkpointMgr.importStack([])`(替换语义清栈 + 重置增量基线,与 mission/workingMemory reset 同模式;接续 arch-review P1-5)。审计确认 skills(contentCache 跨会话有效)/permissions/summarization/subagent 无需重置,checkpoint 是唯一残留。
 - selftest 1142→1145(sec-17 加 `importStack([])` 清栈白盒);e2e 288→296(storage 加 listSessions/deleteSession/sessionId/优雅降级 8 断言)。
@@ -277,6 +480,8 @@
   - **P1-6 `setMission({})` 清空后被历史重捕**:`beforeAgent` 仅判 `!mission` → 无法区分「从未 capture」与「被显式清空」,集成方收尾 `setMission({})` 解除锚定后,下次 send 从完整历史重新捕获含任务动词的旧 user → agent 被锚到过期目标,无告警。修复:加 `explicitlyCleared` 标记,`setMission({})` 置 true(同会话不再自动重捕),`setMission(新目标)` 与 `reset()` 撤销(显式设新目标或切会话归零后可正常 capture)。
   - ⏸ 推后(同 change 其余项):P1-1/P1-2/P1-4 已后续实施(见上各段),仅剩 **P1-3 beforeReturn 门禁解耦**评估后推迟(收益边缘 + 无低风险防死循环方案,真有用户自定义 beforeReturn 需求时重启)。
 - selftest 1130→1142(sec-35 加 P1-5 reset + P1-6 防重捕白盒 8 断言;sec-38 加 reset 白盒 4 断言);e2e 286→288(storage 加 P1-5 switchSession 后 mission 重置断言)。
+
+## [2.23.0] - 2026-08-06
 
 ### Fixed
 - **P0 数据安全逃逸(`fix-write-safety-bypass`,2026-08-03 架构审查发现)**:
@@ -297,23 +502,6 @@
   - `addTool` 升级为覆盖语义(跨最终工具集去重 + warn,不再静默 return);`removeTool` 清 `toolSources`(保持与 allTools 一致)。
   - ⏸ 推后:`removeTool` 删内置(disabledNames 状态机,与 rebuild 交互边界复杂;集成方想禁用内置更直接用 capabilities,边缘场景)+ e2e 重名用例(selftest sec-47 白盒已覆盖纯函数)。
 - selftest 1119→1130(新建 sec-47 `dedupeTools` 白盒 11 断言);e2e 286 不变。
-
-## [2.32.1] - 2026-08-09
-
-### Fixed(placeholder-protected-read-write review 修复)
-- **H1 祖先 set 静默丢失受保护字段**:`normalizeAndCheck` 对 `valAt===undefined` 改为回填当前值(原 skip 在祖先 set 不含受保护子字段时静默丢失 hash/token,违背"精确值保护"承诺)
-- **H2 resource_update 不刷新乐观锁 hash**:`rupdate` 改 bind 后补 `lastReadHash = hashValue(bindRef)`(与其他写路径一致,防紧接 write `VERSION_CONFLICT` 让 LLM 困惑)
-- **M3 D1 复活已删字段**:`expandHandle` 在 `bindCur===undefined` 时返 `RESOURCE_NOT_FOUND`(原展开池旧值复活已删字段,§7c B4)
-- selftest 1480→1484(sec-58 H1/M3 + sec-60 H2)
-
-## [2.32.0] - 2026-08-09
-
-### placeholder-protected-read-write(占位符替换读写·精确值保护)
-- `data.resources: [{path, mode}]` 声明受保护字段:freeze(只读,精确值不入 LLM 消息流)+ verbatim(原样保留,防压缩丢字/防幻觉改错);**bind 恒持原始值,占位符只在读写边界替换**(hash/快照/乐观锁全零干扰)
-- read 受保护路径返占位符 `⟦frozen:path⟧`/`⟦res:handle⟧`;写侧强制层 = 独立纯函数 `enforceSet`/`enforcePatches`,经可选参 `protectedCtx` 注入 `commitSetToBind`/`applyPatchesToBind`/eval 整体替换**三处**,先于 schema 校验(含 C1 回显识别 / A2 定点展开 / D1 池值自愈 / C3 remove 拒 / C2 `patches[i]` 定位)
-- 资源工具 `resource_get`/`update`/`list`/`delete`(advanced,opt-in:配 `data.resources` + vfs)+ SDK API `createResource`/`getResource`/`updateResource`/`deleteResource`/`listResources`/`releaseResources`
-- vfs 第四池 `resources`(4MB,per-resource 文件,handle 路径派生短哈希)+ 跨压缩 pin(`resourcesPin` 中间件)+ skill `precise-value-protection`(`skills/` 分发)+ usageHints 资源段
-- 新增导出 `ResourceProtectSpec` 类型;全增量,默认零行为变化(未配 `data.resources` → no-op;freeze 无 vfs 也工作,verbatim 降级);selftest 1358→1480(sec-58/59/60/61)/ e2e 362→376(resources.mjs)。示例 `examples/precise-value-demo`。
 
 ## [2.22.1] - 2026-08-03
 
@@ -881,3 +1069,4 @@
 - 两个项目 skill:`page-agent-sdk-integrate`(公开分发,集成 SDK)、`page-agent-sdk-release`(维护者自用,发布流程)
 - 项目结构规范化:根目录 demo html 整理进各 `examples/<demo>/index.html`
 - CLAUDE.md 补充完整发布流程 checklist(改代码→中英文文档→bump→build/test→推 gitee→推 github→发 npm→验证)
+

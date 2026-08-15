@@ -250,7 +250,7 @@ export interface ChatSdkOptions {
     summarization?: boolean  // 上下文压缩(关 → 长会话不压缩)
     memory?: boolean         // AGENTS.md 持久指令
     subagent?: boolean       // 子 agent 委派(与 subagent.enabled:false 等效)
-    verify?: boolean         // 自检中间件(默认 false;开启后 agent 返回前跑 check 自纠,需配合 verify.check)
+    verify?: boolean         // 自检中间件(默认 false;开启后 agent 返回前跑 check 自纠。传 verify.check/maxAttempts/adversarial 时自动开,无需重复声明 true;显式 false 阻止自动开)
     domInspect?: boolean     // DOM 读取工具 get_dom(默认 false;agent 读渲染后 DOM 结构,opt-in;有 token 成本,集成方按需开启)
     inspectEnv?: boolean     // 环境探查工具 inspect_env(默认 true;读 window 环境/location/调试变量,轻量只读,排查调试用)
     draftWrite?: boolean     // 分块写工具 draft_write/draft_commit(默认 false;几百 K JSON 分块构建再原子提交,opt-in;需 dataOps + vfs,advanced 暴露)
@@ -265,7 +265,7 @@ export interface ChatSdkOptions {
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | BaseChatModel; maxDepth?: number; maxParallel?: number; timeoutMs?: number }
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[]
-  /** 自检:agent 返回前跑 check,不通过则 feedback 回灌自纠(默认关闭)。需 capabilities.verify:true 开启;check 必填(期三起可省略,默认用 createWriteBackCheck) */
+  /** 自检:agent 返回前跑 check,不通过则 feedback 回灌自纠(默认关闭)。传 check/maxAttempts/adversarial 任一即自动开启(无需再配 capabilities.verify:true;显式 false 或 verify.enabled:false 可关);check 可省略,默认用 createWriteBackCheck */
   verify?: {
     /** 显式关闭(优先级最高;即使 capabilities.verify:true) */
     enabled?: boolean
@@ -862,7 +862,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const missionMw = createMissionMiddleware()
   // 上下文聚焦(focus-context):指定组件精修,目标/视野/范围三层收敛。getSchema 延迟引用 liveData(适配 setData 运行时替换,同 checkpointMgr.getData 模式)
   // 焦点变更统一 emit focus_change(所有入口:API/agent 工具/dialog chip/reset;闭包引用 emit,运行时已初始化)
-  const focusMw = createFocusMiddleware({ getSchema: () => liveData()?.schema, getBind: () => liveData()?.bind, onChange: (focuses) => emit({ type: 'focus_change', focuses }) })
+  // unfocusGuidance:focus 工具仅 advanced 装载(见下 focusTools),simple/minimal 下文案须引导「提示用户移除 chip」而非调用不存在的工具
+  const focusMw = createFocusMiddleware({ getSchema: () => liveData()?.schema, getBind: () => liveData()?.bind, unfocusGuidance: options.toolMode === 'advanced' ? 'tool' : 'ask-user', onChange: (focuses) => emit({ type: 'focus_change', focuses }) })
   const workingMemoryMw = createWorkingMemoryMiddleware()
   const memoryMw = createMemoryMiddleware(options.memory || '')
   // memory 为函数(同步/异步)时,后台预求值,首次 beforeAgent 前尽量就绪(不阻塞 mount)
@@ -908,6 +909,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       s._codeAsset.writablePaths = inferred
       // 同步 SubagentConfig 顶层 writablePaths(spawn 自授剥离写工具后经它授予写权限)
       if (Array.isArray(s.writablePaths)) s.writablePaths = inferred
+      // 重建 systemPrompt/skill 示例路径:工厂调用时 root 未知用 'components' 占位,推断回填后
+      // 按 real root 重建,防占位示例误导非 components 命名(blocks/sections 等)的集成(手搓 config 无钩子,防御跳过)
+      ;(s as any)._rebuildCodeAssetPaths?.(inferred[0])
       console.info(`[page-agent-sdk][createHtmlSubagent] 未传 writablePaths,已从 schema 推断: [${inferred.map((p) => `'${p}'`).join(', ')}]`)
     } else {
       console.warn('[page-agent-sdk][createHtmlSubagent] 未能从 schema 推断 writablePaths(开放 schema(z.any()/z.record())/嵌套容器(如 sections[].children[])/点路径 codeField(如 props.html_code)不支持自动推断),已跳过该 html 子 agent(整体不受影响);如确需代码资产机制(vfs + 格式校验 + 增量 commit),请显式传 writablePaths(代码组件 data 区,如 [\'components\'])')
@@ -986,7 +990,11 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     : null
   // 受保护资源跨压缩 pin(augmentPrompt 每轮注入「受保护资源」段;资源清单天然跨压缩,无需持久化)
   const resourcesPinMw = (useDataOps && finalDataConfig?.resources?.length && dataOpsController?.getResourcesSnapshot)
-    ? createResourcesPinMiddleware({ getResourcesSnapshot: () => dataOpsController?.getResourcesSnapshot?.() ?? [] })
+    ? createResourcesPinMiddleware({
+        getResourcesSnapshot: () => dataOpsController?.getResourcesSnapshot?.() ?? [],
+        // resource_* 仅 advanced 暴露(SIMPLE_HIDDEN);simple/minimal 下提示词不教调用(与工具面一致)
+        toolsExposed: options.toolMode === 'advanced',
+      })
     : undefined
   /** 当前主数据配置(反映运行时替换;供 inspect/verify 等读最新状态) */
   const liveData = (): DataConfig | undefined => dataOpsController?.get() ?? finalDataConfig
@@ -1139,13 +1147,17 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const useSubagent = caps.subagent
   // 子 agent 观察层 tracker(会话级共享:spawn + 预声明中间件统一记录 active/history 运行态)
   const subagentTracker = useSubagent ? createSubagentTracker() : undefined
-  // verify 默认关(烧 token);需 capabilities.verify:true + 未显式 enabled:false + maxAttempts>0(check 可选,省略则用 createWriteBackCheck)
+  // verify 默认关(烧 token);开启 = capabilities.verify:true **或** 传了 verify.check/maxAttempts/adversarial(配置意图推断,
+  // 对齐 auto-html-agent 模式,治「两处都要配」集成摩擦);capabilities.verify 显式 false 不自动开(显式关闭优先)
   const verifyMaxAttempts = options.verify?.maxAttempts ?? 2
-  const useVerify = caps.verify && options.verify?.enabled !== false && verifyMaxAttempts > 0
+  const verifyIntent = !!(options.verify?.check || options.verify?.maxAttempts || options.verify?.adversarial)
+  // capabilities.verify 显式 false 阻止自动开(caps 经 resolveCapabilities 归一,显式/默认 false 不可辨 → 回读原始配置)
+  const verifyCapExplicitOff = options.capabilities?.verify === false
+  const useVerify = (caps.verify || (verifyIntent && !verifyCapExplicitOff)) && options.verify?.enabled !== false && verifyMaxAttempts > 0
   const useContextInspector = caps.contextInspector  // 上下文检查(默认开,纯计算零 LLM 成本;inspectContext/进度条/tab)
   // 诊断:常见误用 warn(与 options.id/mcp 的 warn 惯例一致),避免"以为开了实际没开"
-  if (options.verify?.check && !caps.verify) {
-    console.warn('[page-agent-sdk][verify] 检测到 verify.check 但 capabilities.verify 未开启,verify 未装载')
+  if (verifyIntent && !useVerify && options.verify?.enabled !== false) {
+    console.warn('[page-agent-sdk][verify] 检测到 verify 配置(check/maxAttempts/adversarial)但未装载(capabilities.verify:false 显式关闭 或 maxAttempts≤0)')
   }
 
   // 子 agent 中间件(capabilities.subagent 或 subagent.enabled 为 false 则关闭)
@@ -1751,6 +1763,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       if (options.memory) void store.save(agentId, core.sessionId, { memory: memoryMw.get() || (typeof options.memory === 'string' ? options.memory : '') })
       void refreshSessions()  // session-history Phase 6:切会话后刷新历史列表(响应式 sessions 自动更新)
       lastTitle = undefined; titleLLMDone = false   // 切会话:重置 title 缓存 + LLM 标志,新会话重新生成
+      core.infoTick.value++ // 同 resetSession:focus 重置/快照恢复后 bump,防输入框聚焦 chip 残留旧焦点
       return target
     },
 
@@ -1776,6 +1789,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         void store.createSession(core.agentId, options.session?.title, core.sessionId)
       }
       emit({ type: 'session_restored', sessionId: core.sessionId, rounds: 0 })
+      core.infoTick.value++ // 焦点等 UI computed(focuses chip)挂 infoTick;reset 清焦点后不 bump → 输入框聚焦 chip 残留旧焦点(用户实测)
       void refreshSessions() // 内部守卫:storage 未开启 no-op
       lastTitle = undefined; titleLLMDone = false
     },

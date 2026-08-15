@@ -30,6 +30,15 @@ export async function run(ctx: TestCtx) {
   // 空资源清单 → undefined(不注入)
   assert(pinPrompt([]) === undefined || pinPrompt([]) === '', '✓ resourcesPin → 空清单不注入段')
 
+  // ===== 工具面一致性:resource_* 仅 advanced 暴露,toolsExposed:false(simple/minimal)不教调用 =====
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mwHidden = createResourcesPinMiddleware({ getResourcesSnapshot: () => [{ path: 'id', mode: 'freeze' }], toolsExposed: false })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pHidden = (mwHidden.augmentPrompt as any)?.({} as any) ?? ''
+  assert(!/需真值用 resource_get/.test(pHidden), '✓ resourcesPin toolsExposed=false → 不教 resource_get 调用(simple/minimal 未装载)')
+  assert(/advanced 工具,当前模式未装载/.test(pHidden), '✓ resourcesPin toolsExposed=false → 明示 resource_* 未装载勿调用')
+  assert(/FROZEN_FIELD/.test(pHidden), '✓ resourcesPin toolsExposed=false → 仍含 freeze 错误码应对(保护语义不变)')
+
   // ===== usageHints 资源教程段已移除(与 resourcesPin 每轮功能段重复,实测双份注入浪费)=====
   const uh1 = hintPrompt(true)
   assert(!/受保护资源·精确值保护/.test(uh1), '✓ usageHints 不再注入资源教程段(去重:resourcesPin 每轮已注入功能段,含占位符/resource_get/错误码全量引导)')

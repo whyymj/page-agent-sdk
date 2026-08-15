@@ -155,6 +155,18 @@ export async function run(ctx: TestCtx): Promise<void> {
     '✓ 委派 task 视觉锚:规格条含具体锚点示例(主色 hex / 主体占比),示例本身可模仿',
   )
 
+  // === 提示词命名参数化(prompt 不写死集成方字段名;codeField 可能是 html/innerHtml/嵌套 props.html_code) ===
+  assert(
+    htmlOrchestratorPrompt('html', 'props.html_code').includes('props.html_code 字段') &&
+      htmlOrchestratorPrompt('hero', 'innerHtml').includes('innerHtml 字段') && htmlOrchestratorPrompt('hero', 'innerHtml').includes('use_hero'),
+    '✓ htmlOrchestratorPrompt codeField 参数化:职责边界/重试段跟随实际字段名(不写死 code)',
+  )
+  assert(
+    !systemPromptHelpers.htmlPageProposeFirst.includes('use_html') &&
+      systemPromptHelpers.htmlPageProposeFirst.includes('use_<id>'),
+    '✓ htmlPageProposeFirst 方案切换引导泛化(委派工具见 use_<id>,不写死 use_html —— 自定义 id 时该名不存在)',
+  )
+
   // buildDataPrompt
   assert(buildDataPrompt(undefined) === '', 'buildDataPrompt → 无 data 返空串')
   const dp = buildDataPrompt({

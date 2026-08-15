@@ -96,6 +96,28 @@ test.describe('complex-demo: 真实复杂度(30 类型 + 70 实例)', () => {
   })
 
   /**
+   * Bug 复现锁定(用户实测):清空对话后输入框聚焦 chip 残留。
+   * 根因:resetSession 调 focusMw.reset() 清了焦点但不 bump infoTick(chip 的 computed 挂 infoTick)
+   * → 不重算 → 旧焦点 chip 残留在输入框。修复后 resetSession/switchSession 统一 bump。
+   * 验证链路:UI 两步拾取 → setFocus → chip 出现 → 发消息 → 清空对话 → chip 应消失。
+   */
+  test('focus: 清空对话后输入框聚焦 chip 不残留(resetSession 清焦点)', async ({ page }) => {
+    await page.click('[data-path="components.0"]') // 第 1 步:选中
+    await page.click('.pick-overlay__btn') // 第 2 步:加入聊天 → 聚焦
+    await expect(page.locator('.focus-chip')).toHaveCount(1)
+    // 「清空对话」菜单项需有消息才出现 → 先发一条
+    await mockLlm(page, [{ text: '好的,已了解导航栏需求。' }])
+    await fillInput(page, '改下导航栏')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    await expect(page.locator('.message-row.user')).toHaveCount(1)
+    // 清空对话(resetSession):焦点应随会话重置清空,chip 不残留
+    await clearChat(page)
+    await expect(page.locator('.message-row.user')).toHaveCount(0) // 前置成立:对话确实清空
+    await expect(page.locator('.focus-chip')).toHaveCount(0) // 核心:输入框 chip 不残留旧焦点
+  })
+
+  /**
    * 精确值保护(placeholder-protected-read-write)合并演示:navbar(components.0)的 trackId 被 freeze 保护。
    * 两步拾取聚焦 navbar → read trackId 返 ⟦frozen⟧ 占位符(真实值不进 AI 消息流)→ write 改 trackId 被 FROZEN_FIELD 拒 → 改普通字段 title 放行。
    */

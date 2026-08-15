@@ -42,7 +42,7 @@ export type { SubagentOptions, SubagentLlmConfig, SubagentConfig, SubagentsContr
 // 能力包(专用子 agent 工厂):RAG 多源检索(createRagSubagent)+ HTML 代码组件生成(createHtmlSubagent)
 export { createRagSubagent } from './sdk/ragSubagent'
 export type { RagHit, RagRetrieveOptions, RagRetriever, RagLoader, CreateRagSubagentOptions } from './sdk/ragSubagent'
-export { createHtmlSubagent, createHtmlFormatCheck, htmlFragmentSkill } from './sdk/htmlSubagent'
+export { createHtmlSubagent, createHtmlFormatCheck, htmlFragmentSkill, buildHtmlFragmentSkill } from './sdk/htmlSubagent'
 export type { CreateHtmlSubagentOptions, HtmlFormatCheckOptions } from './sdk/htmlSubagent'
 export { validateHtmlFormat, HTML_VOID_TAGS } from './tools/htmlValidate'
 export type { HtmlFormatIssue } from './tools/htmlValidate'
