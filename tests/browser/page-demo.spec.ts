@@ -300,4 +300,160 @@ test.describe('page-demo: read → write → read', () => {
     const c2 = await page.evaluate(() => (window as any).page.components[2].label)
     expect(c2).toBe('聚焦内')
   })
+
+  /**
+   * 嵌套容器渲染(纯前端,不需 mock LLM):初始页含 card.children / waterfall.children / carousel.children。
+   * 断言:① 容器与子组件 DOM 渲染 + 嵌套 data-path 定位(components.N.children.M)
+   *      ② 瀑布流 columnCount 样式生效 ③ 轮播 ‹› 导航翻页(局部状态,click.stop 不触发选中)
+   */
+  test('嵌套渲染:card/waterfall/carousel 容器 + 子组件 data-path + 瀑布流列数 + 轮播翻页', async ({ page }) => {
+    await mockLlm(page, [{ text: '' }])  // 纯前端;mockLlm 防意外真实调用
+    // ① 卡片嵌套子组件渲染(初始序:4 card / 5 waterfall / 6 carousel)
+    await expect(page.locator('[data-path="components.4.children.0"]')).toHaveText(/卡片内的段落/)
+    await expect(page.locator('[data-path="components.4.children.1"]')).toHaveText(/卡内按钮/)
+    // ② 瀑布流:容器 data-path + columns=2 生效 + 子卡片嵌套 list 定位
+    const wf = page.locator('.comp-waterfall')
+    await expect(wf).toHaveAttribute('data-path', 'components.5')
+    expect(await wf.evaluate((el) => getComputedStyle(el).columnCount)).toBe('2')
+    await expect(page.locator('[data-path="components.5.children.1.children.0"] li').first()).toHaveText(/子列表项 1/)
+    // ③ 轮播:页码 1/2 → 点 › → 第 2 页内容 + 页码 2/2(click.stop 不触发选中)
+    const pos = page.locator('.comp-carousel .nav-pos')
+    await expect(pos).toHaveText('1 / 2')
+    await page.locator('.comp-carousel .nav-btn').nth(1).click()
+    await expect(page.locator('.comp-carousel .carousel-stage')).toContainText('轮播第 2 页')
+    await expect(pos).toHaveText('2 / 2')
+  })
+
+  /**
+   * 调整层级(patch op move,跨数组一步原子):把顶层列表(components.7)移进瀑布卡片 B 的 children。
+   * 验证 union 嵌套路径(components.5.children.1.children)写白名单放行 + move 原子性 + data_change 重渲染。
+   */
+  test('调整层级:move 把顶层组件移进瀑布卡片 children(跨数组原子移动)', async ({ page }) => {
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'read', arguments: { jsonPath: 'components.5' } }] },
+      { tool_calls: [{ name: 'write', arguments: { patch: { op: 'move', jsonPath: 'components.7', value: 'components.5.children.1.children' } } }] },
+      { text: '已把顶层列表移进瀑布卡片 B 的子组件区。' },
+    ])
+    await fillInput(page, '把顶层列表移进瀑布卡片 B 里')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+
+    // 数据侧:顶层 8→7(列表移出),瀑布卡片 B children 多一项(嵌套链 瀑布流>卡片>列表)
+    const topLen = await page.evaluate(() => (window as any).page.components.length)
+    expect(topLen).toBe(7)
+    const moved = await page.evaluate(() => (window as any).page.components[5].children[1].children[1])
+    expect(moved.type).toBe('list')
+    expect(moved.items).toContain('需求收集')
+    // DOM 侧重渲染:嵌套深路径元素可见(data_change → tick → PageRenderer 重建)
+    await expect(page.locator('[data-path="components.5.children.1.children.1"]')).toContainText('需求收集')
+  })
+
+  /**
+   * 聚焦嵌套组件(getSchemaAtPath union 下探配套):两步拾取嵌套 data-path → addFocus 成功
+   * (修前 union 节点返 null 被拒,嵌套组件无法聚焦)→ 聚焦内写放行 / 聚焦外 PATH_DENIED。
+   */
+  test('聚焦嵌套组件:拾取卡片内段落 → 聚焦 chip → 聚焦内改文生效 + 越界 PATH_DENIED', async ({ page }) => {
+    // 第 1 步:点卡片内嵌套段落(components.4.children.0;closest 取最内层,选中的是子组件不是卡片)
+    await page.click('[data-path="components.4.children.0"]')
+    await expect(page.locator('.pick-overlay')).toBeVisible()
+    // 第 2 步:加入聊天 → addFocus(getSchemaAtPath union 下探解析嵌套路径,修前此处被拒)
+    await page.click('.pick-overlay__btn')
+    const chip = page.locator('.focus-chip')
+    await expect(chip).toBeVisible()
+    await expect(chip).toContainText('components.4.children.0')
+
+    const requestBodies: any[] = []
+    page.on('request', (req) => {
+      if (req.method() === 'POST' && req.url().includes('chat/completions')) {
+        try { const body = req.postData(); if (body) requestBodies.push(JSON.parse(body)) } catch { /* ignore */ }
+      }
+    })
+    // 越界写(顶层 title,在焦点外)→ 聚焦内写(嵌套段落文本)→ 完成
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'write', arguments: { value: '越界标题', patch: { op: 'set', jsonPath: 'title' } } }] },
+      { tool_calls: [{ name: 'write', arguments: { value: '嵌套段落已聚焦精修。', patch: { op: 'set', jsonPath: 'components.4.children.0.text' } } }] },
+      { text: '已改卡片内段落。' },
+    ])
+    await fillInput(page, '把卡片里的段落改一下')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+
+    // 越界回灌含 PATH_DENIED;聚焦内嵌套路径写生效
+    const toolContents = requestBodies
+      .flatMap((b) => (b?.messages || []).filter((m: any) => m.role === 'tool').map((m: any) => m.content))
+      .join('\n')
+    expect(toolContents, '焦点外写被拒').toContain('PATH_DENIED')
+    const title = await page.evaluate(() => (window as any).page.title)
+    expect(title).not.toBe('越界标题')
+    const text = await page.evaluate(() => (window as any).page.components[4].children[0].text)
+    expect(text).toBe('嵌套段落已聚焦精修。')
+    await expect(page.locator('[data-path="components.4.children.0"]')).toContainText('嵌套段落已聚焦精修')
+  })
+
+  /**
+   * fix-silent-strip 浏览器级锁定:给 button 写 schema 未声明的 style 字段 → SCHEMA_STRIP 显式拒绝
+   * (修前 zod strip 静默剥离返回假成功,agent 以为写进去了,页面无变化)。
+   * ground truth = 越界写的 tool 结果回灌含 SCHEMA_STRIP;随后合规写正常生效。
+   */
+  test('SCHEMA_STRIP:button 写未声明 style 字段 → 显式拒绝回灌(不假成功)', async ({ page }) => {
+    const requestBodies: any[] = []
+    page.on('request', (req) => {
+      if (req.method() === 'POST' && req.url().includes('chat/completions')) {
+        try { const body = req.postData(); if (body) requestBodies.push(JSON.parse(body)) } catch { /* ignore */ }
+      }
+    })
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'write', arguments: { value: { border: '1px solid #ccc' }, patch: { op: 'set', jsonPath: 'components.2.style' } } }] },
+      { tool_calls: [{ name: 'write', arguments: { value: 'ghost', patch: { op: 'set', jsonPath: 'components.2.variant' } } }] },
+      { text: 'button 组件不支持 style 属性;已改用 ghost 变体实现弱化效果。' },
+    ])
+    await fillInput(page, '给主要按钮加个边框')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+
+    // 越界写的 tool 结果回灌含 SCHEMA_STRIP(显式拒绝,agent 能据此如实告知用户)
+    const toolContents = requestBodies
+      .flatMap((b) => (b?.messages || []).filter((m: any) => m.role === 'tool').map((m: any) => m.content))
+      .join('\n')
+    expect(toolContents, 'SCHEMA_STRIP 显式拒绝').toContain('SCHEMA_STRIP')
+    expect(toolContents, '拒绝文案指出具体字段').toContain('components.2.style')
+    // 数据侧:style 未被写入(无假成功);合规 variant 写生效
+    const c2 = await page.evaluate(() => (window as any).page.components[2])
+    expect(c2.style).toBeUndefined()
+    expect(c2.variant).toBe('ghost')
+  })
+
+  /**
+   * 纯代码精修(auto html 子 agent 委派):schema 含 custom.code 数组元素 → 装配期自动挂 use_html
+   * (3.9+ 零配置)→ 主 agent 委派 → 子 agent write 追加 custom 组件 → 沙箱 iframe 渲染。
+   * 嵌套链验证:瀑布流>轮播>卡片场景由上层 move/嵌套测试覆盖;此处锁「委派 + code 落地 + 渲染」主链路。
+   */
+  test('纯代码精修:use_html 委派 → 子 agent 写 custom.code → 沙箱 iframe 渲染', async ({ page }) => {
+    const tracker = await mockLlm(page, [
+      { tool_calls: [{ name: 'use_html', arguments: { task: '生成一个促销倒计时纯代码组件,主色 #F7C948' } }] },
+      {
+        tool_calls: [{
+          name: 'write',
+          arguments: { patch: { op: 'append', jsonPath: 'components', value: { type: 'custom', name: 'promo-timer', code: '<section class="promo"><h3>限时秒杀</h3><p style="color:#F7C948">距结束 02:00:00</p></section>' } } },
+        }],
+      },
+      { text: '已生成 promo-timer 倒计时组件\n[note] promo-timer 倒计时色 #F7C948 与主视觉一致' },
+      { text: '已生成纯代码倒计时组件,页面底部已渲染。' },
+    ])
+    await fillInput(page, '加一个促销倒计时纯代码组件')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+
+    // 数据侧:custom 组件追加进 components(子 agent 经 writablePaths=['components'] 写入)
+    const c = await page.evaluate(() => (window as any).page.components.at(-1))
+    expect(c.type).toBe('custom')
+    expect(c.name).toBe('promo-timer')
+    expect(c.code).toContain('限时秒杀')
+    // 渲染侧:沙箱 iframe srcdoc 含代码内容;工匠笔记沉淀进 __pgNotes(read 投影隐藏但 bind 直存)
+    const srcdoc = await page.locator('.custom-frame').last().getAttribute('srcdoc')
+    expect(srcdoc).toContain('限时秒杀')
+    expect(await page.evaluate(() => JSON.stringify((window as any).page.components.at(-1).__pgNotes))).toContain('#F7C948')
+    // 4 次 model 调用 = 主委派 → 子写 → 子收口 → 主收口
+    expect(tracker.calls()).toBe(4)
+  })
 })

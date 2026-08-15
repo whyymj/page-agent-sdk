@@ -6,11 +6,14 @@
  * 重建时读最新 page prop 渲染。展示「非 Vue 响应式 bind」集成模式:
  * SDK 工具直接改普通对象,UI 刷新由集成方(此处为 :key 重渲染)负责。
  *
+ * 单组件渲染(含容器递归嵌套)在 PageComponentView;本组件只负责页面骨架 + 点击代理。
  * 两步拾取(focus-context):点组件本体 → emit('select') → 父 selectedPath(浮层显示边框 + 加入聊天按钮);
  * 点「💬 加入聊天」按钮 → emit('focus') → 父调 sdk.setFocus 聚焦该组件精修。
+ * 嵌套子组件各自带 data-path(closest 取最内层,点子组件选中的就是子组件)。
  */
 import { ref } from 'vue'
 import type { PageData } from './pageSchema'
+import PageComponentView from './PageComponentView.vue'
 import PickOverlay from '../_shared/PickOverlay.vue'
 
 defineProps<{ page: PageData; selectedPath?: string | null }>()
@@ -31,29 +34,14 @@ function onBodyClick(e: MouseEvent) {
   <div class="pr" :data-theme="page.theme || 'light'">
     <h1 class="pr-title">{{ page.title }}</h1>
     <div ref="bodyRef" class="pr-body" @click="onBodyClick">
-      <template v-for="(c, i) in page.components" :key="i">
-        <h1 v-if="c.type === 'heading' && (c.level ?? 2) === 1" class="comp comp-h1" :data-path="`components.${i}`">{{ c.text }}</h1>
-        <h2 v-else-if="c.type === 'heading' && (c.level ?? 2) === 2" class="comp comp-h2" :data-path="`components.${i}`">{{ c.text }}</h2>
-        <h3 v-else-if="c.type === 'heading' && (c.level ?? 2) === 3" class="comp comp-h3" :data-path="`components.${i}`">{{ c.text }}</h3>
-        <h4 v-else-if="c.type === 'heading'" class="comp comp-h4" :data-path="`components.${i}`">{{ c.text }}</h4>
-        <p v-else-if="c.type === 'paragraph'" class="comp comp-paragraph" :data-path="`components.${i}`">{{ c.text }}</p>
-        <button
-          v-else-if="c.type === 'button'"
-          class="comp comp-button"
-          :data-variant="c.variant || 'primary'"
-          :data-path="`components.${i}`"
-        >
-          {{ c.label }}
-        </button>
-        <img v-else-if="c.type === 'image'" class="comp comp-image" :src="c.src" :alt="c.alt || ''" :data-path="`components.${i}`" />
-        <ul v-else-if="c.type === 'list'" class="comp comp-list" :data-path="`components.${i}`">
-          <li v-for="(it, j) in c.items" :key="j">{{ it }}</li>
-        </ul>
-        <div v-else-if="c.type === 'card'" class="comp comp-card" :data-path="`components.${i}`">
-          <h3 class="card-title">{{ c.title }}</h3>
-          <p class="card-text">{{ c.text }}</p>
-        </div>
-      </template>
+      <PageComponentView
+        v-for="(c, i) in page.components"
+        :key="i"
+        :comp="c"
+        :path="`components.${i}`"
+        @select="emit('select', $event)"
+        @focus="emit('focus', $event)"
+      />
     </div>
     <!-- 两步拾取浮层:选中态边框 + 「💬 加入聊天」按钮(点按钮才聚焦) -->
     <PickOverlay :selected-path="selectedPath ?? null" :container="bodyRef ?? null" @focus="emit('focus', $event)" />
@@ -86,33 +74,4 @@ function onBodyClick(e: MouseEvent) {
   margin-bottom: 16px;
   font-weight: 500;
 }
-.comp {
-  margin: 12px 0;
-}
-.comp-h1 { font-size: 30px; font-weight: 700; }
-.comp-h2 { font-size: 24px; font-weight: 700; }
-.comp-h3 { font-size: 20px; font-weight: 600; }
-.comp-h4 { font-size: 17px; font-weight: 600; }
-.comp-paragraph { line-height: 1.7; opacity: 0.85; }
-.comp-button {
-  padding: 8px 18px;
-  border: none;
-  border-radius: 7px;
-  cursor: pointer;
-  font-size: 14px;
-  margin: 4px 8px 4px 0;
-}
-.comp-button[data-variant='primary'] { background: #4f46e5; color: #fff; }
-.comp-button[data-variant='secondary'] { background: #e5e7eb; color: #1a1a1a; }
-.comp-button[data-variant='ghost'] { background: transparent; border: 1px solid currentColor; }
-.comp-image { max-width: 100%; border-radius: 8px; }
-.comp-list { padding-left: 22px; line-height: 1.8; }
-.comp-list li { margin: 4px 0; }
-.comp-card {
-  border: 1px solid rgba(127, 127, 127, 0.25);
-  border-radius: 10px;
-  padding: 16px;
-}
-.comp-card .card-title { font-size: 17px; font-weight: 600; margin: 0 0 8px; }
-.comp-card .card-text { margin: 0; opacity: 0.85; line-height: 1.6; }
 </style>

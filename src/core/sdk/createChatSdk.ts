@@ -740,9 +740,16 @@ function matchDataOp(name: string, args?: any): 'set' | 'edit' | 'delete' | 'res
   return null
 }
 
+/** 委派类工具(子 agent 执行入口):子 agent 的数据写发生在这些工具内部,主循环侧无独立工具调用可匹配 */
+function isDelegationTool(name: string): boolean {
+  return name === 'spawn_agent' || name === 'spawn_agents' || name.startsWith('use_')
+}
+
 /**
  * 内部事件中间件:把常用时机经 onEvent 外发给集成方。
- * - wrapToolCall:数据写工具(set/edit/delete/restore)执行后发 data_change(operation/value)
+ * - wrapToolCall:数据写工具(set/edit/delete/restore)执行后发 data_change(operation/value);
+ *   委派类工具(spawn_agent / spawn_agents / use_<id>)成功收口后也补发 —— 子 agent 写 data(如 html 子 agent 写 code 字段)
+ *   经主循环的 use_<id> 内部落地,非 reactive bind 宿主只监听 data_change 时无从感知刷新(修前漏发)
  * - afterModel:每轮 LLM 调用后提取 usage 累加到 core.usage,发 usage 事件(单轮 + 累计)
  * - afterAgent:每轮 agent 结束发 message_update(消息数)
  * stream 事件(round_start/text/tool_call/done 等)由 core.stream 包装层转发(见下)。
@@ -756,6 +763,9 @@ function createSdkEventMiddleware(emit: SdkEventHandler, messages: AgentMessage[
       const op = matchDataOp(ctx.name, ctx.args)
       if (op) {
         emit({ type: 'data_change', operation: op, value: liveData()?.bind } as any)
+      } else if (result.status === 'done' && isDelegationTool(ctx.name)) {
+        // 委派工具内部可能改 data(读多写少,误报仅多一次无害刷新;operation 统一 edit)
+        emit({ type: 'data_change', operation: 'edit', value: liveData()?.bind } as any)
       }
       return result
     },

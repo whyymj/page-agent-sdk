@@ -37,8 +37,16 @@ function downloadCode(lang: string, code: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
+/** 工具栏按钮 icon(与 MessageActions 的 msg-action-btn 统一:icon+文字,不用 emoji) */
+const TOOLBAR_ICONS = {
+  copy: '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.3" /><path d="M10.5 3.5v-.5A1.5 1.5 0 0 0 9 1.5H3.5A1.5 1.5 0 0 0 2 3v5.5A1.5 1.5 0 0 0 3.5 10H4" stroke="currentColor" stroke-width="1.3" /></svg>',
+  check: '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3 3 7-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>',
+  download: '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.5v7.5m0 0L5 7m3 3l3-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /><path d="M2.5 11.5v1a1.5 1.5 0 0 0 1.5 1.5h8a1.5 1.5 0 0 0 1.5-1.5v-1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /></svg>',
+  play: '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.5 3.2v9.6c0 .6.65.97 1.17.66l7.5-4.8a.78.78 0 0 0 0-1.32l-7.5-4.8A.78.78 0 0 0 4.5 3.2z" fill="currentColor" /></svg>',
+} as const
+
 /**
- * 为渲染后的代码块注入操作按钮（复制/预览）。
+ * 为渲染后的代码块注入操作按钮（复制/下载/预览）。
  * 由于 marked 输出静态 HTML，这里在 DOM 渲染后手动增强交互。
  */
 async function enhanceCodeBlocks() {
@@ -61,33 +69,44 @@ async function enhanceCodeBlocks() {
     langLabel.textContent = lang
     toolbar.appendChild(langLabel)
 
+    // 按钮组右侧对齐(原逐按钮 margin-left:auto 收敛到组容器,布局意图更明确)
+    const actions = document.createElement('div')
+    actions.className = 'code-toolbar-actions'
+
     const copyBtn = document.createElement('button')
     copyBtn.className = 'code-action-btn'
-    copyBtn.innerHTML = '复制'
+    copyBtn.title = '复制代码'
+    copyBtn.innerHTML = TOOLBAR_ICONS.copy + '<span>复制</span>'
     copyBtn.onclick = async () => {
       const ok = await copyText(rawCode)
-      copyBtn.innerHTML = ok ? '已复制 ✓' : '复制失败'
-      setTimeout(() => (copyBtn.innerHTML = '复制'), 1500)
+      copyBtn.classList.toggle('done', ok)
+      copyBtn.innerHTML = (ok ? TOOLBAR_ICONS.check : TOOLBAR_ICONS.copy) + `<span>${ok ? '已复制' : '复制失败'}</span>`
+      setTimeout(() => {
+        copyBtn.classList.remove('done')
+        copyBtn.innerHTML = TOOLBAR_ICONS.copy + '<span>复制</span>'
+      }, 1500)
     }
-    toolbar.appendChild(copyBtn)
+    actions.appendChild(copyBtn)
 
     const dlBtn = document.createElement('button')
     dlBtn.className = 'code-action-btn'
-    dlBtn.innerHTML = '⬇ 下载'
     dlBtn.title = '下载为文件'
+    dlBtn.innerHTML = TOOLBAR_ICONS.download + '<span>下载</span>'
     dlBtn.onclick = () => downloadCode(lang, rawCode)
-    toolbar.appendChild(dlBtn)
+    actions.appendChild(dlBtn)
 
     if (isPreviewable(lang)) {
       const previewBtn = document.createElement('button')
       previewBtn.className = 'code-action-btn preview-btn'
-      previewBtn.innerHTML = '▶ 运行预览'
+      previewBtn.title = '在新弹层预览运行'
+      previewBtn.innerHTML = TOOLBAR_ICONS.play + '<span>运行预览</span>'
       previewBtn.onclick = () => {
         previewCode.value = { lang, code: rawCode }
       }
-      toolbar.appendChild(previewBtn)
+      actions.appendChild(previewBtn)
     }
 
+    toolbar.appendChild(actions)
     pre.appendChild(toolbar)
   })
 }
@@ -195,8 +214,7 @@ watch(html, enhanceCodeBlocks)
 .message-md .code-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
+  padding: 6px 10px;
   background: rgba(0, 0, 0, 0.25);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
@@ -208,30 +226,60 @@ watch(html, enhanceCodeBlocks)
   text-transform: lowercase;
 }
 
-.message-md .code-action-btn {
+.message-md .code-toolbar-actions {
+  display: flex;
+  gap: 6px;
   margin-left: auto;
-  padding: 3px 10px;
-  border: none;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.1);
-  color: #e5e7eb;
-  font-size: 12px;
+}
+
+/* pill 按钮与 MessageActions 的 msg-action-btn 同语言(icon+文字,无 emoji);
+   代码块恒深底(#1f2937)不随主题,按钮配色按深底适配 */
+.message-md .code-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #cbd5e1;
+  font-size: 11px;
+  line-height: 1.6;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: all 0.2s;
+}
+
+.message-md .code-action-btn svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
 }
 
 .message-md .code-action-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.35);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
 }
 
+/* 复制成功态:对勾 icon + ok 色(主题变量,与 msg-action-btn.done 一致) */
+.message-md .code-action-btn.done {
+  border-color: var(--cs-ok, #16a34a);
+  color: var(--cs-ok, #16a34a);
+  background: rgba(var(--cs-ok-rgb, 22, 163, 74), 0.12);
+  cursor: default;
+}
+
+/* 运行预览:主色填充强调(替换硬编码 #667eea,主题变量随 light/dark);深底上主色字用白保证对比 */
 .message-md .code-action-btn.preview-btn {
-  margin-left: 4px;
-  background: #667eea;
+  border-color: transparent;
+  background: var(--cs-primary, #1f4d3a);
   color: #fff;
 }
 
 .message-md .code-action-btn.preview-btn:hover {
-  background: #5568d3;
+  background: var(--cs-primary, #1f4d3a);
+  color: #fff;
+  filter: brightness(1.15);
 }
 
 /* highlight.js 主题简化 */

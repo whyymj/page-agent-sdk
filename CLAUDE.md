@@ -30,9 +30,9 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2042 项断言)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2061 项断言)
 npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,617 项;tests/e2e/<module>.mjs 按模块拆分)
-npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,56 项;tests/browser/<demo>.spec.ts)
+npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,61 项;tests/browser/<demo>.spec.ts)
 ```
 
 ## 环境配置
@@ -127,7 +127,7 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test    # tsx 跑 src/core/__tests__/selftest.ts,2042 项断言
+npm test    # tsx 跑 src/core/__tests__/selftest.ts,2061 项断言
 ```
 按模块拆分:`src/core/__tests__/modules/sec-NN.ts`(54+ 个模块)各导出 `run(ctx)`,runner 汇总;共享 `TestCtx` 在 `modules/_ctx.ts`。tsx 跑源码(不经构建),触不到 createChatSdk 顶层 API 作用域。**改任何核心模块后必跑**。
 
@@ -139,7 +139,7 @@ npm run build && npm run test:e2e    # node 跑 dist 产物,617 项
 
 #### 2.5 浏览器 E2E(改 UI/ChatDialog/dataOps 后必跑)
 ```bash
-npm run test:browser  # 56 项;也可 /browser-test 斜杠命令
+npm run test:browser  # 61 项;也可 /browser-test 斜杠命令
 ```
 **原理**:`tests/browser/_helpers.ts` 的 `mockLlm()` 用 `page.route()` 拦截 LLM API 端点,按脚本返回 SSE 流,使 agent ReAct 循环确定性走完,不依赖真 LLM。**双协议**:同时拦截 OpenAI 兼容(`**/chat/completions`)与 Anthropic Messages API(`**/v1/messages`),各返对应格式 SSE,共享 script 计数。spec 按 demo 拆分(page-demo 7 / complex-demo 17 / html-page 8 / nested 3 / error-recovery 2 / rag 3 / queue 3 / customize 7 / xss 2 / human-confirm 2 / html-page 7)。写新测试模板见 `.claude/skills/browser-e2e-testing/SKILL.md`。
 
@@ -169,7 +169,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2042/617/56)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2061/617/61)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判)→ `npm run test:size` → `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证

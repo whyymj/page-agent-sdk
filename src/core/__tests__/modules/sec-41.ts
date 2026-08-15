@@ -41,6 +41,13 @@ export async function run(ctx: TestCtx): Promise<void> {
     const r3 = commitSetToBind({ bindRef: bind3, value: { title: 'y', count: 2 }, schema, allowKeys: null, snapshots: snaps3, maxSnapshots: 20, audit: () => {}, dryRun: true })
     assert(r3.ok === true && (r3 as any).hash === '', '✓ commitSetToBind dryRun → {ok,hash:""}')
     assert(bind3.title === 'x' && snaps3.length === 0, '✓ commitSetToBind dryRun → 不写不入快照')
+
+    // fix-silent-strip:set 值含新增未声明键(zod strip 会静默丢)→ 显式拒绝,不再假成功
+    const bind4 = { title: 'x', count: 1 }
+    const snaps4: any[] = []
+    const r4 = commitSetToBind({ bindRef: bind4, value: { title: 'y', count: 2, extra: 'nope' }, schema, allowKeys: ['title', 'count'], snapshots: snaps4, maxSnapshots: 20, audit: () => {} })
+    assert(r4.ok === false && (r4 as any).error.includes('SCHEMA_STRIP'), '✓ commitSetToBind 未声明新增键 → SCHEMA_STRIP 显式拒绝(fix-silent-strip)')
+    assert(bind4.title === 'x' && snaps4.length === 0, '✓ commitSetToBind strip 拒绝 → 不写 bind 不入快照')
   }
 
   // ===== draft_write / draft_commit(经 createDataOps + vfsStore)=====

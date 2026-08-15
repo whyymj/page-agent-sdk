@@ -3,7 +3,7 @@ import { z } from 'zod'
 import {
   isUnsafePath, safeMerge, getByPath, setByPath, deleteByPath,
   deepClone, maybeParseValue, projectFields, limitDepth, safeStringify, hashValue, cyrb53,
-  applyPatchToClone, applyPatchToLive, restoreLive, restoreInPlace,
+  applyPatchToClone, applyPatchToLive, restoreLive, restoreInPlace, findStrippedKeys,
 } from '../../tools/jsonUtils'
 import { applyPatchesToBind } from '../../tools/dataOps'
 
@@ -109,6 +109,40 @@ export async function run(ctx: TestCtx): Promise<void> {
   const c2: any = { a: 1 }
   assert(applyPatchToClone(c2, 'remove', 'a') === null, 'applyPatchToClone(remove) → 成功')
   assert(c2.a === undefined, 'applyPatchToClone(remove) → 已删除')
+  // remove 路径不存在(含数组索引越界)→ 显式报错(真 LLM 实测:remove components.8 越界静默 no-op,同批其他 op 生效整体报成功 → agent 以为删掉了)
+  const missObj = { items: [1, 2] }
+  const missErr = applyPatchToClone(missObj, 'remove', 'items.5')
+  assert(missErr !== null && missErr.includes('remove 路径不存在'), 'applyPatchToClone(remove 越界索引) → 显式报错(不静默 no-op)')
+  assert(missObj.items.length === 2, 'applyPatchToClone(remove 越界) → 原数据未动')
+  assert(applyPatchToClone(missObj, 'remove', 'nope') !== null, 'applyPatchToClone(remove 不存在字段) → 显式报错')
+
+  // findStrippedKeys 数组位移误伤(评审 CRITICAL 复现):move/remove 使携带 __pgNotes 的元素换位,
+  // 按位置比较会误判「新增被剥离」→ 合法调序/删除被 SCHEMA_STRIP 拒,且 __pg* read 不可见 agent 无法自纠
+  const mvBind = [
+    { type: 'button', label: 'a' },
+    { type: 'custom', name: 'x', code: '<p>1</p>', __pgId: 'c_1', __pgNotes: ['note1'] },
+  ]
+  const mvAfter = JSON.parse(JSON.stringify(mvBind)) // move components.1 → components.0 后的形态
+  const moved = mvAfter.splice(1, 1)[0]
+  mvAfter.splice(0, 0, moved)
+  const mvParsed = [ // safeParse(strip) 结果:__pgId/__pgNotes 均不在 schema
+    { type: 'custom', name: 'x', code: '<p>1</p>' },
+    { type: 'button', label: 'a' },
+  ]
+  assert(findStrippedKeys(mvBind, mvAfter, mvParsed).length === 0, '✓ findStrippedKeys → move 位移后原样元素携带 __pg* 不误判(整体跳过)')
+  // 元素被改动(含 __pg* 键)也不误判:原地 set 不位移,位置对齐 + __pg* 跳过双保险
+  const modAfter = JSON.parse(JSON.stringify(mvBind))
+  modAfter[1] = { ...modAfter[1], code: '<p>2</p>' }
+  const modParsed = [
+    { type: 'button', label: 'a' },
+    { type: 'custom', name: 'x', code: '<p>2</p>' },
+  ]
+  assert(findStrippedKeys(mvBind, modAfter, modParsed).length === 0, '✓ findStrippedKeys → 改动元素携带 __pg* 不误判(__pg* 恒跳过)')
+  // 真·新增未声明键仍要抓(修复不得放松本职)
+  assert(
+    findStrippedKeys([{ type: 'button', label: 'a' }], [{ type: 'button', label: 'a', style: { border: '1px' } }], [{ type: 'button', label: 'a' }])[0] === '0.style',
+    '✓ findStrippedKeys → 新增被剥离键仍按数组路径标记(0.style)',
+  )
   const c3: any = { a: { b: 1 } }
   applyPatchToClone(c3, 'merge', 'a', { c: 2 })
   assert(c3.a.c === 2 && c3.a.b === 1, 'applyPatchToClone(merge) → 合并而非替换')
@@ -140,28 +174,67 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert(liveArr.length === 1 && liveArr[0] === 7, 'restoreLive → 数组 bind 就地还原')
 
   // applyPatchesToBind(P0-1 写回 schema 解析值,fix-write-safety-bypass)
-  // 现状 bug:applyPatchToLive 用原始 a.value 写 live,未走 zod strip → 未声明嵌套键/__proto__ own 键落 bind
-  // 修复(方案 B2):写 live 改为从 res.data 整体写回(与 commitSetToBind 单一真相源),remove 先 deleteByPath
+  // 演进:fix-write-safety-bypass 用「写回 res.data」静默 strip 未声明键;fix-silent-strip 升级为**显式拒绝**
+  // (新增未声明键被 strip = 假成功,agent 以为写进实际没落 → SCHEMA_STRIP 报错,agent 据此告知用户「不支持该字段」)
   const schemaP01 = z.object({ page: z.object({ title: z.string() }) })
-  // ① set 声明路径值含未声明嵌套键 → zod strip 后不落 bind(现行 bug:secret 落 bind)
+  // ① set 声明路径值含未声明嵌套键 → 显式拒绝(fix-silent-strip 新契约)
   const bindP01: any = { page: { title: 'old' } }
   const r1 = applyPatchesToBind({
     bindRef: bindP01, schema: schemaP01, allowKeys: ['page'],
     patches: [{ op: 'set', jsonPath: 'page', value: { title: 'new', secret: 'X' } }],
     snapshots: [], maxSnapshots: 20,
   })
-  assert(r1.ok === true, 'applyPatchesToBind(P0-1) → set 声明路径值含未声明嵌套键,整体校验通过')
-  assert(bindP01.page.title === 'new', 'applyPatchesToBind(P0-1) → 声明字段 title 正常写入')
-  assert((bindP01.page as any).secret === undefined, 'applyPatchesToBind(P0-1) → ✅ 未声明嵌套键 secret 不落 bind(写回 res.data,与 commitSetToBind 单一真相源)')
-  // ② __proto__ own 键注入(值内嵌,绕过 isUnsafePath 只查 path)→ 不注入 bind
+  assert(r1.ok === false && (r1 as any).error.includes('SCHEMA_STRIP'), 'applyPatchesToBind(fix-silent-strip) → ✅ 未声明嵌套键 secret 显式拒绝(SCHEMA_STRIP,不再假成功)')
+  assert(bindP01.page.title === 'old', 'applyPatchesToBind(fix-silent-strip) → 拒绝时整体不写(title 保持原值)')
+  assert((bindP01.page as any).secret === undefined, 'applyPatchesToBind(fix-silent-strip) → 未声明键 secret 不落 bind(P0-1 防线保留)')
+  // ② __proto__ own 键注入(值内嵌,绕过 isUnsafePath 只查 path)→ 同样显式拒绝 + 不注入 bind
   const bindProto: any = { page: { title: 'a' } }
   const r2 = applyPatchesToBind({
     bindRef: bindProto, schema: schemaP01, allowKeys: ['page'],
     patches: [{ op: 'set', jsonPath: 'page', value: JSON.parse('{"title":"b","__proto__":{"polluted":1}}') }],
     snapshots: [], maxSnapshots: 20,
   })
-  assert(r2.ok === true, 'applyPatchesToBind(P0-1) → __proto__ own 键场景整体校验通过')
-  assert(Object.keys(bindProto.page as any).includes('__proto__') === false, 'applyPatchesToBind(P0-1) → ✅ __proto__ own 键不注入 bind(zod strip + safeMerge 跳过 UNSAFE_KEYS,无原型污染风险移交)')
+  assert(r2.ok === false && (r2 as any).error.includes('SCHEMA_STRIP'), 'applyPatchesToBind(fix-silent-strip) → ✅ __proto__ own 键场景显式拒绝')
+  assert(Object.keys(bindProto.page as any).includes('__proto__') === false, 'applyPatchesToBind(fix-silent-strip) → ✅ __proto__ own 键不注入 bind(无原型污染)')
+  // ③ before 已有的未声明键(宿主自管字段)→ 不标不拒(safeMerge 浅合并保留顶层原值,不误伤宿主数据)
+  const bindHost: any = { page: { title: 'old' }, hostOnly: 'keep' }
+  const r3 = applyPatchesToBind({
+    bindRef: bindHost, schema: schemaP01, allowKeys: ['page'],
+    patches: [{ op: 'set', jsonPath: 'page.title', value: 'new' }],
+    snapshots: [], maxSnapshots: 20,
+  })
+  assert(r3.ok === true, 'applyPatchesToBind(fix-silent-strip) → 宿主自管未声明键不触发拒绝(只拦本次新增被剥离的键)')
+  assert(bindHost.page.title === 'new' && bindHost.hostOnly === 'keep', 'applyPatchesToBind(fix-silent-strip) → 声明字段写入 + 顶层宿主字段保留')
+
+  // findStrippedKeys 纯函数白盒(fix-silent-strip 检测核心)
+  assert(
+    JSON.stringify(findStrippedKeys({ a: { x: 1 } }, { a: { x: 1, y: 2 } }, { a: { x: 1 } })) === JSON.stringify(['a.y']),
+    'findStrippedKeys → 新增被剥离键收集为路径',
+  )
+  assert(
+    findStrippedKeys({ a: { x: 1, y: 9 } }, { a: { x: 1, y: 2 } }, { a: { x: 1 } }).length === 0,
+    'findStrippedKeys → before 已有键不标(宿主自管)',
+  )
+  assert(
+    findStrippedKeys({}, { list: [{ a: 1, b: 2 }] }, { list: [{ a: 1 }] })[0] === 'list.0.b',
+    'findStrippedKeys → 数组元素内剥离键定位到下标路径',
+  )
+
+  // discriminatedUnion 降级开放场景(实测 bug:page-demo button 加 style 边框「假成功」)
+  const schemaDu = z.object({
+    components: z.array(z.discriminatedUnion('type', [
+      z.object({ type: z.literal('button'), label: z.string(), variant: z.enum(['primary', 'secondary']).optional() }),
+    ])),
+  })
+  const bindDu: any = { components: [{ type: 'button', label: '次要按钮', variant: 'secondary' }] }
+  const rDu = applyPatchesToBind({
+    bindRef: bindDu, schema: schemaDu, allowKeys: ['components'],
+    patches: [{ op: 'merge', jsonPath: 'components.0', value: { style: { border: '1px solid #ccc' } } }],
+    snapshots: [], maxSnapshots: 20,
+  })
+  assert(rDu.ok === false && (rDu as any).error.includes('SCHEMA_STRIP') && (rDu as any).error.includes('components.0.style'),
+    'applyPatchesToBind(fix-silent-strip) → ✅ discriminatedUnion 降级开放 + 未声明 style 显式拒绝(报错含完整路径,agent 可告知用户不支持)')
+  assert((bindDu.components[0] as any).style === undefined, 'applyPatchesToBind(fix-silent-strip) → style 不落 bind')
   // ③ remove allowKeys 顶层字段 → 正常删除(方案 B2:remove 先 deleteByPath,safeMerge 浅合并不复活)
   const bindRm: any = { page: { title: 'x' }, extra: 1 }
   const schemaRm = z.object({ page: z.object({ title: z.string() }).optional(), extra: z.number().optional() })

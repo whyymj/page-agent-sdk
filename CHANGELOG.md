@@ -4,6 +4,27 @@
 
 ## [Unreleased]
 
+## [3.12.0] - 2026-08-15
+
+### Fixed(假成功治理:未声明字段静默剥离 → 显式拒绝;用户实测驱动)
+- **写未声明字段假成功(SCHEMA_STRIP)**:schema 白名单遇 discriminatedUnion 降级放行后,zod object 默认 strip 模式把未声明键(如给 button 加 `style`)**静默剥离**,写回 parsed 数据却返回成功 —— agent 以为写进去了、页面无变化(实测 page-demo:加边框回复成功但样式不变)。修:新增纯函数 **`findStrippedKeys`**(已导出;收集「本次新增却被剥离」的键路径,宿主已有键不误报),`applyPatchesToBind` / `commitSetToBind` 命中即返 `SCHEMA_STRIP` 错误显式拒绝(附「该结构不支持这些字段」hint,agent 可据此如实告知用户,不再瞎猜编造)
+- **`getSchemaAtPath` union 节点返 null → 递归下探**:遇 discriminatedUnion 原实现直接返 null,嵌套容器路径(如 `components.4.children.0`)无法解析 → **嵌套组件无法聚焦**、`schema_data` 深层查询降级。修:递归下探各 option 中声明了该字段者,任一命中取首个;任何 option 都无该字段仍返 null(降级不变)
+- **委派类工具漏发 `data_change`**:子 agent 写 data(如 html 子 agent 写 code 字段)经主循环 `use_<id>` 工具内部落地,`sdk-events` 中间件只匹配直呼写工具名 → **非 reactive bind 宿主只监听 data_change 时永远收不到子 agent 写入的刷新通知**(实测 page-demo 纯代码组件数据落了画布不动)。修:`spawn_agent` / `spawn_agents` / `use_*` 成功收口后补发 `data_change`(operation 'edit';只读子 agent 误报仅多一次无害刷新)
+
+### Changed
+- **json 展示按钮样式统一**:MessageContent 代码块工具栏与 CodePreview 复制/下载按钮统一 icon 与视觉(复制用文本 icon、下载统一描边样式)
+
+### Examples
+- **page-demo 嵌套容器增强**:组件 schema 升级递归 union(手动 `PageComponent` 类型 + `z.lazy` children),新增 **card(可选 children)/ carousel(每项一页,‹› 导航)/ waterfall(CSS columns 分列)/ custom(纯代码,sandbox iframe 渲染)** 四类组件;渲染器重构为递归 `PageComponentView`(每个元素带嵌套 `data-path`,两步拾取/聚焦天然支持嵌套定位);page-builder skill 补嵌套路径/层级调整(move)/ SCHEMA_STRIP 诚实指引
+
+### Fixed(真 LLM 二轮实测驱动:page-demo 嵌套场景回归)
+- **read 泄漏 `__pg*`(union 元素)**:`projectBySchemaDeep` 遇 union/discriminatedUnion 走非 shape 分支原样返回,文档承诺的「read 投影隐藏 __pg*」失效 —— 实测 agent 从 read 输出照抄 `__pgId` 进 write 触发 SCHEMA_STRIP(多烧一轮自纠)。修:非 shape 分支对普通对象剥离 `__pg*` 键(无 __pg* 字段零拷贝原对象返回,union 降级语义不变)
+- **`patch op:"remove"` 路径不存在静默成功**:`applyPatchToClone` 忽略 `deleteByPath` 的 false 返回 → 数组索引越界(实测 `remove components.8`)静默 no-op,同批其他 op 已生效整体报成功,agent 以为删掉了。修:返回显式错误(`remove 路径不存在` + 引导重新 read 确认索引);patches 原子语义下任一失败整体回滚。单删 `del` 意图保持幂等(「不存在无需删除」)不变
+- **`findStrippedKeys` 数组位移误伤(评审 CRITICAL 复现)**:`move`/`remove` 使数组元素索引位移后,携带框架 sidecar 字段(如 `__pgNotes`)的**未改动**元素在新位置与 before 按位置错位比较 → 误判「新增被剥离」→ 合法调序/删除被 `SCHEMA_STRIP` 拒,且 `__pg*` read 投影隐藏、agent 看不见报错字段无法自纠。修:① 数组先按深度相等匹配「原样存在」的元素整体跳过(未匹配的新增/改动元素回落按位置比较,原地 set/merge 不位移语义不变);② `__pg*` 前缀键恒跳过(isPathAllowed 恒拒 → 无「合法新增」,标了只会误伤)。真·新增未声明键仍照标(本职不放松)。补 `findStrippedKeys` headless 子路径导出
+
+### Tests
+- selftest 2042→**2061**(SCHEMA_STRIP 拒绝路径 + findStrippedKeys 白盒(含 move/remove 位移不误判回归)+ union 下探新契约 + 宿主字段保留 + remove 越界显式报错 + union 投影剥 __pg*)/ e2e 617 / browser 56→**61**(+5 page-demo:嵌套渲染纯前端 / move 跨数组层级调整 / 聚焦嵌套组件(union 下探锁定)/ SCHEMA_STRIP 假成功锁定 / use_html 委派纯代码精修(委派 data_change 刷新锁定));新增真 LLM 回归脚本 `tests/runtime/page-demo-real-llm.mjs`(6 场景:聚焦嵌套/层级调整/嵌套属性/纯代码/诚实拒绝/嵌套新建;含 reload 快速失败防 idle 空烧)
+
 ## [3.11.1] - 2026-08-15
 
 ### Fixed(提示词与工具面一致性自查:prompt 不教未装载的工具;focus bug 同类排查)

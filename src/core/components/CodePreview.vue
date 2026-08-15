@@ -115,9 +115,17 @@ function openInNewTab() {
           <button :class="{ active: mode === 'source' }" @click="mode = 'source'">源码</button>
         </div>
         <div class="preview-actions">
-          <button class="icon-btn" :title="copied ? '已复制' : '复制代码'" @click="copyCode">{{ copied ? '✓' : '📋' }}</button>
-          <button class="icon-btn" title="新窗口打开" @click="openInNewTab">↗</button>
-          <button class="icon-btn" title="关闭" @click="emit('close')">✕</button>
+          <button class="icon-btn" :class="{ done: copied }" :title="copied ? '已复制' : '复制代码'" @click="copyCode">
+            <!-- icon 与 MessageContent 代码工具栏/MessageActions 统一(icon+状态色,不用 emoji) -->
+            <svg v-if="copied" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3 3 7-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            <svg v-else viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.3" /><path d="M10.5 3.5v-.5A1.5 1.5 0 0 0 9 1.5H3.5A1.5 1.5 0 0 0 2 3v5.5A1.5 1.5 0 0 0 3.5 10H4" stroke="currentColor" stroke-width="1.3" /></svg>
+          </button>
+          <button class="icon-btn" title="新窗口打开" @click="openInNewTab">
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3H4a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /><path d="M9 2.5h4.5V7M13 3l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          </button>
+          <button class="icon-btn" title="关闭" @click="emit('close')">
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
+          </button>
         </div>
       </div>
       <div class="preview-body">
@@ -205,19 +213,34 @@ function openInNewTab() {
 .icon-btn {
   width: 28px;
   height: 28px;
-  border: none;
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+  color: #e5e7eb;
   cursor: pointer;
-  font-size: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: all 0.2s;
+}
+
+.icon-btn svg {
+  width: 14px;
+  height: 14px;
 }
 
 .icon-btn:hover {
-  background: rgba(255, 255, 255, 0.25);
+  border-color: rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+/* 复制成功态:ok 色(与 MessageContent .code-action-btn.done 一致) */
+.icon-btn.done {
+  border-color: var(--cs-ok, #16a34a);
+  background: rgba(var(--cs-ok-rgb, 22, 163, 74), 0.12);
+  color: var(--cs-ok, #16a34a);
+  cursor: default;
 }
 
 .preview-body {

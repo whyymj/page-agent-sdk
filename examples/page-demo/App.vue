@@ -42,12 +42,15 @@ function onSelectComponent(path: string): void {
 /** 第 2 步:点「💬 加入聊天」按钮 → 追加聚焦(multi-focus 累积,可同时聚焦多个组件;写越界被拒) */
 function onFocusComponent(path: string): void {
   if (!agent) return
-  const m = /^components\.(\d+)$/.exec(path)
-  const idx = m ? Number(m[1]) : -1
-  const comp = pageObj.components[idx]
-  const label = comp?.type ? `${comp.type} #${idx}` : path
+  const label = compLabel(path)
   const r = agent.addFocus({ path, label }) // multi-focus:累积追加(非覆盖),多次加入聚焦多个组件
   if (r?.ok) selectedPath.value = null // 加入成功 → 清选中态(边框消失,输入框 chip 接管)
+}
+/** 按路径解析组件标签(支持嵌套:components.N.children.M...) */
+function compLabel(path: string): string {
+  let cur: any = pageObj
+  for (const seg of path.split('.')) cur = cur?.[seg]
+  return cur?.type ? `${cur.type}(${path})` : path
 }
 /** chip 点击回调:点输入框内聚焦 chip → 滚动到对应组件 + PickOverlay 边框短暂高亮(回看聚焦对象) */
 function onFocusChipClick(path: string): void {
@@ -123,6 +126,7 @@ onMounted(() => {
     },
   })
   agent.mount()
+  ;(window as any).__sdk = agent // 真 LLM 回归脚本采样口(tests/runtime/page-demo-real-llm.mjs;debugLogs/usage/活动子 agent)
 })
 
 onUnmounted(() => agent?.unmount())

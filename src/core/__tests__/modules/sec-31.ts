@@ -47,8 +47,10 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert(isPathAllowed('components.0.type', unionSchema, uKeys) === true, 'isPathAllowed → union discriminator 降级放行')
   assert(isPathAllowed('components.0.props.title', unionSchema, uKeys) === true, 'isPathAllowed → union 深层 props 放行(修 bug:旧逻辑误 PATH_DENIED)')
   assert(isPathAllowed('components.0.props.unknown', unionSchema, uKeys) === true, 'isPathAllowed → union 降级后深层不再静态校验(交 safeParse 兜底)')
-  // getSchemaAtPath 对 union 降级返 null(投影原样);components.0 返 union 自身(查约束)
-  assert(getSchemaAtPath(unionSchema, 'components.0.props.title') === null, 'getSchemaAtPath → union 深层返 null(降级)')
+  // getSchemaAtPath 对 union 下探(fix-silent-strip 配套:嵌套容器 children 可聚焦):
+  // option 内声明的字段可解析(取首个命中 option);任何 option 都没有的字段 → null
+  assert(getSchemaAtPath(unionSchema, 'components.0.props.title') !== null, 'getSchemaAtPath → union 深层下探命中(嵌套容器聚焦可用)')
+  assert(getSchemaAtPath(unionSchema, 'components.0.props.unknown') === null, 'getSchemaAtPath → union 深层任何 option 都无该字段 → null(降级)')
   assert(getSchemaAtPath(unionSchema, 'components.0') !== null, 'getSchemaAtPath → 数组元素(union)非 null(schema_data 查 anyOf)')
   assert(isPathAllowed('', schema, keys) === true, 'isPathAllowed → 空路径允许(整体由调用方处理)')
   assert(isPathAllowed('name', schema, null) === true, 'isPathAllowed → allowKeys null 全开放(向后兼容)')
@@ -76,6 +78,18 @@ export async function run(ctx: TestCtx): Promise<void> {
     z.array(z.object({ name: z.string() })),
   ) as any[]
   assert(projArr[0].name === 'a' && projArr[0].secret === undefined, 'projectBySchemaDeep → 数组元素递归投影')
+  // union 元素投影剥离 __pg*(真 LLM 实测:union 走非 shape 分支原样返回 → read 泄漏 __pgId → agent 照抄进 write 触发 SCHEMA_STRIP)
+  const pgProj = projectBySchemaDeep(
+    [{ type: 'card', title: 'a', __pgId: 'c_x', __pgNotes: ['n'] }, { type: 'button', label: 'b', __pgId: 'c_y' }],
+    z.array(z.discriminatedUnion('type', [
+      z.object({ type: z.literal('card'), title: z.string() }),
+      z.object({ type: z.literal('button'), label: z.string() }),
+    ])),
+  ) as any[]
+  assert(pgProj[0].__pgId === undefined && pgProj[0].__pgNotes === undefined && pgProj[0].title === 'a', '✓ projectBySchemaDeep → union 元素剥离 __pg*(read 不泄漏框架内部标记)')
+  assert(pgProj[1].label === 'b' && pgProj[1].__pgId === undefined, '✓ projectBySchemaDeep → union 各 option 元素统一剥 __pg*')
+  const noPgObj = { type: 'card', title: 'a' }
+  assert(projectBySchemaDeep(noPgObj, z.discriminatedUnion('type', [z.object({ type: z.literal('card'), title: z.string() })])) === noPgObj, '✓ projectBySchemaDeep → union 无 __pg* 字段时原对象返回(零拷贝)')
 
   // projectBySchema(顶层 key 投影)
   const ps = projectBySchema({ name: 'x', age: 1, extra: 2 }, keys) as any

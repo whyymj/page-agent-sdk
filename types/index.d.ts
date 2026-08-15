@@ -1132,6 +1132,8 @@ export declare function restoreLive(bind: any, snapshotVal: unknown): void;
 export declare function restoreInPlace(live: Record<string, unknown> | unknown[], snapshotVal: unknown): void;
 /** 深度差异对比(对象/数组递归,叶子差异),返回 {path, from, to}[];供 diff_data / verify 自纠 / 审计复用 */
 export declare function diffObjects(a: unknown, b: unknown, prefix?: string): { path: string; from: unknown; to: unknown }[];
+/** 收集「本次新增却被 schema strip 静默剥离」的键路径(fix-silent-strip):after 有、parsed 无、before 无 → 假成功检测,供写路径显式拒绝 */
+export declare function findStrippedKeys(before: unknown, after: unknown, parsed: unknown, prefix?: string): string[];
 // ============ schema 白名单投影纯函数(schemaUtils,refactor-module-extraction 从 dataOps 抽离)============
 export declare function getSchemaTopKeys(schema: any): string[] | null;
 export declare function isPathAllowed(jsonPath: string, schema: any | null, allowKeys: string[] | null): boolean;

@@ -89,7 +89,7 @@ export { runHostScript } from './tools/hostScript'
 export {
   UNSAFE_KEYS, isUnsafePath, safeMerge, getByPath, setByPath, deleteByPath,
   deepClone, maybeParseValue, projectFields, limitDepth, safeStringify, hashValue,
-  applyPatchToClone, applyPatchToLive, restoreLive, restoreInPlace, diffObjects,
+  applyPatchToClone, applyPatchToLive, restoreLive, restoreInPlace, diffObjects, findStrippedKeys,
 } from './tools/jsonUtils'
 export type { EditOp } from './tools/jsonUtils'
 // schema 白名单投影纯函数

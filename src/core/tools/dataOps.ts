@@ -21,7 +21,7 @@ import { toolError, zodError, jsonParseError, formatZodIssues } from './toolErro
 import {
   isUnsafePath, safeMerge, getByPath, setByPath, deleteByPath, deepClone, maybeParseValue,
   projectFields, limitDepth, safeStringify, hashValue,
-  applyPatchToClone, restoreLive, restoreInPlace, diffObjects,
+  applyPatchToClone, restoreLive, restoreInPlace, diffObjects, findStrippedKeys,
   type EditOp,
 } from './jsonUtils'
 import { getSchemaTopKeys, isPathAllowed, getSchemaAtPath, projectBySchemaDeep, describeSchemaNode, extendSchemaWithPgId } from './schemaUtils'
@@ -174,6 +174,11 @@ export function commitSetToBind(args: {
   }
   const res = schema.safeParse(value)
   if (!res.success) return { ok: false, error: zodError('', res.error.issues) }
+  // fix-silent-strip:set 值中新增的键被 zod strip 静默剥离 → 显式拒绝(merge 语义下未声明键不落 bind,假成功)
+  const stripped = findStrippedKeys(bindRef, value, res.data)
+  if (stripped.length) {
+    return { ok: false, error: toolError({ code: 'SCHEMA_STRIP', message: `字段 ${stripped.join(', ')} 不在 schema 声明内,写入被拒绝(防静默丢失)`, hint: '该数据结构不支持这些字段;请只用 schema 声明的字段,或在 data.schema 中声明后重试', path: stripped[0], details: { stripped } }) }
+  }
   if (dryRun) return { ok: true, hash: '', data: res.data }
   if (bindRef === null || typeof bindRef !== 'object') {
     return { ok: false, error: toolError({ code: 'LEAF_BIND', message: `主数据 bind 为原始类型(${bindRef === null ? 'null' : typeof bindRef}),无法就地替换外部持有的值引用`, hint: '主数据 bind 必须为对象/数组;叶子值请用对象包裹(如 {value:"x"})或集成方通过 sdk.setData 替换 bind' }) }
@@ -255,6 +260,12 @@ export function applyPatchesToBind(args: {
     return { ok: false, error: schemaErrorMode === 'schema_invalid'
       ? toolError({ code: 'SCHEMA_INVALID', message: `patches 应用后整体校验失败,未写入`, hint: '确认 patches 合并后整体仍符合 schema', details: formatZodIssues(res.error.issues) })
       : zodError('', res.error.issues) }
+  }
+  // fix-silent-strip:patch 新增的键被 zod strip 静默剥离 → 不再假成功,显式拒绝(agent 据此告知用户「不支持该字段」)
+  // 典型:discriminatedUnion 下 isPathAllowed 降级开放(如 components.N.style),safeParse strip 后写回不含该键
+  const stripped = findStrippedKeys(bindRef, clone, res.data)
+  if (stripped.length) {
+    return { ok: false, error: toolError({ code: 'SCHEMA_STRIP', message: `字段 ${stripped.join(', ')} 不在 schema 声明内,写入被拒绝(防静默丢失)`, hint: '该数据结构不支持这些字段;请只用 schema 声明的字段,或在 data.schema 中声明后重试', path: stripped[0], details: { stripped } }) }
   }
   if (dryRun) return { ok: true, applied, clone }
   // pushSnapshot(内联,与 commitSetToBind 一致:记录改前 bindRef)+ 写回 bind + markDataDirty

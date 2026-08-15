@@ -71,12 +71,13 @@ export function unwrapSchema(schema: any): any {
   return s
 }
 
-/** 按 jsonPath 逐级定位子 schema(支持 ZodObject.shape / ZodArray.element;遇联合/record/lazy 返回 null) */
+/** 按 jsonPath 逐级定位子 schema(支持 ZodObject.shape / ZodArray.element;union 下探含该字段的 option;record/lazy 返回 null) */
 export function getSchemaAtPath(schema: ZodType, jsonPath: string): ZodType | null {
   if (!jsonPath) return schema
   let s: any = unwrapSchema(schema)
   const segs = jsonPath.split('.')
-  for (const seg of segs) {
+  for (let i = 0; i < segs.length; i++) {
+    const seg = segs[i]
     if (!s) return null
     s = unwrapSchema(s)
     if (s && s.shape && typeof s.shape === 'object') {
@@ -88,9 +89,15 @@ export function getSchemaAtPath(schema: ZodType, jsonPath: string): ZodType | nu
       if (!/^\d+$/.test(seg)) return null
       s = s.element
     } else if (s && (s._def?.type === 'union' || s._def?.type === 'discriminatedUnion' || Array.isArray(s.options))) {
-      // discriminatedUnion/ZodUnion:静态不知具体 option,降级返 null(投影原样;
-      // 深层约束用 schema_data(jsonPath 上层)得 anyOf;写入校验交 schema.safeParse 兜底)。修同 isPathAllowed 的 bug
-      return null
+      // discriminatedUnion/ZodUnion:静态不知具体 option → 下探各 option 中声明了该字段者
+      // (嵌套容器场景:components.N.children 在 card/waterfall/carousel option 内声明,button 无)。
+      // 命中任一 option 即续走其分支(多 option 同名字段通常同构递归 children,取首个);
+      // 全不命中(字段不存在于任何 option)→ 返 null(focus 校验据此拒绝,schema_data 降级到上层)。
+      const rest = segs.slice(i).join('.')
+      const hits = (s.options ?? [])
+        .map((opt: any) => getSchemaAtPath(opt, rest))
+        .filter((x: any) => x != null)
+      return hits.length ? hits[0] : null
     } else {
       return null
     }
@@ -172,6 +179,19 @@ export function projectBySchemaDeep(obj: unknown, schema: ZodType | null): unkno
     if (Array.isArray(obj) && (s?._def?.type || s?.element)) {
       const elemSchema = s.element ?? s._def?.type
       return obj.map((o) => projectBySchemaDeep(o, elemSchema))
+    }
+    // union/discriminatedUnion 元素等无法按 shape 投影的普通对象:剥离 __pg*(框架内部标记)。
+    // 真实 LLM 测得此处原样返回导致 read 泄漏 __pgId → agent 照抄进 write 触发 SCHEMA_STRIP(自纠多一轮);
+    // 其余字段保持原样(union 降级语义不变,只挡框架内部字段)
+    if (!Array.isArray(obj)) {
+      const src = obj as Record<string, unknown>
+      const keys = Object.keys(src)
+      if (!keys.some((k) => k.startsWith('__pg'))) return obj
+      const out: Record<string, unknown> = {}
+      for (const k of keys) {
+        if (!k.startsWith('__pg')) out[k] = src[k]
+      }
+      return out
     }
     return obj
   }

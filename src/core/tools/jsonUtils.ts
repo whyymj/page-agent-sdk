@@ -168,7 +168,11 @@ export function applyPatchToClone(clone: any, op: EditOp, jsonPath: string, valu
   }
   if (op === 'remove') {
     if (!jsonPath) return 'remove 操作需要 jsonPath'
-    deleteByPath(clone, jsonPath)
+    // 路径不存在(含数组索引越界)→ 显式报错(真 LLM 实测:remove components.8 越界静默 no-op,
+    // 同 patch 里其他 op 已生效 → 整体报成功,agent 以为删掉了,宁失败不猜错)
+    if (!deleteByPath(clone, jsonPath)) {
+      return `remove 路径不存在: ${jsonPath}(数组索引越界或字段缺失;请先 read 最新结构确认索引)`
+    }
     return null
   }
   if (op === 'merge') {
@@ -273,6 +277,48 @@ export function restoreInPlace(live: Record<string, unknown> | unknown[], snapsh
     : {}
   for (const k of Object.keys(live)) if (!(k in snap)) delete live[k]
   for (const k of Object.keys(snap)) live[k] = snap[k]
+}
+
+/**
+ * 收集「本次新增却被 schema strip 静默剥离」的键路径(fix-silent-strip)。
+ * 判定:after(欲写/patch 后的值)有该键、parsed(schema.safeParse 结果)没有、before(写前 bind/原值)也没有 ——
+ * 即键是本次新引入且解析后被丢,写下去就是「假成功」(agent 以为写进、实际没落)。
+ * before 已有的键不标(strip 模式下 safeMerge 保留原值,属宿主自管字段,不误伤)。
+ * 供 applyPatchesToBind / commitSetToBind 拒绝写入并显式报错,agent 据此告知用户「不支持该字段」。
+ */
+export function findStrippedKeys(before: unknown, after: unknown, parsed: unknown, prefix = ''): string[] {
+  const out: string[] = []
+  const isObj = (v: unknown) => v !== null && typeof v === 'object'
+  if (!isObj(after)) return out
+  // 数组:先按深度相等匹配「原样存在」的元素并跳过 —— move/remove 引起索引位移后,携带宿主自管字段
+  // (如 __pgNotes)的未改动元素在新位置与 before[i] 错位,按位置比较会误判为「新增被剥离」(评审复现)。
+  // 原样元素整体跳过;未匹配(新增/被改动)元素回落到按位置比较(原地 set/merge 不位移,位置对齐成立)
+  if (Array.isArray(after)) {
+    const beforeArr = Array.isArray(before) ? before : []
+    const parsedArr = Array.isArray(parsed) ? parsed : []
+    const seen = new Set(beforeArr.map((x) => JSON.stringify(x)))
+    after.forEach((item, i) => {
+      if (seen.has(JSON.stringify(item))) return
+      out.push(...findStrippedKeys(beforeArr[i], item, parsedArr[i], prefix ? `${prefix}.${i}` : String(i)))
+    })
+    return out
+  }
+  const afterObj = after as Record<string, unknown>
+  const parsedObj = isObj(parsed) && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null
+  const beforeObj = isObj(before) && !Array.isArray(before) ? (before as Record<string, unknown>) : null
+  for (const k of Object.keys(afterObj)) {
+    const p = prefix ? `${prefix}.${k}` : k
+    // __pg* 框架内部字段:isPathAllowed 恒拒 agent 写入 → 不存在「合法新增」,标了只会误伤;
+    // 且 read 投影隐藏 __pg*,报错字段 agent 看不见会陷入无解重试(评审 CRITICAL 两路合并修)
+    if (k.startsWith('__pg')) continue
+    if (parsedObj && !(k in parsedObj)) {
+      // after 有、parsed 无:before 也有 → 宿主自管字段(safeMerge 保留),不标;before 无 → 本次新增被剥离,标
+      if (!beforeObj || !(k in beforeObj)) out.push(p)
+    } else if (parsedObj && k in parsedObj) {
+      out.push(...findStrippedKeys(beforeObj?.[k], afterObj[k], parsedObj[k], p))
+    }
+  }
+  return out
 }
 
 /**
