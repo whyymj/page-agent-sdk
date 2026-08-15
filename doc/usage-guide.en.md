@@ -202,7 +202,19 @@ createChatSdk({
   middleware: [...],
 
   // UI/debug
-  streaming: true, dialog: { title: '...', placeholder: '...' }, debug: false,
+  streaming: true, dialog: {
+    title: '...', placeholder: '...',
+    theme: 'dark',              // built-in theme: 'dark' (default) / 'light'; fully customizable via --cs-* on an ancestor
+    icons: {                    // icon customization (partial; unset keys keep default emojis, empty string hides)
+      header: '🦈',             // header title icon (default 🤖)
+      subagent: '⚡',           // subagent delegation badge (default 🤖)
+      empty: '🪐',              // empty-state icon (default 💬)
+      focus: '📍',              // focus chip (default 🎯)
+      assistantAvatar: '🛰️',    // assistant avatar (default = built-in SVG; emoji/char replaces it)
+      userAvatar: '🙋',         // user avatar (default = built-in SVG)
+      // others: subagentProgress 🧬 / queued 📋 / queuedEdit ✏️ / recommend 💡 / conflict ⚠️
+    },
+  }, debug: false,
 }).mount()
 ```
 

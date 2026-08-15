@@ -5,15 +5,20 @@
  * 纯 props(getFocus/onSetFocus/onClearFocus/infoTick),不 inject ctx;editingFocus 等内部自持。
  */
 import { ref, computed, type Ref } from 'vue'
+import { DEFAULT_DIALOG_ICONS, type DialogIcons } from './icons'
 import type { Focus } from '../harness/state'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   getFocus?: () => Focus | undefined
   onSetFocus?: (focus: Focus) => { ok: boolean; error?: string }
   onClearFocus?: () => void
   /** Agent 信息刷新 tick(sdk.setFocus/clearFocus 后 ++ 触发 focusState 重算) */
   infoTick?: Ref<number>
-}>()
+  /** 图标集(容器从 ctx.icons 下传;独立复用时缺省用默认) */
+  icons?: DialogIcons
+}>(), {
+  icons: () => ({ ...DEFAULT_DIALOG_ICONS }),
+})
 
 // 依赖 infoTick 响应式触发:++ → 重算 → chip 显示/隐藏
 const focusState = computed(() => {
@@ -43,7 +48,7 @@ function clearFocusChip(): void {
 
 <template>
   <div v-if="focusState" class="focus-bar">
-    <span class="focus-bar-icon">🎯</span>
+    <span class="focus-bar-icon">{{ icons.focus }}</span>
     <span class="focus-bar-text">
       <span v-if="focusState.label" class="focus-bar-label">{{ focusState.label }}</span>
       <code class="focus-bar-path">{{ focusState.path }}</code>

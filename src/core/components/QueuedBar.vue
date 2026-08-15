@@ -3,21 +3,21 @@
 import { useChatContext } from '../composables/chatContext'
 
 const ctx = useChatContext()
-const { chat, editQueued } = ctx
+const { chat, editQueued, icons } = ctx
 const { queuedTasks, removeQueuedTask } = chat
 </script>
 
 <template>
   <div v-if="queuedTasks.length" class="queued-bar">
     <div class="queued-head">
-      <span class="queued-icon">📋</span>
+      <span class="queued-icon">{{ icons.queued }}</span>
       <span class="queued-title">排队中 · 生成完后自动执行</span>
       <span class="queued-count">{{ queuedTasks.length }}</span>
     </div>
     <div v-for="(task, qIdx) in queuedTasks" :key="qIdx" class="queued-item">
       <span class="queued-idx">{{ qIdx + 1 }}</span>
       <span class="queued-text">{{ task }}</span>
-      <button class="queued-act" title="修改(填回输入框编辑)" @click="editQueued(qIdx)">✏️</button>
+      <button class="queued-act" title="修改(填回输入框编辑)" @click="editQueued(qIdx)">{{ icons.queuedEdit }}</button>
       <button class="queued-act queued-del" title="撤销该任务" @click="removeQueuedTask(qIdx)">✕</button>
     </div>
   </div>

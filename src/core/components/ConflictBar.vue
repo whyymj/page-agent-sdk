@@ -5,13 +5,18 @@
  * conflictExpanded 自持;agent/current 预览从 pendingConflict 派生。
  */
 import { ref, computed, watch } from 'vue'
+import { DEFAULT_DIALOG_ICONS, type DialogIcons } from './icons'
 import type { PendingConflict } from '../sdk/createChatSdk'
 import type { ConflictResolution } from '../tools/dataOps'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   pendingConflict?: PendingConflict | null
   onResolve?: (action: ConflictResolution['action']) => void
-}>()
+  /** 图标集(容器从 ctx.icons 下传;独立复用时缺省用默认) */
+  icons?: DialogIcons
+}>(), {
+  icons: () => ({ ...DEFAULT_DIALOG_ICONS }),
+})
 
 const conflictExpanded = ref(false)
 watch(() => props.pendingConflict, () => { conflictExpanded.value = false })
@@ -43,7 +48,7 @@ const conflictCurrentPreview = computed(() => {
 <template>
   <div v-if="pendingConflict" class="conflict-bar">
     <div class="conflict-head">
-      <span class="conflict-icon">⚠️</span>
+      <span class="conflict-icon">{{ icons.conflict }}</span>
       <span class="conflict-title">写入冲突:<code>{{ pendingConflict.path }}</code> 已被外部修改</span>
     </div>
     <div class="conflict-detail">

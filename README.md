@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-2181%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-2192%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -247,6 +247,8 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | `drawerHidden` | `boolean` · default `false` | Drawer mode hidden by default (not shown after `mount`; requires `sdk.show()` to display): for "click button to show chatbox" scenarios; only effective when `drawer: true` |
 | `inputRows` | `number` · default `2` | Input box rows (visible height); `1` = single row; `2` = 2-row initial height, auto-expands up to max-height:100px; `>2` = taller initial height |
 | `onClose` | `() => void` | Drawer mode close callback (default `hide`; pass to override and sync external mount state) |
+| `theme` | `'light' \| 'dark'` · default `'dark'` | Built-in theme (dark = Ark design palette); fully customizable via `--cs-*` on an ancestor |
+| `icons` | `Partial<DialogIcons>` | **Icon customization**: partial override of default emojis (`header` 🤖 / `subagent` 🤖 / `subagentProgress` 🧬 / `empty` 💬 / `focus` 🎯 / `queued` 📋 / `queuedEdit` ✏️ / `recommend` 💡 / `conflict` ⚠️; `assistantAvatar`/`userAvatar` default to built-in SVG, pass a text glyph to replace). Values are plain text (emoji/char, not parsed as HTML); empty string hides the icon; unset keys keep defaults |
 
 ### Extension points
 
@@ -528,7 +530,7 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 2181 assertions (tsx, source-level; no LLM dependency)
+npm test            # 2192 assertions (tsx, source-level; no LLM dependency)
 npm run test:e2e    # 698 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 

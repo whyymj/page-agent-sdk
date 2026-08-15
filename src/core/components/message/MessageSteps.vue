@@ -2,9 +2,13 @@
 import { computed, reactive } from 'vue'
 import type { ToolStep } from '../../types'
 import { copyText } from '../../utils/clipboard'
+import { DEFAULT_DIALOG_ICONS, type DialogIcons } from '../icons'
 import SubReasonDetails from './SubReasonDetails.vue'
 
-const props = defineProps<{ steps: ToolStep[] }>()
+// icons 由 MessageRow 从 ctx 下传(纯 props 叶子零依赖);独立复用时缺省用默认图标集
+const props = withDefaults(defineProps<{ steps: ToolStep[]; icons?: DialogIcons }>(), {
+  icons: () => ({ ...DEFAULT_DIALOG_ICONS }),
+})
 
 /** 步骤状态中文标签(running/done/error → 执行中/成功/失败),配合色块 status-dot 使用 */
 function statusLabel(status: 'running' | 'done' | 'error'): string {
@@ -137,7 +141,7 @@ function copyDetail(text: string, truncated: boolean, full?: unknown): void {
       <div class="step-head">
         <span class="status-dot" :class="step.status"></span>
         <span class="step-name">{{ step.name }}</span>
-        <span v-if="isSubagentTool(step.name)" class="subagent-badge" title="子 agent 委派(独立上下文,只回结论)">🤖 子</span>
+        <span v-if="isSubagentTool(step.name)" class="subagent-badge" title="子 agent 委派(独立上下文,只回结论)">{{ icons.subagent }} 子</span>
         <span v-if="step.count > 1" class="step-count">×{{ step.count }}</span>
         <span class="step-status" :class="step.status">{{ statusLabel(step.status) }}</span>
         <span v-if="step.durationMs != null && step.status !== 'running'" class="step-duration">{{ formatDuration(step.durationMs) }}</span>
@@ -165,7 +169,7 @@ function copyDetail(text: string, truncated: boolean, full?: unknown): void {
       <SubReasonDetails v-if="step.subReason" :sub-reason="step.subReason" :sub-reason-full="step.subReasonFull" :status="step.status" />
       <!-- 子 agent 工作进度(嵌套展示;紫色系与主工具区分;相邻同名工具经 groupedSteps 合并为 ×N,与主 agent 一致) -->
       <div v-if="step.children && step.children.length" class="step-children">
-        <div class="step-children-label">🧬 子 agent 进度</div>
+        <div class="step-children-label">{{ icons.subagentProgress }} 子 agent 进度</div>
         <div v-for="(c, cIdx) in groupedSteps(step.children)" :key="cIdx" class="step-child" :class="c.status">
           <span class="status-dot sm" :class="c.status"></span>
           <span class="step-name">{{ c.name }}</span>

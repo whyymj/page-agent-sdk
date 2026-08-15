@@ -2,6 +2,11 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.17.0] - 2026-08-16
+
+### Added(UI)
+- **`dialog.icons` 图标自定义**(用户诉求:默认 🤖/🎯 等 emoji 与业务品牌不符,希望能换):局部覆盖对话框内置 emoji —— 9 个文本键(`header` 🤖 / `subagent` 🤖 / `subagentProgress` 🧬 / `empty` 💬 / `focus` 🎯 / `queued` 📋 / `queuedEdit` ✏️ / `recommend` 💡 / `conflict` ⚠️)+ 2 个头像键(`assistantAvatar`/`userAvatar` 缺省 = 内置 SVG,传 emoji/字符替换为文本字形)。值为纯文本按文本插值渲染(**不解析 HTML,天然防注入**);空串 = 隐藏该图标;未传键用默认(默认路径行为零变化)。接线:`dialog.icons` → ChatDialog → `createChatContext` 解析(`resolveDialogIcons`)→ 各原子组件经 `ctx.icons` 取用(MessageSteps/FocusBar/ConflictBar 纯 props 叶子从父级下传,独立复用缺省默认)。导出 `DialogIcons` 类型 + `DEFAULT_DIALOG_ICONS`/`resolveDialogIcons`(L2 自建 UI 复用)。selftest 新增 sec-81(11 项)+ browser 新增 icons.spec(3 项:自定义生效 / 头像字形替换 / 未配置 demo 默认回归)
+
 ## [3.16.0] - 2026-08-16
 
 ### Added(UI)

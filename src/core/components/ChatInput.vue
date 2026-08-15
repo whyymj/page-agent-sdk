@@ -9,7 +9,7 @@ import { useChatContext } from '../composables/chatContext'
 defineProps<{ placeholder: string; inputRows: number }>()
 
 const ctx = useChatContext()
-const { inputText, send, keydown, canUndo, undo, focuses, removeFocus, focusChipClick } = ctx
+const { inputText, send, keydown, canUndo, undo, focuses, removeFocus, focusChipClick, icons } = ctx
 const { state, stop } = ctx.chat
 </script>
 
@@ -27,7 +27,7 @@ const { state, stop } = ctx.chat
           :title="`精修中:${f.path}(点击回看 · ✕ 移除)`"
           @click="focusChipClick(f)"
         >
-          <span class="focus-chip-icon">🎯</span><code class="focus-chip-path">{{ f.path }}</code>
+          <span class="focus-chip-icon">{{ icons.focus }}</span><code class="focus-chip-path">{{ f.path }}</code>
           <button type="button" class="focus-chip-x" data-test="focus-clear" title="移除此焦点" @click.stop="removeFocus(f.path)">✕</button>
         </span>
       </div>

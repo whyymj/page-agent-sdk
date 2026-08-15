@@ -11,6 +11,7 @@
 import { ref, computed, inject, type InjectionKey, type Ref, type ComputedRef } from 'vue'
 import { useChat } from './useChat'
 import { copyText } from '../utils/clipboard'
+import { resolveDialogIcons, type DialogIcons } from '../components/icons'
 import type { AgentMessage, AgentInfo, StreamHandler } from '../types'
 import type { Focus } from '../harness/state'
 
@@ -47,6 +48,8 @@ export interface ChatContextOptions {
   onFocusChipClick?: (focus: Focus) => void
   /** Agent 信息刷新 tick(sdk.addFocus/removeFocus 后 ++);触发 focuses/canUndo/summary 重算 */
   infoTick?: Ref<number>
+  /** 图标局部覆盖(dialog.icons;未传键用 DEFAULT_DIALOG_ICONS,默认路径行为零变化) */
+  icons?: Partial<DialogIcons>
 }
 
 /** 容器上下文:useChat 对话状态(chat.*) + 容器级共享 UI 状态/方法 */
@@ -99,6 +102,8 @@ export interface ChatContext {
   clearFocus: () => void
   /** chip 点击回调(→ emit focus_chip_click;集成方可滚动/高亮组件) */
   focusChipClick: (focus: Focus) => void
+  /** 图标集(resolveDialogIcons 解析后的完整形态;原子组件经 ctx.icons.<key> 取用) */
+  icons: DialogIcons
 }
 
 /** provide/inject 注入键 */
@@ -218,6 +223,9 @@ export function createChatContext(opts: ChatContextOptions = {}): ChatContext {
   }
   const focusChipClick = (f: Focus): void => { opts.onFocusChipClick?.(f) }
 
+  // 图标集(dialog.icons 局部覆盖 → 完整形态;注入 ctx 供各原子组件取用)
+  const icons = resolveDialogIcons(opts.icons)
+
   return {
     chat,
     inputText,
@@ -247,6 +255,7 @@ export function createChatContext(opts: ChatContextOptions = {}): ChatContext {
     removeFocus,
     clearFocus,
     focusChipClick,
+    icons,
   }
 }
 

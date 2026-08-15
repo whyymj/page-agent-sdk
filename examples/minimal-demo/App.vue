@@ -26,6 +26,13 @@ onMounted(() => {
     dialog: {
       title: '最简 AI 对话框',
       placeholder: '问我任何问题...',
+      // 图标自定义(3.17+):局部覆盖默认 emoji(🤖/🧬/🎯/…),未传键用默认;头像两键可换成文本字形
+      icons: {
+        header: '🦈',
+        empty: '🪐',
+        assistantAvatar: '🛰️',
+        userAvatar: '🙋',
+      },
     },
   })
   agent.mount('#chat-root')

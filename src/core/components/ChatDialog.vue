@@ -17,6 +17,7 @@ import ChatInput from './ChatInput.vue'
 import DebugDrawer from './DebugDrawer.vue'
 import SkillPanel from './SkillPanel.vue'
 import type { DebugLog } from '../harness/createAgent'
+import type { DialogIcons } from './icons'
 import type { AgentMessage, AgentInfo, StreamHandler } from '../types'
 import type { PendingConflict } from '../sdk/createChatSdk'
 import type { ConflictResolution } from '../tools/dataOps'
@@ -100,6 +101,8 @@ const props = withDefaults(defineProps<{
   sections?: Partial<Record<SectionKey, boolean>>
   /** 内置主题:'dark'(默认,深色紫调,方舟专题设计稿色板)/ 'light'(中性浅色) */
   csTheme?: 'light' | 'dark'
+  /** 图标局部覆盖(→ ctx.icons;未传键用默认 emoji 🤖/🎯/…) */
+  icons?: Partial<DialogIcons>
 }>(), {
   title: 'AI 助手',
   placeholder: '输入消息,Enter 发送...',
@@ -127,6 +130,7 @@ const ctx = createChatContext({
   onClearFocus: props.onClearFocus,
   onFocusChipClick: props.onFocusChipClick,
   infoTick: props.infoTick,
+  icons: props.icons,
 })
 provide(chatContextKey, ctx)
 
@@ -178,7 +182,7 @@ const drawerWidthStyle = computed(() => {
     <!-- 上下文聚焦条(指定组件精修) -->
     <template v-if="renderSection('focus')">
       <slot name="focus" :chat="ctx">
-        <FocusBar :get-focus="getFocus" :on-set-focus="onSetFocus" :on-clear-focus="onClearFocus" :info-tick="infoTick" />
+        <FocusBar :get-focus="getFocus" :on-set-focus="onSetFocus" :on-clear-focus="onClearFocus" :info-tick="infoTick" :icons="ctx.icons" />
       </slot>
     </template>
 
@@ -207,7 +211,7 @@ const drawerWidthStyle = computed(() => {
     <!-- 乐观锁冲突 -->
     <template v-if="renderSection('conflict')">
       <slot name="conflict" :chat="ctx">
-        <ConflictBar :pending-conflict="pendingConflict" :on-resolve="onResolveConflict" />
+        <ConflictBar :pending-conflict="pendingConflict" :on-resolve="onResolveConflict" :icons="ctx.icons" />
       </slot>
     </template>
     </div>

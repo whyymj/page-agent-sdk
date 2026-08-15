@@ -164,6 +164,39 @@ export interface ChatDialogSections {
   skill?: boolean;
 }
 
+/** 对话框图标集(dialog.icons 局部覆盖,未传键用默认 emoji 🤖/🧬/🎯/📋/✏️/💡/⚠️/💬)。
+ *  值为纯文本(emoji/字符/字母,按文本插值渲染不解析 HTML);空串=隐藏该图标;
+ *  头像两键缺省 undefined=内置 SVG 字形,传字符串替换为文本字形 */
+export interface DialogIcons {
+  /** 头部标题前图标(默认 🤖) */
+  header: string;
+  /** 子 agent 委派标记(默认 🤖;MessageSteps「🤖 子」badge) */
+  subagent: string;
+  /** 子 agent 进度块标签(默认 🧬) */
+  subagentProgress: string;
+  /** 空会话大图标(默认 💬) */
+  empty: string;
+  /** 聚焦 chip 图标(默认 🎯;FocusBar / 输入框 chip / 历史消息 chip 共用) */
+  focus: string;
+  /** 排队任务图标(默认 📋) */
+  queued: string;
+  /** 排队任务「修改」按钮(默认 ✏️) */
+  queuedEdit: string;
+  /** 人工确认「推荐」提示(默认 💡) */
+  recommend: string;
+  /** 写入冲突提示(默认 ⚠️) */
+  conflict: string;
+  /** assistant 头像字形(undefined = 内置 robot SVG;传 emoji/字符替换为文本) */
+  assistantAvatar?: string;
+  /** user 头像字形(undefined = 内置 user SVG) */
+  userAvatar?: string;
+}
+
+/** 默认图标集(完整形态;dialog.icons 传 Partial 局部覆盖) */
+export declare const DEFAULT_DIALOG_ICONS: DialogIcons;
+/** 局部覆盖 → 完整图标集(非字符串忽略;头像键空串视为未传) */
+export declare function resolveDialogIcons(partial?: Partial<DialogIcons>): DialogIcons;
+
 export interface ChatDialogProps {
   fetchResponse?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<string>;
   fetchStream?: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>;
@@ -204,6 +237,8 @@ export interface ChatDialogProps {
   onFocusChipClick?: (focus: Focus) => void;
   /** 区块显隐(chatdialog-component-split);键=false 关闭整块(含 slot),默认全开 */
   sections?: ChatDialogSections;
+  /** 图标局部覆盖(→ ctx.icons;未传键用默认 emoji,空串=隐藏) */
+  icons?: Partial<DialogIcons>;
 }
 
 export interface ToolInfo { name: string; description: string; schema?: unknown; source?: string }
@@ -868,6 +903,8 @@ export interface DialogConfig {
   onClose?: () => void;
   /** Built-in theme: 'dark' (default; dark purple palette from the Ark design spec) / 'light' (neutral light). Overridable via --cs-* on an ancestor. */
   theme?: 'light' | 'dark';
+  /** Icon overrides (partial; unset keys keep default emoji 🤖/🧬/🎯/📋/✏️/💡/⚠️/💬; empty string hides the icon; avatar keys undefined = built-in SVG) */
+  icons?: Partial<DialogIcons>;
 }
 
 /** 会话级任务目标锚点(mission 中间件;capture 或 setMission;revive-mission-anchor Phase 1) */

@@ -18,6 +18,7 @@
 import { reactive, ref, type Ref } from 'vue'
 import { tool, type StructuredToolInterface } from '@langchain/core/tools'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
+import type { DialogIcons } from '../components/icons'
 import { createAgent, type DebugLog } from '../harness/createAgent'
 import { asAgentError } from '../tools/toolError'
 import { isAbort } from '../harness/retry'
@@ -360,6 +361,8 @@ export interface DialogConfig {
   onClose?: () => void
   /** 内置主题:'dark'(默认,深色紫调,方舟专题设计稿色板)/ 'light'(中性浅色);亦可祖先覆盖 --cs-* 完全自定义 */
   theme?: 'light' | 'dark'
+  /** 图标局部覆盖:替换默认 emoji(🤖/🧬/🎯/📋/✏️/💡/⚠️/💬;头像两键 undefined=内置 SVG)。未传键用默认;空串=隐藏该图标 */
+  icons?: Partial<DialogIcons>
   /** ChatDialog 区块显隐(chatdialog-component-split):键=false 关闭整块(含 slot);默认全开。键:header/focus/body/queued/approval/conflict/footer/debug/skill */
   sections?: Record<string, boolean>
 }

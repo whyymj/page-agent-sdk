@@ -86,6 +86,7 @@ const sdk = createChatSdk({
     drawer: true,                                // drawer mode: right slide-in + mask; close defaults to hide() preserving history
     title: '[Business] Agent',
     placeholder: 'Try: [example operation]',
+    icons: { header: '[icon]', assistantAvatar: '[emoji]' },  // optional: override default emojis (🤖/🎯/…); unset keys keep defaults, empty string hides
   },
   // systemPrompt: describe business + data structure; reliableWriteRules auto-appended with '---' separator (default true)
   systemPrompt: 'You are a [business] assistant. Main data = { title, items[] }. To edit, change title or items (add/remove/edit items, adjust fields); [page/UI] updates live. See load_skill("[skill-name]") for fields.',

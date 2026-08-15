@@ -31,7 +31,7 @@ const props = defineProps<{
 defineEmits<{ (e: 'close'): void }>()
 
 const ctx = useChatContext()
-const { chat } = ctx
+const { chat, icons } = ctx
 const { state, reset, clearMessages } = chat
 
 const moreOpen = ref(false)
@@ -62,7 +62,7 @@ function handleOpenSession(id: string): void {
   <!-- 原 ChatDialog header 有 cursor:pointer 但未绑 click(折叠功能 dead,isExpanded 恒 true);保持原行为不接 toggleCollapse,遵守「默认路径行为零变化」(design §6) -->
   <div class="chat-header">
     <div class="header-left">
-      <span class="header-icon">🤖</span>
+      <span class="header-icon">{{ icons.header }}</span>
       <span class="header-title">{{ title }}</span>
       <span v-if="state.loading" class="status-dot pulse"></span>
     </div>

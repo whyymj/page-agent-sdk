@@ -209,6 +209,16 @@ createChatSdk({
   dialog: {                      // 对话框 UI 归组配置
     title: 'AI 助手',             // 对话框标题
     placeholder: '输入消息...',   // 输入框占位
+    theme: 'dark',               // 内置主题:'dark'(默认)/'light';亦可祖先覆盖 --cs-* 完全自定义
+    icons: {                     // 图标自定义(局部覆盖;未传键用默认 emoji,空串=隐藏)
+      header: '🦈',              // 头部标题前图标(默认 🤖)
+      subagent: '⚡',            // 子 agent 委派标记(默认 🤖)
+      empty: '🪐',               // 空会话大图标(默认 💬)
+      focus: '📍',               // 聚焦 chip(默认 🎯)
+      assistantAvatar: '🛰️',     // assistant 头像(缺省=内置 SVG;传 emoji/字符替换为文本)
+      userAvatar: '🙋',          // user 头像(缺省=内置 SVG)
+      // 其余:subagentProgress 🧬 / queued 📋 / queuedEdit ✏️ / recommend 💡 / conflict ⚠️
+    },
   },
   debug: false,                 // 调试日志
 }).mount()

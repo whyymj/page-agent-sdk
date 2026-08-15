@@ -14,7 +14,7 @@ import AvatarIcon from './AvatarIcon.vue'
 defineProps<{ showAvatar: boolean; showTyping: boolean }>()
 
 const ctx = useChatContext()
-const { chat, formatTime, copiedMsg, copyMessage, isPendingAssistant, isReasoningExpanded, toggleReasoning, canUndo, undo } = ctx
+const { chat, formatTime, copiedMsg, copyMessage, isPendingAssistant, isReasoningExpanded, toggleReasoning, canUndo, undo, icons } = ctx
 // 滚动容器已上移至 ChatDialog 的 .chat-main(消息 + queued/approval/conflict 统一滚动);
 // 此处只取状态与重试方法
 const { state, retry, regenerate } = chat
@@ -28,7 +28,7 @@ const lastIsAssistant = computed(() => state.messages[state.messages.length - 1]
 <template>
   <div class="chat-body">
     <div v-if="!hasMessages" class="empty-state">
-      <div class="empty-icon">💬</div>
+      <div class="empty-icon">{{ icons.empty }}</div>
       <p>有什么可以帮你的?</p>
     </div>
 
@@ -52,7 +52,7 @@ const lastIsAssistant = computed(() => state.messages[state.messages.length - 1]
 
     <!-- 加载占位:仅当最后一条不是 assistant 占位时(非流式等待)才单独显示,避免与流式占位叠加成两个 AI 头像 -->
     <div v-if="state.loading && !lastIsAssistant" class="message-row assistant">
-      <div v-if="showAvatar" class="message-avatar"><AvatarIcon role="assistant" /></div>
+      <div v-if="showAvatar" class="message-avatar"><AvatarIcon role="assistant" :glyph="icons.assistantAvatar" /></div>
       <div class="message-content">
         <MessageBubble content="" role="assistant" :is-pending-assistant="true" :show-typing="showTyping" :show-cursor="false" />
       </div>
