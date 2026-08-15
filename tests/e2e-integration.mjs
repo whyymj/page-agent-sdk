@@ -25,6 +25,7 @@ import { run as runHangFeedback } from './e2e/hang-feedback.mjs'
 import { run as runMainSubIsolation } from './e2e/main-sub-isolation.mjs'
 import { run as runSessionIntegrity } from './e2e/session-integrity.mjs'
 import { run as runContextEconomy } from './e2e/context-economy.mjs'
+import { run as runMcp } from './e2e/mcp.mjs'
 
 const modules = [
   ['systemprompt', runSystemprompt],
@@ -51,6 +52,7 @@ const modules = [
   ['main-sub-isolation', runMainSubIsolation],
   ['session-integrity', runSessionIntegrity],
   ['context-economy', runContextEconomy],
+  ['mcp', runMcp],
 ]
 
 let totalPass = 0, totalFail = 0

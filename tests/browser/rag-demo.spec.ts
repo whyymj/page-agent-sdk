@@ -157,3 +157,26 @@ test.describe('rag-demo: 子 agent 模式(双模式合并,原 rag-subagent-demo)
     }, { timeout: 10_000 })
   })
 })
+
+test.describe('rag-demo: D 模式 MCP 直连(mcp-demo 合并)', () => {
+  test('场景4:切 D 模式 → 重建 agent + mcp 直连配置注入(无 VITE_RAG_MCP_URL 时连本地 mock)', async ({ page }) => {
+    await page.goto('/examples/rag-demo/')
+    await page.waitForSelector('.chat-dialog')
+    await clearChat(page)
+
+    // 切到 D 模式(MCP 直连)→ unmount + 重建。
+    // e2e 环境无 VITE_RAG_MCP_URL → mock server 形态(localhost:3001/mcp);未启动 mock server 时
+    // MCP 握手失败仅 warn 降级(allSettled 故障隔离),agent 本体正常挂载 —— 断言重建成功即可
+    await clickByText(page, 'D · MCP 直连')
+    await page.waitForFunction(() => {
+      const el = document.querySelector('.chat-dialog')
+      const title = document.querySelector('.header-title')
+      return !!el && !!(title && title.textContent && title.textContent.includes('MCP 直连'))
+    }, { timeout: 10_000 })
+
+    // D 模式面板:直连说明可见(含 mcp:[] 配置提示);C 模式的 MCP 状态条不可见(D 由 SDK 内部管理连接)
+    const pageText = await page.textContent('.page')
+    expect(pageText).toContain('mcp:[]')
+    expect(await page.locator('.mcp-status').count(), 'D 模式不应有 C 模式的 MCP 状态条').toBe(0)
+  })
+})

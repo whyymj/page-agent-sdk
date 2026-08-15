@@ -1,5 +1,9 @@
 import { constructLlmFromConfig, constructOpenLlmSync } from '../../llm/constructLlm'
 import { extractTextDelta, extractReasoningDelta, extractUsage } from '../../utils/contentParts'
+import { createAgent } from '../../harness/createAgent'
+import { createSubagentMiddleware } from '../../harness/subagent'
+import { BaseChatModel } from '@langchain/core/language_models/chat_models'
+import { AIMessage, AIMessageChunk } from '@langchain/core/messages'
 import type { TestCtx } from './_ctx'
 
 // LLM 构造工厂 constructLlm(Anthropic 开箱:provider 抽离,openai 同步 / anthropic 动态 import)
@@ -110,5 +114,71 @@ export async function run(ctx: TestCtx): Promise<void> {
     const llm2 = constructOpenLlmSync({ apiKey: 'sk-test', model: 'gpt-4', extraConfig: { fetch: customFetch } }) as any
     const f2 = llm2.clientConfig?.fetch
     assert(f2 === customFetch, '✓ extraConfig.fetch 覆盖默认包装(集成方可整体替换)')
+  }
+  console.log('\n[子 agent provider 透传 · anthropic 协议]')
+  {
+    // fix:主 llm 传 LLMConfig + provider:'anthropic' 时,子 agent 散字段重建曾丢 provider →
+    // 被按 OpenAI 协议构造,请求打到 {baseUrl}/chat/completions 404 秒败(rag-demo 真 MCP 实测抓包)。
+    // 验证:伪 fetch(clientOptions 透传)捕获子 agent 实际请求,断言打到 Anthropic 原生 /v1/messages。
+    class MockLLM extends BaseChatModel {
+      scripts: Array<{ content?: string; toolCalls?: Array<{ id?: string; name: string; args?: any }> }>
+      idx = 0
+      constructor(scripts: any[]) { super({}); this.scripts = scripts }
+      _llmType(): string { return 'mock' }
+      async *_streamResponseChunks(_messages: any, _options: any): AsyncGenerator<any> {
+        const s = this.scripts[this.idx++] ?? { content: '完成。' }
+        const tcc = (s.toolCalls ?? []).map((tc, i) => ({ id: tc.id ?? `c${i}`, name: tc.name, args: JSON.stringify(tc.args ?? {}), index: i }))
+        yield { text: s.content ?? '', message: new AIMessageChunk({ content: s.content ?? '', tool_call_chunks: tcc }), generationInfo: {} }
+      }
+      async _generate(_messages: any, _options: any): Promise<any> {
+        const s = this.scripts[this.idx++] ?? { content: '完成。' }
+        const msg = new AIMessage({ content: s.content ?? '', tool_calls: (s.toolCalls ?? []).map((tc, i) => ({ id: tc.id ?? `c${i}`, name: tc.name, args: tc.args ?? {} })) })
+        return { generations: [{ text: s.content ?? '', message: msg }], llmOutput: {} }
+      }
+    }
+    // 伪 fetch:记录请求 URL/body,返 Anthropic SSE 流(单 text block「子结论ok」)
+    const seenUrls: string[] = []
+    const seenBodies: any[] = []
+    const fakeFetch = async (url: any, init?: any) => {
+      seenUrls.push(String(url))
+      try { seenBodies.push(JSON.parse(String(init?.body ?? '{}'))) } catch { seenBodies.push({}) }
+      const enc = new TextEncoder()
+      const events = [
+        ['message_start', { type: 'message_start', message: { id: 'msg_t', type: 'message', role: 'assistant', content: [], model: 'claude', stop_reason: null, usage: { input_tokens: 1, output_tokens: 0 } } }],
+        ['content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }],
+        ['content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '子结论ok' } }],
+        ['content_block_stop', { type: 'content_block_stop', index: 0 }],
+        ['message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 3 } }],
+        ['message_stop', { type: 'message_stop' }],
+      ] as const
+      const sse = events.map(([ev, d]) => `event: ${ev}\ndata: ${JSON.stringify(d)}\n\n`).join('')
+      const body = new ReadableStream({ start(c) { c.enqueue(enc.encode(sse)); c.close() } })
+      return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }) as any
+    }
+    const mainLlm = new MockLLM([
+      { toolCalls: [{ name: 'spawn_agent', args: { prompt: '查一下', model: 'claude-opus-4-override' } }] },
+      { content: '完成' },
+    ])
+    const subMw = createSubagentMiddleware({
+      llm: {
+        provider: 'anthropic', apiKey: 'sk-ant-test', model: 'claude-3-5-sonnet-20241022',
+        baseUrl: 'https://api.anthropic.test', contextWindow: 200000, maxTokens: 64,
+        extraConfig: { fetch: fakeFetch },
+      },
+      allTools: () => [],
+    })
+    const agent = createAgent({ llm: mainLlm as any, middleware: [subMw], maxToolRounds: 2, maxRetries: 0 })
+    let final = ''
+    let spawnResult = ''
+    await agent.stream([{ role: 'user', content: '做点事', timestamp: Date.now() }], (e: any) => {
+      if (e.type === 'done') final = e.content
+      if (e.type === 'tool_result' && e.name === 'spawn_agent') spawnResult = String(e.result ?? '')
+    }, undefined)
+    assert(final === '完成', '✓ 子 agent provider anthropic:主循环正常收口(spawn 后回到主 LLM 综合)')
+    assert(seenUrls.length > 0, '✓ 子 agent provider anthropic:子 LLM 实际发出请求(经 clientOptions.fetch 捕获)')
+    assert(seenUrls.every((u) => u.includes('/v1/messages')), '✓ 子 agent provider anthropic:请求打到 /v1/messages(修复前丢 provider 走 /chat/completions 404)')
+    assert(!seenUrls.some((u) => u.includes('chat/completions')), '✓ 子 agent provider anthropic:无 OpenAI 协议请求(不混协议)')
+    assert(spawnResult.includes('子结论ok'), '✓ 子 agent provider anthropic:SSE 流被解析,spawn 结论回主(子 agent 跑通)')
+    assert(seenBodies.every((b) => b.model === 'claude-opus-4-override'), '✓ task.model 覆盖透传到子 LLM(请求 body.model = 委派覆盖值,非主 model)')
   }
 }

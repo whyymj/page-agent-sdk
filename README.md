@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-2092%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-2098%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -300,7 +300,7 @@ src/core/
 ├── composables/               # useChat / useContextManager / useMarkdown
 ├── components/                 # ChatDialog / MessageContent / CodePreview / DebugDrawer
 └── types/index.ts  index.ts    # types / sole library entry
-examples/                       # page-demo / nested-demo / dynamic-demo / human-confirm-demo / planner-demo / subagent-demo / mcp-demo / toolsets-demo / proxy-demo
+examples/                       # page-demo / nested-demo / dynamic-demo / human-confirm-demo / planner-demo / subagent-demo / toolsets-demo / proxy-demo
 doc/                            # usage-guide / architecture / context-management / architecture-files
 CLAUDE.md                       # architecture + gotchas + coding conventions (agent must-read)
 ```
@@ -357,7 +357,7 @@ src/core/
 ├── composables/               # useChat / useContextManager / useMarkdown
 ├── components/                 # ChatDialog / MessageContent / CodePreview / DebugDrawer
 └── types/index.ts  index.ts    # types / sole library entry
-examples/                       # page-demo / nested-demo / dynamic-demo / human-confirm-demo / planner-demo / subagent-demo / mcp-demo / toolsets-demo / proxy-demo
+examples/                       # page-demo / nested-demo / dynamic-demo / human-confirm-demo / planner-demo / subagent-demo / toolsets-demo / proxy-demo
 doc/                            # usage-guide / architecture / context-management / architecture-files
 CLAUDE.md                       # architecture + gotchas + coding conventions (agent must-read)
 ```
@@ -483,7 +483,7 @@ After `npm run dev`, visit the corresponding page:
 | Example | Entry | Demonstrates |
 |---|---|---|
 | minimal-demo | `/examples/minimal-demo/` | Minimal: 5-line chat dialog, no data ops |
-| rag-demo | `/examples/rag-demo/` | RAG async docs: `memory` accepts async fn to load KB + switch/refresh |
+| rag-demo | `/examples/rag-demo/` | RAG/MCP, 4 modes: A `memory` async fn load/switch KB · B `createRagSubagent` mock retriever · C subagent + real MCP (`VITE_RAG_MCP_URL`) · D MCP direct inject (`npm run mcp:mock` fallback) |
 | headless-demo | `/examples/headless-demo/` | Headless: `ui:false` + self-built UI via `sdk.messages`/`sdk.send` |
 | page-demo | `/` | Self-bootstrapping demo: left JSON reactive page + right chat |
 | nested-demo | `/examples/nested-demo/` | Nested block tree + human confirm + checkpoint |
@@ -491,7 +491,6 @@ After `npm run dev`, visit the corresponding page:
 | human-confirm-demo | `/examples/human-confirm-demo/` | AI proactive inquiry (multi-plan pick) + pre-write confirm |
 | planner-demo | `/examples/planner-demo/` | Plan-reflect-execute (high-temp creative planner + low-temp reflector) |
 | subagent-demo | `/examples/subagent-demo/` | Subagent parallel orchestration |
-| mcp-demo | `/examples/mcp-demo/` | MCP remote tools (needs `npm run mcp:mock`) |
 | animation-demo | `/examples/animation-demo/` | ChatDialog enter/collapse/unmount animations + inline/drawer + hide/show |
 | multi-agent-demo | `/examples/multi-agent-demo/` | Multi-agent parallel + exclusive switch (3 independent agents, drawer hide/show keeps each history) |
 | proxy-demo | `/examples/proxy-demo/` | LLM connection config: proxy to prevent apiKey leakage (browser holds only userToken, proxy injects real key; auto-refresh on expired token; needs `npm run proxy:mock`) + Provider switch (`provider:'anthropic'` for Claude native protocol, streaming + extended thinking) |
@@ -529,8 +528,8 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 2092 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 655 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm test            # 2098 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 666 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test

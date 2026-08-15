@@ -1,19 +1,33 @@
 <script setup lang="ts">
 /**
- * RAG demo(双模式对照,原 rag-demo + rag-subagent-demo 合并):
+ * RAG demo(四模式对照,原 rag-demo + rag-subagent-demo + mcp-demo 合并):
  *
  *   A. memory 模式(默认):memory 传异步函数,首次对话前后台加载知识库文档,注入主 systemPrompt(文档常驻主上下文)
  *      —— 适合小文档库 / 每轮都要用的资料;演示 setMemory 切库 + refreshMemory 强刷
- *   B. 子 agent 模式:createRagSubagent 配置检索子 agent(独立上下文,主调 use_rag 按需检索,只回结论)
- *      —— 适合大文档库 / 按需查(文档不占主上下文,省 token + 不爆窗口)
+ *   B. 子 agent 模式(mock):createRagSubagent 配置检索子 agent(独立上下文,主调 use_rag 按需检索,只回结论)
+ *      —— 适合大文档库 / 按需查(文档不占主上下文,省 token + 不爆窗口);retriever 为关键词匹配 mock
+ *   C. 子 agent + 真实 MCP 模式(.env 配了 VITE_RAG_MCP_URL 时可用):retriever 包远程 MCP server 的
+ *      rag_search 工具(connectMcp 懒连接 + 断线重连)—— 与 B 同架构,只换数据源,演示
+ *      「检索子 agent + 外部 MCP 检索服务」的组合:大文档仍在子上下文,主 agent 只收结论。
+ *   D. MCP 直连模式(原 mcp-demo):主 agent 经 mcp:[] 直连 MCP server,工具直接注入主工具池(不经子 agent)。
+ *      .env 配 VITE_RAG_MCP_URL → 真实知识库(rag_search/rag_ask/rag_documents);未配 → 连本地 mock
+ *      server(npm run mcp:mock @ localhost:3001/mcp,公开仓库开箱可跑)。
+ *      与 C 对照:直连 = 主 agent 直接调 MCP 工具(工具结果进主上下文);C = 检索过程隔离在子 agent。
  *
- * 顶部切模式 = unmount + 重建 agent(两种模式的配置面完全不同)。
+ * 顶部切模式 = unmount + 重建 agent(各模式的配置面完全不同)。
  * LLM 走 Anthropic 原生协议(provider:'anthropic',动态 import @langchain/anthropic),网关为 modelverse。
- * 知识库文档为内联 mock(无真实 fetch 依赖),实际使用时替换为 fetch('/kb/xxx.md');
+ * A 模式知识库文档为内联 mock(无真实 fetch 依赖),实际使用时替换为 fetch('/kb/xxx.md');
  * B 模式 retriever 为关键词匹配 mock(无真实向量库依赖),实际替换为 vectorDB.search(embed(query))。
  */
 import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { createChatSdk, createRagSubagent, type ChatSdk, type RagHit } from '../../src/core'
+import {
+  createChatSdk,
+  createRagSubagent,
+  connectMcp,
+  type ChatSdk,
+  type RagHit,
+  type McpConnection,
+} from '../../src/core'
 import DevNav from '../_shared/DevNav.vue'
 
 const root = ref<HTMLElement>()
@@ -39,8 +53,75 @@ const KB = {
 }
 
 // ===== 模式切换 =====
-type RagMode = 'memory' | 'subagent'
+type RagMode = 'memory' | 'subagent' | 'mcp' | 'direct'
 const mode = ref<RagMode>('memory')
+
+// ===== 真实 MCP 模式(C)=====
+// MCP server 地址经 .env 的 VITE_RAG_MCP_URL 注入(gitignore,内网地址不进源码/仓库);未配置 → C 模式不可用
+const ragMcpUrl = (import.meta.env.VITE_RAG_MCP_URL as string | undefined)?.trim() || ''
+const mcpAvailable = !!ragMcpUrl
+// 连接状态(懒连接:首次检索才握手;断线自动重连一次)
+const mcpStatus = ref<'idle' | 'connecting' | 'ready' | 'error'>('idle')
+const mcpTools = ref('')
+let mcpConn: McpConnection | null = null
+
+/** 懒连接 MCP server;复用已有连接,断线(调用抛错)时重连一次 */
+async function ensureMcp(): Promise<McpConnection> {
+  if (mcpConn) return mcpConn
+  mcpStatus.value = 'connecting'
+  try {
+    mcpConn = await connectMcp({ transport: 'http', url: ragMcpUrl, name: 'rag-kb' })
+    if (!mcpConn.tools.length) throw new Error('MCP server 未暴露任何工具')
+    mcpTools.value = mcpConn.tools.map((t) => t.name).join(' / ')
+    mcpStatus.value = 'ready'
+    return mcpConn
+  } catch (e) {
+    mcpConn = null
+    mcpStatus.value = 'error'
+    throw e
+  }
+}
+
+/** MCP 工具结果文本 → RagHit[](尽力解析 JSON;解析不出按整段文本作单条命中) */
+function parseMcpHits(text: string, source: string): RagHit[] {
+  try {
+    const data = JSON.parse(text)
+    const arr = Array.isArray(data) ? data : Array.isArray(data?.results) ? data.results : Array.isArray(data?.hits) ? data.hits : Array.isArray(data?.documents) ? data.documents : null
+    if (arr) {
+      return arr.map((it: any) => ({
+        content: typeof it === 'string' ? it : (it?.content ?? it?.text ?? JSON.stringify(it)),
+        source: it?.docName ?? it?.source ?? it?.title ?? source,
+        score: typeof it?.score === 'number' ? it.score : undefined,
+      }))
+    }
+  } catch {
+    /* 非 JSON,按纯文本处理 */
+  }
+  return text ? [{ content: text, source }] : []
+}
+
+/**
+ * 真实 MCP retriever:调 server 的 rag_search 工具(工具名带 search 的兜底取第一个)。
+ * 抛错经 createRagSubagent 内置降级 → search_docs 返回错误字符串,子 agent 换词重试/如实收口,不崩。
+ */
+async function mcpRetriever(query: string, opts?: { topK?: number }): Promise<RagHit[]> {
+  const conn = await ensureMcp()
+  const tool = conn.tools.find((t) => t.name === 'rag_search') ?? conn.tools.find((t) => t.name.includes('search'))
+  if (!tool) throw new Error(`MCP server 无检索工具(可用:${conn.tools.map((t) => t.name).join(', ')})`)
+  let text: string
+  try {
+    text = await tool.invoke({ query, top_k: opts?.topK ?? 5 })
+  } catch (e) {
+    // 可能是参数名不符(server schema 非 query/top_k)→ 退回仅 query 再试一次
+    try {
+      text = await tool.invoke({ query })
+    } catch (e2) {
+      mcpConn = null // 连接坏(server 重启等)→ 清缓存,下次检索重连
+      throw e2
+    }
+  }
+  return parseMcpHits(text, ragMcpUrl)
+}
 
 // ===== memory 模式状态 =====
 const currentKb = ref<keyof typeof KB>('faq')
@@ -124,6 +205,58 @@ function buildAgent(): ChatSdk {
       },
     })
   }
+  if (mode.value === 'direct') {
+    // D. MCP 直连(原 mcp-demo):主 agent 经 mcp:[] 直连,工具直接注入主工具池(不经子 agent)。
+    // 配了 VITE_RAG_MCP_URL → 真实知识库;否则连本地 mock server(npm run mcp:mock,公开仓库开箱可跑)
+    if (mcpAvailable) {
+      return createChatSdk({
+        id: 'rag-demo-direct',
+        llm,
+        systemPrompt:
+          '你是知识库问答助手。可直接调用 MCP 工具:rag_search(检索知识库)/ rag_ask(直接问知识库)/ rag_documents(列文档)。用户提问时先检索再回答,答案附出处(docName/breadcrumb);知识库没有的明确说没有,不要编造。',
+        storage: 'memory',
+        mcp: [{ transport: 'http', url: ragMcpUrl, name: 'rag' }],
+        dialog: {
+          title: 'MCP 直连 · RAG 知识库',
+          placeholder: '问知识库问题(主 agent 直接调 rag_search)…',
+        },
+      })
+    }
+    return createChatSdk({
+      id: 'rag-demo-direct-mock',
+      llm,
+      systemPrompt:
+        '你可以调用 MCP server(mock)提供的工具:get_weather(查天气)/ search(搜索)/ calc(计算)。用户问相关问题时主动调用对应工具,基于结果回答。',
+      storage: 'memory',
+      mcp: [{ transport: 'http', url: 'http://localhost:3001/mcp', name: 'mock' }],
+      dialog: {
+        title: 'MCP 直连(mock server)',
+        placeholder: '试试:北京天气 / 搜索 AI / 算 12*8(须先 npm run mcp:mock)',
+      },
+    })
+  }
+  if (mode.value === 'mcp') {
+    // C. 真实 MCP 模式:与 B 同架构(检索子 agent),retriever 换成远程 MCP server 的 rag_search
+    const a = createChatSdk({
+      id: 'rag-demo-mcp',
+      llm,
+      systemPrompt:
+        '你是知识库问答助手。需要查阅文档时调 use_rag({task:"..."}) 委派检索子 agent(其背后是远程 MCP 知识库检索服务),据其返回的结论作答;结论要标注来源。资料未覆盖就说「知识库中未提及」。',
+      storage: 'memory',
+      subagents: [createRagSubagent({ retriever: mcpRetriever, useVfs: false })],
+      dialog: {
+        title: 'RAG 子 agent + 真实 MCP 检索',
+        placeholder: '问知识库问题(主 agent 委派 use_rag → MCP rag_search)…',
+      },
+    })
+    a.hook((e) => {
+      const ev = e as any
+      if (ev.type === 'subagent' && ev.kind === 'tool_result' && ev.name === 'search_docs') {
+        lastSearchResult.value = ev.result || ''
+      }
+    })
+    return a
+  }
   const a = createChatSdk({
     id: 'rag-demo-sub',
     llm,
@@ -153,6 +286,13 @@ function buildAgent(): ChatSdk {
 async function rebuild() {
   agent?.unmount()
   agent = null
+  // 离开 C 模式 → 断开 MCP 连接(下次进入懒重连)
+  if (mode.value !== 'mcp' && mcpConn) {
+    await mcpConn.close().catch(() => {})
+    mcpConn = null
+    mcpStatus.value = 'idle'
+    mcpTools.value = ''
+  }
   await nextTick() // 等 DOM 里 #chat-root 重新渲染(v-if 切换面板)
   const el = document.getElementById('chat-root')
   if (!el) return
@@ -160,11 +300,17 @@ async function rebuild() {
   agent.mount(el)
 }
 
-// 切模式 → 重建(两模式配置面不同,不能运行时切换)
-watch(mode, () => void rebuild())
+// 切模式 → 重建(各模式配置面不同,不能运行时切换)
+watch(mode, (m) => {
+  if (m === 'mcp' && !mcpAvailable) return // 未配 VITE_RAG_MCP_URL 时不可选(按钮已禁用,双保险)
+  void rebuild()
+})
 
 onMounted(() => void rebuild())
-onUnmounted(() => agent?.unmount())
+onUnmounted(() => {
+  agent?.unmount()
+  if (mcpConn) void mcpConn.close().catch(() => {})
+})
 
 function switchKb(name: keyof typeof KB) {
   currentKb.value = name
@@ -182,7 +328,7 @@ function switchKb(name: keyof typeof KB) {
 <template>
   <DevNav />
   <div class="page">
-    <h1>RAG 知识库问答(双模式对照)</h1>
+    <h1>RAG 知识库问答(四模式对照)</h1>
 
     <div class="mode-switcher">
       <span class="label">模式:</span>
@@ -192,10 +338,27 @@ function switchKb(name: keyof typeof KB) {
       <button :class="['mode-btn', { active: mode === 'subagent' }]" @click="mode = 'subagent'">
         B · createRagSubagent 检索
       </button>
+      <button
+        :class="['mode-btn', { active: mode === 'mcp' }]"
+        :disabled="!mcpAvailable"
+        :title="mcpAvailable ? '' : '未配置 .env 的 VITE_RAG_MCP_URL'"
+        @click="mode = 'mcp'"
+      >
+        C · 真实 MCP 检索
+      </button>
+      <button :class="['mode-btn', { active: mode === 'direct' }]" @click="mode = 'direct'">
+        D · MCP 直连
+      </button>
       <span class="mode-hint">
         {{ mode === 'memory'
           ? '文档常驻主上下文 —— 适合小文档库 / 每轮都要用的资料'
-          : '独立上下文按需检索,只回结论 —— 适合大文档库(文档不占主上下文)' }}
+          : mode === 'subagent'
+            ? '独立上下文按需检索,只回结论 —— 适合大文档库(文档不占主上下文)'
+            : mode === 'mcp'
+              ? '同 B 架构,retriever 换成远程 MCP 检索服务(.env VITE_RAG_MCP_URL)'
+              : mcpAvailable
+                ? 'MCP 工具直接注入主工具池,主 agent 直接调(与 C 的子 agent 隔离检索对照)'
+                : '主 agent 直连本地 mock MCP server(须先 npm run mcp:mock)' }}
       </span>
     </div>
 
@@ -223,7 +386,7 @@ function switchKb(name: keyof typeof KB) {
       </details>
     </template>
 
-    <template v-else>
+    <template v-else-if="mode === 'subagent'">
       <p>
         用 <code>createRagSubagent({{ '{ retriever }' }})</code> 配置检索子 agent。主 agent 调 <code>use_rag</code>
         时,子 agent 在<strong>独立上下文</strong>检索 KB,只把结论回主(文档不占主上下文)。
@@ -238,6 +401,41 @@ function switchKb(name: keyof typeof KB) {
         <summary>最近一次检索命中(RAG 子 agent 的 search_docs 返回)</summary>
         <pre>{{ lastSearchResult }}</pre>
       </details>
+    </template>
+
+    <template v-else-if="mode === 'mcp'">
+      <p>
+        与 B 同架构(<code>createRagSubagent</code> 检索子 agent),retriever 换成远程 MCP server 的
+        <code>rag_search</code> 工具(<code>connectMcp</code> 懒连接,首次检索才握手)。大段检索结果仍在子上下文,
+        主 agent 只收结论。地址经 <code>.env</code> 的 <code>VITE_RAG_MCP_URL</code> 注入,不进源码。
+      </p>
+
+      <div class="mcp-status">
+        <span class="label">MCP 连接:</span>
+        <span class="status" :data-status="mcpStatus === 'ready' ? 'ready' : mcpStatus === 'connecting' ? 'loading' : mcpStatus === 'error' ? 'error' : 'idle'">
+          {{ mcpStatus === 'idle' ? '未连接(首次检索时握手)' : mcpStatus === 'connecting' ? '连接中…' : mcpStatus === 'ready' ? '已连接' : '连接失败(检查网络/服务)' }}
+        </span>
+        <span v-if="mcpTools" class="mcp-tools">注入工具:{{ mcpTools }}</span>
+      </div>
+
+      <details class="hits-preview" v-if="lastSearchResult">
+        <summary>最近一次检索命中(RAG 子 agent 的 search_docs 返回)</summary>
+        <pre>{{ lastSearchResult }}</pre>
+      </details>
+    </template>
+
+    <template v-else>
+      <p v-if="mcpAvailable">
+        主 agent 经 <code>mcp:[]</code> 直连知识库 MCP server(地址经 <code>.env</code> 的 <code>VITE_RAG_MCP_URL</code> 注入),
+        握手后工具(<code>rag_search</code> / <code>rag_ask</code> / <code>rag_documents</code>)<strong>直接注入主工具池</strong> ——
+        与 C 模式对照:C 的检索过程隔离在子 agent(大结果不占主上下文),D 的主 agent 直接调(结果进主上下文,适合工具少 / 调用轻的场景)。
+      </p>
+      <p v-else>
+        主 agent 经 <code>mcp:[]</code> 直连本地 mock MCP server。公开仓库无内网 MCP 也可开箱体验:
+        先启动 mock server(<code>npm run mcp:mock</code> → http://localhost:3001/mcp),注入
+        <code>get_weather</code> / <code>search</code> / <code>calc</code> 三个工具;对话框「日志」→「Agent 信息」tab 可见注入的工具。
+        配置 <code>.env</code> 的 <code>VITE_RAG_MCP_URL</code> 即切换为真实知识库。
+      </p>
     </template>
 
     <!-- :key=mode:切模式时 Vue 重建全新容器节点(旧 app 随旧节点销毁),避免双 app 挂同容器冲突 -->
@@ -293,6 +491,10 @@ p code {
   color: #fff;
   border-color: var(--ark-accent);
 }
+.mode-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .mode-hint {
   font-size: 12px;
   color: var(--ark-muted);
@@ -340,6 +542,21 @@ p code {
 .status[data-status='error'] {
   color: #dc2626;
   background: #fee2e2;
+}
+.status[data-status='idle'] {
+  color: var(--ark-muted);
+  background: var(--ark-panel);
+}
+.mcp-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.mcp-tools {
+  font-size: 12px;
+  color: var(--ark-muted);
 }
 .kb-preview,
 .hits-preview {

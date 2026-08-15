@@ -1373,7 +1373,7 @@ Nine end-to-end scenarios with copy-paste code live in the bundled Agent Skill a
 | 9 | MCP integration | `mcp:[{transport,url}]` remote tools; `@modelcontextprotocol/sdk` optional peerDep |
 | 10 | Multi-agent parallel + exclusive switch | multiple `createChatSdk` (distinct `id`, each its own `data`) + `dialog.drawer:true`; switch via `hide()`/`show()` (keeps each history/in-flight generation, no unmount) |
 
-Runnable demos per scenario: `examples/nested-demo` (1), `examples/page-demo` (1/2), `examples/subagent-demo` (6), `examples/mcp-demo` (9), `examples/human-confirm-demo` (4), `examples/planner-demo` (planning), `examples/toolsets-demo` (tool separation), `examples/animation-demo` (animations + hide/show), `examples/multi-agent-demo` (multi-agent parallel + exclusive switch).
+Runnable demos per scenario: `examples/nested-demo` (1), `examples/page-demo` (1/2), `examples/subagent-demo` (6), `examples/rag-demo` mode D (9), `examples/human-confirm-demo` (4), `examples/planner-demo` (planning), `examples/toolsets-demo` (tool separation), `examples/animation-demo` (animations + hide/show), `examples/multi-agent-demo` (multi-agent parallel + exclusive switch).
 
 ### Multi-agent parallel + exclusive switch
 

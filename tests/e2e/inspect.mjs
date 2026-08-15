@@ -307,6 +307,15 @@ export async function run() {
     try {
       const sdk = createChatSdk({ ui: false, id: 'e2e-mcp-inject', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS, mcp: [{ transport: 'http', url: mock.url }] })
       await sdk.mount()
+      // MCP 后台连接(mcp-e2e 优化):mount 不再等握手 → 轮询等工具迟到注入(setTools rebind)
+      const injected = await (async () => {
+        for (let i = 0; i < 50; i++) {
+          if (sdk.inspect().tools.some((x) => x.name === 'mock_weather')) return true
+          await new Promise((r) => setTimeout(r, 100))
+        }
+        return false
+      })()
+      assert(injected, 'P0-3 MCP 注入:后台握手完成(5s 内迟到注入;mount 后立查已非同步语义)')
       const tools = sdk.inspect().tools
       const t = tools.find((x) => x.name === 'mock_weather')
       assert(!!t, 'P0-3 MCP 注入:mock_weather 出现在 inspect().tools(遮蔽修复前永不出现)')

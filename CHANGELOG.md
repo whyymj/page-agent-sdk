@@ -2,7 +2,20 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
-## [Unreleased]
+## [3.14.0] - 2026-08-15
+
+### Added(真实 MCP e2e + rag/mcp demo 四模式合并)
+- **真实 MCP e2e(`tests/e2e/mcp.mjs`,10 项)**:spawn 真实 mock MCP server(StreamableHTTP,tsx 子进程)走完整网络链路 —— `connectMcp` 握手 → 工具迟到注入 → agent ReAct 真调 `get_weather` → 结果回灌;附挂死 server 超时降级 / release 先行竞态 / 全程 `unhandledRejection` 零断言。区别于纯 stub:SDK 的 MCP client 与 MCP SDK server 真跑网络
+- **rag-demo 与 mcp-demo 合并(四模式对照)**:`examples/rag-demo` 升级 A(memory 异步注入)/ B(createRagSubagent mock)/ C(子 agent + 真实 MCP,.env `VITE_RAG_MCP_URL`)/ D(MCP 直连,原 mcp-demo 并入;未配 env 连本地 mock `npm run mcp:mock`);删除 `examples/mcp-demo`;C vs D 对照演示「检索隔离在子 agent」vs「工具直进主上下文」
+
+### Fixed
+- **MCP 后台连接不阻塞 mount(真测驱动)**:原实现 `initDone` await `connectMcp`(握手默认 15s 超时)→ server 不可达时对话框 15s 不渲染。改为后台 `void` 异步握手 + `core.agent.setTools` rebind 迟到注入(下一轮 LLM 即可用;就绪前对话正常只是暂无 MCP 工具);竞态两路幂等;`mcpBackgroundReleased` 标记防 release 先行时回填已释放 core 的 mcpClosers(连接泄漏)
+- **子 agent `llm.provider:'anthropic'` 透传丢失**:`SubagentLlmConfig` 声明 anthropic 协议时子 agent 仍按 OpenAI 协议发请求(报 404/400)。修:`runSubagent` 检测 provider 预构造 `ChatAnthropic` 实例注入(经 `constructLlmFromConfig` 动态 import);openai 路径维持同步散字段向后兼容;`task.model` 覆盖同步透传
+
+### Tests
+- selftest 2092→**2098**(+6 子 agent anthropic 协议 fake-fetch 断言:/v1/messages 端点 + task.model 覆盖)/ e2e 655→**666**(+10 真实 MCP 链路 + inspect P0-3 改轮询适配后台注入)/ browser 63→**64**(+1 rag-demo D 模式 MCP 直连重建)
+
+## [3.13.0] - 2026-08-15
 
 ### Added(并行子 agent 第一批:prompt 并行化 + 失败隔离;openspec `parallel-subagent-delegation`)
 - **同轮并行委派引导**:`htmlOrchestratorPrompt` 编排段升级「逐个委派」→「多组件委派」—— 不同组件可在**同一轮并行**发多个 `use_<id>`(每次仍独立子 agent 实例;需 `maxParallelTools > 1`,默认 1 串行零变化);同组件单一在途禁令 + 一次 task 塞多组件禁令保留;主 agent 自己的 write 可与委派同轮混排

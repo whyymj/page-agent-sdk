@@ -28,6 +28,7 @@ import { createSummarizationMiddleware, type SummarizationOptions } from './summ
 import type { Focus, VfsFile } from './state'
 import type { ZodType } from 'zod'
 import { normalizeUsage } from '../utils/contentParts'
+import { constructLlmFromConfig } from '../llm/constructLlm'
 import type { ComponentLock, ResolveComponentsResult } from '../sdk/componentLock'
 
 /** 子 agent 转发到主 UI 的进度(tool_call/tool_result 工具级 + reasoning 思考过程增量;text 不转发:是生成内容,经 vfs/data 落地,不进进度) */
@@ -35,6 +36,8 @@ type SubProgress = Extract<StreamEvent, { type: 'tool_call' | 'tool_result' | 'r
 
 export interface SubagentLlmConfig {
   apiKey: string
+  /** provider 透传:缺省 'openai';'anthropic' 子 agent 同走 Claude 原生协议(动态 import 异步构造,见 runSubagent) */
+  provider?: 'openai' | 'anthropic'
   baseUrl?: string
   model?: string
   temperature?: number
@@ -371,6 +374,17 @@ async function runSubagent(
   const usageMw: Middleware | undefined = opts.onUsage
     ? { name: 'sub-usage', afterModel: (res) => { const u = normalizeUsage(res.message); if (u) opts.onUsage!(u) } }
     : undefined
+  // provider 透传(fix:主 llm 传 LLMConfig + provider:'anthropic' 时,散字段重建曾丢 provider →
+  // 子 agent 被按 OpenAI 协议构造,请求打到 {baseUrl}/chat/completions 404 秒败)。
+  // anthropic 走 constructLlmFromConfig 动态构造(runSubagent 是 async,可承载动态 import);
+  // openai 路径维持同步散字段构造(向后兼容)
+  let resolvedSubLlm: BaseChatModel | undefined
+  if (!isChatModel(opts.llm) && opts.llm.provider === 'anthropic') {
+    resolvedSubLlm = await constructLlmFromConfig(
+      { ...opts.llm, model: task.model ?? opts.llm.model },
+      { temperature: opts.temperature ?? opts.llm.temperature, maxTokens: opts.maxTokens ?? opts.llm.maxTokens },
+    )
+  }
   const child = createAgent({
     // 模型能力透传(显式声明优先,驱动子 agent offload 阈值/压缩触发,修原 16K 误算 silent bug)
     contextWindow: subCaps.contextWindow,
@@ -379,15 +393,17 @@ async function runSubagent(
     // extraConfig/extraBody 一并透传(真 LLM 抓包实测:散字段重构造曾丢它们 → 集成方的 headers/fetch/thinking 配置在子 agent 失效)
     ...(isChatModel(opts.llm)
       ? { llm: opts.llm }
-      : {
-          apiKey: opts.llm.apiKey,
-          baseUrl: opts.llm.baseUrl,
-          model: task.model ?? opts.llm.model,
-          temperature: opts.temperature ?? opts.llm.temperature,
-          maxTokens: opts.maxTokens ?? opts.llm.maxTokens,
-          ...(opts.llm.extraConfig ? { extraConfig: opts.llm.extraConfig } : {}),
-          ...(opts.llm.extraBody ? { extraBody: opts.llm.extraBody } : {}),
-        }),
+      : resolvedSubLlm
+        ? { llm: resolvedSubLlm }
+        : {
+            apiKey: opts.llm.apiKey,
+            baseUrl: opts.llm.baseUrl,
+            model: task.model ?? opts.llm.model,
+            temperature: opts.temperature ?? opts.llm.temperature,
+            maxTokens: opts.maxTokens ?? opts.llm.maxTokens,
+            ...(opts.llm.extraConfig ? { extraConfig: opts.llm.extraConfig } : {}),
+            ...(opts.llm.extraBody ? { extraBody: opts.llm.extraBody } : {}),
+          }),
     // 身份优先级:运行时 role(spawn 参数)> 配置默认 systemPrompt > 兜底
     systemPrompt:
       task.role?.trim() ||

@@ -1021,8 +1021,11 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 宿主动作(actions):集成方注册的页面操作 → 自动包成命名 tool;异常隔离(run 抛错回灌 LLM 不崩)
   const actionTools: StructuredToolInterface[] = actionsToTools(options.actions ?? {})
   actionTools.forEach((t) => toolSources.set(t.name, 'action'))
-  // mcpTools 可变:mount 时收集,setTools 重建 extraTools 时纳入
+  // mcpTools 可变:后台握手完成后收集,setTools 重建 extraTools 时纳入
   const mcpTools: StructuredToolInterface[] = []
+  // MCP 后台连接释放标记:release 先行(握手完成前 unmount)→ 后台握手完成后直接关连接,
+  // 不回填已释放 core 的 mcpClosers(防连接泄漏:mcp-e2e 真测发现的后台化伴生竞态)
+  let mcpBackgroundReleased = false
   // 人工确认(主动侧):默认开启(不猜测,不确定/多方案/高风险时主动征询);顶层 humanConfirm:false 或 approval.humanConfirmTool:false 关闭
   const useHumanConfirm =
     options.humanConfirm !== false && (options.approval ? options.approval.humanConfirmTool !== false : true)
@@ -1846,6 +1849,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       core.refCount--
       if (core.refCount <= 0) {
         abortAllActive() // P1-11:dispose 前先断全部在途流(防流在途关 store/MCP 资源;原 H11「release 关资源时流在途」)
+        mcpBackgroundReleased = true // MCP 后台握手若仍在途:完成后直接关连接,不回填已释放 core(mcp-e2e 真测)
         if (store) {
           vfsStore.flush?.()
           void store.flush()
@@ -2260,27 +2264,44 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     await resolveAndLoad()
     // Skill 独立加载(与 storage 选项分离;即使 storage:false 也从 SkillStore 恢复)
     await loadUserSkills()
-    // MCP:连所有 server(故障隔离),工具注入 allTools(createAgent 前 —— 构造后 bindTools 固化)
+    // MCP:连所有 server(故障隔离),工具注入 allTools。
+    // mcp-e2e 真测优化:握手(默认 15s 超时)曾 await 在 initDone → mount 被阻塞,server 不可达时
+    // 对话框 15s 不渲染(切模式白屏感)。改为后台连接:agent 先建/对话框先渲染,握手完成后 push 工具 +
+    // setTools rebind 迟到注入(下一轮 LLM 即可用;就绪前对话正常,只是暂无 MCP 工具)。
+    // 竞态安全:若握手在下方 createAgent 前完成(constructLlmFromConfig 的 await 间隙),allTools 重建后
+    // 直接随 tools: allTools 进 agent;若在之后走 setTools 注入 —— 两路幂等不重复。
     if (options.mcp?.length) {
-      const results = await Promise.allSettled(options.mcp.map((c) => connectMcp(c)))
-      core.mcpClosers = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value.close] : []))
-      core.mcpServers = []
-      // 复用外层 mcpTools 数组(buildCore 作用域声明):旧实现在此用 const 声明同名局部变量遮蔽外层,
-      // 致 push 进局部数组、rebuildExtraTools 读外层空数组 → MCP 工具从未注入 agent(主流程审查 P0-3)
-      results.forEach((r, i) => {
-        const cfg = options.mcp![i]
-        const label = cfg.name ?? cfg.url
-        if (r.status === 'fulfilled') {
-          core.mcpServers.push({ name: label, url: cfg.url, toolCount: r.value.tools.length })
-          r.value.tools.forEach((t) => toolSources.set(t.name, `mcp:${label}`))
-          mcpTools.push(...r.value.tools)
-        } else {
-          console.warn(`[page-agent-sdk][mcp] server ${label} 连接失败:`, r.reason)
+      void (async () => {
+        const results = await Promise.allSettled(options.mcp!.map((c) => connectMcp(c)))
+        const closers = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value.close] : []))
+        // release 先行:core 已释放 → 不回填 mcpClosers(release 已 splice 过,回填=泄漏),直接关
+        if (mcpBackgroundReleased) {
+          void Promise.allSettled(closers.map((c) => c()))
+          return
         }
-      })
-      // 重建 allTools(纳入 mcpTools);此时 createAgent 尚未构造,allTools 直接作为 tools 传入
-      allTools = rebuildExtraTools()
-      if (options.debug) console.log(`[page-agent-sdk][mcp] 注入 ${mcpTools.length} 个工具,${core.mcpServers.length} 个 server`)
+        core.mcpClosers = closers
+        core.mcpServers = []
+        // 复用外层 mcpTools 数组(buildCore 作用域声明):旧实现在此用 const 声明同名局部变量遮蔽外层,
+        // 致 push 进局部数组、rebuildExtraTools 读外层空数组 → MCP 工具从未注入 agent(主流程审查 P0-3)
+        results.forEach((r, i) => {
+          const cfg = options.mcp![i]
+          const label = cfg.name ?? cfg.url
+          if (r.status === 'fulfilled') {
+            core.mcpServers.push({ name: label, url: cfg.url, toolCount: r.value.tools.length })
+            r.value.tools.forEach((t) => toolSources.set(t.name, `mcp:${label}`))
+            mcpTools.push(...r.value.tools)
+          } else {
+            console.warn(`[page-agent-sdk][mcp] server ${label} 连接失败:`, r.reason)
+          }
+        })
+        // 重建 allTools(纳入 mcpTools)+ 已建 agent 则 rebind 迟到注入(infoTick 刷新 inspect)
+        if (mcpTools.length) {
+          allTools = rebuildExtraTools()
+          if (core.agent) core.agent.setTools(allTools)
+          core.infoTick.value++
+        }
+        if (options.debug) console.log(`[page-agent-sdk][mcp] 注入 ${mcpTools.length} 个工具,${core.mcpServers.length} 个 server`)
+      })()
     }
     // 主 LLM:实例直传;LLMConfig 经 constructLlmFromConfig(provider 分支,Anthropic 动态 import)构造实例注入
     const mainLlm = isChatModel(options.llm) ? options.llm : await constructLlmFromConfig(options.llm as LLMConfig)

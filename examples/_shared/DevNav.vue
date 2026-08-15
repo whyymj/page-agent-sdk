@@ -27,8 +27,7 @@ const GROUPS: NavGroup[] = [
     links: [
       { href: '/examples/subagent-demo/', label: '子 Agent', match: (p: string) => p.startsWith('/examples/subagent-demo') },
       { href: '/examples/planner-demo/', label: '规划反思', match: (p: string) => p.startsWith('/examples/planner-demo') },
-      { href: '/examples/rag-demo/', label: 'RAG 文档', match: (p: string) => p.startsWith('/examples/rag-demo') },
-      { href: '/examples/mcp-demo/', label: 'MCP', match: (p: string) => p.startsWith('/examples/mcp-demo') },
+      { href: '/examples/rag-demo/', label: 'RAG / MCP', match: (p: string) => p.startsWith('/examples/rag-demo') },
       { href: '/examples/human-confirm-demo/', label: '人工确认', match: (p: string) => p.startsWith('/examples/human-confirm-demo') },
       { href: '/examples/toolsets-demo/', label: '工具分离', match: (p: string) => p.startsWith('/examples/toolsets-demo') },
       { href: '/examples/html-page-demo/', label: 'HTML 页面', match: (p: string) => p.startsWith('/examples/html-page-demo') },

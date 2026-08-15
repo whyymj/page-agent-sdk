@@ -2187,7 +2187,7 @@ await agent.send('加一个提交按钮')
 | 9 | MCP 集成 | `mcp:[{transport,url}]` 远程工具;`@modelcontextprotocol/sdk` 可选 peerDep |
 | 10 | 多 Agent 并行 + 互斥切换 | 多个 `createChatSdk`(不同 `id` 各管各 `data`)+ `dialog.drawer:true`;切换调 `hide()`/`show()`(保留各自历史/生成进程,不卸载) |
 
-各场景对应的可运行 demo:`examples/nested-demo`(1)、`examples/page-demo`(1/2)、`examples/subagent-demo`(6)、`examples/mcp-demo`(9)、`examples/human-confirm-demo`(4)、`examples/planner-demo`(规划)、`examples/toolsets-demo`(工具分离)、`examples/animation-demo`(动画 + hide/show)、`examples/multi-agent-demo`(多 Agent 并行 + 互斥切换)。
+各场景对应的可运行 demo:`examples/nested-demo`(1)、`examples/page-demo`(1/2)、`examples/subagent-demo`(6)、`examples/rag-demo` D 模式(9)、`examples/human-confirm-demo`(4)、`examples/planner-demo`(规划)、`examples/toolsets-demo`(工具分离)、`examples/animation-demo`(动画 + hide/show)、`examples/multi-agent-demo`(多 Agent 并行 + 互斥切换)。
 
 ### 多 Agent 并行 + 互斥切换
 
