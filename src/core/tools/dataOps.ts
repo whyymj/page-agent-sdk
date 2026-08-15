@@ -594,7 +594,8 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'edit_data',
       description:
-        '增量编辑主数据(对象/数组),只发改动的 patch,无需重传整个大对象。op:set(在 jsonPath 设值)、remove(删 jsonPath)、merge(把 value 合并到 jsonPath 指向的对象,默认根)、append(把 value 追加到 jsonPath 指向的数组,默认根)。jsonPath 为相对主数据根的点号路径(数组索引用数字,如 components.0.text);value 为 JSON 对象(推荐直传)或 JSON 字符串。整体仍经 schema 校验,失败不写入。expectedHash(可选):改前 read/get 返回的 hash;不传时自动用你最后读到的 hash(autoLock,默认开)防"基于过期值覆盖"。',
+        '增量编辑主数据(advanced;simple 用 write 等价)。op:set 设值/remove 删/merge 合并对象/append 追加数组/move 移动数组元素;jsonPath 相对根(数组索引用数字);value 直传对象或 JSON 字符串。经 schema 校验失败不写。expectedHash 可选乐观锁。大对象优先增量改,勿整体重传。',
+
       schema: z.object({
         op: z.enum(['set', 'remove', 'merge', 'append', 'move']).optional().describe('增量操作(顶层或 patch.op 至少一个):set 设值/remove 删/merge 合并/append 追加/move 移动数组元素(value=目标路径字符串,数组本身=追加/数组内下标=插入;同数组即重排,目标下标按移除源后解释)'),
         jsonPath: z.string().optional().describe('相对主数据根的点号路径(如 components.0.text);顶层或 patch.jsonPath。set/remove 必填,merge/append 不填则作用于根'),
@@ -728,7 +729,8 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'query_data',
       description:
-        '用 JSONPath 表达式对主数据做结构化查询(只读,无副作用)。语法子集:$ 根、.key、[n]、["key"]、[*] 通配、[?(filter)] 过滤、..key 递归找后代、..* 全后代。过滤表达式:@.field op literal(op:==/!=/</<=/>/>=),&&/||/() 连接;@ 指当前元素。注意过滤作用于"当前节点的子元素数组",若主数据是对象需先点出数组字段再过滤,如 $.components[?(@.type=="card" && @.price<100)]。返回匹配元素的 path(相对主数据根,数组索引可作后续 edit_data 的 jsonPath)+ index(若父为数组)+ value。适合在大数组里按条件筛选元素,定位后再用 edit_data 增量改。',
+        '用 JSONPath 查询主数据(只读)。语法:$ 根/.key/[n]/[*]/[?(filter)](==/!=/</<=/>/>=,&&/||)/..key 递归;对象需先点出数组再过滤,如 $.components[?(@.type=="card")]。返回匹配元素 path/index/value(path 可作后续 write patch 的 jsonPath)。大数组筛选定位用它,改用 write patch。',
+
       schema: z.object({
         expr: z.string().describe('JSONPath 表达式,如 $.components[?(@.type=="card" && @.price<100)] 或 $..title(递归找所有 title)'),
         limit: z.number().int().min(1).max(200).optional().describe('返回结果上限,默认 50'),
@@ -1043,7 +1045,8 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'write',
       description:
-        '写入主数据(高层入口,合并 set/edit/delete + 自动乐观锁 + 自动快照)。四种意图:① 整体替换 write({ value }) value 为整个 JSON 对象(推荐)或字符串;② 单个增量 patch write({ patch:{op,jsonPath,value} }) op=set/remove/merge/append,jsonPath 相对主数据根(如 components.0.props.title),patch.value 是该 patch 的值(自带,与 patches 一致——string/number 直传该字段新值,勿包成 {字段:值} 对象);也兼容 write({ value, patch:{op,jsonPath} }) 顶层 value 形式(向后兼容,但优先用 patch.value 避免与①整体 set 的 value 语义混淆);③ 批量增量 write({ patches:[{op,jsonPath,value},...] }) 一次原子应用多个 patch(任一失败整体不写入,适合一次改多处);④ 删除 write({ patch:{jsonPath}, del:true })。写入自动经 schema 校验(失败不写)+ 自动存快照(可 restore_data 回退)+ 自动乐观锁(autoLock,用你最后 read 到的 hash 比对,冲突则 VERSION_CONFLICT)。集成方可能经 write 拦截器校验/转换/拒绝(批量模式拦截器收到 {patches},返回新 patches 数组或 {error})。dryRun(可选):预检模式,走完整校验链(schema + 白名单 + patch 应用到 clone)但不落盘/入快照,返回预览(四意图均支持,复杂改动先看会改成啥、能否过 schema)。',
+        '写入主数据(高层入口,合并 set/edit/delete + 自动乐观锁 + 自动快照)。四意图:① 整体替换 write({value:整个对象});② 增量 write({patch:{op,jsonPath,value}}) op=set/remove/merge/append/move(move 的 value=目标路径字符串);③ 批量原子 write({patches:[...]})(任一失败整批回滚);④ 删子路径 write({patch:{jsonPath},del:true})。dryRun:true 预检不落盘。写入自动 schema 校验(失败不写,按错误修正重试)+ 自动快照。详细用法见系统提示「能力使用提示」。',
+
       schema: z.object({
         value: z.unknown().optional().describe('JSON 对象(推荐,如 {title:"x"})或 JSON 字符串;set 整体或单个 patch 的 set/merge/append 必填'),
         patch: z.object({

@@ -649,6 +649,14 @@ sdk.vfsWrite('docs/components/hero.md', 'Hero 组件用于首屏主视觉...')
   - **输出格式校验**(`formatCheck`,默认开):① `validate_code` 自检工具(子 agent 生成/修改后自主调用;标签配对闭合等结构合法性,带行号报错)② verify beforeReturn 门禁(返回前确定性扫 vfs 工作副本,不通过回灌 feedback 自纠,`maxVerifyAttempts:2` 兜底防循环)。校验器为纯函数 `validateHtmlFormat`(已导出,集成方渲染层可复用做纵深防御);`formatCheck:false` 关闭整条校验链
   - **主 scope read 摘要**:主 agent read data 时,标记字段(`code`)摘要为 `<code Nkb>`(防代码正文灌主上下文);子 agent read 完整(改 code 需全文);集成方业务长文本不受影响
   - **`codeField` 可配置(开放 schema 适配)**:code 字段位置默认 `'code'`(组件顶层),开放 schema 平台可配嵌套 jsonPath(如 `'props.html_code'`);「是否代码组件」= 该路径有 string(非代码组件自然跳过);装配期命中校验(组件数>0 且全员未命中 → console.warn,防填错路径静默失败)。例:`createHtmlSubagent({ writablePaths:['components'], codeField:'props.html_code' })`
+  - **UI 规范 skill 双挂模式(真 LLM 实测验证)**:规范类 skill 同时挂主 agent 与 html 子 agent —— 主 agent 知规范才能在委派 task 里给准确视觉锚(hex 取自规范而非凭页面观察自造近似色);子 agent 照规范生成。只挂子会导致主 agent 锚与规范冲突:
+    ```ts
+    const uiSpec = defineSkill({ name: 'ark-ui-spec', description: '平台 UI 规范:色板/间距/形态约束', getContent: () => SPEC })
+    createChatSdk({
+      skills: [uiSpec, ...],                                  // 主:决策/委派锚引用规范值
+      subagents: [createHtmlSubagent({ skills: [uiSpec, htmlFragmentSkill] })],  // 子:生成遵循(传 skills 覆盖默认,须并回 htmlFragmentSkill)
+    })
+    ```
   - **`writablePaths` 装配期自动推断(3.6+,可省略)**:未传时 createChatSdk 装配期从 `data.schema` 顶层扫描「数组元素含 `codeField` string 字段」的路径自动回填(`inferWritablePaths`,console.info 留痕;显式传入优先跳过推断)。不支持推断的形态 → warn + throw 提示显式传参:开放 schema(`z.any()`/`z.record`)、嵌套容器(如 `sections[].children[]`)、点路径 codeField(`props.html_code` 嵌套结构)—— 宁失败不猜错路径(错误路径 = 框架扫描区整体落空)
   - **主 agent 编排自适应注入(零配置)**:装配期自动检测 —— 有 html 子 agent → 主 agent systemPrompt 自动追加委派编排 `htmlOrchestratorPrompt(id)`(custom code 不 read 不 write 全权 `use_<id>` / 逐个委派防污染 / task 规格化 4 要素 + ⑤历史偏好转述);无显式 html 子 agent + schema 含 code 数组 → **3.9+ 自动装配默认 `createHtmlSubagent()`**(info 留痕,无开关;显式 `createHtmlSubagent(...)` 优先不重复;推断不出的形态(顶层 code 字段/开放 schema)不装 → `htmlDirectWriteFallback` 主 agent 自己 write code 的降级 + warn);开放 schema(`z.any()`)扫不到时集成方 opt-in spread。**勿手动 spread `htmlPageOrchestrator`**(自动注入已覆盖,双重注入浪费 token);opt-out `orchestratorPrompt:false`
   - **组件工匠笔记 `craftNotes`(默认开)**:子 agent 收口回复末尾附 `[note] <一句话实现要点>` 行(htmlSystemPrompt 约定),框架 afterAgent 提取沉淀为组件 `__pgNotes`(FIFO ≤5 条 × 200 字,随 data json 进服务端 DB 跨会话持久);下次委派同组件时经「组件代码文件地图」注入最近 1 条(`📝 笔记×N`)—— 同组件跨委派**设计意图持续**("前任的交接":设计决策/用户偏好/踩坑),状态在数据里不在子 agent 实例里(与 code-as-data-asset 哲学同构)。`__pgNotes` 走 `__pg*` sidecar 机制(agent read 投影隐藏、写不进,框架独占);`craftNotes:false` 关闭(零沉淀零注入)

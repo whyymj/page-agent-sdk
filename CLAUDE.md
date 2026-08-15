@@ -146,6 +146,9 @@ npm run test:browser  # 54 项;也可 /browser-test 斜杠命令
 #### 3. 浏览器手动验证(改 UI/示例后跑)
 `npm run dev` 逐个 demo 验证(见目录结构 examples 清单;各 demo 侧重点见 `doc/usage-guide.md`)。
 
+#### 3.5 真 LLM 场景回归(本地脚本 `_real-llm-uispec.mjs`,gitignore)
+complex-demo(flash)10 场景:委派/规范/精修/调序/删除/恢复/开放指令。要点:idle 判定 = debugLogs 静默 90s + `getActiveSubagents()===0`(reasoning 不打日志,只看日志会误判);超时 dump 诊断(轮次/最近工具);`window.__sdk.messages` 每元素结构勿信字段名(用 at(-1) 校验)。3.10 系列修复全部由该脚本驱动发现。
+
 #### 4. 运行时手动验证(依赖 LLM/server)
 子 agent 委派 / MCP / verify 自纠 / 真实 LLM 流式 / draft 真 LLM(`npm run test:draft-real`,无 key 自动 skip)。
 

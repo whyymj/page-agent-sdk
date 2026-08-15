@@ -15,6 +15,10 @@
 - **examples 优化**:① rag-demo 与 rag-subagent-demo 合并为单 demo 双模式(A memory 异步注入 / B createRagSubagent 检索子 agent,顶部切换重建 agent;共享 mock 知识库不再重复内联);② complex-demo / html-page-demo 的 `createHtmlSubagent()` 去掉显式 `writablePaths`(演示 3.6+ 装配期推断最小形态);③ minimal-demo 头部补 `presets.pageBuilder` 一行式指引
 ### Added
 - **patch op `move`(移动/重排数组元素一步完成)**:`{op:'move', jsonPath:'components.2', value:'components.0'}` —— 同数组即重排(替代双 set 交换,索引易错),跨数组即移动(替代 append+remove 两步非原子);目标可为数组本身(追加;不存在且父级为对象时自动建数组)或数组内下标(插入,越界 clamp);目标下标按移除源后解释;仅支持数组元素;目标路径同样过 schema 白名单;进 patches 原子批。新导出 `moveByPath` 纯函数
+### Changed(上下文经济性第一阶段,真 LLM 量化驱动)
+- **usageHints 受保护资源教程段去重**(与 resourcesPin 每轮功能段重复注入,实测双份)
+- **编排提示段合并**(执行纪律/职责边界/修改类三段重叠 → 两段;视觉锚引用规范)
+- **write/query_data/edit_data 工具描述压缩**(-40%,教程细节归 usageHints;实测 S4 场景 prompt tokens -19%)
 ### Fixed(真 LLM 实测,续)
 - **DSML 单竖线变体解析**:flash 泄漏形态 `<｜DSML｜invoke>`(单竖线)+ 对称闭合 `<｜DSML｜/parameter>`(原正则只认双竖线 + XML 闭合)→ detect 命中但 parse null → 重试耗尽 → **DSML 文本当结论返回主 agent,子 agent 工具白做**。修:守卫判定后剥离单竖线标记归一纯 XML 形态 + 闭合正则宽化(两种闭合形态都支持);截断保护不回归
 - **编排视觉锚引用规范**:task 规格化的视觉锚 hex **取自平台 UI/设计规范 skill 的定义值**(有规范类 skill 先 load 再引用,勿凭页面观察自造近似色)—— 实测主 agent 自造 #667eea 与规范 #7063E7 冲突

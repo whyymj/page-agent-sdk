@@ -30,14 +30,9 @@ export async function run(ctx: TestCtx) {
   // 空资源清单 → undefined(不注入)
   assert(pinPrompt([]) === undefined || pinPrompt([]) === '', '✓ resourcesPin → 空清单不注入段')
 
-  // ===== usageHints 第 4 参 hasResources 门控资源段 =====
+  // ===== usageHints 资源教程段已移除(与 resourcesPin 每轮功能段重复,实测双份注入浪费)=====
   const uh1 = hintPrompt(true)
-  assert(/受保护资源·精确值保护/.test(uh1), '✓ usageHints hasResources=true → 注入资源段')
-  assert(/⟦frozen:path⟧/.test(uh1) && /⟦res:handle⟧/.test(uh1), '✓ usageHints → 含占位符语义')
-  assert(/resource_get/.test(uh1), '✓ usageHints → 含 resource_get 引导')
-  assert(/RESOURCE_EVICTED/.test(uh1), '✓ usageHints → 含淘汰检测引导')
-  const uh2 = hintPrompt(false)
-  assert(!/受保护资源·精确值保护/.test(uh2), '✓ usageHints hasResources=false → 不注入资源段')
+  assert(!/受保护资源·精确值保护/.test(uh1), '✓ usageHints 不再注入资源教程段(去重:resourcesPin 每轮已注入功能段,含占位符/resource_get/错误码全量引导)')
   // 默认(未传 hasResources)→ false
   const mwDef = createUsageHintsMiddleware({}, true, 'advanced')
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
