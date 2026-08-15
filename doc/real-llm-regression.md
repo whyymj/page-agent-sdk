@@ -52,3 +52,18 @@
 
 - 断言失败 ≠ 全废:先看 `errors` 与工具序列区分「模型能力问题」(prompt 措辞可救)vs「SDK 链路问题」(工具不可见/路径守卫误拒/DSML 解析漏)
 - 「读探测被拒后自纠成功」(如 read 越界 → PATH_DENIED → 改对路径)是**健康行为**,不算失败;「写越界被拒」才是红线
+
+## 并行委派复验(3.13 P3d,第二批组件锁的前置证据)
+
+脚本 `tests/runtime/parallel-delegation-real.mjs`(complex-demo + flash,`maxParallelTools:3`),输出 `_real-llm-parallel.json`。场景:一条消息 = 两个纯代码组件 + 主标题改写。判定 7 项(R1 委派≥2 / R2 同轮≥2 个 use_html / R3 子 agent 真并发 / R4 落地 / R5 write 与委派同轮混排 / R6 标题 / R7 零致命)。
+
+**结果:7/7 全绿(2026-08-15)**。关键证据:
+
+- **同轮混排**(debugLogs tool_result 按 round 分组):Round 4 = `write + read + use_html + read + use_html` —— 主 agent 一轮内同时发出标题 write 与两个委派,与编排引导逐字吻合(模型回复原话「现在同时执行：改标题 + 委派两个代码组件生成」)
+- **真并发**:`maxActiveSubagents=2`(采样期间两个子 agent 同时在途;子 agent 时长 407s vs 53s,长短悬殊仍重叠)
+- **前提修复**:complex-demo 旧 systemPrompt 写着「勿一次委派多个」与新并行引导直接矛盾(模型会听 business prompt 覆盖编排段)——已改为「可同轮并行、同组件单一在途」并补配 `maxParallelTools:3`。教训:**改内置引导时须 grep 各 demo 的自定义 systemPrompt 是否残留旧禁令**
+
+方法补充:
+
+- **同轮判定**用 debugLogs `tool_result` 的 `data.round` 分组数 `use_html`,不用事件时间戳(同轮多个 tool_call 的调用时刻几乎同时,时间戳聚簇不可靠;round 字段是权威分组)
+- **并发判定**优先 `getActiveSubagents()` 采样最大值;sub 事件按 label 区间的算法在多委派同 id(都叫 `html`)时失效(label 同名合并),勿依赖

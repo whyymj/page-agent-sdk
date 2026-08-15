@@ -120,8 +120,11 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert(
     systemPromptHelpers.htmlPageOrchestrator.includes('use_html') &&
       systemPromptHelpers.htmlPageOrchestrator.includes('职责边界') &&
-      systemPromptHelpers.htmlPageOrchestrator.includes('逐个委派'),
-    '✓ htmlPageOrchestrator → 非空且含关键编排规则(职责边界 / use_html / 逐个委派)',
+      systemPromptHelpers.htmlPageOrchestrator.includes('多组件委派') &&
+      // 并行委派引导(parallel-subagent-delegation 第一批):不同组件可同轮并行 / 同组件单一在途
+      systemPromptHelpers.htmlPageOrchestrator.includes('并行发多个 use_html') &&
+      systemPromptHelpers.htmlPageOrchestrator.includes('同一组件同一时间只能有一个委派在途'),
+    '✓ htmlPageOrchestrator → 非空且含关键编排规则(职责边界 / use_html / 多组件委派 + 并行引导)',
   )
   assert(
     systemPromptHelpers.htmlPageProposeFirst.includes('2~3 套') &&

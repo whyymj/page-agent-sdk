@@ -22,6 +22,9 @@ const TOUCHED = '__pgTouched'
 /** state 上挂载的「本轮子 agent 最终回复文本」holder(对象引用,wrapModelCall mutate / afterAgent 读;并发子 agent 实例天然隔离) */
 const FINAL = '__pgFinalText'
 
+/** state 上挂载的「checkout 时组件级 code hash」holder(parallel-subagent-delegation Q3c:人工并发冲突检测,keep_external) */
+const CODE_HASHES = '__pgCodeHashes'
+
 /** 工匠笔记 sidecar 字段名(read 投影隐藏 __pg* 现成;框架直改 bind,不进 schema) */
 const NOTES = '__pgNotes'
 /** 每组件笔记上限(FIFO 保最近 N 条)与单条长度上限 */
@@ -48,6 +51,25 @@ function appendNotes(item: Record<string, unknown>, notes: string[]): void {
     .map((n) => (n.length > NOTE_MAX_CHARS ? n.slice(0, NOTE_MAX_CHARS) + '…' : n))
     .slice(-NOTES_MAX)
   item[NOTES] = merged
+}
+
+/**
+ * 字符串 hash(djb2 → 32bit hex;Q3c 人工并发 commit 冲突检测用)。
+ * 只需检测「变化」无需密码学强度;纯函数导出供单测。
+ */
+export function hashString(s: string): string {
+  let h = 5381
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0
+  return (h >>> 0).toString(16)
+}
+
+/** 扫 bind 的 writablePaths,收集全部代码组件 name(非空;Q2d 组件锁 knownNames 来源,与文件地图同源) */
+export function collectComponentNames(bind: unknown, writablePaths: string[]): string[] {
+  const out: string[] = []
+  forEachCodeItem(bind, writablePaths, (o) => {
+    if (typeof o.name === 'string' && o.name) out.push(o.name)
+  })
+  return out
 }
 
 export interface CodeAssetMiddlewareOptions {
@@ -153,11 +175,16 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
       const ctrl = getController()
       const bind = ctrl?.get?.().bind
       let codeTotal = 0, codeHit = 0
+      // Q3c:checkout 时记组件级 code hash(Map<__pgId, hash>,对象引用 holder 经 state 浅合并保留);
+      // commit 前比对 —— 不一致 = 人工/宿主在委派窗口内直改了 bind(锁防不了人工,零桥接合法路径),
+      // 人工优先(keep_external,对齐乐观锁哲学):跳过该组件 commit + observable 留痕,不覆盖人工值
+      const codeHashes: Map<string, string> = new Map()
       forEachCodeItem(bind, writablePaths, (o) => {
         codeTotal++
         const code = getByPath(o, codeField)
         if (typeof code === 'string') {
           codeHit++
+          codeHashes.set(o.__pgId as string, hashString(code))
           const vfsPath = `${codeVfsPrefix}${o.__pgId}.${ext}`
           vfsStore.files[vfsPath] = { content: code, updatedAt: Date.now() }
         }
@@ -175,7 +202,7 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
       //    + __pgFinalText holder(wrapModelCall 捕获子 agent 最终回复,工匠笔记提取源;对象引用 mutate,并发实例隔离)
       // ③ 注入 vfsStore.files 引用到 state.files(verify 门禁扫 state.files 见 code 工作副本;与 vfs-bridge 同引用,覆盖无副作用)
       //    __pgTouched/__pgFinalText 是框架内部 state 扩展(类 __pgId);TS 上以 Partial<typeof state> 表达,运行时浅合并保留引用
-      return { files: vfsStore.files, [TOUCHED]: new Set<string>(), [FINAL]: { text: '' } } as unknown as Partial<typeof state>
+      return { files: vfsStore.files, [TOUCHED]: new Set<string>(), [FINAL]: { text: '' }, [CODE_HASHES]: codeHashes } as unknown as Partial<typeof state>
     },
     // 捕获子 agent 收口回复(无 tool_calls 的模型响应 = 最终文本;wrap-up 收口轮同经洋葱):工匠笔记提取源。
     // 不用 beforeReturn(maxVerifyAttempts>0 才跑,formatCheck:false 不覆盖)/afterAgent state.messages(createAgent 消息流
@@ -265,15 +292,30 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
       if (!bind) return
       const touched = ((state as unknown as Record<string, unknown>)[TOUCHED] as Set<string> | undefined) ?? new Set<string>()
       if (touched.size) {
+        // Q3c:checkout 时记录的组件级 code hash(commit 前比对人工并发;holder 引用经 state 浅合并保留)
+        const codeHashes = ((state as unknown as Record<string, unknown>)[CODE_HASHES] as Map<string, string> | undefined) ?? new Map<string, string>()
         // ① 增量 commit:touched vfs 文件 → data.code(按 __pgId,直改 bind;不经 write → 不进快照栈、不经 schema 校验)
+        // 失败隔离(per-component 容错):单组件 commit 抛错只跳过该组件(留痕),循环继续 —— 并行多子 agent 各自 commit 互不传染
         const dataPgIds = new Set<string>()  // data 现有 __pgId(孤儿清理判定用)
         forEachCodeItem(bind, writablePaths, (o) => {
           const pgId = o.__pgId as string
           dataPgIds.add(pgId)
           const vfsPath = `${codeVfsPrefix}${pgId}.${ext}`
-          if (touched.has(vfsPath)) {
+          if (!touched.has(vfsPath)) return
+          try {
             const f = vfsStore.files[vfsPath]
             if (f && typeof f.content === 'string') {
+              // Q3c 人工并发冲突检测(keep_external):当前 bind code hash ≠ checkout 记录 → 委派窗口内人工/宿主直改了
+              // 该组件 code(锁防不了人工,零桥接合法路径)→ 人工优先,跳过 commit 保留人工值 + observable 留痕。
+              // HTML 文本不做三路合并(不可靠);无记录(如组件 code 为 checkout 后新增)不比对照常 commit
+              const rec = codeHashes.get(pgId)
+              if (rec !== undefined) {
+                const cur = getByPath(o, codeField)
+                if (typeof cur !== 'string' || hashString(cur) !== rec) {
+                  console.warn(`[page-agent-sdk][code-asset] 组件 ${o.name ?? pgId}(${vfsPath})在修改期间被外部更新,已保留外部版本(keep_external),本次子 agent 修改未提交`)
+                  return  // 跳过该组件 commit;dataPgIds 已加(孤儿清理仍认此组件在 data 中)
+                }
+              }
               // F2: commit 前校验结构合法性 —— 防 abort/timeout 路径 commit 未跑 verify beforeReturn 的半成品(未闭合标签等)。
               // 正常路径 verify 门禁已用同校验器验过,此处必过(零误伤);仅兜底拦 abort/timeout 半成品,data.code 保持旧值。
               const issues = validateHtmlFormat(f.content)
@@ -284,12 +326,16 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
               setByPath(o, codeField, f.content)  // 直改 bind(Vue 响应式触发 UI;不进快照栈;按 codeField 写回嵌套字段)
             }
             // vfs_rm 删了文件:f 为空 → 不改 data.code(组件项还在;子 agent 意图删整个组件应 write del components.N,触发孤儿清理)
+          } catch (e) {
+            // per-component 容错:单组件 commit 异常(读 vfs/setByPath 等)不中断后续组件 commit
+            console.warn(`[page-agent-sdk][code-asset] 组件 commit 失败已跳过(其余组件不受影响):${vfsPath} - ${String((e as Error)?.message ?? e)}`)
           }
         })
         // ② 孤儿清理:vfs 工作副本里 __pgId 不在 data 的 → 删 vfs 文件(子 agent write del 删组件后,data 项没了,vfs 文件残留)
         for (const p of touched) {
           const pgId = pgIdFromVfsPath(p, codeVfsPrefix)
           if (pgId && !dataPgIds.has(pgId)) {
+            console.warn(`[page-agent-sdk][code-asset] 组件 ${pgId}(${p})已被外部删除,放弃 commit 并清理 vfs 工作副本(不复活组件)`)
             delete vfsStore.files[p]
           }
         }

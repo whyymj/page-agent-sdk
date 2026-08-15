@@ -432,4 +432,65 @@ test.describe('complex-demo: 组件操作(调换顺序 / 改层级 / 聚焦纯�
     const code = await page.evaluate(() => window.page.components.find((c) => c.name === 'beer')?.code ?? '')
     expect(code, '焦点 custom.code 经子 vfs_write + commit 更新').toContain('干杯青岛')
   })
+
+  // ===== 同轮并行委派 + 组件锁(parallel-subagent-delegation 3.13 第二批 Q5c)=====
+  // complex-demo 配置 maxParallelTools: 3 → 同轮多个 use_html 真并发(SSE 走 Playwright route)
+
+  test('并行委派:同轮双 use_html 不同组件 → 两把锁独立,两组件 code 均更新', async ({ page }) => {
+    // 前置:evaluate 造两个 custom(带 __pgId 供 codeAsset checkout/commit)
+    await page.evaluate(() => {
+      window.page.components.push(
+        { type: 'custom', name: 'beer', code: '<section class="beer"><h1>old</h1></section>', __pgId: 'c_par_beer' },
+        { type: 'custom', name: 'mug', code: '<section class="mug"><h1>old</h1></section>', __pgId: 'c_par_mug' },
+      )
+    })
+    // 主同轮双委派(显式 components 声明,锁按组件名互斥);子各自 vfs_write 工作副本 → commit 回写
+    // 响应按文件区分,两个子 agent 谁先消费哪条都正确(commit 按 __pgId 映射回组件)
+    const { calls } = await mockLlm(page, [
+      { tool_calls: [
+        { name: 'use_html', arguments: { task: '把 beer 标题改成「干杯青岛」', components: ['beer'] } },
+        { name: 'use_html', arguments: { task: '把 mug 主色改成橙色', components: ['mug'] } },
+      ] },
+      { tool_calls: [{ name: 'vfs_write', arguments: { path: 'html/c_par_beer.html', content: '<section class="beer"><h1>干杯青岛</h1></section>' } }] },
+      { tool_calls: [{ name: 'vfs_write', arguments: { path: 'html/c_par_mug.html', content: '<section class="mug" style="color:orange"><h1>橙色酒杯</h1></section>' } }] },
+      { text: 'beer 已改' },
+      { text: 'mug 已改' },
+      { text: '两个组件都已完成' },
+    ])
+    await fillInput(page, 'beer 和 mug 都改一下')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    const codes = await page.evaluate(() => Object.fromEntries(
+      window.page.components.filter((c: any) => c.name === 'beer' || c.name === 'mug').map((c: any) => [c.name, c.code ?? '']),
+    ))
+    expect(codes.beer, 'beer 组件 code 更新(锁 beer 不阻塞 mug)').toContain('干杯青岛')
+    expect(codes.mug, 'mug 组件 code 更新(锁 mug 不阻塞 beer)').toContain('橙色酒杯')
+    expect(calls(), '6 次 LLM 调用(主1 + 子×2各2 + 主收口1)').toBe(6)
+  })
+
+  test('组件锁互斥:同轮双 use_html 同组件 → 第二个 COMPONENT_BUSY,下轮重委派成功', async ({ page }) => {
+    await page.evaluate(() => {
+      window.page.components.push({ type: 'custom', name: 'beer', code: '<section class="beer"><h1>old</h1></section>', __pgId: 'c_busy_beer' })
+    })
+    // 先者持锁跑完;后者立即回灌 COMPONENT_BUSY(零 LLM 调用)→ 主下轮重委派(锁已释放)成功
+    const { calls } = await mockLlm(page, [
+      { tool_calls: [
+        { name: 'use_html', arguments: { task: '把 beer 标题改成「干杯青岛」', components: ['beer'] } },
+        { name: 'use_html', arguments: { task: '把 beer 副标题改成「畅饮」', components: ['beer'] } },
+      ] },
+      { tool_calls: [{ name: 'vfs_write', arguments: { path: 'html/c_busy_beer.html', content: '<section class="beer"><h1>干杯青岛</h1></section>' } }] },
+      { text: '第一处已改' },
+      { tool_calls: [{ name: 'use_html', arguments: { task: '重试:把 beer 副标题改成「畅饮」', components: ['beer'] } }] },
+      { tool_calls: [{ name: 'vfs_write', arguments: { path: 'html/c_busy_beer.html', content: '<section class="beer"><h1>干杯青岛</h1><p>畅饮</p></section>' } }] },
+      { text: '第二处已改' },
+      { text: 'beer 两处修改完成' },
+    ])
+    await fillInput(page, 'beer 标题和副标题都改')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    // 重委派版本落地(含两处修改);busy 委派零 LLM 调用 → 总 7 次(主1+子A2+主重委派1+子B2+主收口1)
+    const code = await page.evaluate(() => window.page.components.find((c: any) => c.name === 'beer')?.code ?? '')
+    expect(code, 'busy 后下轮重委派成功(重试版本落地)').toContain('畅饮')
+    expect(calls(), 'busy 委派零 LLM 调用(总 7 次)').toBe(7)
+  })
 })

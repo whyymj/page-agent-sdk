@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+### Added(并行子 agent 第一批:prompt 并行化 + 失败隔离;openspec `parallel-subagent-delegation`)
+- **同轮并行委派引导**:`htmlOrchestratorPrompt` 编排段升级「逐个委派」→「多组件委派」—— 不同组件可在**同一轮并行**发多个 `use_<id>`(每次仍独立子 agent 实例;需 `maxParallelTools > 1`,默认 1 串行零变化);同组件单一在途禁令 + 一次 task 塞多组件禁令保留;主 agent 自己的 write 可与委派同轮混排
+- **并行失败隔离(per-task settlement)**:无关联的并行任务一个出错**不批量回退** —— 失败委派以 error result 单独回灌主 agent,其余照常执行落地,主循环不中断(e2e 锁定);与单次 `write({ patches })` 整体原子回滚(一次逻辑写的原子意图)按**任务关联性**区分语义(spec 显式声明)
+- **codeAsset commit 逐组件容错**:afterAgent commit 循环补 per-component try/catch —— 单组件 commit 抛错只跳过该组件(console.warn 留痕),循环继续不中断后续组件 commit(修前单组件异常会中断整个 commit 循环)
+
+### Added(并行子 agent 第二批:组件锁 · 同组件单委派互斥 + 人工并发保护)
+- **组件锁机制(`src/core/sdk/componentLock.ts`)**:同组件并发第二个 `use_html` 立即回灌 **`COMPONENT_BUSY`**(recoverable,零子 agent 消耗,主 agent 下轮重委派即可)—— 同组件互斥从 prompt 禁令升级为机制锁。锁目标 = `components` 显式声明(过滤编造名)/ 缺省时 task 文本与已知组件名**整词唯一命中**才锁(0 或 ≥2 命中不锁,宁漏不误);acquire 多组件原子(任一被占全失败不留半套锁),release 幂等;不同组件锁相互独立不阻塞并行;默认串行(`maxParallelTools:1`)零变化
+- **主 agent 写检查(`createComponentWriteGuardMiddleware`)**:委派在途时主写工具(`write`/`set_data`/`edit_data`/`delete_data`/`draft_commit`)命中被锁组件子树 → 回灌 **`COMPONENT_LOCKED`**(整体 set 全量数据也拒;`dryRun` 不拦),锁释放后放行 —— 防主 agent 与子 agent 同时改一个组件
+- **commit 人工并发检测(hash 快照比对)**:委派在途窗口(checkout→commit)内人工/宿主直改 bind 的保护 —— ① 同组件 code 被外部改过 → commit 保留人工值(**keep_external**,不静默覆盖)+ warn 留痕;② 组件被删 → 不复活 + vfs 工作副本同步清理;③ 索引位移(插入/删除致组件挪位)→ commit 按 `__pgId` 落到同组件,不写错位置(e2e H1-H4 真链路锁定)
+- **观察层**:`inspect().subagent.lockedComponents`(组件名 → 占用委派 taskId)+ DebugDrawer 子 agent tab 组件锁视图;锁事件(logSink acquire/release/conflict)进 debugLogs
+
+### Tests
+- selftest 2061→**2092**(+31 组件锁白盒 sec-77:acquire 原子/幂等、resolveTargetComponents 三档、lockedIndexPaths 实时解析、写守卫六路、hashString、人工并发 H1/H2/无修改)/ e2e 625→**655**(+19:组件锁 4 场景[并行双锁独立/同组件 busy 零消耗/锁内写回灌 COMPONENT_LOCKED(时序锚 slow_probe)/默认串行零变化]+ 人工并发 H1-H4 真链路[delayMs 撑开在途窗口])/ browser 61→**63**(+2 complex-demo:同轮双 use_html 并行委派不同组件 / 同组件 busy 回灌下轮重委派)
+
 ## [3.12.0] - 2026-08-15
 
 ### Fixed(假成功治理:未声明字段静默剥离 → 显式拒绝;用户实测驱动)

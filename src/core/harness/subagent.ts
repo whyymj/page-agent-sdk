@@ -28,6 +28,7 @@ import { createSummarizationMiddleware, type SummarizationOptions } from './summ
 import type { Focus, VfsFile } from './state'
 import type { ZodType } from 'zod'
 import { normalizeUsage } from '../utils/contentParts'
+import type { ComponentLock, ResolveComponentsResult } from '../sdk/componentLock'
 
 /** 子 agent 转发到主 UI 的进度(tool_call/tool_result 工具级 + reasoning 思考过程增量;text 不转发:是生成内容,经 vfs/data 落地,不进进度) */
 type SubProgress = Extract<StreamEvent, { type: 'tool_call' | 'tool_result' | 'reasoning' }>
@@ -653,6 +654,14 @@ export interface SubagentsMiddlewareOptions {
   onUsage?: (u: TokenUsage) => void
   /** 子执行超时 ms(P1-17b,opt-in)。configToSubOpts 透传 */
   timeoutMs?: number
+  /**
+   * 组件锁(parallel-subagent-delegation Q2:同组件单委派互斥)。use_<id> 委派入口:
+   * resolveComponents 解析目标组件 → acquire(非阻塞)→ 跑子 agent → finally release;
+   * acquire 失败立即回灌 COMPONENT_BUSY(不排队不占并发槽)。不传 = 无锁(零回归)。
+   */
+  componentLock?: ComponentLock
+  /** 目标组件解析(explicit / text-match / none 三档;createChatSdk 装配期注入 knownNames getter 闭包) */
+  resolveComponents?: (args: { components?: string[]; task: string }) => ResolveComponentsResult
 }
 
 /** 合法工具名校验(生成 use_<id>) */
@@ -765,7 +774,7 @@ export function createSubagentsMiddleware(
       v.push(s)
       t.push(
         tool(
-          async ({ task }, config) => {
+          async ({ task, components }, config) => {
             // per-call signal/emit/logSink(CA 并发修复):并发委派各用各的
             const call = callCtxOf(config)
             const opts = configToSubOpts(s, main)
@@ -774,6 +783,28 @@ export function createSubagentsMiddleware(
             // 事件 taskId 保持 use_${s.id} 不变(不破坏 UI 嵌套分组),steps 经 forward wrapper 累积到 observeId
             const tracker = main.tracker
             const observeId = tracker ? `use_${s.id}-${Math.random().toString(36).slice(2, 6)}` : `use_${s.id}`
+            // 组件锁(Q2:同组件单委派互斥):解析目标组件 → acquire(非阻塞无排队)→ 跑 → finally release。
+            // acquire 失败立即回灌 COMPONENT_BUSY(recoverable 字符串结果,主 LLM 换顺序/下轮重委派),
+            // 不排队不占 runPool 并发槽干等;锁事件经 logSink 留痕(acquire/conflict/release,kind 区分)
+            const lock = main.componentLock
+            const lockOwner = observeId
+            let lockRelease: (() => void) | undefined
+            let lockNames: string[] = []
+            const logLock = (kind: 'acquire' | 'conflict' | 'release', extra?: Record<string, unknown>) =>
+              call.logSink?.({ timestamp: Date.now(), type: 'middleware', data: { name: 'component-lock', kind, components: lockNames, owner: lockOwner, ...extra } })
+            if (lock) {
+              const res = main.resolveComponents?.({ components, task })
+              lockNames = res?.names ?? []
+              if (lockNames.length) {
+                const acq = await lock.acquire(lockNames, lockOwner)
+                if (!acq.ok) {
+                  logLock('conflict', { heldBy: acq.heldBy })
+                  return `COMPONENT_BUSY · 组件 [${lockNames.join(', ')}] 正在被子 agent(${acq.heldBy})修改,本次委派未执行。同一组件同一时间只能有一个委派在途;请先做其他组件,或等该委派结束后(下一轮)再重试本组件。`
+                }
+                lockRelease = acq.release
+                logLock('acquire')
+              }
+            }
             const baseForward = makeForward(`use_${s.id}`, s.id, call.emit)
             const forward = tracker
               ? (e: SubProgress) => {
@@ -791,12 +822,18 @@ export function createSubagentsMiddleware(
             } catch (e) {
               tracker?.finish(observeId, 'error', String((e as Error)?.message ?? e))
               throw e
+            } finally {
+              // 幂等 release(finally 兜底覆盖正常/异常/abort 全路径)
+              if (lockRelease) { lockRelease(); logLock('release') }
             }
           },
           {
             name: `use_${s.id}`,
             description: `委派给「${s.description}」子 agent 执行任务,返回其结论(过程隔离,不占主上下文)。`,
-            schema: z.object({ task: z.string().describe('委派给该子 agent 的任务描述') }),
+            schema: z.object({
+              task: z.string().describe('委派给该子 agent 的任务描述'),
+              components: z.array(z.string()).optional().describe('本次委派要修改的组件名列表(并行委派时必填,框架按组件互斥:同组件同时只允许一个委派在途)'),
+            }),
           },
         ),
       )

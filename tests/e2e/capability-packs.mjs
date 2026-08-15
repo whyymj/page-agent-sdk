@@ -324,6 +324,91 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:capability-packs] 并行失败隔离(同轮双委派 A 崩溃 → B 照常落地 + 主循环继续,不批量回退)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    // 同轮两个 use_html(无关联任务):A(hero)子 agent model 抛错 → error result 回灌;B(banner)照常 vfs_write+commit
+    // 队列(串行执行确定序):[0]主同轮双委派 → [1]子A model 抛错(4xx 不重试)→ [2]子B vfs_write → [3]子B收口 → [4]主收口
+    const llm = stubModel(
+      { toolCalls: [
+        { name: 'use_html', args: { task: '改 hero 标题' } },
+        { name: 'use_html', args: { task: '改 banner 配色' } },
+      ] },
+      { throw: '子 agent hero 内部错误' },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_banner.html', content: '<section>新 banner</section>' } }] },
+      { text: '已改 banner' },
+      { text: 'hero 委派失败,banner 完成' },
+    )
+    const bind = { title: 't', components: [
+      { type: 'custom', name: 'hero', code: '<section>旧 hero</section>', __pgId: 'c_hero' },
+      { type: 'custom', name: 'banner', code: '<section>旧 banner</section>', __pgId: 'c_banner' },
+    ] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-failiso', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
+    })
+    await sdk.mount()
+    const reply = await sdk.send('两个组件都改一下')
+    // B 照常落地(A 的失败不回退/不阻断 B 的 commit)
+    assert(bind.components[1].code === '<section>新 banner</section>', '✓ 失败隔离:A 子 agent 崩溃,B 组件照常 commit 落地(不批量回退)')
+    // A 保持原值(失败者未改)
+    assert(bind.components[0].code === '<section>旧 hero</section>', '✓ 失败隔离:A 组件 code 保持原值(失败委派零副作用)')
+    // 主循环继续:A 的错误以 ToolMessage 回灌,主 agent 正常收口(而非整轮中断)
+    assert(/banner 完成/.test(reply), '✓ 失败隔离:主 agent 收到 A 的 error result 后正常收口(主循环不中断)')
+    assert(llm.calls === 5, `✓ 失败隔离:5 次 model 调用(主1+子A崩1+子B2+主收口1,实际 ${llm.calls})`)
+    sdk.unmount()
+  }
+
+  console.log('[e2e:capability-packs] commit 逐组件容错(单组件 commit 抛错 → 跳过留痕,其余组件照常 commit)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    // components[0].code 用 setter 抛错的 accessor 模拟「单组件 commit 失败」(读路径正常:checkout 能取旧值);
+    // 子 agent touched 两个组件 → commit 时 hero setter 抛错被 per-component try/catch 接住,banner 仍落盘
+    const llm = stubModel(
+      { toolCalls: [{ name: 'use_html', args: { task: '改 hero 和 banner' } }] },
+      { toolCalls: [
+        { name: 'vfs_write', args: { path: 'html/c_hero.html', content: '<section>新 hero</section>' } },
+      ] },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_banner.html', content: '<section>新 banner</section>' } }] },
+      { text: '两个都改了' },
+      { text: '完成' },
+    )
+    const heroStored = { code: '<section>旧 hero</section>' }
+    const hero = { type: 'custom', name: 'hero', __pgId: 'c_hero' }
+    Object.defineProperty(hero, 'code', {
+      get: () => heroStored.code,
+      set() { throw new Error('模拟宿主侧写 hero.code 失败') },
+      enumerable: true, configurable: true,
+    })
+    const bind = { title: 't', components: [
+      hero,
+      { type: 'custom', name: 'banner', code: '<section>旧 banner</section>', __pgId: 'c_banner' },
+    ] }
+    const warns = []
+    const origWarn = console.warn
+    console.warn = (...a) => { warns.push(a.join(' ')) }
+    try {
+      const sdk = createChatSdk({
+        ui: false, id: 'e2e-cap-commit-iso', storage: false, llm,
+        capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+        data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+        subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
+      })
+      await sdk.mount()
+      // 修前:setter 抛错会从 forEachCodeItem 传播 → afterAgent 中断(极端情况下整轮失败);修后:逐组件容错
+      const reply = await sdk.send('两个组件都改')
+      assert(/完成/.test(reply), '✓ commit 容错:单组件 commit 抛错不中断主流程(send 正常收口)')
+      assert(heroStored.code === '<section>旧 hero</section>', '✓ commit 容错:失败组件(hero)保持旧值(跳过 commit)')
+      assert(bind.components[1].code === '<section>新 banner</section>', '✓ commit 容错:后续组件(banner)照常 commit(循环不中断)')
+      assert(warns.some((w) => w.includes('组件 commit 失败已跳过')), '✓ commit 容错:失败组件 observable 留痕(console.warn)')
+      sdk.unmount()
+    } finally {
+      console.warn = origWarn
+    }
+  }
+
   console.log('[e2e:capability-packs] 组件代码文件地图(augmentPrompt 注入子 agent system prompt,修 __pgId 映射摩擦)')
   {
     const { stubModel } = await import('./_stub-model.mjs')
@@ -698,6 +783,300 @@ export async function run() {
     // ④ 完整流程 7 次 model 调用(主委派1→子写1→子收口→主委派2→子写2→子收口→主收口)
     assert(/完成/.test(reply), '✓ 主流程收口')
     assert(llm.calls === 7, `✓ 完整流程 7 次 model 调用(实际 ${llm.calls})`)
+    sdk.unmount()
+  }
+
+  // ===== 组件锁与同组件单委派互斥(parallel-subagent-delegation 第二批 Q5b)=====
+
+  console.log('[e2e:capability-packs] 组件锁 · 并行双委派不同组件(maxParallelTools:2 → 两锁独立,均落地)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    // 同轮双 use_html 显式声明不同 components → 两把锁互不冲突,各自 vfs_write + commit
+    // 队列(并发 microtask 确定序:子A首调 → 子B首调 → 子A收口 → 子B收口):
+    //   [0]主双委派 → [1]子A vfs_write(hero) → [2]子B vfs_write(banner) → [3]子A收口 → [4]子B收口 → [5]主收口
+    const llm = stubModel(
+      { toolCalls: [
+        { name: 'use_html', args: { task: '改 hero 标题', components: ['hero'] } },
+        { name: 'use_html', args: { task: '改 banner 配色', components: ['banner'] } },
+      ] },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_hero.html', content: '<section>并行 hero</section>' } }] },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_banner.html', content: '<section>并行 banner</section>' } }] },
+      { text: 'hero 完成' },
+      { text: 'banner 完成' },
+      { text: '两个组件都完成' },
+    )
+    const bind = { title: 't', components: [
+      { type: 'custom', name: 'hero', code: '<section>旧 hero</section>', __pgId: 'c_hero' },
+      { type: 'custom', name: 'banner', code: '<section>旧 banner</section>', __pgId: 'c_banner' },
+    ] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-lock-par', storage: false, llm, maxParallelTools: 2,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
+    })
+    await sdk.mount()
+    const reply = await sdk.send('两个组件并行改')
+    assert(bind.components[0].code === '<section>并行 hero</section>', '✓ 并行双委派:hero 组件 code 落地(锁 hero 不阻塞 banner)')
+    assert(bind.components[1].code === '<section>并行 banner</section>', '✓ 并行双委派:banner 组件 code 落地(锁 banner 不阻塞 hero)')
+    assert(/完成/.test(reply), '✓ 并行双委派:主流程收口')
+    assert(llm.calls === 6, `✓ 并行双委派:6 次 model 调用(主1+子×2+主收口1,实际 ${llm.calls})`)
+    // 锁事件留痕:acquire×2 + release×2,无 conflict
+    const lockLogs = sdk.debugLogs.value.filter((l) => l.type === 'middleware' && l.data?.name === 'component-lock')
+    assert(lockLogs.filter((l) => l.data?.kind === 'acquire').length === 2, '✓ 并行双委派:acquire 留痕 ×2(logSink)')
+    assert(lockLogs.filter((l) => l.data?.kind === 'release').length === 2, '✓ 并行双委派:release 留痕 ×2(finally 幂等)')
+    assert(lockLogs.every((l) => l.data?.kind !== 'conflict'), '✓ 并行双委派:不同组件零冲突')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:capability-packs] 组件锁 · 同组件第二个委派 → COMPONENT_BUSY 回灌,下轮重委派成功')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    // 同轮双 use_html 均显式 components:['hero'] → 先者持锁跑完,后者立即回灌 COMPONENT_BUSY(零 model 调用);
+    // 主下一轮重委派(锁已释放)成功
+    // 队列:[0]主双委派 → [1]子A vfs_write → [2]子A收口 → [3]主重委派 → [4]子B vfs_write → [5]子B收口 → [6]主收口
+    const llm = stubModel(
+      { toolCalls: [
+        { name: 'use_html', args: { task: '改 hero 标题', components: ['hero'] } },
+        { name: 'use_html', args: { task: '改 hero 配色', components: ['hero'] } },
+      ] },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_hero.html', content: '<section>重试前 hero</section>' } }] },
+      { text: '已改' },
+      { toolCalls: [{ name: 'use_html', args: { task: '重试改 hero 配色', components: ['hero'] } }] },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_hero.html', content: '<section>重试后 hero</section>' } }] },
+      { text: '已改' },
+      { text: '完成' },
+    )
+    const bind = { title: 't', components: [
+      { type: 'custom', name: 'hero', code: '<section>旧 hero</section>', __pgId: 'c_hero' },
+      { type: 'custom', name: 'banner', code: '<section>旧 banner</section>', __pgId: 'c_banner' },
+    ] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-lock-busy', storage: false, llm, maxParallelTools: 2,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
+    })
+    await sdk.mount()
+    await sdk.send('hero 改两处')
+    // busy 委派未执行子 agent(model 零消耗):总调用 = 主1+子A2+主重委派1+子B2+主收口1 = 7
+    assert(llm.calls === 7, `✓ COMPONENT_BUSY:busy 委派零 model 调用(总 7 次,实际 ${llm.calls})`)
+    assert(bind.components[0].code === '<section>重试后 hero</section>', '✓ COMPONENT_BUSY:下轮重委派成功(重试版本落地)')
+    const results = sdk.debugLogs.value.filter((l) => l.type === 'tool_result')
+    assert(results.some((l) => String(l.data?.result).startsWith('COMPONENT_BUSY')), '✓ COMPONENT_BUSY:busy 回灌进 tool_result(主 LLM 可见可重试)')
+    const lockLogs = sdk.debugLogs.value.filter((l) => l.type === 'middleware' && l.data?.name === 'component-lock')
+    assert(lockLogs.some((l) => l.data?.kind === 'conflict'), '✓ COMPONENT_BUSY:conflict 留痕(logSink)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:capability-packs] 组件锁 · 委派在途时主 agent 写锁组件 → COMPONENT_LOCKED 回灌,锁释放后放行')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    const { defineTool } = await import('../../dist/page-agent-sdk.js')
+    // 同轮 [use_html(hero), slow_probe, write(name)] 并发(limit 2):
+    //   worker1 use_html 起跑即 acquire 持锁,子 model 响应 delayMs 400(委派长跑保持在途);
+    //   worker2 先跑 slow_probe(80ms 定时器,时序锚:确保 write 派发时锁已被持有 —— 守卫检查在工具
+    //   派发同步段,若 write 紧随 use_html 同 tick 派发会先于 acquire 微任务,测不到在途窗口);
+    //   跑完接力 write → 守卫看到锁 → COMPONENT_LOCKED;下一轮锁已释放 → 同一 write 放行
+    // 队列:[0]主同轮三工具 → [1]子 vfs_write(delay 400ms) → [2]子收口 → [3]主重试 write → [4]主收口
+    const llm = stubModel(
+      { toolCalls: [
+        { name: 'use_html', args: { task: '改 hero 标题', components: ['hero'] } },
+        { name: 'slow_probe', args: {} },
+        { name: 'write', args: { patch: { op: 'set', jsonPath: 'components.0.name', value: 'hero-改后' } } },
+      ] },
+      { delayMs: 400, toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_hero.html', content: '<section>守卫 hero</section>' } }] },
+      { text: '已改' },
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.0.name', value: 'hero-改后' } } }] },
+      { text: '完成' },
+    )
+    const slowProbe = defineTool({
+      name: 'slow_probe', description: '测试时序锚:稍等再返回',
+      schema: z.object({}), handler: async () => { await new Promise((r) => setTimeout(r, 80)); return 'ok' },
+    })
+    const bind = { title: 't', components: [
+      { type: 'custom', name: 'hero', code: '<section>旧 hero</section>', __pgId: 'c_hero' },
+      { type: 'custom', name: 'banner', code: '<section>旧 banner</section>', __pgId: 'c_banner' },
+    ] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-lock-write', storage: false, llm, maxParallelTools: 2,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      tools: [slowProbe],
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
+    })
+    await sdk.mount()
+    await sdk.send('改 hero 并顺手改名')
+    assert(bind.components[0].code === '<section>守卫 hero</section>', '✓ 写检查:子 agent commit 照常落地(write 被拒不影响委派)')
+    assert(bind.components[0].name === 'hero-改后', '✓ 写检查:锁释放后同 write 放行(name 更新)')
+    const results = sdk.debugLogs.value.filter((l) => l.type === 'tool_result' && l.data?.name === 'write')
+    assert(results.some((l) => String(l.data?.result).startsWith('COMPONENT_LOCKED')), '✓ 写检查:锁内写回灌 COMPONENT_LOCKED')
+    assert(llm.calls === 5, `✓ 写检查:5 次 model 调用(主1+子2+主重试写1+主收口1,实际 ${llm.calls})`)
+    sdk.unmount()
+  }
+
+  console.log('[e2e:capability-packs] 组件锁 · 默认串行(maxParallelTools 缺省)同轮双委派同组件 → 零变化(不 busy)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    // 默认串行:同轮两个 use_html 按序执行(第二个起步时第一个已 release)→ 不触发互斥,与 3.13 前行为完全一致
+    // 队列:[0]主双委派 → [1]子1 vfs_write → [2]子1收口 → [3]子2 vfs_write → [4]子2收口 → [5]主收口
+    const llm = stubModel(
+      { toolCalls: [
+        { name: 'use_html', args: { task: '改 hero 标题', components: ['hero'] } },
+        { name: 'use_html', args: { task: '再改 hero 配色', components: ['hero'] } },
+      ] },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_hero.html', content: '<section>串行一</section>' } }] },
+      { text: '已改' },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_hero.html', content: '<section>串行二</section>' } }] },
+      { text: '已改' },
+      { text: '完成' },
+    )
+    const bind = { title: 't', components: [
+      { type: 'custom', name: 'hero', code: '<section>旧 hero</section>', __pgId: 'c_hero' },
+    ] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-lock-serial', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
+    })
+    await sdk.mount()
+    await sdk.send('hero 改两处')
+    assert(bind.components[0].code === '<section>串行二</section>', '✓ 默认串行:双委派按序执行(后者落地,零行为变化)')
+    assert(!sdk.debugLogs.value.some((l) => l.type === 'tool_result' && String(l.data?.result).startsWith('COMPONENT_BUSY')), '✓ 默认串行:不触发 COMPONENT_BUSY(锁只管并发)')
+    assert(llm.calls === 6, `✓ 默认串行:6 次 model 调用(实际 ${llm.calls})`)
+    // 观察层:锁视图空闲(委派结束自动解锁)
+    assert(Object.keys(sdk.inspect().subagent.lockedComponents ?? {}).length === 0, '✓ 默认串行:inspect().subagent.lockedComponents 空闲(委派结束自动解锁)')
+    sdk.unmount()
+  }
+
+  // ===== 人工并发 commit 冲突检测(parallel-subagent-delegation 第二批 Q5d,H1-H4 真链路)=====
+  // 机理:委派在途窗口 = checkout(子 agent beforeAgent)→ commit(afterAgent)之间;
+  // stub 子 model 响应 delayMs 250 撑开窗口,setTimeout 80ms 处直改 bind 模拟人工并发修改
+
+  console.log('[e2e:capability-packs] 人工并发 H1:在途窗口人工改同组件 code → commit 保留人工值(keep_external)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    const llm = stubModel(
+      { toolCalls: [{ name: 'use_html', args: { task: '改 hero 标题' } }] },
+      { delayMs: 250, toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_hero.html', content: '<section>子版本</section>' } }] },
+      { text: '已改' },
+      { text: '完成' },
+    )
+    const bind = { title: 't', components: [
+      { type: 'custom', name: 'hero', code: '<section>旧 hero</section>', __pgId: 'c_hero' },
+    ] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-human-h1', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
+    })
+    await sdk.mount()
+    const warns = []
+    const origWarn = console.warn
+    console.warn = (...a) => { warns.push(a.join(' ')) }
+    try {
+      setTimeout(() => { bind.components[0].code = '<section>人工版本</section>' }, 80)
+      await sdk.send('改 hero')
+    } finally {
+      console.warn = origWarn
+    }
+    assert(bind.components[0].code === '<section>人工版本</section>', '✓ H1 人工并发:人工值保留(keep_external,子版本不覆盖)')
+    assert(warns.some((w) => w.includes('外部更新')), '✓ H1 人工并发:keep_external 留痕(console.warn)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:capability-packs] 人工并发 H2:在途窗口人工删除组件 → 不复活 + vfs 工作副本清理')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    const llm = stubModel(
+      { toolCalls: [{ name: 'use_html', args: { task: '改 hero 标题' } }] },
+      { delayMs: 250, toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_hero.html', content: '<section>子版本</section>' } }] },
+      { text: '已改' },
+      { text: '完成' },
+    )
+    const bind = { title: 't', components: [
+      { type: 'custom', name: 'hero', code: '<section>旧 hero</section>', __pgId: 'c_hero' },
+      { type: 'custom', name: 'banner', code: '<section>旧 banner</section>', __pgId: 'c_banner' },
+    ] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-human-h2', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
+    })
+    await sdk.mount()
+    const warns = []
+    const origWarn = console.warn
+    console.warn = (...a) => { warns.push(a.join(' ')) }
+    try {
+      setTimeout(() => { bind.components.splice(0, 1) }, 80) // 人工删除 hero
+      await sdk.send('改 hero')
+    } finally {
+      console.warn = origWarn
+    }
+    assert(bind.components.length === 1 && bind.components[0].__pgId === 'c_banner', '✓ H2 人工并发:被删组件不复活')
+    assert(sdk.vfsRead('html/c_hero.html') === undefined, '✓ H2 人工并发:vfs 工作副本同步清理')
+    assert(warns.some((w) => w.includes('放弃 commit')), '✓ H2 人工并发:孤儿清理留痕(console.warn)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:capability-packs] 人工并发 H3:在途窗口人工插入组件致索引位移 → commit 按 __pgId 落同组件')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    const llm = stubModel(
+      { toolCalls: [{ name: 'use_html', args: { task: '改 hero 标题' } }] },
+      { delayMs: 250, toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_hero.html', content: '<section>位移后子版本</section>' } }] },
+      { text: '已改' },
+      { text: '完成' },
+    )
+    const bind = { title: 't', components: [
+      { type: 'custom', name: 'hero', code: '<section>旧 hero</section>', __pgId: 'c_hero' },
+      { type: 'custom', name: 'banner', code: '<section>旧 banner</section>', __pgId: 'c_banner' },
+    ] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-human-h3', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
+    })
+    await sdk.mount()
+    // 在途窗口人工往头部插入新组件:hero 从 index 0 位移到 1;commit 须按 __pgId 落到 hero(而非旧 index 0)
+    setTimeout(() => { bind.components.unshift({ type: 'custom', name: 'inserted', code: '<section>人工插入</section>' }) }, 80)
+    await sdk.send('改 hero')
+    assert(bind.components.length === 3, '✓ H3 索引位移:人工插入组件保留')
+    assert(bind.components[0].name === 'inserted', '✓ H3 索引位移:人工组件仍在头部')
+    assert(bind.components[1].__pgId === 'c_hero' && bind.components[1].code === '<section>位移后子版本</section>', '✓ H3 索引位移:子版本按 __pgId 落到 hero 新位置(不写错组件)')
+    assert(bind.components[2].code === '<section>旧 banner</section>', '✓ H3 索引位移:无关组件(banner)不受影响')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:capability-packs] 人工并发 H4:在途窗口人工改其他组件 → 互不覆盖(人工值 + 子版本都落地)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    const llm = stubModel(
+      { toolCalls: [{ name: 'use_html', args: { task: '改 hero 标题' } }] },
+      { delayMs: 250, toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_hero.html', content: '<section>hero 子版本</section>' } }] },
+      { text: '已改' },
+      { text: '完成' },
+    )
+    const bind = { title: 't', components: [
+      { type: 'custom', name: 'hero', code: '<section>旧 hero</section>', __pgId: 'c_hero' },
+      { type: 'custom', name: 'banner', code: '<section>旧 banner</section>', __pgId: 'c_banner' },
+    ] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-human-h4', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
+    })
+    await sdk.mount()
+    // 人工并发改 banner(子 agent 只动 hero)→ 两边修改都保留,互不覆盖
+    setTimeout(() => { bind.components[1].code = '<section>banner 人工版本</section>' }, 80)
+    await sdk.send('改 hero')
+    assert(bind.components[0].code === '<section>hero 子版本</section>', '✓ H4 人工并发:hero 子版本正常 commit')
+    assert(bind.components[1].code === '<section>banner 人工版本</section>', '✓ H4 人工并发:banner 人工值保留(改动隔离到组件粒度)')
     sdk.unmount()
   }
 

@@ -46,7 +46,8 @@ import { createContextInspectorMiddleware } from '../harness/contextInspector'
 import { connectMcp, type McpServerConfig } from '../mcp/client'
 import { createSummarizationMiddleware } from '../harness/summarization'
 import { buildDataPrompt, buildSystemPrompt } from './promptBuilder'
-import { createCodeAssetMiddleware } from './codeAssetMiddleware'
+import { createCodeAssetMiddleware, collectComponentNames } from './codeAssetMiddleware'
+import { createComponentLock, resolveTargetComponents, createComponentWriteGuardMiddleware } from './componentLock'
 import { createHtmlSubagent } from './htmlSubagent'
 import { isChatModel, resolveLlm, deriveTitle } from './llmResolver'
 import { constructLlmFromConfig, constructOpenLlmSync } from '../llm/constructLlm'
@@ -1239,8 +1240,20 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     }
     return { ...s, middleware: newMiddleware }
   })
+  // parallel-subagent-delegation Q2d/Q3:组件锁(同组件单委派互斥,按组件名)+ 主 agent 写检查中间件。
+  // 有 codeAsset 子 agent(并行委派的目标场景)才装;锁空集时全部接缝 no-op(零拦截零回归)。
+  // knownNames 与子 agent 文件地图同源(collectComponentNames 扫 bind 代码组件 name),委派时实时解析。
+  const componentLock = hasCodeAsset && useSubagent ? createComponentLock() : undefined
+  const componentWriteGuardMw = componentLock
+    ? createComponentWriteGuardMiddleware({
+        getBind: () => liveData()?.bind,
+        writablePaths: codeAssetPgIdPaths,
+        getLocked: () => componentLock!.locked(),
+      })
+    : undefined
   const subagentsMw = useSubagent && subagentsForAssemble !== undefined
-    ? createSubagentsMiddleware(subagentsForAssemble, { llm: options.llm, allTools: () => core.agent?.allTools ?? allTools, debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null, getBind: () => liveData()?.bind, tracker: subagentTracker, guardMiddleware: childGuards.length ? childGuards : undefined, getVfsFiles: useVfs ? () => vfsStore.files : undefined, enterDataScope: dataOpsController?.enterScope ? (id) => dataOpsController.enterScope!(id) : undefined, exitDataScope: dataOpsController?.exitScope ? (id) => dataOpsController.exitScope!(id) : undefined, onUsage: (u) => { usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0); usage.completion_tokens = (usage.completion_tokens ?? 0) + (u.completion_tokens ?? 0); usage.total_tokens = (usage.total_tokens ?? 0) + (u.total_tokens ?? 0) }, timeoutMs: options.subagent?.timeoutMs })
+    ? createSubagentsMiddleware(subagentsForAssemble, { llm: options.llm, allTools: () => core.agent?.allTools ?? allTools, debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null, getBind: () => liveData()?.bind, tracker: subagentTracker, guardMiddleware: childGuards.length ? childGuards : undefined, getVfsFiles: useVfs ? () => vfsStore.files : undefined, enterDataScope: dataOpsController?.enterScope ? (id) => dataOpsController.enterScope!(id) : undefined, exitDataScope: dataOpsController?.exitScope ? (id) => dataOpsController.exitScope!(id) : undefined, onUsage: (u) => { usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0); usage.completion_tokens = (usage.completion_tokens ?? 0) + (u.completion_tokens ?? 0); usage.total_tokens = (usage.total_tokens ?? 0) + (u.total_tokens ?? 0) }, timeoutMs: options.subagent?.timeoutMs,
+      ...(componentLock ? { componentLock, resolveComponents: (args: { components?: string[]; task: string }) => resolveTargetComponents(args, collectComponentNames(liveData()?.bind, codeAssetPgIdPaths)) } : {}) })
     : undefined
   const subagentsController = subagentsMw ? (subagentsMw as any).controller as import('../harness/subagent').SubagentsController : null
 
@@ -1421,6 +1434,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(verifyMw ? [verifyMw] : []), // permissions 之后(beforeReturn 正序,verify 在用户自定义中间件前)
     ...(subagentMw ? [subagentMw] : []),
     ...(subagentsMw ? [subagentsMw] : []),
+    // parallel-subagent-delegation Q3b:主 agent 写检查(委派在途组件锁前缀拒写;只装主栈,子 agent 走自己的栈)
+    ...(componentWriteGuardMw ? [componentWriteGuardMw] : []),
     ...(augmentSystemMw ? [augmentSystemMw] : []),
     ...(contextInspectorMw ? [contextInspectorMw] : []),  // context-inspector:wrapModelCall 快照实际消息构成(大小/分类/占比)
     ...(options.middleware || []),
@@ -2005,6 +2020,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           // 观察层:运行中(active)+ 历史(history LRU≤20)委派状态(会话级,实时反映)
           active: subagentTracker?.getActive() ?? [],
           history: subagentTracker?.getHistory() ?? [],
+          // 组件锁视图(组件名 → 占用委派 taskId;parallel-subagent-delegation Q4a,无锁场景为空对象)
+          lockedComponents: componentLock?.locked() ?? {},
         },
         verify: {
           enabled: !!verifyMw,

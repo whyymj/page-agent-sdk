@@ -240,6 +240,8 @@ export interface SubagentInfo {
   active?: SubagentRunState[];
   /** 历史委派(观察层;LRU≤20,最新在前) */
   history?: SubagentRunState[];
+  /** 组件锁视图(组件名 → 占用委派 taskId;同组件单委派互斥,委派结束自动解锁;无锁场景为空对象) */
+  lockedComponents?: Record<string, string>;
 }
 /** 预声明子 agent 配置(同主配置子集 + id/description;缺省继承主 agent) */
 export interface SubagentConfig {

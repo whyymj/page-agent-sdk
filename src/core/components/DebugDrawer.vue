@@ -182,6 +182,8 @@ const ctxOccupancyLevel = computed<'green' | 'yellow' | 'red' | ''>(() => {
 /** 子 agent 观察层(subagent-observability):active 运行态 + history 历史 */
 const subagentActive = computed(() => agentInfo.value?.subagent?.active ?? [])
 const subagentHistory = computed(() => agentInfo.value?.subagent?.history ?? [])
+/** 组件锁视图(组件名 → 占用委派 taskId;parallel-subagent-delegation Q4b) */
+const lockedEntries = computed(() => Object.entries(agentInfo.value?.subagent?.lockedComponents ?? {}))
 const subStatusMeta: Record<string, { label: string; color: string }> = {
   running: { label: '运行中', color: '#059669' },
   done: { label: '完成', color: '#6b7280' },
@@ -309,6 +311,11 @@ function flowNodeDetail(lg: DebugLog): string {
               </template>
             </div>
             <div v-if="tab === 'subagent'" class="subagent-panel">
+              <!-- 组件锁视图(同组件单委派互斥;委派结束自动解锁) -->
+              <div v-if="lockedEntries.length" class="sub-section">
+                <div class="sub-section-title">🔒 组件锁 ({{ lockedEntries.length }})</div>
+                <div v-for="[name, owner] in lockedEntries" :key="'lock-'+name" class="sub-task">🔒 {{ name }} ← {{ owner }}</div>
+              </div>
               <div v-if="!subagentActive.length && !subagentHistory.length" class="trace-empty">
                 尚未委派子 agent。主 agent 调用 <code>use_&lt;id&gt;</code> 或 <code>spawn_agent</code> 后,这里展示运行状态与委派历史。
               </div>

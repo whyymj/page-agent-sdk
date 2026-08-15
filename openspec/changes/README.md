@@ -44,7 +44,9 @@
 
 ## 进行中
 
-(无)
+| change | 状态 | 一句话 |
+|---|---|---|
+| [`2026-08-15-parallel-subagent-delegation/`](./2026-08-15-parallel-subagent-delegation/) | proposal 已评审(三方评审裁定:冲突改立即回灌不排队 + 分两批实施);第一批实施中 | 多子 agent 同轮并行委派:第一批 = prompt 并行化 + **失败隔离**(无关联任务一个出错不批量回退)+ commit 逐组件容错;第二批 = **同组件写互斥**(组件锁:立即回灌 `COMPONENT_BUSY` + 主 agent 写检查 `COMPONENT_LOCKED`)+ **人工并发 commit 冲突检测**(checkout hash 比对,人工优先 keep_external);后台 agent 模式登记 deferred |
 
 ---
 
