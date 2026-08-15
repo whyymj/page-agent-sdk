@@ -457,3 +457,47 @@ test.describe('page-demo: read → write → read', () => {
     expect(tracker.calls()).toBe(4)
   })
 })
+
+test.describe('page-demo: 工具步骤展开细节(入参/返回值)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/')
+    await page.waitForSelector('.chat-dialog')
+    await clearChat(page)
+  })
+
+  test('点步骤行右端「展开」(Figma 设计稿)→ 显示入参 JSON 与返回值;展开另一个前一个收起(全局单展开)', async ({ page }) => {
+    // read → write 两步工具,各自有 args/result
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'read', arguments: { jsonPath: 'title' } }] },
+      { tool_calls: [{ name: 'write', arguments: { value: '展开验证', patch: { op: 'set', jsonPath: 'title' } } }] },
+      { text: '完成。' },
+    ])
+    await fillInput(page, '改标题为「展开验证」')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+
+    // 两个步骤行右端都有「展开」文字链(Figma 471:6389)
+    const toggles = page.locator('.step-item .step-detail-toggle')
+    await expect(toggles).toHaveCount(2)
+
+    // 展开 read:显示「入参」段(jsonPath)+「返回值」段(含标题原文)
+    await toggles.nth(0).click()
+    const detail1 = page.locator('.step-detail').first()
+    await expect(detail1).toBeVisible()
+    await expect(detail1.locator('.step-detail-head', { hasText: '入参' })).toHaveCount(1)
+    await expect(detail1.locator('.step-detail-pre').first()).toContainText('title')
+    await expect(detail1.locator('.step-detail-head', { hasText: '返回值' })).toHaveCount(1)
+    await expect(detail1.locator('.step-detail-pre').nth(1)).toContainText('主数据 @ title')  // read 返回格式化原文(含 hash)
+
+    // 展开 write → read 的细节收起(全局单展开)
+    await toggles.nth(1).click()
+    await expect(page.locator('.step-detail')).toHaveCount(1)
+    const detail2 = page.locator('.step-detail').first()
+    await expect(detail2.locator('.step-detail-pre').first()).toContainText('展开验证')
+
+    // 再点同一入口 → 收起(文案回「展开」)
+    await expect(toggles.nth(1)).toContainText('收起')
+    await toggles.nth(1).click()
+    await expect(page.locator('.step-detail')).toHaveCount(0)
+  })
+})

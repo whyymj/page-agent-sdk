@@ -147,6 +147,12 @@ export async function run(ctx: TestCtx): Promise<void> {
       htmlOrchestratorPrompt('hero').includes('职责边界'),
     '✓ 自定义 id:htmlOrchestratorPrompt("hero") 含 use_hero(动态工具名),不含 use_html,编排内容一致(自定义 id 不误导)',
   )
+  {
+    // 新建组件所有权契约(真 LLM 实测:主 agent 把子 agent 返回的 code 又 append 一遍 → 索引 8/9 重复组件)
+    const op = htmlOrchestratorPrompt('html')
+    assert(op.includes('新建组件由子 agent 全权创建'), '✓ 编排:新建组件所有权归子 agent(主不替它创建/追加)')
+    assert(op.includes('委派返回即已落地') && op.includes('不要再 write/append 一遍'), '✓ 编排:委派返回即已落地,主 agent 禁重复 write(防重复组件)')
+  }
   assert(
     typeof systemPromptHelpers.htmlDirectWriteFallback === 'string' &&
       systemPromptHelpers.htmlDirectWriteFallback.includes('直接 write') &&

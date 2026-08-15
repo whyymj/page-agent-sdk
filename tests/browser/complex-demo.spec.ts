@@ -63,15 +63,19 @@ test.describe('complex-demo: 真实复杂度(30 类型 + 70 实例)', () => {
     await fillInput(page, '改下导航栏标题')
     await clickSend(page)
     await waitForAgentIdle(page)
-    // user message 含 .msg-focus-chip(同输入框 chip:显示 path + ✕);点击 ✕ 移除当前焦点
+    // user message 含 .msg-focus-chip(历史快照:显示 path,只读可点击回看;**无 ✕** —— 删历史 chip 改不了已发消息,还会误删当前焦点)
     const userRow = page.locator('.message-row.user').first()
     const chip = userRow.locator('.msg-focus-chip')
     await expect(chip).toHaveCount(1)
     await expect(chip).toContainText('components.0') // chip 显示 path(同输入框)
     expect(await chip.getAttribute('title')).toContain('components.0') // title 回看 path
-    // ✕ 移除当前焦点(同输入框 chip ✕,history chip ✕ = 移除当前焦点)→ 输入框 chip 消失
-    await chip.locator('.msg-focus-chip-x').click()
+    // 历史 chip 无删除按钮(快照语义);当前焦点仍由输入框 chip 的 ✕ 管理
+    await expect(chip.locator('.msg-focus-chip-x')).toHaveCount(0)
+    await expect(page.locator('[data-test="focus-clear"]')).toBeVisible()
+    // 输入框 ✕ 移除当前焦点 → 输入框 chip 消失,历史标注保留
+    await page.click('[data-test="focus-clear"]')
     await expect(page.locator('.focus-chip')).toHaveCount(0)
+    await expect(chip).toHaveCount(1) // 历史标注不受影响(快照)
   })
 
   test('focus: 两步聚焦后写越界被拒(PATH_DENIED)→ 自纠写聚焦内放行', async ({ page }) => {

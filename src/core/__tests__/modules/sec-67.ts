@@ -98,6 +98,11 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert((hcfg as any)._codeAsset?.writablePaths?.length === 1 && (hcfg as any)._codeAsset?.ext === 'html', '✓ _codeAsset 标记设(createChatSdk 装配识别 → checkout/commit + pgIdPaths/largeTextPaths)')
   assert(hcfg.skills?.length === 1 && hcfg.skills[0].name === 'html-fragment', '✓ 默认装 html-fragment skill(单模式完整页面级)')
 
+  // 结论落地声明契约(真 LLM 实测:主 agent 见返回 code 又 append 一遍 → 重复组件;子 agent 首行声明已创建 + 不贴代码全文)
+  assert(hcfg.systemPrompt?.includes('结论首行必须是落地声明') && hcfg.systemPrompt?.includes('已创建组件'),
+    '✓ 子 agent 结论首行落地声明(主 agent 据此判定已完成不重复写)')
+  assert(hcfg.systemPrompt?.includes('不要贴代码全文'), '✓ 子 agent 结论不贴代码全文(防诱发主 agent 再写一遍)')
+
   // middleware 含 todos(getPlanPhase 是 createTodosMiddleware 特有)
   assert(!!hcfg.middleware && hcfg.middleware.length > 0, '✓ middleware 默认装(planning:true)')
   assert(typeof (hcfg.middleware![0] as any).getPlanPhase === 'function', '✓ middleware[0] 是 todos 中间件(getPlanPhase)')

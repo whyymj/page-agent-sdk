@@ -1080,5 +1080,48 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:capability-packs] 新建纯代码组件:子 agent 全权创建 + 主 agent 不重复落地(真 LLM 实测重复组件坑)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    // 队列序:主委派 → 子 write 创建(path ①,自己写进数组)→ 子收口(落地声明)→ 主收口(不再 write)
+    const llm = stubModel(
+      { toolCalls: [{ name: 'use_html', args: { task: '新建啤酒杯组件 beer:金黄 #F7C948' } }] },
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.1', value: { type: 'custom', name: 'beer', code: '<section class="beer">杯</section>' } } } }] },
+      { text: '已创建组件 beer(索引 1)[note] 液面用 height keyframes' },
+      { text: '已创建 beer 组件,read 核对无误' },
+    )
+    const bind = { title: 't', components: [{ type: 'navbar', name: 'nav', title: '导航' }] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-newcomp', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), title: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
+    })
+    await sdk.mount()
+    // 编排 prompt 锚点:新建所有权 + 禁重复落地契约已注入(真 LLM 实测:主 agent 把返回 code 又 append → 索引 8/9 重复)
+    const sp = sdk.inspect().systemPrompt
+    assert(sp.includes('委派返回即已落地') && sp.includes('重复组件'), '✓ 编排注入「委派返回即已落地/防重复组件」契约(新建所有权归子 agent)')
+    sdk.unmount()
+    // invoke 模式不发过程事件(流式事件仅 stream 模式)→ 用顶层中间件记录主 agent 工具调用
+    // (子 agent 走子栈自己的中间件装配,顶层 wrapToolCall 只见主 agent 的调用,天然区分创建者)
+    const mainToolCalls = []
+    const sdk2 = createChatSdk({
+      ui: false, id: 'e2e-cap-newcomp', storage: false, llm,
+      middleware: [{ name: 'record-main-tools', wrapToolCall: async (ctx, next) => { mainToolCalls.push(ctx.name); return next(ctx) } }],
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), title: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
+    })
+    await sdk2.mount()
+    await sdk2.send('加一个啤酒杯纯代码组件')
+    assert(bind.components.length === 2, `✓ 新建纯代码组件:数组恰 +1 无重复(实际 ${bind.components.length})`)
+    assert(bind.components.filter((c) => c.name === 'beer').length === 1, '✓ 新建组件 name 唯一(无主 agent 重复落地)')
+    assert(bind.components[1].code === '<section class="beer">杯</section>' && bind.components[1].__pgId, '✓ 子 agent path① 创建(含 code + 框架补 __pgId)')
+    assert(mainToolCalls.filter((n) => n === 'write').length === 0, `✓ 主 agent 零 write(不重复落地;主 agent 工具序列 ${JSON.stringify(mainToolCalls)})`)
+    assert(mainToolCalls.includes('use_html'), '✓ 主 agent 只委派(序列含 use_html)')
+    assert(llm.calls === 4, `✓ 调用链 4 轮(主委派/子写/子收口/主收口,实际 ${llm.calls})`)
+    sdk2.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

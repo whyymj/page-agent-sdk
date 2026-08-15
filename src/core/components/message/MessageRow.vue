@@ -51,7 +51,7 @@ const showCursor = computed(() => isAssistant.value && props.loading && props.is
     <div class="message-content">
       <MessageReasoning v-if="isAssistant" :text="reasoning" :expanded="reasoningExpanded" @toggle="$emit('toggle-reasoning')" />
       <MessageSteps v-if="isAssistant" :steps="steps" />
-      <!-- user 消息发送时的焦点快照(chip 同输入框:本体点击回看滚动,✕ 移除当前焦点) -->
+      <!-- user 消息发送时的焦点快照:历史记录只读(本体点击回看滚动);不带 ✕ —— 删历史 chip 改不了已发消息的上下文,还会误删当前焦点 -->
       <div v-if="message.role === 'user' && message.focuses?.length" class="msg-focuses">
         <span
           v-for="f in message.focuses"
@@ -59,7 +59,7 @@ const showCursor = computed(() => isAssistant.value && props.loading && props.is
           class="msg-focus-chip"
           :title="`回看 ${f.path}`"
           @click="ctx.focusChipClick(f)"
-        >🎯 {{ f.path }}<button type="button" class="msg-focus-chip-x" @click.stop="ctx.removeFocus(f.path)">✕</button></span>
+        >🎯 {{ f.path }}</span>
       </div>
       <MessageBubble
         :content="message.content"
@@ -88,8 +88,6 @@ const showCursor = computed(() => isAssistant.value && props.loading && props.is
 .msg-focuses { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; margin-bottom: 4px; }
 .msg-focus-chip { display: inline-flex; align-items: center; gap: 2px; padding: 1px 4px 1px 6px; border-radius: 10px; background: rgba(var(--cs-primary-rgb, 31, 77, 58), 0.12); color: var(--cs-primary, #1f4d3a); font-size: 11px; line-height: 1.6; cursor: pointer; white-space: nowrap; }
 .msg-focus-chip:hover { background: rgba(var(--cs-primary-rgb, 31, 77, 58), 0.2); }
-.msg-focus-chip-x { border: none; background: transparent; color: inherit; cursor: pointer; padding: 0 4px; border-radius: 8px; font-size: 11px; line-height: 1; opacity: 0.55; transition: opacity 0.15s, background 0.15s; }
-.msg-focus-chip-x:hover { opacity: 1; background: rgba(var(--cs-err-rgb, 220, 38, 38), 0.15); color: var(--cs-err, #dc2626); }
 .message-row.user .message-content { display: flex; flex-direction: column; align-items: flex-end; }
 /* 跨边界:hover message-row.assistant 时显示子组件 MessageActions 的 .msg-actions(后代选择器穿透) */
 .message-row.assistant:hover :deep(.msg-actions) { opacity: 1; }
