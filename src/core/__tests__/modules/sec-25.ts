@@ -1,4 +1,4 @@
-import { detectGarbledToolCall, parseGarbledToolCalls, detectTransitionalReply } from '../../harness/createAgent'
+import { detectGarbledToolCall, parseGarbledToolCalls, detectTransitionalReply, sanitizeGarbledContent } from '../../harness/createAgent'
 import type { TestCtx } from './_ctx'
 
 export async function run(ctx: TestCtx): Promise<void> {
@@ -69,5 +69,16 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 截断保护回归:参数未闭合仍跳过
     const trunc = '<｜DSML｜tool_calls><｜DSML｜invoke name="write"><｜DSML｜parameter name="data">{\"a\":1'
     assert(parseGarbledToolCalls(trunc) === null, '✓ 截断 DSML(参数未闭合)→ null 交重试(原保护不回归)')
+  }
+
+  // ===== sanitizeGarbledContent(3.11 真 LLM 实测:wrap-up/重试耗尽路径把未解析 DSML 原文当结论返回)=====
+  {
+    // S1 实测形态:多空行 + 中英过渡 prose + 单竖线 DSML 截断块 → 只留标记前 prose
+    const s1 = '\n\n\n好的,我已加载平台 UI 规范。现在开始规划并委派生成这个优惠券代码\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name="use_html">\n<｜DSML｜parameter name="task" string="true">生成优惠券代码组件(custom),追加到 page.components 末尾\n\n组件定位: 新组件'
+    assert(sanitizeGarbledContent(s1) === '好的,我已加载平台 UI 规范。现在开始规划并委派生成这个优惠券代码', '✓ sanitizeGarbledContent → S1 实测形态:DSML 块剥离,标记前 prose 保留(去首尾空白)')
+    assert(sanitizeGarbledContent('<｜｜DSML｜｜>invoke name="x">正文') === '', '✓ 全 garbled(标记在最前)→ 空串(调用方换兜底文案)')
+    assert(sanitizeGarbledContent('任务已完成,详见上方操作。') === '任务已完成,详见上方操作。', '✓ 无标记 → 原样返回')
+    assert(sanitizeGarbledContent('') === '', '✓ 空串 → 空串')
+    assert(sanitizeGarbledContent('前面说明\n<invoke name="read">...') === '前面说明', '✓ 弱伪 XML(<invoke name=)同款截断')
   }
 }

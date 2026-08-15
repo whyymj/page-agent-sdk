@@ -21,7 +21,7 @@
 import type { AgentMessage } from '../types'
 import { useContextManager, type ContextManagerOptions } from '../composables/useContextManager'
 import { groupRounds } from '../utils/rounds'
-import { shouldTriggerCompression } from '../composables/contextIndex'
+import { shouldTriggerCompression, resolvePromptSoftCap } from '../composables/contextIndex'
 import type { CompressDecision, CompressDecisionInput } from '../sdk/compressDecision'
 import type { ContextSnapshot } from '../utils/contextAnalysis'
 import type { Middleware } from './middleware'
@@ -55,7 +55,10 @@ export function createSummarizationMiddleware(
         if (shouldTriggerCompression(rounds, ctxManager.config)) {
           const triggerMode = ctxManager.config.contextWindow && ctxManager.config.contextWindow > 0 ? 'token' : 'rounds'
           const triggerReason = triggerMode === 'token'
-            ? `历史 token 超阈值 ${Math.round((ctxManager.config.contextWindow ?? 0) * (ctxManager.config.summaryThresholdRatio ?? 0.5))}`
+            ? `历史 token 超阈值 ${Math.round(Math.min(
+                (ctxManager.config.contextWindow ?? 0) * (ctxManager.config.summaryThresholdRatio ?? 0.5),
+                resolvePromptSoftCap(ctxManager.config.contextWindow, ctxManager.config.promptSoftCapTokens),
+              ))}`
             : `轮数 ${rounds.length} 超阈值 ${ctxManager.config.summaryThresholdRounds}`
           try {
             decision =

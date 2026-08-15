@@ -156,6 +156,8 @@ export interface AgentInfo {
   data?: DataInfo
   /** 当前上下文压缩预设(默认 auto;complex 为多步复杂任务/大 JSON 场景) */
   contextPreset?: 'auto' | 'conservative' | 'aggressive' | 'complex'
+  /** 压缩触发配置反射:contextWindow / summaryThresholdRatio / promptSoftCap(softCap 解析结果,Infinity=不参与) */
+  compression?: { contextWindow: number; summaryThresholdRatio: number; promptSoftCap: number }
   /** 规划阶段防死循环状态(maxPlanRevisions 预算;planning 关闭时 inPlanning 恒 false) */
   planPhase?: { inPlanning: boolean; rounds: number; limit: number }
   /** 当前任务目标锚点(mission 中间件;未开启/未 capture → undefined) */

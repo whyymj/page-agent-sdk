@@ -123,5 +123,45 @@ export async function run() {
     sdk.unmount(); sdk2.unmount()
   }
 
+  console.log('[e2e:hang-feedback] wrap-up/重试耗尽的 DSML 泄漏剥离(3.11 真 LLM 实测:S1 轮次耗尽收口时 use_html 委派以文本输出,原文当结论返回)')
+  {
+    const dsml = '\n\n好的,我已加载平台 UI 规范。现在开始规划并委派生成这个优惠券代码\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name="use_html">\n<｜DSML｜parameter name="task" string="true">生成优惠券代码组件(custom),追加到 page.components 末尾'
+    // 场景一:工具轮耗尽 → wrap-up(裸 llm)返回 DSML 截断块 → 剥离 + observable error 留痕
+    const errors = []
+    const llm = stubModel(
+      { toolCalls: [{ name: 'read', args: { jsonPath: 'title' } }] },
+      { text: dsml },  // wrap-up 响应(轮次耗尽收口)
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-garbled-wrapup', storage: false, llm, autoTitle: false,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' }, description: '测试' },
+      maxToolRounds: 1,  // 1 轮工具后耗尽 → 强制走 wrap-up 收口
+      onEvent: (e) => { if (e.type === 'error') errors.push(e) },
+    })
+    await sdk.mount()
+    const reply = await sdk.send('生成优惠券组件')
+    assert(!reply.includes('<｜DSML｜'), '✓ wrap-up DSML 泄漏被剥离(原:未解析任务规格当结论返回,委派零落地零提示)')
+    assert(reply.includes('好的,我已加载平台 UI 规范') && reply.includes('未执行'), '✓ 剥离后保留标记前 prose + 诚实注记(调用未执行)')
+    assert(sdk.debugLogs.value.some((l) => l.data?.stage === 'garbled_wrapup'), '✓ debugLogs 留痕 garbled_wrapup')
+    assert(errors.some((e) => e.code === 'GARBLED_TOOL_CALL_EXHAUSTED'), '✓ observable error 事件 GARBLED_TOOL_CALL_EXHAUSTED(集成方可感知任务未完成)')
+    sdk.unmount()
+
+    // 场景二:主循环 garbled 重试耗尽(连续 3 次截断 DSML)→ 同款剥离
+    const llm2 = stubModel(
+      { toolCalls: [{ name: 'read', args: { jsonPath: 'title' } }] },
+      { text: dsml }, { text: dsml }, { text: dsml },
+    )
+    const sdk2 = createChatSdk({
+      ui: false, id: 'e2e-garbled-exhaust', storage: false, llm: llm2, autoTitle: false,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' }, description: '测试' },
+    })
+    await sdk2.mount()
+    const reply2 = await sdk2.send('生成优惠券组件')
+    assert(!reply2.includes('<｜DSML｜') && reply2.includes('好的,我已加载平台 UI 规范'), '✓ 主循环 garbled 重试耗尽 → DSML 剥离 + prose 保留(原:emit error 后仍把原文当 final)')
+    sdk2.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

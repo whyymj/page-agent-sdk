@@ -96,7 +96,7 @@ export type { EditOp } from './tools/jsonUtils'
 export { getSchemaTopKeys, isPathAllowed, unwrapSchema, getSchemaAtPath, projectBySchemaDeep, projectBySchema, describeSchemaNode, renderSchemaHint, renderSchemaOverview, renderSchemaShallow, formatConstraints } from './tools/schemaUtils'
 export type { SchemaNodeDesc } from './tools/schemaUtils'
 // 上下文索引纯函数
-export { STOP_WORDS, tokenize, estimateMessageTokens, estimateRoundTokens, indexSummarize, recallRounds, shouldTriggerCompression } from './composables/contextIndex'
+export { STOP_WORDS, tokenize, estimateMessageTokens, estimateRoundTokens, indexSummarize, recallRounds, shouldTriggerCompression, resolvePromptSoftCap, SOFT_CAP_MIN_WINDOW, DEFAULT_PROMPT_SOFT_CAP } from './composables/contextIndex'
 export { CompressDecisionSchema, type CompressDecision } from './sdk/compressDecision'
 // LLM 解析
 export { isChatModel, resolveLlm, deriveTitle } from './sdk/llmResolver'

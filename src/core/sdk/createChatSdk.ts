@@ -75,7 +75,7 @@ import { createSkillStore, type SkillStore, type SkillStoreConfig, type Persiste
 import { makeId } from '../utils/id'
 import { resolveModelCaps, MIN_CONTEXT_WINDOW } from '../utils/modelCaps'
 import { trimMemoryMessagesImpl, composeTrimSummary } from '../utils/rounds'
-import { indexSummarize } from '../composables/contextIndex'
+import { indexSummarize, resolvePromptSoftCap } from '../composables/contextIndex'
 import { extractVfsRefs, gcVfsLargeResults } from '../utils/vfsGc'
 import { DEFAULT_STREAM_STALL_MS } from '../utils/stallTimeout'
 import { createSerialRunner } from '../utils/serialRunner'
@@ -221,6 +221,12 @@ export interface ChatSdkOptions {
   streamStallMs?: number
   /** token 预算上限(累计 total_tokens 超过 → 停止 agent + emit BUDGET_EXCEEDED;需 capabilities.automation:true) */
   tokenBudget?: number
+  /**
+   * 单次 invoke 的 token 预算上限(opt-in,默认关):本次 agent 调用累计 total_tokens 超限 → 中断收口
+   * (observable emit ROUND_TOKEN_BUDGET_EXCEEDED + 友好收口文本,已完成部分保留)。与 automation 的全局
+   * tokenBudget 正交:后者跨会话累计、需 automation 能力;本项单 invoke、无条件可用(防单轮死循环烧钱)。
+   */
+  roundTokenBudget?: number
   /** 时间预算 ms(从 agent 开始计时,超过 → 停止;需 capabilities.automation:true) */
   timeBudgetMs?: number
   /** 无人值守错误恢复:致命错误(invoke 抛错)自动 restore_last_checkpoint + 重试次数(默认 1;防单点错误永久中断批量/长任务)。需 capabilities.automation:true */
@@ -1249,6 +1255,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     useDataOps && !!finalDataConfig,
     options.toolMode,
     !!finalDataConfig?.resources?.length,
+    // C1 自感知预算:softCap 解析结果(token 维度触发;装配期一次,阈值近似够用)
+    { promptSoftCap: resolvePromptSoftCap(modelCaps.contextWindow, resolvedCtxOpts.promptSoftCapTokens) },
   )
   // A4「可操作数据」段:每轮从 liveData() 动态重算(修 setData 不同步 Bug)
   // 插中间件栈最前(usageHints 之前),保证数据段紧跟 base —— LLM 看到的 system 结构与现状等价
@@ -1427,6 +1435,21 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     }
   }
 
+  /**
+   * send/batch 路径的流事件观察器:approval 自动拒(P1-1)+ observable error 事件转发 emit。
+   * 3.11 真 LLM 复测发现:send 路径只传 approvalWatch,agent stream 内的 observable error
+   * (GARBLED_TOOL_CALL_EXHAUSTED / ROUND_TOKEN_BUDGET_EXCEEDED / STREAM_STALLED 等)到不了
+   * options.onEvent —— headless 集成方对「任务可能未完成」完全无感知。仅转发 error 类
+   * (流式 delta 不外发,保持「流式事件仅 stream 模式」契约)。
+   */
+  function makeStreamWatch(signal?: AbortSignal): (e: import('../types').StreamEvent) => void {
+    const approvalWatch = makeApprovalWatch(signal)
+    return (e) => {
+      approvalWatch?.(e)
+      if ((e as any).type === 'error') emit(e as any)
+    }
+  }
+
   // session-history Phase 6:会话历史响应式状态下沉(集成方直接消费 sdk.sessions,无需手动 listSessions/refresh/hook)
   const sessionsRef: Ref<SessionMeta[]> = ref([])
   /** 刷新历史会话列表到 sessionsRef(switchSession/deleteSession/onClear/init 后调;storage 未开启 no-op) */
@@ -1600,8 +1623,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       const maxAuto = useAutomation ? (options.maxAutoRetries ?? 1) : 0
       let attempt = 0
       let pushed = false
-      // P1-1(fix-hang-and-feedback):无响应方路径自动拒确认(详见 makeApprovalWatch 注释)
-      const approvalWatch = makeApprovalWatch(options.signal)
+      // P1-1(fix-hang-and-feedback):无响应方路径自动拒确认 + observable error 转发(详见 makeStreamWatch 注释)
+      const streamWatch = makeStreamWatch(options.signal)
       while (true) {
         if (!pushed) {
           messages.push({ role: 'user', content: msg, timestamp: Date.now() })
@@ -1609,7 +1632,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         }
         try {
           // P1-4(fix-hang-and-feedback):signal 穿透 —— 原 invoke 不带 signal,send 完全不可中断(headless 唯一出路=刷新)
-          let reply = await core.agent!.invoke(messages, options.signal, approvalWatch)
+          let reply = await core.agent!.invoke(messages, options.signal, streamWatch)
           // output 拦截器:返回前 postprocess(可改写最终回复)
           if (options.interceptors?.output) {
             try { const r = options.interceptors.output(reply); if (typeof r === 'string') reply = r } catch { /* 拦截器抛错忽略,用原 reply */ }
@@ -1646,7 +1669,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       await core.initDone
       if (!tasks.length) return []
       const results: BatchResult[] = []
-      const approvalWatch = makeApprovalWatch(signal)  // P1-1:批处理同样无 UI 响应方,确认超时自动拒
+      const streamWatch = makeStreamWatch(signal)  // P1-1:批处理同样无 UI 响应方,确认超时自动拒;error 转发同 send
       for (let i = 0; i < tasks.length; i++) {
         // P1-4(fix-hang-and-feedback):外部 abort → 停止剩余任务(剩余记 aborted,不静默丢)
         if (signal?.aborted) {
@@ -1659,7 +1682,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         const beforeLen = messages.length  // 失败时 truncate 回(撤销本轮 user + invoke 期间的中间 push)
         try {
           messages.push({ role: 'user', content: task, timestamp: Date.now() })
-          const reply = await core.agent!.invoke(messages, signal, approvalWatch)
+          const reply = await core.agent!.invoke(messages, signal, streamWatch)
           messages.push({ role: 'assistant', content: reply, timestamp: Date.now() })
           core.afterRound()
           if (store) await store.flush()
@@ -1926,6 +1949,12 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         skills: (skillsMw ? (skillsMw as any).controller.get() as SkillSpec[] : (options.skills ?? [])).map((s) => ({ name: s.name, description: s.description })),
         data: liveData() ? { description: liveData()!.description, schema: liveData()!.schema } : undefined,
         contextPreset: options.contextPreset ?? 'auto',
+        // 压缩触发配置反射(context-economy-phase2:softCap 解析结果可见,集成方可核对提前压缩是否生效)
+        compression: {
+          contextWindow: modelCaps.contextWindow,
+          summaryThresholdRatio: resolvedCtxOpts.summaryThresholdRatio ?? 0.5,
+          promptSoftCap: resolvePromptSoftCap(modelCaps.contextWindow, resolvedCtxOpts.promptSoftCapTokens),
+        },
         memory: memoryMw.get(),
         middleware: middlewares.map((m) => m.name),
         todos: (core.agent?.getState?.()?.todos ?? []).map((t) => ({
@@ -2229,6 +2258,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       maxOutputTokens: modelCaps.maxOutputTokens,
       // verify 自纠上限:装载 verify 时用 verify.maxAttempts(默认 2),否则 0(关闭自纠 = 现状)
       maxVerifyAttempts: useVerify ? verifyMaxAttempts : 0,
+      // C4 单 invoke token 预算(opt-in,默认关):超限友好收口;与 automation 全局 tokenBudget 正交
+      roundTokenBudget: options.roundTokenBudget ?? 0,
       // setLlm 后回调:重解析模型能力(contextWindow/maxOutputTokens 影响 offload 阈值/压缩)
       onLlmChange: (newLlm: BaseChatModel) => {
         // 仅更新实例引用;modelCaps 重算 + 最小窗口校验 + 集中回灌由 createChatSdk.setLlm 权威处理

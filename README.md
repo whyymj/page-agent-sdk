@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-1967%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-2006%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -134,6 +134,7 @@ CDN zero-config: `<script src="https://unpkg.com/page-agent-sdk"></script>` → 
 | 📦 context compression | 4-layer adaptive compression, presets + LLM summary | `contextPreset` |
 | 🧪 complex-task tuned | `complex` context preset (larger window + later compress + more recall, for multi-step / large-JSON / long-workflow tasks); vfs JSON-aware tools (`vfs_json_read` / `vfs_json_patch`) for structured big-JSON ops inside vfs; vfs three-pool LRU (large_results / drafts / userFiles isolated, no mutual eviction) | `contextPreset:'complex'`, `capabilities.vfs` |
 | 🛡️ compression-safe | Live data snapshot + preserved tool results in summary; write returns hint available paths; `systemPromptHelpers.reliableWriteRules` | built-in |
+| 💰 Context economy (3.10/3.11+) | Compression cost cap `promptSoftCapTokens` (defaults to 160K when window ≥320K — huge-window models no longer burn hundreds of thousands of tokens before compressing; reflected via `inspect().compression`) + agent budget self-awareness (70%-rounds / half-cap token hint, consecutive write-failure reminder, per-invocation `roundTokenBudget` friendly wrap-up) + tool-description slimming (-40% prompt) | `contextOptions.promptSoftCapTokens`, `roundTokenBudget` |
 | 💾 persistence | IndexedDB multi-session + quota eviction + switch | `storage` |
 | 👁 DOM read (2.20+) | Read rendered DOM structure (depth-cutoff + attr whitelist); verify modifications took effect — distinct from `eval_script` (structured + read-only) | `capabilities.domInspect` |
 | 📊 Context inspector | Snapshot actual-LLM-message composition (total / occupancy / category ratio); DebugDrawer `📊 上下文` tab + `inspectContext()`; zero LLM cost, default on | `capabilities.contextInspector` |
@@ -222,7 +223,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | **Capability packs** (2.37+) | `subagents` | `createRagSubagent({retriever?,loader?,useVfs?})` / `createHtmlSubagent({writablePaths?,codeVfsPrefix?,codeField?,orchestratorPrompt?,formatCheck?,craftNotes?})` (3.9+ usually no need to declare one — createChatSdk auto-registers a default HTML subagent at assembly; declare explicitly only to customize codeField/formatCheck etc.; open schemas / nested containers / dotted codeField need an explicit value) | Specialized subagent factories — **RAG**: multi-source retrieval (semantic `search_docs` / async `load_doc` / vfs / fetch), read-only, independent context; **HTML**: code-component generation — **code as a data asset** (code lives in `data.<writablePath>[i].code`, persisted with the data JSON; vfs is an edit working copy). The framework auto-checks-out (data.code→vfs by `__pgId`) before the subagent runs and auto-commits (vfs→data.code, direct bind mutation — no snapshot stack) after; the main agent is transparent (main-scope read sees a `<code Nkb>` summary). New components via `write`; edits via `vfs_edit` on the working copy. `codeField` (default `'code'`, nested jsonPath like `'props.html_code'` for open-schema platforms; + assembly-time hit-check warns on wrong path); main-agent orchestration **auto-injected** at assembly (3.9+ zero-config: a default HTML subagent is **auto-registered** when no explicit one exists and the schema has a code array — no switch needed, info logged; opt out prompt-only via `orchestratorPrompt:false`); model advice: prefer strong instruction-following models (deepseek-v4/claude/gpt-4o) for html codegen — flash-class amplifies over-thinking; **craft notes `craftNotes`** (on by default): the html subagent's final reply `[note]` lines are persisted to the component's `__pgNotes` (travels with the data JSON), and injected via the file map on the next delegation to that component ("handoff from the previous maintainer": design decisions / user feedback / pitfalls) — design intent persists across delegations; opt out via `craftNotes:false`; `formatCheck` on by default = `validate_code` self-check + verify beforeReturn gate with feedback self-correction; `validateHtmlFormat` exported. **Breaking (3.0)**: removed `onComplete`/`codeRef`/`codeSnapshots` — migrate `codeRef`→`code` field, drop `onComplete`/mirror. Composable/splitable, opt-in, ship with `rag-search`/`html-builder` skills. Plus `sdk.vfsWrite(path,content)` for async doc injection. See [doc/usage-guide.md](doc/usage-guide.md#capability-packs) |
 | **Subagent observability** (2.38+) | — | `inspect().subagent.{active,history}` / `sdk.{getActiveSubagents,subagentHistory}` | active/history runtime state + DebugDrawer "🤖 subagent" tab (follows `subagent` capability, session-level, not persisted) |
 | **Context** | `contextPreset` | `'auto' \| 'conservative' \| 'aggressive' \| 'complex'` · default `auto` | Compression preset (`complex` for multi-step / large-JSON / long-workflow tasks) |
-| | `contextOptions` | `Partial<ContextManagerOptions> \| false` | Fine params (`false` disables compression). Includes `preserveLastToolResults` (default `['describe_data','describe_data']` — keep field descriptions in compressed summary) |
+| | `contextOptions` | `Partial<ContextManagerOptions> \| false` | Fine params (`false` disables compression). Includes `promptSoftCapTokens` (3.11+ compression cost cap — 160K default when window ≥320K, explicit `0` disables) and `preserveLastToolResults` (default `['describe_data','describe_data']` — keep field descriptions in compressed summary) |
 | | `summaryLlm` | `BaseChatModel \| LLMConfig` | Summary-dedicated LLM (defaults to main `llm`) |
 | | `maxMemoryRounds` | `number` · default `30` | Dialog history memory round cap (`0` disables trim) |
 | | `vfs` | `{initialFiles?,maxBytes?}` · default 4MB | In-memory workspace cap (LRU evict on overflow) |
@@ -230,6 +231,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `session` | `{id?,autoResume?,title?}` | Session control |
 | | `shareContext` | `boolean` · default `false` | Same `id` instances share one agent |
 | **Robustness/other** | `maxRetries` / `maxParallelTools` / `maxToolRounds` | `number` · 2 / 1 / 10 | Model retries / per-round tool concurrency / max rounds |
+| | `roundTokenBudget` | `number` · default `0` (off) | Per-invocation cumulative token cap (3.11+; exceed → friendly wrap-up, partial work preserved; orthogonal to automation's `tokenBudget`, no automation capability needed) |
 | | `mcp` | `McpServerConfig[]` | Remote MCP servers (http/sse/websocket) |
 | | `middleware` | `Middleware[]` | Custom middleware (appended to built-in stack) |
 | | `streaming` / `debug` | — | UI/debug |
@@ -527,8 +529,8 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 1967 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 596 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm test            # 2006 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 605 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test

@@ -24,6 +24,7 @@ import { run as runAuthorizationSurface } from './e2e/authorization-surface.mjs'
 import { run as runHangFeedback } from './e2e/hang-feedback.mjs'
 import { run as runMainSubIsolation } from './e2e/main-sub-isolation.mjs'
 import { run as runSessionIntegrity } from './e2e/session-integrity.mjs'
+import { run as runContextEconomy } from './e2e/context-economy.mjs'
 
 const modules = [
   ['systemprompt', runSystemprompt],
@@ -49,6 +50,7 @@ const modules = [
   ['hang-feedback', runHangFeedback],
   ['main-sub-isolation', runMainSubIsolation],
   ['session-integrity', runSessionIntegrity],
+  ['context-economy', runContextEconomy],
 ]
 
 let totalPass = 0, totalFail = 0

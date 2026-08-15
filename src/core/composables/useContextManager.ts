@@ -39,6 +39,11 @@ export interface ContextManagerOptions {
   contextWindow?: number
   /** 触发压缩的 token 比例(默认 0.5:历史估算 token > contextWindow*0.5 时压缩) */
   summaryThresholdRatio?: number
+  /**
+   * prompt 软上限(token,成本维度):历史估算 token > min(window×ratio, softCap) 即触发压缩。
+   * 窗口 ≥320K 的模型未传时默认 160K(超大窗口 ratio×window 阈值过晚,500K 才首压);显式传 0 关闭。
+   */
+  promptSoftCapTokens?: number
   /** 保留最近窗口的 token 预算比例(默认 0.4) */
   windowRatio?: number
   /**

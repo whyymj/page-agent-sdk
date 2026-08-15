@@ -103,6 +103,25 @@ export interface HarnessState {
   focus?: Focus
   /** 多焦点全量(multi-focus;beforeAgent 同时注入 focus=focuses[0] 兼容旧消费者) */
   focuses?: Focus[]
+  /**
+   * 当前 invoke 的执行进度(createAgent 每轮更新;供中间件 augmentPrompt 注入预算提示/写失败提醒 —— context-economy-phase2 C1/C2)。
+   * 每次 invoke 新建对象(state 重建);中间件只读,勿改。
+   */
+  loopProgress?: LoopProgress
+}
+
+/** 单次 invoke 的执行进度(agent 自感知预算的数据源) */
+export interface LoopProgress {
+  /** 已消耗工具轮次 */
+  rounds: number
+  /** 本 invoke 工具轮预算(maxToolRounds) */
+  maxToolRounds: number
+  /** 本 invoke 累计 token 用量(每轮模型调用后累加;与 sdk.usage 会话级口径区分) */
+  invokeUsage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
+  /** 写工具同路径连续失败计数(path → 次数;写成功清零) */
+  writeFailures: Record<string, number>
+  /** 预算提示是否已注入(每任务一次,防每轮复读刷存在感) */
+  budgetHinted: boolean
 }
 
 export function createInitialState(): HarnessState {

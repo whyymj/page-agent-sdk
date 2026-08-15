@@ -723,6 +723,11 @@ defineSkill({
 ### 6.8 Context & memory caps
 
 - 4-layer adaptive compression (`contextPreset`: auto/conservative/aggressive/complex). **LLM summary is async (2.41.0+)**: compression returns immediately with an index summary (**no first-token block**; previously it awaited the LLM ≤15s), while an LLM summary runs in the background into a prefix cache; later rounds reuse it (LLM prefix + fresh index tail).
+- **Compression cost cap** (`contextOptions.promptSoftCapTokens`, 3.11+): the token trigger is `min(window × ratio, softCap)`. Huge-window models (e.g. 1M-window flash-class) would burn hundreds of thousands of tokens before the ratio trigger fires — the soft cap switches "when to compress" to a cost dimension: **defaults to 160K when unset and window ≥320K**; an explicit positive value wins; explicit `0` disables (small-window models are unaffected — the cap can only trigger earlier, never later). Verify the effective value via `inspect().compression.promptSoftCap`. See `doc/context-management.md` §5.
+- **Budget self-awareness (3.11+)**: a "⏳ budget hint" line is injected into the system prompt once per task when tool rounds reach 70% of `maxToolRounds` or cumulative prompt tokens reach half the soft cap (advisory: converge or report progress); the same write path failing ≥2 times consecutively injects a "re-read / restore_data" reminder. Opt-in per-invocation cap `roundTokenBudget` (default off): cumulative tokens for a single `send` exceeding it → friendly wrap-up text, partial work preserved — unlike automation's `tokenBudget` it needs no `capabilities.automation` and scopes to one call (guards against a single runaway round).
+  ```ts
+  createChatSdk({ roundTokenBudget: 50000 })  // per-task cap ~50K tokens, friendly wrap-up on exceed
+  ```
 - vfs `maxBytes` (default 8MB; 2.16.0+ three independent pools) LRU evict; dialog `maxMemoryRounds` (default 30) trim
 
 #### complex preset + vfs JSON-aware tools (2.16.0+)
@@ -930,6 +935,7 @@ For unattended batch / long-task scenarios (generate pages in the background, cr
 const sdk = createChatSdk({
   capabilities: { automation: true },  // opt-in, default off
   tokenBudget: 100000,      // cumulative token cap (exceed → stop + emit BUDGET_EXCEEDED)
+  roundTokenBudget: 50000,  // (optional) per-invocation token cap, 3.11+; no automation capability needed, friendly wrap-up on exceed
   timeBudgetMs: 600000,     // time cap ms (10 min; exceed → stop)
   maxAutoRetries: 2,        // fatal-error auto-recovery count (restore_last_checkpoint + retry; default 1)
   checkpoint: true,         // pairs with resume (per-round snapshot + persist checkpoint stack/usage)
@@ -942,7 +948,7 @@ const results = await sdk.batch(['gen page A', 'gen page B', 'gen page C'])
 // → [{ task, reply, ok:true }, { task, error, ok:false }, { task, reply, ok:true }]
 ```
 
-- **Resource budget** (`tokenBudget`/`timeBudgetMs`): checked before each model call; exceed → agent stops + emits `BUDGET_EXCEEDED` (observable); unfinished part can `restoreLastCheckpoint`.
+- **Resource budget** (`tokenBudget`/`timeBudgetMs`): checked before each model call; exceed → agent stops + emits `BUDGET_EXCEEDED` (observable); unfinished part can `restoreLastCheckpoint`. `roundTokenBudget` (3.11+) is a per-invocation complement — no `capabilities.automation` needed.
 - **Error recovery** (`maxAutoRetries`): fatal invoke error → `restore_last_checkpoint` + retry (limited) + emit `AUTO_RECOVER_RETRY`; exhausted → fatal.
 - **Batch** (`sdk.batch(tasks)`): per-task invoke, checkpoint before each; failed task `messages` splice truncate + `ok:false` doesn't halt the batch + emit `BATCH_TASK_FAILED`.
 - **Resume**: after refresh/crash, new sdk with same `id` + `storage` → mount recovers (checkpoint stack + cumulative usage from store) → `listCheckpoints` has values + `restoreLastCheckpoint` works + budget stats stay continuous. Needs `capabilities.automation` + `checkpoint` + `storage` together.

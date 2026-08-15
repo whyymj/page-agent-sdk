@@ -8,6 +8,7 @@
  *  - 绝不覆盖集成方 systemPrompt(拼接在其后,由 buildSystemPrompt 组装)。
  */
 import type { Middleware } from './middleware'
+import type { HarnessState } from './state'
 import { resolveCapabilities } from '../capabilities'
 
 /** capabilities 子集(仅用法提示相关开关) */
@@ -29,17 +30,25 @@ type HintCapabilityFlags = {
 /** 高温阈值:≥0.7 视为创意/规划型子 agent */
 const CREATIVE_TEMP = 0.7
 
+/** 自感知预算提示配置(C1:softCap 传入才有 token 维度触发) */
+export interface BudgetHintOptions {
+  /** 解析后的有效 prompt 软上限(resolvePromptSoftCap 产物;Infinity=不参与) */
+  promptSoftCap?: number
+}
+
 /**
  * @param caps 能力开关(planning / dataOps / subagent / humanConfirm / subagents)
  * @param hasDataOps 是否实际装了 数据操作工具(用于判断 snapshot 回退提示是否有意义)
  * @param toolMode 工具呈现模式:simple/minimal 主推 read/write;advanced 用底层 get/set/edit
+ * @param _hasResources 保留签名兼容(资源教程段已移至 resourcesPin,参数不再使用)
+ * @param budget C1 自感知预算提示配置(softCap;不传则仅轮次维度触发)
  */
-export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined, hasDataOps: boolean, toolMode: 'simple' | 'advanced' | 'minimal' = 'simple', _hasResources?: boolean): Middleware {  // _hasResources 保留签名兼容(资源教程段已移至 resourcesPin,参数不再使用)
+export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined, hasDataOps: boolean, toolMode: 'simple' | 'advanced' | 'minimal' = 'simple', _hasResources?: boolean, budget?: BudgetHintOptions): Middleware {  // _hasResources 保留签名兼容(资源教程段已移至 resourcesPin,参数不再使用)
   const rc = resolveCapabilities(caps)  // 单一解析 capability 开关(humanConfirm/subagents 非 capability,caps 直接访问)
   const simple = toolMode !== 'advanced'
   return {
     name: 'usageHints',
-    augmentPrompt: () => {
+    augmentPrompt: (state: HarnessState) => {
       const hints: string[] = []
       if (rc.planning) {
         hints.push('【自适应规划】按任务复杂度决定是否先规划,不要对简单任务过度编排:')
@@ -111,6 +120,24 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
         hints.push('  3) 即将执行高风险不可逆操作(删除/覆盖/批量改动)前:调工具确认。')
         hints.push('  4) 规划出多步方案需用户确认时:把整个方案(或关键分步)作为 option 调 request_human_confirmation,确认后再执行。')
         hints.push('用户在选项里选了哪个,就按那个方案继续;选「拒绝」则停止并询问如何调整。')
+      }
+      // C1/C2 自感知预算提示(context-economy-phase2):数据源 state.loopProgress(createAgent 每轮更新);
+      // 轮次/token 提示每任务只注入一次(budgetHinted 闭包于 per-invoke progress 对象),写失败提醒随失败存续注入
+      const p = state?.loopProgress
+      if (p) {
+        const usedTokens = p.invokeUsage.prompt_tokens || p.invokeUsage.total_tokens
+        const softCap = budget?.promptSoftCap ?? Number.POSITIVE_INFINITY
+        const nearRounds = p.maxToolRounds > 0 && p.rounds >= Math.ceil(p.maxToolRounds * 0.7)
+        const nearTokens = softCap !== Number.POSITIVE_INFINITY && usedTokens >= softCap * 0.5
+        if (!p.budgetHinted && (nearRounds || nearTokens) && (p.rounds > 0 || usedTokens > 0)) {
+          p.budgetHinted = true
+          hints.push(`⏳ 预算提示:本任务已用 ${p.rounds}/${p.maxToolRounds} 工具轮、累计约 ${Math.max(1, Math.round(usedTokens / 1000))}K prompt tokens。若已接近目标请收敛并给出总结;尚未接近请向用户汇报进度与剩余计划,勿默默继续。`)
+        }
+        const failEntries = Object.entries(p.writeFailures).filter(([, n]) => n >= 2)
+        if (failEntries.length) {
+          const list = failEntries.map(([path, n]) => `${path || '(整体)'}×${n}`).join('、')
+          hints.push(`⚠️ 以下路径已连续写失败:${list}。连续失败常意味着方向错了——先 read 重新核对实际值/类型,或 restore_data 回退后再改;若确需继续,换思路而非原样重试。`)
+        }
       }
       if (hints.length) {
         hints.unshift('调用工具务必用标准 function calling(工具调用)格式发起,不要在回复正文里输出伪 XML/标签(如 deepseek 的 tool_calls 标签、invoke、function_call、tool_call 等)或 JSON 文本——那不会被识别为工具调用,会被当普通文字,工具不执行。')

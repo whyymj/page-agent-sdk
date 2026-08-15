@@ -102,7 +102,7 @@ export function createTodosMiddleware(
         inPlanning = true
         planPhaseRounds = 1
       } else if (planPhaseRounds > maxPlanRevisions) {
-        return `规划阶段已达上限(${maxPlanRevisions} 轮)。停止调研/修订,基于当前清单开始执行(用 write/set_data/edit_data 落地)。当前清单:\n${todos.map((t, i) => `${i + 1}. #${t.id} [${t.status}] ${t.content}`).join('\n') || '(空)'}`
+        return `规划阶段已达上限(${maxPlanRevisions} 轮,现在已是第 ${planPhaseRounds} 版计划)。停止调研/修订,基于当前清单开始执行(用 write/set_data/edit_data 落地)。当前清单:\n${todos.map((t, i) => `${i + 1}. #${t.id} [${t.status}] ${t.content}`).join('\n') || '(空)'}`
       }
       todos = ensureIds(input)
       return `已更新任务清单:${todos.length} 项\n${todos.map((t, i) => `${i + 1}. #${t.id} [${t.status}] ${t.content}`).join('\n')}`
@@ -133,7 +133,7 @@ export function createTodosMiddleware(
     async ({ id, content, status, parentId, deps, criteria, evidence }) => {
       // planning 状态下同样受预算约束(防用 update_todo 绕过)
       if (inPlanning && planPhaseRounds > maxPlanRevisions) {
-        return `规划阶段已达上限(${maxPlanRevisions} 轮)。停止修订,基于当前清单开始执行。当前任务 id:${todos.map((t) => t.id).join(', ') || '(空)'}`
+        return `规划阶段已达上限(${maxPlanRevisions} 轮,现在已是第 ${planPhaseRounds} 版计划)。停止修订,基于当前清单开始执行。当前任务 id:${todos.map((t) => t.id).join(', ') || '(空)'}`
       }
       const idx = todos.findIndex((t) => t.id === id)
       if (idx < 0) {

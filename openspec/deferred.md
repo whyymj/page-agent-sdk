@@ -353,6 +353,16 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 
 ---
 
+### [2026-08-15] 上下文经济性 mid-turn 想法四项 — ⏸ 暂缓(未立项部分)
+
+**来源**:3.10.x 迭代期间用户 mid-turn 提出;其中「单轮 token 提示/上限」「重复计数提醒」已立项进 `context-economy-phase2` 阶段 C,余四项评估后暂缓:
+
+1. **提示词分级按需切换**(复杂设计 vs 简单流程 skill/限制):先看 context-economy-phase2 落地效果(softCap + 自感知提示);编排纪律(新建直接委派)已覆盖主要浪费源,分级切换的认知成本(集成方选档)可能高于收益。**重启触发**:复测 S1 后 flash 仍调研过重。
+2. **主 agent json 走 vfs 维护**(避免整体占上下文):已有大结果外存 + read 分页/裁剪/多路径 + `<code Nkb>` 摘要四层缓解;主 bind 直改 reactive 是响应式命脉,整体搬 vfs 动摇零桥接架构。**重启触发**:softCap 后主 agent 消息累积仍是大头且非工具结果类。
+3. **skill/mcp/tools 按需共享给子 agent**:规范 skill 双挂模式已覆盖主场景;通用按需共享需 spawn 期动态授权面审计(安全面扩大)。**重启触发**:真实集成出现「子 agent 需要主 agent 持有的 skill 且双挂不够」的案例。
+4. **maxMemoryRounds 默认 30 下调**:OOM 层与 prompt 成本正交(trimMemoryMessages 与 summarization 独立);softCap 已从成本侧解决。**重启触发**:小窗口模型(<128K)实测内存压力。
+
+
 ## 维护约定
 
 - 暂缓项**不进** `project.md`「进行中的 change」(避免占心智);本文件是唯一索引。

@@ -158,7 +158,10 @@ base systemPrompt(集成方注入的身份/规则 + 自动追加的 reliableWrit
 2. `groupRounds(messages)` 按用户消息切分为轮次(一轮 = 一条 user + 其后所有 assistant)
 3. **提取头部旧摘要正文**:若 messages 头部已有③留下的「【更早对话摘要】」system,提取其正文(去 header),稍后并入新摘要(防③留下的累积历史被②静默丢失)
 4. **窗口切分**(token 驱动优先):
-   - 有 `contextWindow` → `totalTokens = Σ estimateRoundTokens(round)`;`totalTokens <= contextWindow × summaryThresholdRatio` → 不触发;否则从最新轮往回累加 token 到 `contextWindow × windowRatio` 为止,其后为旧轮
+   - 有 `contextWindow` → `totalTokens = Σ estimateRoundTokens(round)`;`totalTokens <= min(contextWindow × summaryThresholdRatio, promptSoftCap)` → 不触发;否则从最新轮往回累加 token 到 `contextWindow × windowRatio` 为止,其后为旧轮
+     - `promptSoftCap`(成本上限,context-economy-phase2):`resolvePromptSoftCap(contextWindow, promptSoftCapTokens)` 单一真源解析 —— 显式 >0 用该值 / 显式 0 = Infinity(关)/ 未传且窗口 ≥320K → 默认 160_000 / 其余不参与(Infinity)。取 `min` 语义:softCap 只会更早触发、不会放宽带宽,小窗口模型的原行为不受影响
+     - 动机:大窗口模型(flash 类 1M)按 ratio 触发要烧到 50 万 token 才压缩,成本不可接受;softCap 把「何时压缩」从窗口维度改成成本维度
+     - 反射:`inspect().getInfo().compression = { contextWindow, summaryThresholdRatio, promptSoftCap }` 可核对生效值
    - 无 `contextWindow` → 轮数模式:`rounds.length <= summaryThresholdRounds` → 不触发;否则保留最近 `windowRounds` 轮,其余为旧轮
 5. **摘要生成**:
    - `enableLLMSummary && llmInvoke` → `summaryText = await llmInvoke(indexSummarize(older, preserveSet))`(失败回退索引摘要)
@@ -184,6 +187,7 @@ base systemPrompt(集成方注入的身份/规则 + 自动追加的 reliableWrit
 |---|---|---|
 | `contextPreset` | `auto` | 预设档位(见七) |
 | `summaryThresholdRatio` | 0.5(auto) | 历史 token 超 `contextWindow × 此比例` 触发 |
+| `promptSoftCapTokens` | 窗口 ≥320K 时 160_000 | 触发上限的更紧上界(取 `min`):显式 >0 用该值 / 显式 0 = 关 / 未传且窗口 ≥320K 默认 160_000 / 小窗口不参与。防大窗口模型按 ratio 触发前烧穿预算 |
 | `windowRatio` | 0.4(auto) | 保留近轮的 token 预算比例 |
 | `recallTopK` | 3(auto) | 召回最相关旧轮数 |
 | `enableRecall` | true | 是否启用关键词召回 |
@@ -350,7 +354,7 @@ flowchart TB
 
 ### 细参覆盖(`contextOptions`)
 
-在预设基础上覆盖个别字段:`contextWindow` / `windowRounds` / `summaryThresholdRounds` / `summaryThresholdRatio` / `windowRatio` / `recallTopK` / `enableRecall` / `enableLLMSummary` / `preserveLastToolResults` / `getRegisteredData`。`contextOptions: false` 关闭 summarization 中间件。
+在预设基础上覆盖个别字段:`contextWindow` / `windowRounds` / `summaryThresholdRounds` / `summaryThresholdRatio` / `promptSoftCapTokens` / `windowRatio` / `recallTopK` / `enableRecall` / `enableLLMSummary` / `preserveLastToolResults` / `getRegisteredData`。`contextOptions: false` 关闭 summarization 中间件。
 
 ### 摘要专用 LLM
 

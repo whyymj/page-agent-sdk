@@ -102,11 +102,31 @@ export interface CompressionTriggerConfig {
   contextWindow?: number
   summaryThresholdRatio?: number
   summaryThresholdRounds?: number
+  /** prompt 软上限(token):成本维度触发上界;解析规则见 resolvePromptSoftCap */
+  promptSoftCapTokens?: number
+}
+
+/** softCap 默认参与门槛:窗口 ≥320K 的大窗口模型才默认启用(常规窗口 ratio 阈值仍先生效,零变化) */
+export const SOFT_CAP_MIN_WINDOW = 320_000
+/** 默认 softCap:超大窗口(flash/v4 档 1M)下 ratio×window=500K 才首压、prompt 成本线性膨胀;160K 留 16× 常规会话余量(真 LLM 复测校准,非契约值) */
+export const DEFAULT_PROMPT_SOFT_CAP = 160_000
+
+/**
+ * 解析有效 softCap(纯函数,单一真源;供触发判断 + 消耗提示 C1 共用):
+ * - 显式 promptSoftCapTokens > 0 → 该值(覆盖默认)
+ * - 显式 0 → Infinity(显式关,一键回退)
+ * - 未传 + 窗口 ≥320K → 默认 160K
+ * - 未传 + 小窗口 → Infinity(不参与)
+ */
+export function resolvePromptSoftCap(contextWindow?: number, promptSoftCapTokens?: number): number {
+  if (promptSoftCapTokens != null) return promptSoftCapTokens > 0 ? promptSoftCapTokens : Infinity
+  if (contextWindow && contextWindow >= SOFT_CAP_MIN_WINDOW) return DEFAULT_PROMPT_SOFT_CAP
+  return Infinity
 }
 
 /**
  * 压缩触发预检(纯函数):是否已达压缩阈值(agent-driven-compression §1 HIGH)。
- * - token 模式(contextWindow>0):历史估算 token > contextWindow * summaryThresholdRatio(默认 0.5)
+ * - token 模式(contextWindow>0):历史估算 token > min(contextWindow * summaryThresholdRatio, softCap)(context-economy-phase2:softCap 成本维度,与 ratio 阈值同为上界取更紧者)
  * - 轮数模式:轮数 > summaryThresholdRounds(默认 8,严格 >)
  * 单一真源:compressInput 的 decide 前置 gate + compress() 内部触发判断共用,
  * 避免「开启 agentCompression 后每条消息都 decide 烧 1~2 次 LLM 调用」(design §1 HIGH)。
@@ -114,7 +134,10 @@ export interface CompressionTriggerConfig {
 export function shouldTriggerCompression(rounds: Round[], config: CompressionTriggerConfig): boolean {
   if (config.contextWindow && config.contextWindow > 0) {
     const totalTokens = rounds.reduce((s, r) => s + estimateRoundTokens(r), 0)
-    const threshold = config.contextWindow * (config.summaryThresholdRatio ?? 0.5)
+    const threshold = Math.min(
+      config.contextWindow * (config.summaryThresholdRatio ?? 0.5),
+      resolvePromptSoftCap(config.contextWindow, config.promptSoftCapTokens),
+    )
     return totalTokens > threshold
   }
   return rounds.length > (config.summaryThresholdRounds ?? 8)

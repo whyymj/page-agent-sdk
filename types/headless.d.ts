@@ -275,6 +275,8 @@ export interface AgentInfo {
   data?: DataInfo;
   /** 当前上下文压缩预设(默认 auto;complex 为多步复杂任务/大 JSON 场景) */
   contextPreset: 'auto' | 'conservative' | 'aggressive' | 'complex';
+  /** 压缩触发配置反射:contextWindow / summaryThresholdRatio / promptSoftCap(softCap 解析结果,Infinity=不参与) */
+  compression: { contextWindow: number; summaryThresholdRatio: number; promptSoftCap: number };
   memory: string;
   middleware: string[];
   todos: { id: string; content: string; status: string }[];
@@ -767,6 +769,8 @@ export interface ChatSdkOptions {
   streamStallMs?: number;
   /** token 预算上限(累计 total_tokens 超过 → 停止 agent + emit BUDGET_EXCEEDED;需 capabilities.automation:true) */
   tokenBudget?: number;
+  /** 单次 invoke 的 token 预算上限(opt-in,默认关):本次 agent 调用累计 total_tokens 超限 → 中断收口(observable emit + 友好文本,已完成部分保留);与 automation 全局 tokenBudget 正交 */
+  roundTokenBudget?: number;
   /** 时间预算 ms(从 agent 开始计时,超过 → 停止;需 capabilities.automation:true) */
   timeBudgetMs?: number;
   /** 无人值守错误恢复:致命错误(invoke 抛错)自动 restore_last_checkpoint + 重试次数(默认 1;防单点错误永久中断批量/长任务)。需 capabilities.automation:true */
@@ -792,7 +796,7 @@ export interface ChatSdkOptions {
   checkpoint?: boolean | { maxCheckpoints?: number; auto?: boolean };
   /** MCP server 列表(连远程 server 动态注入其 tools;浏览器仅 http/sse/websocket) */
   mcp?: McpServerConfig[];
-  /** 上下文压缩配置(false 关闭;默认 LLM 摘要,失败回退索引摘要) */
+  /** 上下文压缩配置(false 关闭;默认 LLM 摘要,失败回退索引摘要)。含 promptSoftCapTokens(prompt 软上限:窗口 ≥320K 模型默认 160K,历史 token 超 min(window×ratio, softCap) 即提前压缩;传 0 显式关) */
   contextOptions?: any;
   /** 上下文压缩预设档位(默认 'auto'):auto / conservative / aggressive / complex(多步复杂任务/大 JSON);提供合理默认,contextOptions 细参可覆盖 */
   contextPreset?: 'auto' | 'conservative' | 'aggressive' | 'complex';
@@ -1145,7 +1149,13 @@ export declare function estimateMessageTokens(m: any): number;
 export declare function estimateRoundTokens(r: any): number;
 export declare function indexSummarize(older: any[], preserve?: Set<string>): string;
 export declare function recallRounds(older: any[], query: string, topK: number): any[];
-export declare function shouldTriggerCompression(rounds: any[], config: { contextWindow?: number; summaryThresholdRatio?: number; summaryThresholdRounds?: number }): boolean;
+export declare function shouldTriggerCompression(rounds: any[], config: { contextWindow?: number; summaryThresholdRatio?: number; summaryThresholdRounds?: number; promptSoftCapTokens?: number }): boolean;
+/** 解析有效 prompt 软上限:显式 >0 用该值 / 显式 0 关(Infinity) / 未传且窗口 ≥320K 默认 160K / 其余不参与 */
+export declare function resolvePromptSoftCap(contextWindow?: number, promptSoftCapTokens?: number): number;
+/** softCap 默认参与门槛(窗口 ≥320K) */
+export declare const SOFT_CAP_MIN_WINDOW: number;
+/** 默认 prompt 软上限(160K) */
+export declare const DEFAULT_PROMPT_SOFT_CAP: number;
 // ============ LLM 解析(llmResolver,refactor-module-extraction 期二 从 createChatSdk 抽离)============
 export declare function isChatModel(v: unknown): boolean;
 export declare function resolveLlm(options: any): { modelCaps: any; summaryLlmInvoke: ((prompt: string) => Promise<string>) | undefined };

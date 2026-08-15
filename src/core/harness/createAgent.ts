@@ -26,8 +26,8 @@ import { offloadLargeResult } from '../utils/offload'
 import { runPool } from '../utils/pool'
 import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars, type ModelCaps } from '../utils/modelCaps'
 import { getTraceMetrics } from '../utils/traceMetrics'
-import { extractTextDelta, extractReasoningDelta, extractUsage } from '../utils/contentParts'
-import { createInitialState, type HarnessState } from './state'
+import { extractTextDelta, extractReasoningDelta, extractUsage, normalizeUsage } from '../utils/contentParts'
+import { createInitialState, type HarnessState, type LoopProgress } from './state'
 import { withRetry, isAbort, type RetryOptions } from './retry'
 import { withStallTimeout, StreamStalledError, DEFAULT_STREAM_STALL_MS } from '../utils/stallTimeout'
 import { isContextLengthError } from './errors'
@@ -64,6 +64,18 @@ export function detectGarbledToolCall(content: string): boolean {
   //  - <｜tool[_a-z]*｜>:DeepSeek tool 段标记变体(<｜tool｜>/<｜tool_begin｜> 等)
   //  - <invoke name=> / <tool_call> / <function_call>:通用伪 XML 工具调用
   return /<｜tool_calls｜>|<｜｜[^>]*tool_call|<｜｜?DSML|<｜｜?tool[_a-z]*｜?>|<invoke\s+name=|<\/?tool_call>|<function_call>/i.test(content)
+}
+
+/** 剥离 garbled 工具调用文本,只保留首个标记出现前的正常 prose。导出供测试。
+ *  实测(3.11 真 LLM 复测):wrap-up/重试耗尽路径曾把未解析的 DSML 块(单竖线 + 截断的任务规格)原样当
+ *  最终答复返回 —— 对用户是乱码且暗示已执行,实为零执行(use_html 委派从未跑)。
+ *  规则:强守卫标记(单/双竖线 DSML / <｜tool*｜> / <function_call> / <invoke name=)首次出现处截断 ——
+ *  标记后的正文几乎必是工具调用规格(参数值可含多行长文),不是给用户的话;无标记返回原串(去首尾空白)。 */
+export function sanitizeGarbledContent(content: string): string {
+  if (!content) return ''
+  const re = /<｜tool_calls｜>|<｜｜[^>]*tool_call|<｜｜?DSML|<｜｜?tool[_a-z]*｜?>|<function_call>|<invoke\s+name=/i
+  const m = content.search(re)
+  return (m >= 0 ? content.slice(0, m) : content).trim()
 }
 
 /** 过渡性收口模式:模型中途输出计划性表态就停(实测 deepseek-v4-flash:「好的,我先看看…再委派生成」调研完即收口)。导出供测试 */
@@ -213,6 +225,12 @@ export interface CreateAgentOptions {
   maxParallelTools?: number
   /** beforeReturn 自纠上限(默认 0 = 关闭,纯放行);>0 时 agent 返回前跑 beforeReturn 钩子,有 feedback 则回灌 user 消息继续循环,达上限强制 return 防死循环 */
   maxVerifyAttempts?: number
+  /**
+   * 单次 invoke 的 token 预算上限(opt-in;context-economy-phase2 C4):每轮模型调用前检查本次 invoke 累计
+   * total_tokens,超限 → 中断收口(observable emit + 友好收口文本,已完成部分保留)。与 automation 的全局
+   * tokenBudget 正交:后者跨整个会话累计、需 automation 能力;本项单 invoke、无条件可用(防单轮死循环烧钱)。
+   */
+  roundTokenBudget?: number
   /** 日志下沉:每条 debugLog 产生时回调(子 agent 经此把日志转发到主 debugLogs) */
   onLog?: (entry: DebugLog) => void
   /** span 采集回调(capabilities.tracing 开时由 createChatSdk 注入;关时 undefined → startSpan/endSpan no-op 零开销) */
@@ -272,6 +290,26 @@ export function computeMaxIterations(maxToolRounds: number, userMax?: number): n
   return userMax ?? Math.max(maxToolRounds * 3, 30)
 }
 
+/** C2 写失败计数认定的写工具集(dataOps 高层 + 底层写路径;draft_commit 视为根路径写) */
+const WRITE_TOOL_NAMES = new Set(['write', 'set_data', 'edit_data', 'delete_data', 'draft_commit'])
+
+/**
+ * 从写工具 args 提取目标 path(计数聚合键;提取不出 → 根 '')。纯函数。
+ * 覆盖:jsonPath 直传(edit_data/delete_data)/ patch.jsonPath(write 增量)/ patches[0].jsonPath(write 批量)/ 其余(整体 set)= 根
+ */
+export function extractWriteTargetPath(args: unknown): string {
+  if (!args || typeof args !== 'object') return ''
+  const a = args as Record<string, unknown>
+  if (typeof a.jsonPath === 'string') return a.jsonPath
+  const patch = a.patch as Record<string, unknown> | undefined
+  if (patch && typeof patch.jsonPath === 'string') return patch.jsonPath
+  const patches = a.patches
+  if (Array.isArray(patches) && patches.length && patches[0] && typeof (patches[0] as any).jsonPath === 'string') {
+    return (patches[0] as any).jsonPath
+  }
+  return ''
+}
+
 export function createAgent(options: CreateAgentOptions) {
   const {
     apiKey,
@@ -291,6 +329,7 @@ export function createAgent(options: CreateAgentOptions) {
     stallMs = DEFAULT_STREAM_STALL_MS,
     maxParallelTools = 1,
     maxVerifyAttempts = 0,
+    roundTokenBudget = 0, // C4 单 invoke token 预算(opt-in;0=关)
     onLog,
     onSpan,
     onTrace,
@@ -684,6 +723,17 @@ export function createAgent(options: CreateAgentOptions) {
     const modelHandler = composeModelCall(middlewares, (req) => coreModelCall(req, onEvent, signal))
     const toolHandler = composeToolCall(middlewares, coreExecTool)
 
+    // 自感知预算进度(context-economy-phase2 C1/C2):每 invoke 新建;state 经 runBeforeModel/runAfterModel 的 spread
+    // 更新不会丢嵌套引用,augmentPrompt(state) 每轮可读到最新值(轮次/累计 usage/写失败计数)
+    const progress: LoopProgress = {
+      rounds: 0,
+      maxToolRounds,
+      invokeUsage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      writeFailures: {},
+      budgetHinted: false,
+    }
+    state.loopProgress = progress
+
     let rounds = 0
     let iterations = 0 // 总循环计数(含自纠轮),受 maxIterations 硬上限约束防死循环(harden-react-loop-budget)
     const maxIterations = computeMaxIterations(maxToolRounds, userMaxIterations)
@@ -698,6 +748,15 @@ export function createAgent(options: CreateAgentOptions) {
         iterations++ // 总循环计数(含自纠轮),触顶 maxIterations 强制退出防死循环
         // 每轮开始检查 abort(用户停止)
         if (signal?.aborted) break
+        // C4 单 invoke token 预算(opt-in):模型调用前查本次累计 total_tokens,超限 → 友好收口
+        // (observable emit + 中断;已完成部分保留,与用户停止同 abort 语义;不走 wrap-up 追加 LLM 调用防预算超了再烧)
+        if (roundTokenBudget > 0 && progress.invokeUsage.total_tokens > roundTokenBudget) {
+          const budgetMsg = `本轮 token 预算(约 ${roundTokenBudget})已用尽:任务在 ${rounds} 轮工具调用后中断,已完成的部分均保留。可继续对话,指定下一步(如「继续完成」/「只改 X」/「提高预算重试」)。`
+          log('error', { stage: 'round_token_budget_exceeded', used: progress.invokeUsage.total_tokens, budget: roundTokenBudget, rounds })
+          onEvent({ type: 'error', message: budgetMsg, severity: 'observable', code: 'ROUND_TOKEN_BUDGET_EXCEEDED', context: { used: progress.invokeUsage.total_tokens, budget: roundTokenBudget } } as any)
+          onEvent({ type: 'done', content: budgetMsg })
+          return budgetMsg
+        }
         const roundSpanId = startSpan(undefined, 'round', `round ${iterations}`, { round: iterations })?.id
         onEvent({ type: 'round_start', round: iterations })  // 迭代号(含自纠轮,每轮新号);log 的 round 仍用工具轮号(rounds)便于调试追踪(harden-react-loop-budget)
 
@@ -721,6 +780,15 @@ export function createAgent(options: CreateAgentOptions) {
         log('llm_response', { round: rounds + 1, content: response.content, toolCalls: response.toolCalls })
         // usage 兼容:OpenAI/DeepSeek additional_kwargs.usage + Anthropic response_metadata.usage(extractUsage 统一;主链 usage 累加已在 sdk-events 多 provider fallback)
         endSpan(modelSpan, response.aborted ? 'timeout' : 'ok', { usage: extractUsage(response.message) })
+        // C1 自感知预算:本 invoke 累计 usage(normalizeUsage 归一 camelCase 兼容;主链会话级累加不受影响)
+        {
+          const nu = normalizeUsage(response.message)
+          if (nu) {
+            progress.invokeUsage.prompt_tokens += nu.prompt_tokens ?? 0
+            progress.invokeUsage.completion_tokens += nu.completion_tokens ?? 0
+            progress.invokeUsage.total_tokens += nu.total_tokens ?? 0
+          }
+        }
 
         state = runAfterModel(middlewares, response, state)
 
@@ -785,8 +853,17 @@ export function createAgent(options: CreateAgentOptions) {
               }
             }
             pendingFormatRetry = false // 收口:正常 final 或 garbled 重试耗尽(已 emit error)→ 清 flag
-            onEvent({ type: 'done', content: response.content })
-            return response.content
+            // garbled 重试耗尽:原文里的 DSML/伪 XML 块对用户是乱码(且工具未执行)——剥离标记前 prose 返回 + 注记;
+            // 剥离后无剩余 → 诚实兜底文案(3.11 真 LLM 实测:截断的 DSML 任务规格被当结论返回,委派零落地零提示)
+            let finalContent = response.content
+            if (garbled) {
+              const prose = sanitizeGarbledContent(finalContent)
+              finalContent = prose
+                ? `${prose}\n\n(注:此后模型输出了无法解析的工具调用文本,该调用未执行,任务可能未完成。)`
+                : '模型多次输出无法解析的工具调用格式,本次任务可能未完成。请重试或继续指示。'
+            }
+            onEvent({ type: 'done', content: finalContent })
+            return finalContent
           }
         }
         pendingFormatRetry = false // 走到这里 = 本轮有标准 tool_call(重试成功或正常),清 flag
@@ -822,8 +899,17 @@ export function createAgent(options: CreateAgentOptions) {
           if (!r) continue
           currentMessages.push(new ToolMessage({ tool_call_id: ctxs[i].id, content: r.content }))
         }
+        // C2 写失败计数:写工具同路径连续 error +1 / 成功清零(达 ≥2 由 usageHints 注入提醒;纯确定性,零 LLM 成本)
+        for (let i = 0; i < ctxs.length; i++) {
+          const r = results[i]
+          if (!r || !WRITE_TOOL_NAMES.has(ctxs[i].call.name)) continue
+          const key = extractWriteTargetPath(ctxs[i].call.args)
+          if (r.status === 'error') progress.writeFailures[key] = (progress.writeFailures[key] ?? 0) + 1
+          else delete progress.writeFailures[key]
+        }
         if (signal?.aborted) break // 中止则不进入下一轮
         rounds++
+        progress.rounds = rounds
       }
 
       // 循环退出:abort(用户停止)或达到最大轮次
@@ -862,8 +948,19 @@ export function createAgent(options: CreateAgentOptions) {
           return resp.content
         }
         if (resp.content) {
-          onEvent({ type: 'done', content: resp.content })
-          return resp.content
+          // wrap-up 同样可能泄漏 DSML(3.11 真 LLM 实测:轮次耗尽收口时模型仍试图以文本委派,裸 llm 无工具可解析,
+          // 原文直接返回 = 未解析的任务规格当结论)——同款剥离 + observable error(与主循环 garbled_exhausted 对齐)
+          let wrapUpText = resp.content
+          if (detectGarbledToolCall(wrapUpText)) {
+            const prose = sanitizeGarbledContent(wrapUpText)
+            log('error', { stage: 'garbled_wrapup', content: wrapUpText.slice(0, 200) })
+            onEvent({ type: 'error', message: '模型在收口(工具轮耗尽)时输出无法解析的工具调用格式,任务可能未完成。请重试或换模型。', severity: 'observable', code: 'GARBLED_TOOL_CALL_EXHAUSTED', context: { content: wrapUpText.slice(0, 200) } } as any)
+            wrapUpText = prose
+              ? `${prose}\n\n(注:工具调用次数已达上限,模型最后试图发起的调用未执行,任务可能未完成。)`
+              : '我已完成本轮能做的部分操作,但最后的计划未能执行(工具调用次数已达上限)。请重试或继续指示。'
+          }
+          onEvent({ type: 'done', content: wrapUpText })
+          return wrapUpText
         }
       }
       // 收口也无文本(极端)→ 兜底文案

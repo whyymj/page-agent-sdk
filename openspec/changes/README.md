@@ -42,7 +42,7 @@
 
 ## 进行中
 
-(无活跃 change)
+- **2026-08-15 `context-economy-phase2`**(上下文经济性二阶段 + agent 自感知预算,目标 minor):承接 3.10.2 一阶段(S4 -19%)后的新瓶颈 —— S1 单场景 28 轮/507K prompt tokens(压缩触发太晚:flash 1M 窗口 × ratio 0.5 = 500K 才首压)。四线:① `promptSoftCapTokens` 成本维度触发(窗口 ≥320K 默认 softCap 160K,显式可覆盖/0 关);② 工具面瘦身二批(eval_script 505/draft_commit 379/set_data 312 等剩余长描述,教程归 usageHints);③ agent 自感知预算(轮次/token 消耗提示一行注入 + 写失败重复计数提醒 + 计划版次计数 + `roundTokenBudget` opt-in 单轮上限 —— 用户三项想法落地);④ 真 LLM 复测 S1/S7 对比基线。见 [`2026-08-15-context-economy-phase2/`](./2026-08-15-context-economy-phase2/)。
 
 ---
 

@@ -532,7 +532,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'get_data',
       description:
-        '@deprecated(改用 read,等价且支持 fields/depth/分页/多路径;get_data 仅为兼容保留)。读取主数据的当前值(安全序列化:函数/DOM/循环引用做摘要;大结果由系统自动外存,提示用 vfs_read 回读)。返回含 hash(乐观锁):改前先 read/get 拿 hash,写入时传 expectedHash 回传,系统对比当前 hash 防"基于过期值覆盖"。jsonPath 可选:读整个主数据不传,读子路径传(如 components.0.text)。',
+        '@deprecated(改用 read,等价且支持 fields/depth/分页)。读取主数据当前值(返回含 hash 供乐观锁);jsonPath 可选读子路径。大结果自动外存 vfs。',
       schema: z.object({ jsonPath: z.string().optional().describe('相对主数据根的点号路径(如 components.0.text);不传则读整个主数据') }),
     },
   )
@@ -553,7 +553,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'set_data',
       description:
-        '设置主数据的值(整体替换)。value 为 JSON 对象(或 JSON 字符串),需通过 schema 校验。校验失败会返回错误而非写入。expectedHash(可选):改前 read/get 返回的 hash,传入则启用乐观锁;不传时系统自动用你最后一次读到的 hash 比对(autoLock,默认开)。大对象/数组强烈建议改用 edit_data 增量 patch。白名单模式(schema 为 ZodObject 子集):set 为根级浅合并,深层子对象整体替换(未传字段丢失);保留深层字段请用 edit_data({op:"merge", jsonPath:"子路径", value:{...}})局部合并。',
+        '@deprecated(改用 write,等价)。整体设置主数据(value 需过 schema 校验)。白名单模式:set 为根级浅合并,深层整体替换(未传字段丢失);保留深层字段用 edit_data({op:"merge"})。expectedHash 乐观锁可选(默认 autoLock)。',
       schema: z.object({
         value: z.unknown().describe('JSON 对象(推荐直传,如 {title:"x"}),或 JSON 字符串;需符合 schema'),
         expectedHash: z.string().optional().describe('乐观锁:改前 read/get 返回的 hash;传入则校验,不一致拒绝写入防覆盖。不传则自动用你最后读到的 hash(autoLock)'),
@@ -594,7 +594,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'edit_data',
       description:
-        '增量编辑主数据(advanced;simple 用 write 等价)。op:set 设值/remove 删/merge 合并对象/append 追加数组/move 移动数组元素;jsonPath 相对根(数组索引用数字);value 直传对象或 JSON 字符串。经 schema 校验失败不写。expectedHash 可选乐观锁。大对象优先增量改,勿整体重传。',
+        '增量编辑主数据(advanced;simple 用 write 等价)。op:set/remove/merge/append/move;jsonPath 相对根(数组索引用数字);value 对象或 JSON 字符串。schema 校验失败不写;expectedHash 可选乐观锁。大对象优先增量改。',
 
       schema: z.object({
         op: z.enum(['set', 'remove', 'merge', 'append', 'move']).optional().describe('增量操作(顶层或 patch.op 至少一个):set 设值/remove 删/merge 合并/append 追加/move 移动数组元素(value=目标路径字符串,数组本身=追加/数组内下标=插入;同数组即重排,目标下标按移除源后解释)'),
@@ -702,7 +702,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     },
     {
       name: 'history_data',
-      description: '查看主数据快照(只读,不回退当前)。① list:true 列出快照时间线(序号/操作/标签/时间/大小,等价原 list_data_snapshots);② 不传或传 id 查看某次快照内容(默认最近一次),可选 jsonPath 只看子路径(按 schema 投影)。看上一版长啥样而不影响当前(冲突诊断/verify 自纠/用户问"刚才改了啥")。对比差异用 diff_data。',
+      description: '查看主数据快照(只读不回退当前)。list:true 列时间线;传 id 看某次快照内容(默认最近),jsonPath 可只看子路径。冲突诊断/看上一版用;对比差异用 diff_data;回退用 restore_data。',
       schema: z.object({
         id: z.number().int().optional().describe('快照序号;不传则最近一次(list:true 时忽略)'),
         jsonPath: z.string().optional().describe('只看快照的某子路径(相对主数据根);不传则整个快照'),
@@ -729,7 +729,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'query_data',
       description:
-        '用 JSONPath 查询主数据(只读)。语法:$ 根/.key/[n]/[*]/[?(filter)](==/!=/</<=/>/>=,&&/||)/..key 递归;对象需先点出数组再过滤,如 $.components[?(@.type=="card")]。返回匹配元素 path/index/value(path 可作后续 write patch 的 jsonPath)。大数组筛选定位用它,改用 write patch。',
+        '用 JSONPath 查询主数据(只读):$ 根/.key/[n]/[*]/[?(==/!=/</<=/>/>=,&&/||)]/..key 递归。返回匹配元素 path/index/value(path 可作 write patch 的 jsonPath);大数组筛选定位用它。',
 
       schema: z.object({
         expr: z.string().describe('JSONPath 表达式,如 $.components[?(@.type=="card" && @.price<100)] 或 $..title(递归找所有 title)'),
@@ -752,7 +752,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'search_data',
       description:
-        '在主数据内做文本搜索(只读,无副作用)。mode:substring(子串,默认,大小写不敏感)、regex(正则,i 标志)、fuzzy(模糊:子串命中或 Levenshtein 距离 ≤ fuzzyThreshold)。递归遍历所有叶子值(及可选 key),返回命中元素的 path + value(超 200 字符截断)。适合在大 JSON 里找名字近似、记不清的元素,定位 path 后用 edit_data 改。',
+        '主数据内文本搜索(只读)。mode:substring(默认,不区分大小写)/regex(i 标志)/fuzzy(Levenshtein ≤ fuzzyThreshold)。递归遍历叶子值返回命中 path+value(超 200 字符截断);找名字记不清的元素用它。',
       schema: z.object({
         query: z.string().describe('搜索词(substring/regex/fuzzy 共用)'),
         mode: z.enum(['substring', 'regex', 'fuzzy']).optional().describe('匹配模式,默认 substring'),
@@ -839,7 +839,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'eval_script',
       description:
-        '在隔离的 Web Worker 沙箱里对主数据跑自定义 JS 脚本(无 window/document 访问,fetch/XHR/WebSocket/importScripts 已禁用,超时 3s 可终止)。脚本以 `data` 为入参(主数据的深拷贝),返回值即结果。mode:query(默认,只读,把返回值回给 LLM,适合过滤/映射/聚合/统计大数组)、transform(把返回值作为主数据的新整体值,经 schema 校验后就地落地,适合批量重写)。transform 支持两种返回形式:① 完整新值(整体替换);② {patches:[{op,jsonPath,value},...]} 增量 patch(按 patch 应用,避免大对象整体重传,任一 patch 失败或整体 schema 校验失败则不写入)。query 不改主数据。脚本内可用标准 JS(Array/Object/JSON/Math 等)与 async/await。jsonPath(可选,子树模式):仅对 jsonPath 指向的子树执行(降低大 JSON 深拷贝/执行成本),transform 时返回值作为该子树的新值。',
+        '在 Worker 沙箱对主数据跑自定义 JS(无 window/fetch,超时 3s)。入参 data(深拷贝),返回值即结果。mode:query 只读回给 LLM(过滤/映射/聚合)/transform 落地(返回完整新值或 {patches:[...]} 增量)。jsonPath 可只对子树执行。',
       schema: z.object({
         script: z.string().describe('JS 脚本体,如 data.filter(c=>c.stock>0).map(c=>c.id);入参名 data;末尾表达式或 return 即返回值'),
         mode: z.enum(['query', 'transform']).optional().describe('query=只读返回结果(默认),transform=校验后落地为新值'),
@@ -1124,7 +1124,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       {
         name: 'draft_write',
         description:
-          '分块写 JSON 草稿到 drafts 池(累积构建超大 JSON,解决单次 write 装不下 LLM max_tokens)。mode:"start" 新建/覆盖草稿;"append" 追加 chunk 到已有草稿(拼接字符串)。草稿存 drafts/{draftId}.json(2MB 池,与 offload 分池互不挤占)。返回 {draftId,bytes,mode} 看累计进度。配合 draft_commit 合并+校验+提交。LLM 负责分块拼成合法 JSON(最后 draft_commit 时整体 JSON.parse 校验;拼接不合法返回 JSON_INVALID,草稿保留可继续修正)。',
+          '分块写 JSON 草稿到 drafts 池(单次 write 受 max_tokens 限制装不下时用)。mode:"start" 新建/"append" 追加拼接;返回 {draftId,bytes} 看累计进度。累积完 draft_commit 提交;拼接不合法返回 JSON_INVALID 草稿保留。',
         schema: z.object({
           draftId: z.string().describe('草稿标识(自起,如 "page-gen-1")'),
           chunk: z.string().describe('JSON 片段字符串(分块输出,append 拼接成完整 JSON;如 \'{"components":[\' / \'{"type":"heading",...},\' / \']}\')'),
@@ -1160,7 +1160,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       {
         name: 'draft_commit',
         description:
-          '把 draft_write 累积的草稿合并 + schema 校验 + 原子提交到主数据(失败不污染 bind,草稿保留供修后重试)。流程:读 drafts/{draftId}.json → JSON.parse(失败 JSON_INVALID,草稿保留)→ 乐观锁校验(expectedHash/autoLock,失败触发冲突人工介入,草稿保留)→ schema 校验(失败 SCHEMA_INVALID,草稿保留)→ 写 bind + 自动快照(与 write(set)/set_data 共用 commitSetToBind,restore_data 可回退)→ 清草稿。适合从零生成大 JSON(如 50+ 组件页面):分块 draft_write 累积 → draft_commit 一次提交。小改仍用 write/patch(无需 draft)。',
+          '把 draft_write 累积的草稿合并 + JSON.parse + 乐观锁 + schema 校验,原子提交主数据(任一步失败不写,草稿保留可修后重试;成功清草稿 + 自动快照可回退)。仅大 JSON 从零生成用;小改用 write。',
         schema: z.object({
           draftId: z.string().describe('要提交的草稿标识(对应 draft_write 的 draftId)'),
           expectedHash: z.string().optional().describe('乐观锁:改前 read/get 返回的 hash;传入则校验,不一致拒绝写入防覆盖。不传则自动用你最后读到的 hash(autoLock)'),

@@ -109,7 +109,7 @@ export const getDomTool = tool(
   {
     name: 'get_dom',
     description:
-      '读取页面渲染后的 DOM 结构(结构化返回 tag/attrs/text/children)。用于检查实际渲染效果、定位元素、验证修改是否生效(改完数据看页面是否如期变化)。depth 控制遍历深度(默认 3,防大 DOM 爆 token),attrs 限定返回属性(默认 id/class/style/href 等常用 + data-*)。大结果自动外存 vfs。',
+      '读渲染后 DOM 结构(tag/attrs/text/children)。检查渲染效果/验证修改是否生效用;depth 控制深度(默认 3),attrs 限定返回属性。只读,大结果自动外存 vfs。',
     schema: z.object({
       selector: z.string().optional().describe('CSS 选择器(默认 body,读整个页面)'),
       depth: z.number().int().min(0).max(10).optional().describe('遍历深度(默认 3;0 只读根节点)'),

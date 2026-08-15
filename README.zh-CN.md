@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-1967%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-2006%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -134,6 +134,7 @@ CDN 零配置：`<script src="https://unpkg.com/page-agent-sdk"></script>` → `
 | 📦 上下文压缩 | 4 层自适应压缩，预设档位 + LLM 摘要 | `contextPreset` |
 | 🧪 复杂任务调优 | `complex` 上下文预设（更大窗口 + 更晚压缩 + 更多召回，适合多步 / 大 JSON / 长流程编排）；vfs JSON 感知工具（`vfs_json_read` / `vfs_json_patch`）在 vfs 内结构化操作大 JSON；vfs 三池分池（large_results / drafts / userFiles 隔离 LRU，互不挤占） | `contextPreset:'complex'`、`capabilities.vfs` |
 | 🛡️ 压缩不丢信息 | 摘要内嵌当前 data 快照 + 保留指定工具结果；写返回附可操作 path；`systemPromptHelpers.reliableWriteRules` | 内置 |
+| 💰 上下文经济性 (3.10/3.11+) | 压缩触发成本上限 `promptSoftCapTokens`(窗口 ≥320K 默认 160K,大窗口模型不再烧几十万 token 才压缩;`inspect().compression` 反射)+ agent 预算自感知(轮次 70%/token 半程注入提示、连续写失败提醒、单轮预算 `roundTokenBudget` 友好收口)+ 工具描述瘦身(-40% prompt) | `contextOptions.promptSoftCapTokens`、`roundTokenBudget` |
 | 💾 持久化 | IndexedDB 多会话 + 配额淘汰 + 切换 | `storage` |
 | 🤖 无人值守自动化 (2.20+) | 资源预算闸（`tokenBudget`/`timeBudgetMs`）+ 致命错误自动恢复（`maxAutoRetries`：回退 checkpoint + 重试）+ 刷新续跑 + `sdk.batch(tasks)` 批处理 | `capabilities.automation` |
 | 📐 上下文健壮性 (2.30+) | 硬地板 `contextWindow ≥200K`(启动拒绝 <200K 模型如老款 `deepseek`/`gpt-4o`/`glm-4.5`);三道闸(压缩/trim/offload)阈值在 `setLlm` 后跟随实时窗口;遇 `context_length_exceeded` 反应性重试(激进 trim → 重试一次,不裸失败);vfs 大结果引用受保护免 LRU 淘汰 + OOM 1.5× 兜底;系统段预算(25% 窗口,丢弃非 pin 段保 base/mission/workingMemory) | 内置 |
@@ -218,7 +219,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | **能力包** (2.37+) | `subagents` | `createRagSubagent({retriever?,loader?,useVfs?})` / `createHtmlSubagent({writablePaths?,codeVfsPrefix?,codeField?,orchestratorPrompt?,formatCheck?,craftNotes?})`(3.9+ 通常无需显式声明 —— createChatSdk 装配期自动装配默认 HTML 子 agent;显式传仅用于定制 codeField/formatCheck 等;开放 schema/嵌套容器/点路径 codeField 需显式传) | 专用子 agent 工厂 —— **RAG**:多源检索(语义 `search_docs` / 异步 `load_doc` / vfs / fetch),只读,独立上下文;**HTML**:代码组件生成 —— **代码作为 data 资产**(代码存 `data.<writablePath>[i].code`,随 data json 持久化;vfs 作编辑工作副本)。框架自动 checkout(data.code→vfs 按 `__pgId`)/ commit(vfs→data.code,直改 bind,不进快照栈),主 agent 透明(主 scope read 见 `<code Nkb>` 摘要)。新建走 `write`;修改走 `vfs_edit` 工作副本。`codeField`(默认 `'code'`,嵌套 jsonPath 如 `'props.html_code'` 适配开放 schema 平台;+ 装配期命中校验填错路径 onWarning);主 agent 编排**装配期自适应注入**(3.9+ 零配置:无显式 html 子 agent + schema 含 code 数组→**自动装配默认 HTML 子 agent**(无开关,info 留痕);有显式子 agent→委派;`orchestratorPrompt:false` opt-out);模型建议:html 代码生成推荐强指令模型(deepseek-v4/claude/gpt-4o),flash 类放大过度思考;**工匠笔记 `craftNotes`**(默认开):子 agent 收口回复 `[note]` 行沉淀为组件 `__pgNotes`(随 data 持久化),下次委派同组件经文件地图注入「前任的交接」(设计决策/用户反馈/踩坑)—— 同组件跨委派设计意图持续,`craftNotes:false` 关闭;`formatCheck` 默认开 = `validate_code` 自检 + verify beforeReturn 门禁回灌自纠;`validateHtmlFormat` 导出。**Breaking(3.0)**:去 `onComplete`/`codeRef`/`codeSnapshots` —— 迁移 `codeRef`→`code` 字段,去 `onComplete`/镜像。可组合/拆分,opt-in,随 `rag-search`/`html-builder` skill 分发。另 `sdk.vfsWrite(path,content)` 异步注入文档。见 [doc/usage-guide.md](doc/usage-guide.md#能力包) |
 | **子 agent 观察层** (2.38+) | — | `inspect().subagent.{active,history}` / `sdk.{getActiveSubagents,subagentHistory}` | active/history 运行态 + DebugDrawer「🤖 子 agent」tab(随 `subagent` 能力开,会话级不持久化) |
 | **上下文** | `contextPreset` | `'auto' \| 'conservative' \| 'aggressive' \| 'complex'` · 默认 `auto` | 压缩预设档位（`complex` 面向多步 / 大 JSON / 长流程编排任务） |
-| | `contextOptions` | `Partial<ContextManagerOptions> \| false` | 细参覆盖（`false` 关压缩）。含 `preserveLastToolResults`（默认 `['describe_data','describe_data']`——压缩摘要里保留字段说明） |
+| | `contextOptions` | `Partial<ContextManagerOptions> \| false` | 细参覆盖（`false` 关压缩）。含 `promptSoftCapTokens`（3.11+ 压缩触发成本上限,窗口 ≥320K 默认 160K、显式 0 关）与 `preserveLastToolResults`（默认 `['describe_data','describe_data']`——压缩摘要里保留字段说明） |
 | | `summaryLlm` | `BaseChatModel \| LLMConfig` | 摘要专用 LLM（不配用主 `llm`） |
 | | `maxMemoryRounds` | `number` · 默认 `30` | 对话历史内存上限轮次（`0` 关裁剪） |
 | | `vfs` | `{initialFiles?,maxBytes?}` · 默认 4MB | 内存工作区上限（超限 LRU 淘汰） |
@@ -226,6 +227,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `session` | `{id?,autoResume?,title?}` | 会话控制 |
 | | `shareContext` | `boolean` · 默认 `false` | 同 `id` 多实例共享同一 agent |
 | **鲁棒/其他** | `maxRetries` / `maxParallelTools` / `maxToolRounds` | `number` · 2 / 1 / 10 | 模型重试 / 同轮工具并发 / 最大轮次 |
+| | `roundTokenBudget` | `number` · 默认 `0`（关） | 单次调用累计 token 上限（3.11+;超限友好收口,已完成部分保留;与 automation 的 `tokenBudget` 正交,无需开 automation） |
 | | `mcp` | `McpServerConfig[]` | 远程 MCP server（http/sse/websocket） |
 | | `middleware` | `Middleware[]` | 自定义中间件（拼到内置栈末尾） |
 | | `streaming` / `debug` | — | UI/调试 |
@@ -472,8 +474,8 @@ function switchTo(i: number) {
 ## 自测
 
 ```bash
-npm test            # 1967 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 596 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm test            # 2011 项断言（tsx 源码级，不依赖 LLM）
+npm run test:e2e    # 610 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试

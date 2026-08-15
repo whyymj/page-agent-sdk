@@ -112,7 +112,7 @@ export const inspectEnvTool = tool(
   {
     name: 'inspect_env',
     description:
-      '读取宿主页面环境信息(排查调试用,默认开启)。不传参 = 返回环境摘要(location 的 URL/origin/path、navigator 的浏览器/语言、viewport 视口尺寸、document 的 title/readyState);传 key = 读取指定 window 属性值(如 inspect_env({key:"appConfig"}) 读集成方挂的调试变量 window.appConfig)。用于排查「当前页面在哪/什么浏览器/视口多大/调试变量值是什么」。轻量只读,大结果自动外存 vfs。',
+      '读宿主页面环境信息(排查调试)。不传参返回摘要(URL/origin、浏览器/语言、viewport、title/readyState);传 key 读指定 window 属性值(如 key:"appConfig")。只读,大结果自动外存 vfs。',
     schema: z.object({
       key: z.string().optional().describe('要读取的 window 属性名(如 "appConfig"/"__DEBUG__");不传 = 返回环境摘要'),
     }),

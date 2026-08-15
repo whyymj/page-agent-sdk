@@ -6,6 +6,17 @@
 
 > ℹ️ 本段累积了 2.23.0 → 2.24.1 多个已发布版本的内容(harden-eval-sandbox / main-flow-audit / context-inspector / arch-review P1 / demo 主题 / session-history / 串行化 / simplify-toolset 等),待按 git tag 逐条归入对应版本段(已知文档债,本次未拆)。
 
+### Added(上下文经济性第二阶段 + agent 预算自感知)
+- **压缩触发成本上限 `promptSoftCapTokens`**:token 触发阈值改 `min(窗口 × ratio, softCap)`——大窗口模型(flash 类 1M)按 ratio 要烧几十万 token 才压缩,softCap 把「何时压缩」改成成本维度。解析单一真源 `resolvePromptSoftCap`(`src/core/composables/contextIndex.ts` 并导出):显式 >0 用该值 / 显式 0 = 关 / 未传且窗口 ≥320K → 默认 160_000(`SOFT_CAP_MIN_WINDOW`/`DEFAULT_PROMPT_SOFT_CAP` 一并导出)/ 其余不参与;`min` 语义只会更早触发、不影响小窗口模型原行为。生效值经 `inspect().compression = { contextWindow, summaryThresholdRatio, promptSoftCap }` 反射
+- **agent 预算自感知(零配置默认生效)**:① 消耗提示 —— 工具轮次达 `maxToolRounds` 70% 或本次任务累计 prompt token 达 softCap 一半时,system prompt 注入一行「⏳ 预算提示」(每任务一次,给收敛/汇报两出口);② 写失败提醒 —— 同一写路径连续 ≥2 次失败注入「先 read 重新核对 / restore_data 回退」(成功清零);③ 计划版次计数 —— `maxPlanRevisions` 超限回灌文本补「现在已是第 N 版计划」
+- **`roundTokenBudget`(单次调用 token 预算,opt-in 默认 0=关)**:单次 invoke 累计 total_tokens 超限 → 友好收口文本中断(不走 wrap-up 追加 LLM 调用防再烧;debugLogs 留痕 `round_token_budget_exceeded`;已完成部分保留可继续对话)。与 automation 的 `tokenBudget` 正交:后者跨会话累计需 `capabilities.automation`,本项单调用无条件可用
+### Changed(上下文经济性第二阶段)
+- **工具描述瘦身二批(-40%)**:eval_script(505→153 字符)/ draft_commit / set_data / draft_write / get_data / query_data / search_data / history_data / edit_data / inspect_env / get_dom 共 11 个工具描述按「何时用 + 关键参数」原则压缩,教程细节归 usageHints(`!simple` 分支,不双份);selftest 补语义锚点 + 长度上限回归断言(防一阶段反向锚定事故重演)
+
+### Fixed(3.11 真 LLM 复测:wrap-up/重试耗尽路径 DSML 泄漏剥离)
+- **wrap-up 收口泄漏未解析 DSML**:工具轮耗尽收口(wrap-up 裸 llm + 「工具已用尽直接作答」提示)时模型仍以文本输出工具调用(实测 S1:截断的 `use_html` 委派任务规格),原文不经 garbled 检测直接当最终答复返回 —— 对用户是乱码且暗示已执行,实为零执行。修:wrap-up 与主循环 garbled 重试耗尽路径统一走新导出 `sanitizeGarbledContent`(首个强守卫标记前 prose 保留、其后 DSML 块剥离;无剩余换诚实兜底文案)+ debugLogs 留痕(`garbled_wrapup`)+ observable error `GARBLED_TOOL_CALL_EXHAUSTED`
+- **headless send/batch 路径 observable error 事件不外发**:send 只传 approvalWatch 给 agent,agent stream 内的 observable error(GARBLED_TOOL_CALL_EXHAUSTED / ROUND_TOKEN_BUDGET_EXCEEDED 等)到不了 `options.onEvent` —— 集成方对「任务可能未完成」无感知。修:新增 `makeStreamWatch`(approval 自动拒 + error 类事件转发 emit;流式 delta 仍仅 stream 模式外发,契约不变)
+
 ### Added
 - **HTML 子 agent 自动装配(默认开,浏览器端页面搭建开箱即用)**:无显式 html 子 agent + subagent 能力开 + schema 含「数组元素带 code 字段」→ 装配期自动注册默认 `createHtmlSubagent()`(委派编排 + vfs 工作副本 + 格式校验 + 增量 commit 全套,console.info 留痕)。无开关(用户拍板主场景只有 HTML,不需要关闭);显式 `createHtmlSubagent(...)` 优先不重复装配;推断不出的形态(顶层 code 字段/开放 schema)不装 → 走「主 agent 自己写」降级直写。**行为变更提示**:此前依赖「数组 code 字段 + 主 agent 直写」的集成,现自动走委派(如需直写请改 schema 形态或显式自定义编排)
 

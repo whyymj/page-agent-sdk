@@ -4,7 +4,7 @@
  */
 import type { TestCtx } from './_ctx'
 import { groupRounds } from '../../utils/rounds'
-import { shouldTriggerCompression } from '../../composables/contextIndex'
+import { shouldTriggerCompression, resolvePromptSoftCap, DEFAULT_PROMPT_SOFT_CAP } from '../../composables/contextIndex'
 import { CompressDecisionSchema } from '../../sdk/compressDecision'
 import type { AgentMessage } from '../../types'
 
@@ -40,6 +40,18 @@ export async function run(ctx: TestCtx) {
   // ===== 默认阈值(轮数默认 8 / ratio 默认 0.5)=====
   assert(shouldTriggerCompression(groupRounds(makeRounds(9)), {}) === true, '✓ shouldTrigger 轮数默认阈值 8 → 9 > 8 触发')
   assert(shouldTriggerCompression(groupRounds(makeRounds(8)), {}) === false, '✓ shouldTrigger 轮数默认阈值 8 → 8 = 8 不触发')
+
+  // ===== promptSoftCapTokens 成本维度(context-economy-phase2 阶段 A)=====
+  // 解析层:大窗口默认 160K 参与 / 小窗口不参与 / 显式覆盖 / 显式 0 关
+  assert(resolvePromptSoftCap(1_000_000) === DEFAULT_PROMPT_SOFT_CAP, '✓ resolvePromptSoftCap → 窗口 ≥320K 默认 softCap 160K 参与')
+  assert(resolvePromptSoftCap(200_000) === Number.POSITIVE_INFINITY, '✓ resolvePromptSoftCap → 窗口 <320K 未传不参与(小窗口 ratio 仍先生效)')
+  assert(resolvePromptSoftCap(1_000_000, 50_000) === 50_000, '✓ resolvePromptSoftCap → 显式值覆盖默认')
+  assert(resolvePromptSoftCap(1_000_000, 0) === Number.POSITIVE_INFINITY, '✓ resolvePromptSoftCap → 显式 0 关闭(一键回退)')
+  // 触发层:min(ratio 阈值, softCap) 取更紧者;1500 token 场景
+  const bigRounds = groupRounds([msg('user', '问'.repeat(600)), msg('assistant', '答'.repeat(400))])  // ~1500 token(CJK 1.5/字)
+  assert(shouldTriggerCompression(bigRounds, { contextWindow: 1_000_000, summaryThresholdRatio: 0.5, promptSoftCapTokens: 1000 }) === true, '✓ shouldTrigger softCap → 显式 1000 更紧于 ratio 500K,1500 > 1000 触发(提前压缩)')
+  assert(shouldTriggerCompression(bigRounds, { contextWindow: 1_000_000, summaryThresholdRatio: 0.5, promptSoftCapTokens: 0 }) === false, '✓ shouldTrigger softCap → 显式 0 关,1500 < 500K 不触发(回退原行为)')
+  assert(shouldTriggerCompression(bigRounds, { contextWindow: 1_000_000, summaryThresholdRatio: 0.001 }) === true, '✓ shouldTrigger softCap → 默认不干扰小 ratio(ratio 阈值 1000 更紧,1500 > 1000 触发)')
 
   // ===== CompressDecisionSchema 合法 =====
   assert(CompressDecisionSchema.safeParse({ keepRounds: 3, summarize: { mode: 'llm' } }).success === true, '✓ schema → keepRounds + mode 合法通过')

@@ -896,12 +896,25 @@ createChatSdk({ maxRetries: 0 })   // 关闭自动重试
   - `aggressive`:小模型/省上下文,阈值 0.3、窗口 0.3,召回 Top-5
   - `complex`(2.16.0+):多步复杂任务/大 JSON/长流程,比例制:窗口 0.6、触发阈值 0.7、召回 Top-5、开 LLM 摘要;`preserveLastToolResults` 默认含 `describe_data`/`read`/`query_data`/`search_data`(大 JSON 场景防字段描述被摘要丢)。详见下文「complex 预设 + vfs JSON 感知工具」
 - **摘要专用模型**:`summaryLlm` 可指定更便宜的小模型做摘要(不配用主 `llm`);`summaryTemperature`/`summaryMaxTokens`/`summaryTimeoutMs` 微调摘要 LLM。
+- **压缩触发成本上限**(`contextOptions.promptSoftCapTokens`,3.11+):token 触发阈值取 `min(窗口 × ratio, softCap)`。大窗口模型(如 flash 类 1M 窗口)按 ratio 要烧到几十万 token 才压缩,成本不可接受;softCap 把「何时压缩」改成成本维度 —— **未传且窗口 ≥320K 时默认 160K**,显式传值用该值,显式 `0` 关闭(小窗口模型不受影响,只会更早触发不会更晚)。生效值经 `inspect().compression.promptSoftCap` 反射核对。详见 `doc/context-management.md` §五。
 - **对话历史上限**:`maxMemoryRounds`(默认 30)超限把最旧轮次压缩为一条摘要 system 消息。
 - **vfs 工作区上限**:`vfs.maxBytes`(默认 8MB,2.16.0+)超限按 LRU 淘汰最旧文件。2.16.0+ **三池分池**:`large_results/*`(工具结果外存,自动)、`drafts/*`(草稿)、`userFiles`(用户文件)各自独立 LRU 互不挤占(默认单池 2MB,large_results 4MB),`vfs.poolBytes` 可单池配,读写跨池透明。
 
 这些在 `storage: false`(纯内存)下也生效,防 OOM。
 
 压缩统计可在 DebugDrawer「🧬 Agent 信息」tab 的「🗜️ 上轮压缩」段查看(触发与否、摘要轮次、召回条数、策略名),排查"上下文为何变了"。
+
+#### 预算自感知与单轮预算(3.11+)
+
+agent 对自身消耗有了感知,长任务不再「闷头烧到中断」:
+
+- **消耗提示(C1)**:工具轮次达 `maxToolRounds` 的 70%、或本次任务累计 prompt token 达 softCap 一半时,system prompt 注入一行「⏳ 预算提示」(给两个出口:收敛收口 or 向用户汇报进度)。每任务只注入一次,零配置默认生效。
+- **写失败提醒(C2)**:同一写路径连续 ≥2 次失败(乐观锁冲突/schema 拒绝等)时,注入「先 read 重新核对 / restore_data 回退」提醒,防同一条路反复撞墙。
+- **单轮 token 预算**(`roundTokenBudget`,opt-in 默认关):单次 `send` 的累计 token 超限 → 友好收口文本中断(已完成部分保留,可继续对话「继续完成」),debugLogs 留痕。与 automation 的 `tokenBudget` 正交:后者跨会话累计、需 `capabilities.automation`;本项单次调用、无条件可用,防单轮死循环烧钱。
+
+```ts
+createChatSdk({ roundTokenBudget: 50000 })  // 单次对话任务最多约 5 万 token,超限友好收口
+```
 
 #### 上下文构成查看 `inspectContext`(2.24+)
 
@@ -1254,6 +1267,7 @@ createChatSdk({
 const sdk = createChatSdk({
   capabilities: { automation: true },  // opt-in,默认关
   tokenBudget: 100000,      // 累计 token 上限(超 → 停止 + emit BUDGET_EXCEEDED)
+  roundTokenBudget: 50000,  // (可选)单次调用 token 上限,3.11+;无需 automation 能力,超限友好收口
   timeBudgetMs: 600000,     // 时间上限 ms(10 分钟;超 → 停止)
   maxAutoRetries: 2,        // 致命错误自动恢复次数(restore_last_checkpoint + 重试;默认 1)
   checkpoint: true,         // 配合断点续跑(每轮存档 + 持久化 checkpoint 栈/usage)
@@ -1266,7 +1280,7 @@ const results = await sdk.batch(['生成专题A', '生成专题B', '生成专题
 // → [{ task, reply, ok:true }, { task, error, ok:false }, { task, reply, ok:true }]
 ```
 
-- **资源预算**(`tokenBudget`/`timeBudgetMs`):每轮 model 调用前检查累计;超限 → agent 停止 + emit `BUDGET_EXCEEDED`(observable,不中断 emit 链),未完成部分可 `restoreLastCheckpoint` 回退。
+- **资源预算**(`tokenBudget`/`timeBudgetMs`):每轮 model 调用前检查累计;超限 → agent 停止 + emit `BUDGET_EXCEEDED`(observable,不中断 emit 链),未完成部分可 `restoreLastCheckpoint` 回退。`roundTokenBudget`(3.11+)为单次调用口径的补充,不需 automation 能力。
 - **错误恢复**(`maxAutoRetries`):invoke 致命错误 → `restore_last_checkpoint` 回本轮前 + 重试(限次防循环)+ emit `AUTO_RECOVER_RETRY`(observable);重试耗尽 → fatal(emit + throw)。适合单点模型/工具错误不永久中断批量。
 - **批处理**(`sdk.batch(tasks)`):逐任务 invoke,每任务前 `checkpoint.save`;失败任务 `messages` splice truncate(撤销本轮 user + 中间 push,防失败 user 残留致下一任务上下文错乱)+ `ok:false` 不中断整批 + emit `BATCH_TASK_FAILED`。
 - **断点续跑**:刷新/崩溃后,新 sdk 同 `id` + `storage` → mount 恢复(checkpoint 栈 + 累计 usage 从 store 恢复)→ `listCheckpoints` 有值 + `restoreLastCheckpoint` 可用 + 预算统计连续。需 `capabilities.automation` + `checkpoint` + `storage` 三者配合。

@@ -99,5 +99,34 @@ export async function run(ctx: TestCtx): Promise<void> {
     // describe_data 返回说明
     r = await invoke(t['describe_data'], {})
     assert(/应用配置/.test(r), 'describe_data 返回主数据说明')
+
+    // 工具描述总长回归(context-economy-phase2 二批瘦身;防一阶段「反向锚定把新文案盖错对象」事故重演:
+    // 每条描述须与其工具语义一致(抽查锚点词)+ 单条 ≤330(write 一阶段已压基线)
+    const descAnchors: [string, RegExp][] = [
+      ['eval_script', /沙箱/], ['draft_commit', /草稿/], ['draft_write', /drafts/],
+      ['query_data', /JSONPath/], ['search_data', /搜索/], ['history_data', /快照/],
+      ['set_data', /deprecated|弃用/], ['get_data', /deprecated|弃用/], ['edit_data', /增量/],
+      ['write', /四意图|写入主数据/], ['read', /hash/],
+    ]
+    for (const [n, anchor] of descAnchors) {
+      const d = t[n]?.description ?? ''
+      if (!t[n]) continue // draft_write/draft_commit 等 opt-in 工具在本 fixture(schema 小,未开)不装配,跳过
+      assert(anchor.test(d), `✓ 描述锚点 → ${n} 描述含语义锚点(未被盖错对象)`)
+      assert(d.length <= 330, `✓ 描述长度 → ${n} ≤330(实际 ${d.length},防描述膨胀)`)
+    }
+    // 总长上限:advanced 可见数据工具描述总和 ≤3200(压缩二批回归线)
+    const ADV_VISIBLE = ['describe_data','get_data','set_data','edit_data','delete_data','restore_data','history_data','query_data','search_data','eval_script','read','write','schema_data','diff_data','draft_write','draft_commit']
+    const total = ADV_VISIBLE.reduce((s2, n) => s2 + (t[n]?.description?.length ?? 0), 0)
+    assert(total <= 3200, `✓ 描述总长 → advanced 数据工具描述合计 ≤3200(实际 ${total})`)
+
+    // draft 工具锚点(vfsStore 提供才装配 → 单独小 fixture;仍属描述回归断言)
+    const draftTools = createDataOps(
+      { schema: z.object({ a: z.string() }), bind: { a: 'x' }, description: '草稿夹具' },
+      { vfsStore: createVfs() },
+    )
+    const dt = byName(draftTools)
+    assert(/草稿/.test(dt['draft_commit']?.description ?? ''), '✓ 描述锚点 → draft_commit 描述含语义锚点(草稿)')
+    assert(/drafts/.test(dt['draft_write']?.description ?? ''), '✓ 描述锚点 → draft_write 描述含语义锚点(drafts 池)')
+    assert((dt['draft_commit']?.description?.length ?? 0) <= 330 && (dt['draft_write']?.description?.length ?? 0) <= 330, '✓ 描述长度 → draft 两工具 ≤330(防膨胀)')
   }
 }
