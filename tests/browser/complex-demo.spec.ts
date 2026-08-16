@@ -166,6 +166,9 @@ test.describe('complex-demo: 真实复杂度(30 类型 + 70 实例)', () => {
   })
 
   test('read 全量 → write patch 改 navbar title → read 子路径确认', async ({ page }) => {
+    // 4 轮 ReAct + complex-demo 重页面(30 类型 70 实例)在高负载下跑不完默认 60s 测试预算(实测 flaky,
+    // 重试才过)→ 放宽本用例预算 + idle 等待同步放宽;断言本身在 idle 后取值,不涉时序
+    test.setTimeout(150_000)
     await mockLlm(page, [
       { tool_calls: [{ name: 'read', arguments: {} }] },
       { tool_calls: [{ name: 'write', arguments: { value: '测试改标题', patch: { op: 'set', jsonPath: 'components.0.props.title' } } }] },
@@ -175,7 +178,7 @@ test.describe('complex-demo: 真实复杂度(30 类型 + 70 实例)', () => {
 
     await fillInput(page, '把导航栏标题改成「测试改标题」')
     await clickSend(page)
-    await waitForAgentIdle(page)
+    await waitForAgentIdle(page, 120_000)
 
     // 断言 1:window.page.components[0].props.title(navbar)已更新
     const navbarTitle = await page.evaluate(() => (window as any).page.components[0].props.title)

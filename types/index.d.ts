@@ -120,6 +120,10 @@ export interface TokenUsage {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
+  /** prompt caching 命中读取的 input tokens(Anthropic;0/缺省=未命中或端点不支持缓存) */
+  cache_read_input_tokens?: number;
+  /** prompt caching 本次写入的 input tokens(Anthropic;写价格 1.25x,5m/1h TTL 内复用) */
+  cache_creation_input_tokens?: number;
 }
 /** 批处理单任务结果(sdk.batch 返回;ok=true 含 reply,ok=false 含 error) */
 export interface BatchResult {
@@ -491,6 +495,10 @@ export interface LLMConfig {
   extraBody?: Record<string, any>;
   /** 透传 ChatOpenAI configuration 的额外字段(如 headers/timeout/customFetch),与 baseUrl 合并 */
   extraConfig?: Record<string, any>;
+  /** Anthropic prompt caching(仅 provider:'anthropic' 生效):`true` = ephemeral 5m / `'1h'` = 长 TTL。
+   *  langchain 顶层 cache_control 自动在最后一个可缓存块打断点并随对话增长推进 —— ReAct 多轮前缀
+   *  (system+tools+历史)命中缓存,input 价格降至 ~1/10;效果观测看 usage 事件的 cache_read_input_tokens */
+  cacheControl?: boolean | '5m' | '1h';
 }
 /** LangChain BaseChatModel 的结构形状(provider 抽离:llm 可传任意 provider 实例) */
 export type ChatModelLike = {

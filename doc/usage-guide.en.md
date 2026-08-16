@@ -1326,10 +1326,12 @@ createChatSdk({
     apiKey: 'sk-ant-xxx',
     model: 'claude-sonnet-4-5-20250929',
     baseUrl: 'https://api.anthropic.com',  // optional, official by default; custom gateway here
+    cacheControl: true,             // prompt caching (optional): true = ephemeral 5m / '1h' = long TTL, see note below
   },
 }).mount()
 ```
 
+> - **Prompt caching (`cacheControl`, Anthropic-protocol only)**: ReAct rounds re-send the full prefix (system + tool defs + history) every turn; `cacheControl: true` forwards the top-level `cache_control` via langchain `invocationKwargs` — the server places breakpoints automatically and advances them as the conversation grows. Prefix cache hits cut input price to **~1/10** (writes 1.25x, 5m/1h TTL). Observe via `cache_read_input_tokens`/`cache_creation_input_tokens` on usage events / `sdk.usage` (present only when the endpoint reports them). **Endpoint support varies (tested 2026-08)**: the modelverse gateway honors caching on **non-streaming** calls (measured: 2048 of a 2787-token prefix served from cache on round 2) but **not streaming** (the SDK always streams → no benefit on that gateway today; the config is harmless); official api.anthropic.com reports cache fields on streaming. OpenAI/DeepSeek endpoints cache automatically and are unaffected by this switch
 > - `@langchain/anthropic` is an **optional peerDep** — install only when using Anthropic (`npm i @langchain/anthropic`); projects not using Anthropic are unaffected (dynamic import loads only in the `provider:'anthropic'` branch)
 > - `setLlm` to Anthropic requires a `BaseChatModel` instance (dynamic import can't be synchronous): `const { ChatAnthropic } = await import('@langchain/anthropic'); sdk.setLlm(new ChatAnthropic({ apiKey, model }))`; passing `LLMConfig + provider:'anthropic'` throws a clear hint
 > - **IIFE (CDN `<script>`) does not support Anthropic** (browser has no importmap to resolve the bare specifier); use npm (ESM/UMD) for Anthropic. The CDN bundle does not bundle `@langchain/anthropic` (defaults to OpenAI/DeepSeek)

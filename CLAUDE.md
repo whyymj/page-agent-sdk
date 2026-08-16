@@ -30,8 +30,8 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2200 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,698 项;tests/e2e/<module>.mjs 按模块拆分)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2207 项断言)
+npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,703 项;tests/e2e/<module>.mjs 按模块拆分)
 npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,73 项;tests/browser/<demo>.spec.ts)
 ```
 
@@ -148,8 +148,8 @@ npm run test:browser  # 73 项;也可 /browser-test 斜杠命令
 #### 3. 浏览器手动验证(改 UI/示例后跑)
 `npm run dev` 逐个 demo 验证(见目录结构 examples 清单;各 demo 侧重点见 `doc/usage-guide.md`)。
 
-#### 3.5 真 LLM 场景回归(`npm run test:uispec-real`,仓库脚本)
-complex-demo(flash)10 场景:委派/规范/精修/调序/删除/恢复/开放指令。脚本 `tests/runtime/uispec-real-llm.mjs`(Playwright 浏览器路径;报告 `_real-llm-uispec.json` gitignore,断点续跑传场景号);**方法论详见 `doc/real-llm-regression.md`**(idle 双条件判定/超时 dump 诊断/基线对比硬指标 prompt tokens+工具数/reload 诊断)。要点:idle 判定 = debugLogs 静默 90s + `getActiveSubagents()===0`(reasoning 不打日志,只看日志会误判);**跑前必重启 dev server**(遗留旧 vite server 的 optimizeDeps 状态过期 → 页面强制 reload → memory 后端会话清空,msgs 归零假性失败,3.11 排查烧 1h);**跑中禁并发 test:browser**;`.env` 无 key 自动 skip。3.10/3.11 系列修复全部由真 LLM 复测驱动发现。
+#### 3.5 真 LLM 场景回归(`npm run test:real`,统一入口)
+**统一入口** `npm run test:real [套件] [场景号…]`(套件:`uispec` complex-demo 10 场景 / `rag` 四模式 / `parallel` 并行复验;共享基建 `tests/runtime/_real-llm-lib.mjs`,新套件只写场景+checks);**基线对比已机械化**:`--baseline-diff`(读现有报告秒回 diff,▲疑似回归/▼改善,阈值 token ±15% 且 ±2000 / toolCount ±3)/ `--baseline-update`(确认预期后采集,`tests/runtime/real-llm-baseline.json` 随代码提交)。报告 `_real-llm-*.json` gitignore,断点续跑传场景号。**方法论详见 `doc/real-llm-regression.md`**(idle 双条件判定/超时 dump 诊断/reload 诊断)。要点:idle 判定 = debugLogs 静默 90s + `getActiveSubagents()===0`(reasoning 不打日志,只看日志会误判);**跑前必重启 dev server**(遗留旧 vite server 的 optimizeDeps 状态过期 → 页面强制 reload → memory 后端会话清空,msgs 归零假性失败,3.11 排查烧 1h);**跑中禁并发 test:browser**;`.env` 无 key 自动 skip。headless 族(draft/trace/maliang,`tests/runtime/*-real-llm.ts`)不经统一入口,各自 `npm run test:*-real`。3.10/3.11 系列修复全部由真 LLM 复测驱动发现。
 
 #### 4. 运行时手动验证(依赖 LLM/server)
 子 agent 委派 / MCP / verify 自纠 / 真实 LLM 流式 / draft 真 LLM(`npm run test:draft-real`,无 key 自动 skip)。
@@ -171,7 +171,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2200/698/73)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2207/703/73)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判)→ `npm run test:size` → `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证

@@ -2,6 +2,20 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.19.0] - 2026-08-16
+
+### Added(真 LLM 回归评估框架化;deferred 触发线达成)
+- **统一入口 `npm run test:real [套件] [场景号…]`**(`tests/runtime/real-llm.mjs`):套件注册表编排(uispec complex-demo 10 场景 / rag 四模式 / parallel 并行复验),串行跑避免抢 dev server;聚合汇总 + 失败非零退出码
+- **共享基建 `tests/runtime/_real-llm-lib.mjs`**:idle 双条件判定(debugLogs 静默 90s×3 + 活动子 agent=0,**补页面 reload 快速失败**—— debugLogs 清零即抛,不再空等超时)/ 事件捕获 / 断点续跑 / 超时 dump 诊断 / 基线 diff,三套脚本从四份同款拷贝收敛为薄壳(场景定义 + checks),新套件成本骤降
+- **基线对比机械化**:`--baseline-diff`(读现有报告秒回,不跑 LLM;每场景 prompt/completion/toolCount/elapsedSec 旧→新±%,超阈值标 ▲疑似回归/▼改善;阈值 token ±15% 且 ±2000 / toolCount ±3)+ `--baseline-update`(确认预期后采集;`tests/runtime/real-llm-baseline.json` 入库随代码提交,跨会话可比)
+- rag 套件:场景被 `only` 跳过时连前置切模式/MCP 等待一并省(修前白等 30s+);rag/uispec 采集补 `fromSdkUsage` 兜底
+- 验证:离线(既有报告种子基线 + 自比零回归 + 模拟 +30% 标 ▲)+ 真 LLM 冒烟(rag S1 直答 3/3 绿,统一入口 → 套件 → 基线 diff → 汇总 → 退出码全链路)
+
+### Added(Anthropic prompt caching)
+- **`llm.cacheControl`**(仅 `provider:'anthropic'` 生效):`true` = ephemeral 5m / `'1h'` = 长 TTL。ReAct 多轮每轮重发完整前缀(system+工具定义+历史)全价计费;开启后经 `invocationKwargs` 透传顶层 `cache_control`,**服务端自动打断点并随对话增长推进** —— 前缀命中缓存 input 价格降至 ~1/10(写 1.25x)。子 agent 同步透传(SubagentLlmConfig)。实现考据(探针实测):@langchain/anthropic 1.5.4 构造器顶层 `cache_control` 字段**不进请求体**(只消费调用时 options),必须走 `invocationKwargs` 展开。**端点支持差异(实测 2026-08)**:modelverse 网关非流式命中(实测 2787 token 前缀第二轮 2048 走缓存)、流式不生效(SDK 恒流式 → 该网关暂无收益,配置无害);官方 api.anthropic.com 流式回报。OpenAI/DeepSeek 端点自动缓存不受此开关控制
+- **usage 缓存观测字段**:`TokenUsage` 增 `cache_read_input_tokens`/`cache_creation_input_tokens`,`normalizeUsage` 归一 Anthropic 顶层 snake 与 langchain `usage_metadata.input_token_details` 两种形态 → usage 事件 / `sdk.usage` 可见;真 LLM 回归框架同步累计进报告与基线指标(cacheRead/cacheCreate)
+- rag-demo 挂 `cacheControl: true` 作展示与验证载体;selftest sec-53 +7(构造映射 true/1h/未传 + 归一两种形态 + 缺省不占位)
+
 ## [3.18.0] - 2026-08-16
 
 ### Added(UI)

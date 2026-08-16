@@ -6,12 +6,15 @@
 
 | 工具 | 路径 | 覆盖 |
 |---|---|---|
-| `npm run test:uispec-real` | `tests/runtime/uispec-real-llm.mjs` | **浏览器路径全场景回归**(complex-demo S1–S10:委派/规范/精修/调序/属性/新建/删除/容器/错误恢复/开放指令;Playwright 驱动 dev server 页面,含 UI 交互 + 渲染层) |
+| `npm run test:real` | `tests/runtime/real-llm.mjs` | **统一入口**(套件编排 + 基线对比;下三行浏览器族套件均可单独跑) |
+| ↳ `… test:real uispec` | `tests/runtime/uispec-real-llm.mjs` | **浏览器路径全场景回归**(complex-demo S1–S10:委派/规范/精修/调序/属性/新建/删除/容器/错误恢复/开放指令) |
+| ↳ `… test:real rag` | `tests/runtime/rag-demo-real-llm.mjs` | rag-demo 四模式(A memory 直答 / B mock 检索 / C 真实 MCP / D MCP 直连;Anthropic 协议) |
+| ↳ `… test:real parallel` | `tests/runtime/parallel-delegation-real.mjs` | 同轮并行委派复验(单场景 7 判定) |
 | `npm run test:draft-real` | `tests/runtime/draft-real-llm.ts` | 大 JSON 分块写(draft_write/draft_commit) |
 | `npm run test:trace-real` | `tests/runtime/trace-real-llm.ts` | 结构化追踪 TraceSpan |
 | `npm run test:maliang-real` | `tests/runtime/maliang-real-llm.ts` | 马良模型场景 |
 
-`tests/runtime/*-real-llm.ts` 系列(headless 直连 dist)与 uispec(浏览器 + dev server)互补:前者快、无 UI 因素;后者真实但慢(全套 ~40min)。
+浏览器族三套件共享基建 `tests/runtime/_real-llm-lib.mjs`(idle 双条件 / 事件捕获 / 断点续跑 / 基线 diff),新套件只需写场景定义 + checks。`tests/runtime/*-real-llm.ts` 系列(headless 直连 dist)与浏览器族互补:前者快、无 UI 因素;后者真实但慢(全套 ~40min)。
 
 ## 跑前准备(踩坑沉淀,必读)
 
@@ -46,7 +49,15 @@
 - `checks` 断言结果 / `errors`(PATH_DENIED 等回灌留痕)
 - `components`(含 codeHead 截断 + `__pgNotes` 笔记)
 
-**基线对比法**:改提示词/工具描述/编排逻辑后,重跑同场景号,对比报告 json 的 `usage.prompt` 与 `toolCount` 两个硬数字 + 断言通过率。真模型输出有波动,单次 ±10% 内视为噪声;连续两轮同方向变化才算真信号。
+**基线对比法(已机械化,3.19 框架化)**:改提示词/工具描述/编排逻辑后:
+
+```bash
+npm run test:real uispec 1          # 重跑受影响场景
+npm run test:real -- --baseline-diff   # 秒回:当前报告 vs 入库基线的硬指标 diff(不跑 LLM)
+npm run test:real -- --baseline-update # 确认是预期变化后采集新基线(tests/runtime/real-llm-baseline.json,随代码提交)
+```
+
+diff 输出每场景 `prompt/completion/toolCount/elapsedSec` 的 `旧→新(±%)`,超阈值标 **▲疑似回归 / ▼疑似改善**(阈值:token ±15% 且 ±2000;toolCount ±3;elapsedSec 仅展示不判)。真模型输出有波动,单次 ±10% 内视为噪声;连续两轮同方向变化才算真信号 —— ▲ 出现先人工判断是否 prompt 改动的预期代价,确认后更新基线。
 
 ## 判定口径
 

@@ -1,0 +1,28 @@
+{
+  "recordedAt": "2026-08-16T00:52:04.132Z",
+  "suites": {
+    "uispec": {
+      "S1": {
+        "prompt": 520333,
+        "completion": 4944,
+        "toolCount": 26,
+        "elapsedSec": 336
+      }
+    },
+    "rag": {
+      "S3": {
+        "prompt": 16866,
+        "completion": 734,
+        "toolCount": 2,
+        "elapsedSec": 160
+      },
+      "S4": {
+        "prompt": 20889,
+        "completion": 982,
+        "toolCount": 4,
+        "elapsedSec": 108
+      }
+    },
+    "parallel": {}
+  }
+}

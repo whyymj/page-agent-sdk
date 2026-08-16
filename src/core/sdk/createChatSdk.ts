@@ -101,6 +101,14 @@ export interface LLMConfig {
   extraBody?: Record<string, any>
   /** 透传 ChatOpenAI configuration 的额外字段(如 headers/timeout/customFetch),与 baseUrl 合并 */
   extraConfig?: Record<string, any>
+  /**
+   * Anthropic prompt caching(仅 provider:'anthropic' 生效,openai 端点自动缓存不受此控制):
+   * `true` = ephemeral 5m / `'1h'` = 长 TTL。langchain 顶层 cache_control 自动在「最后一个可缓存块」打
+   * 断点并随对话增长推进 —— ReAct 多轮前缀(system+tools+历史)命中缓存,input 价格降至 ~1/10。
+   * 前置条件:system 组装每轮恒定段在前(动态段会破缓存);网关需透传 cache_control(实测验证看
+   * usage 的 cache_read_input_tokens)。
+   */
+  cacheControl?: boolean | '5m' | '1h'
 }
 
 /** 单 agent 实例的会话控制 */
@@ -865,7 +873,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const vfsStore = createVfs(options.vfs?.initialFiles, {
     persist: store
       ? { save: (files: Record<string, VfsFile>): void => {
-          if (core.sessionId && store) void store.save(agentId, core.sessionId, { vfs: files })
+          persistSave({ vfs: files })   // fire-and-forget 统一出口(吞错防 unhandled rejection;函数声明提升,定义在后可调用)
         } }
       : undefined,
     maxBytes: options.vfs?.maxBytes,
@@ -1499,7 +1507,12 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   /** 刷新历史会话列表到 sessionsRef(switchSession/deleteSession/onClear/init 后调;storage 未开启 no-op) */
   async function refreshSessions(): Promise<void> {
     if (!store) return
-    sessionsRef.value = (await store.listSessions(agentId)).sort((a, b) => b.lastAccessed - a.lastAccessed)
+    // 内部吞错:多处 void refreshSessions() fire-and-forget,release 后迟到调用(store 已 dispose)会变 unhandled rejection
+    try {
+      sessionsRef.value = (await store.listSessions(agentId)).sort((a, b) => b.lastAccessed - a.lastAccessed)
+    } catch (e) {
+      if (options.debug) console.warn('[page-agent-sdk][persist] refreshSessions 失败(已吞):', e)
+    }
   }
 
   // ===== P1-11(fix-data-integrity):串行闸 + 在途流注册表建在 core 级 =====
@@ -1758,10 +1771,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       conflictMgr.resolve('keep_external')
       // context-persist-resilience:切走前 persist 当前会话的 mission/workingMemory(防 setMission / 工作记忆积累后切走丢失;persistRuntime 仅 afterRound 触发,setMission 后未发消息即切会话会漏存)
       if (core.sessionId && store) {
-        if (useMission) { const m = missionMw.getMission(); if (m) void store.save(agentId, core.sessionId, { mission: m } as Partial<SessionSnapshot>) }
-        if (useWorkingMemory) { const wm = workingMemoryMw.getWorkingMemory(); if (wm) void store.save(agentId, core.sessionId, { workingMemory: wm } as Partial<SessionSnapshot>) }
+        if (useMission) { const m = missionMw.getMission(); if (m) persistSave({ mission: m } as Partial<SessionSnapshot>) }
+        if (useWorkingMemory) { const wm = workingMemoryMw.getWorkingMemory(); if (wm) persistSave({ workingMemory: wm } as Partial<SessionSnapshot>) }
         // focus-auto-switch:切走前 persist focus(有值存值;clearFocus 后存 null 覆盖清除)
-        if (useFocus) { const fs = focusMw.getFocuses(); void store.save(agentId, core.sessionId, { focus: fs.length ? fs : null } as Partial<SessionSnapshot>) }
+        if (useFocus) { const fs = focusMw.getFocuses(); persistSave({ focus: fs.length ? fs : null } as Partial<SessionSnapshot>) }
       }
       vfsStore.flush?.()
       await store.flush()
@@ -1792,8 +1805,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         core.applySnapshot(snap)
         emit({ type: 'session_restored', sessionId: target, rounds: snap.messages?.length ?? 0 })
       }
-      if (options.memory) void store.save(agentId, core.sessionId, { memory: memoryMw.get() || (typeof options.memory === 'string' ? options.memory : '') })
-      void refreshSessions()  // session-history Phase 6:切会话后刷新历史列表(响应式 sessions 自动更新)
+      if (options.memory) persistSave({ memory: memoryMw.get() || (typeof options.memory === 'string' ? options.memory : '') })
+      void refreshSessions()  // session-history Phase 6:切会话后刷新历史列表(响应式 sessions 自动更新;内部已吞错)
       lastTitle = undefined; titleLLMDone = false   // 切会话:重置 title 缓存 + LLM 标志,新会话重新生成
       core.infoTick.value++ // 同 resetSession:focus 重置/快照恢复后 bump,防输入框聚焦 chip 残留旧焦点
       return target
@@ -1818,7 +1831,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       if (checkpointMgr) checkpointMgr.importStack([])
       if (core.agent) core.agent.debugLogs.value = []
       if (store) {
-        void store.createSession(core.agentId, options.session?.title, core.sessionId)
+        store.createSession(core.agentId, options.session?.title, core.sessionId).catch((e: unknown) => {
+          if (options.debug) console.warn('[page-agent-sdk][persist] createSession 失败(已吞):', e)
+        })
       }
       emit({ type: 'session_restored', sessionId: core.sessionId, rounds: 0 })
       core.infoTick.value++ // 焦点等 UI computed(focuses chip)挂 infoTick;reset 清焦点后不 bump → 输入框聚焦 chip 残留旧焦点(用户实测)
@@ -2142,8 +2157,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     }
     // options.memory 落盘(每次启动确保持久化;加载时 options 优先已在 applySnapshot 处理)
     // 函数 source 落盘已解析的文本(函数本身不可序列化,且 reload 时 options.memory 仍是函数会重新求值)
-    if (options.memory) void store.save(agentId, core.sessionId, { memory: memoryMw.get() || (typeof options.memory === 'string' ? options.memory : '') })
-    void refreshSessions()  // session-history Phase 6:init 载入会话后刷新历史列表
+    if (options.memory) persistSave({ memory: memoryMw.get() || (typeof options.memory === 'string' ? options.memory : '') })
+    void refreshSessions()  // session-history Phase 6:init 载入会话后刷新历史列表(内部已吞错)
   }
 
   /** Skill 独立加载:从 SkillStore 恢复用户创建的 skill(与 storage 选项分离,即使 storage:false 也持久化) */
@@ -2215,49 +2230,78 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   let lastTitle: string | undefined
   let titleLLMDone = false   // LLM 标题是否已生成(每会话一次,主旨更准;switchSession/onClear 重置)
 
+  /**
+   * fire-and-forget 落盘统一出口:吞错 + debug 留痕(deferred RE 组修复)。
+   * 原 `void store.save(...)` 无 .catch —— release 后迟到写(store.dispose 已关 IDB 连接)/配额满等
+   * 拒绝无人接 → unhandledRejection(browser e2e 实测:InvalidStateError: The database connection is closing)。
+   */
+  function persistSave(patch: Partial<SessionSnapshot>): void {
+    if (!core.sessionId || !store) return
+    store.save(agentId, core.sessionId, patch).catch((e: unknown) => {
+      if (options.debug) console.warn('[page-agent-sdk][persist] save 失败(已吞):', e)
+    })
+  }
+
+  /** fire-and-forget 标题更新(同 persistSave,吞错防 unhandled rejection) */
+  function persistUpdateTitle(sid: string, title: string): void {
+    if (!store) return
+    store.updateTitle(agentId, sid, title).catch((e: unknown) => {
+      if (options.debug) console.warn('[page-agent-sdk][persist] updateTitle 失败(已吞):', e)
+    })
+  }
+
   /** 持久化当前会话的 messages + todos(一轮结束 / send 后调用) */
   function persistRuntime(): void {
     if (!core.sessionId || !store) return
     // messages 元素是 Vue reactive proxy → IDB structured clone 会抛 DataCloneError(静默失败,messages 存不进);
     // 先 JSON 纯化为普通对象。localStorage 走 JSON.stringify 本就纯化,故 local 不受影响、indexed 受影响。
     const pureMessages = JSON.parse(JSON.stringify(messages)) as AgentMessage[]
-    void store.save(agentId, core.sessionId, { messages: pureMessages })
+    persistSave({ messages: pureMessages })
     // todos 始终同步当前态(含空数组覆写):否则会话内 todos 由有变空(LLM 主动 write_todos([]))后,
     // storage 仍残留旧清单 → 刷新恢复出遗留的已完成 todos。代价:未用过 todos 的会话多写一条空记录(可忽略)。
     const todos = core.agent?.getState?.()?.todos ?? []
-    void store.save(agentId, core.sessionId, { todos })
+    persistSave({ todos })
     // context-persist-resilience 功能A:持久化 mission/workingMemory(刷新/切会话后长任务目标 + 工作记忆不丢;非空才写省 IDB 写)
     if (useMission) {
       const m = missionMw.getMission()
-      if (m) void store.save(agentId, core.sessionId, { mission: m } as Partial<SessionSnapshot>)
+      if (m) persistSave({ mission: m } as Partial<SessionSnapshot>)
     }
     if (useWorkingMemory) {
       const wm = workingMemoryMw.getWorkingMemory()
-      if (wm) void store.save(agentId, core.sessionId, { workingMemory: wm } as Partial<SessionSnapshot>)
+      if (wm) persistSave({ workingMemory: wm } as Partial<SessionSnapshot>)
     }
     // focus-auto-switch:持久化 focus(有值存值;clearFocus 后存 null 覆盖清除,防旧值残留被下次 restore)
     if (useFocus) {
       const fs = focusMw.getFocuses()
-      void store.save(agentId, core.sessionId, { focus: fs.length ? fs : null } as Partial<SessionSnapshot>)
+      persistSave({ focus: fs.length ? fs : null } as Partial<SessionSnapshot>)
     }
     // automation 断点续跑:持久化 checkpoint 栈 + 累计 usage(刷新/崩溃后恢复,长任务可续跑;仅 automation 开启时写,省空间)
     if (useAutomation && checkpointMgr) {
-      void store.save(agentId, core.sessionId, { checkpoints: checkpointMgr.exportStack() } as Partial<SessionSnapshot>)
-      void store.save(agentId, core.sessionId, { usage } as Partial<SessionSnapshot>)
+      persistSave({ checkpoints: checkpointMgr.exportStack() } as Partial<SessionSnapshot>)
+      persistSave({ usage } as Partial<SessionSnapshot>)
     }
     // 自动 title:首条 user 截取(变化才写,避免每轮重复;供历史列表显示,替代「会话 xxxxxx」)
     const title = deriveTitle(messages)
     if (title && title !== lastTitle) {
       lastTitle = title
-      void store.updateTitle(agentId, core.sessionId, title)
+      persistUpdateTitle(core.sessionId, title)
     }
     // LLM 标题(异步,首轮 user+assistant 完成后一次;主旨更准,覆盖规则 title;失败/无 LLM 用规则兜底)
     const autoTitle = options.autoTitle !== false
     if (autoTitle && titleLlmInvoke && !titleLLMDone && messages.some((m) => m.role === 'user') && messages.some((m) => m.role === 'assistant')) {
       titleLLMDone = true
+      const sid = core.sessionId // 调度时会话快照:LLM 返回时可能已切会话,写错会话
       void (async () => {
-        const llmTitle = await titleLlmInvoke(messages)
-        if (llmTitle) { await store.updateTitle(agentId, core.sessionId, llmTitle); await refreshSessions() }
+        try {
+          const llmTitle = await titleLlmInvoke(messages)
+          // 迟到守卫(deferred RE 组修复):LLM 期间卸载(refCount≤0 → store 已 dispose)或切会话(sessionId 变)→ 放弃
+          if (llmTitle && core.refCount > 0 && core.sessionId === sid) {
+            persistUpdateTitle(sid, llmTitle)
+            await refreshSessions()
+          }
+        } catch {
+          /* LLM 标题失败:规则 title 已兜底,吞掉防 unhandled rejection */
+        }
       })()
     }
     if (options.debug) console.log('[page-agent-sdk][persist] save', core.sessionId, `${messages.length} msgs`)

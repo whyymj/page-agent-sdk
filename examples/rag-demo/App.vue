@@ -175,6 +175,9 @@ function buildAgent(): ChatSdk {
     // 生产环境直连经 VITE_ANTHROPIC_BASE_URL 配 https://api.modelverse.cn/
     baseUrl: import.meta.env.VITE_ANTHROPIC_BASE_URL || `${location.origin}/llm`,
     model: import.meta.env.VITE_ANTHROPIC_MODEL || 'deepseek-v4-flash',
+    // prompt caching(Anthropic 协议专属):多轮 ReAct 前缀(system+tools+历史)命中缓存,input 价格降至 ~1/10;
+    // 效果观测:usage 事件的 cache_read_input_tokens(真 LLM 回归 npm run test:real rag 基线对比)
+    cacheControl: true,
     // 低于 MIN_CONTEXT_WINDOW(200K)启动即 throw,故显式声明窗口与最大输出
     contextWindow: 200000,
     maxOutputTokens: 8192,

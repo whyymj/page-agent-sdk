@@ -96,5 +96,16 @@ export async function constructLlmFromConfig(cfg: LLMConfig, opts: ConstructOpts
     // anthropicApiUrl = baseUrl(Anthropic SDK 的 baseURL 别名);clientOptions 透传 extraConfig(fetch/headers 等)
     ...(cfg.baseUrl ? { anthropicApiUrl: normalizeBaseUrl(cfg.baseUrl) } : {}),
     ...(cfg.extraConfig ? { clientOptions: cfg.extraConfig } : {}),
+    // prompt caching:走 invocationKwargs 透传顶层 cache_control(服务端自动在最后一个可缓存块打断点并随对话推进,
+    // ReAct 多轮前缀命中 input 价格 ~1/10)。注:不能走构造器顶层 cache_control 字段 —— 实测 @langchain/anthropic
+    // 1.5.4 只消费「调用时 options.cache_control」,构造字段不进请求体;invocationKwargs 直接展开进 body 且
+    // 显式 cache_control:undefined 在 JSON 序列化被丢弃,不会覆盖。true=ephemeral(5m);'1h'=长 TTL
+    ...(cfg.cacheControl
+      ? {
+          invocationKwargs: {
+            cache_control: { type: 'ephemeral' as const, ...(cfg.cacheControl !== true ? { ttl: cfg.cacheControl } : {}) },
+          },
+        }
+      : {}),
   })
 }

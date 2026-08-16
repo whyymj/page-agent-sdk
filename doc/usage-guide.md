@@ -1525,10 +1525,12 @@ createChatSdk({
     apiKey: 'sk-ant-xxx',
     model: 'claude-sonnet-4-5-20250929',
     baseUrl: 'https://api.anthropic.com',  // 可选,默认官方;自建网关填此处
+    cacheControl: true,             // prompt caching(可选):true=ephemeral 5m / '1h'=长 TTL,见下方说明
   },
 }).mount()
 ```
 
+> - **prompt caching(`cacheControl`,Anthropic 协议专属)**:ReAct 多轮每轮重发完整前缀(system+工具定义+历史),`cacheControl: true` 经 langchain `invocationKwargs` 透传顶层 `cache_control`,服务端自动打断点并随对话推进 —— 前缀命中缓存,input 价格降至 **~1/10**(写 1.25x,5m/1h TTL)。效果观测:usage 事件/`sdk.usage` 的 `cache_read_input_tokens`/`cache_creation_input_tokens`(端点回报才携带);真 LLM 回归 `npm run test:real rag` 的基线 diff 可见 prompt ▼。**端点支持差异(实测 2026-08)**:modelverse 网关**非流式**命中(实测 2787 token 前缀第二轮 2048 走缓存)、**流式不生效**(SDK 恒流式 → 该网关暂无收益,配置无害保留);官方 api.anthropic.com 流式回报缓存字段。OpenAI/DeepSeek 端点自动缓存,不受此开关控制
 > - `@langchain/anthropic` 是 **optional peerDep** —— 用 Anthropic 才需装(`npm i @langchain/anthropic`),不用 Anthropic 的项目零影响(动态 import 仅 `provider:'anthropic'` 分支加载)
 > - `setLlm` 切 Anthropic 需传 `BaseChatModel` 实例(动态 import 无法同步):`const { ChatAnthropic } = await import('@langchain/anthropic'); sdk.setLlm(new ChatAnthropic({ apiKey, model }))`;传 `LLMConfig + provider:'anthropic'` 会 throw 清晰提示
 > - **IIFE(CDN `<script>`)不支持 Anthropic**(浏览器无 importmap 解析 bare specifier);用 Anthropic 走 npm(ESM/UMD)。CDN 全量包不打包 `@langchain/anthropic`(默认 OpenAI/DeepSeek)

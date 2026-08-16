@@ -325,10 +325,10 @@ P3×33 以文档漂移(多处已随审计直接修正)/ 代码卫生 / 测试 / 
 1. ✅ activeScope 并发错乱 —— 已修:per-call scope token(`RunnableConfig.configurable.__pgDataScope`,wrapWithScope 注入 + dataOps `scopeOf(config)` 优先取,ambient 兜底);AsyncLocalStorage 浏览器不可用,args 注入通道被 zod 重建阻断,configurable 是唯一干净通道。
 2. ✅ createSubagentsMiddleware 闭包单变量并发(M3 同型)—— 已修:wrapToolCall 注入 `ctx.callConfig.__pgSubagentCall`(signal/emit/logSink)→ coreExecTool 经 configurable 透传到 spawn/use_<id> 工具 fn 第二参;闭包单变量降 fallback。
 
-### RE fire-and-forget 组(P2×2)
+### RE fire-and-forget 组(P2×2)—— ✅ 已修(2026-08-16,稳定性小修包)
 
-1. ⏸ autoTitle LLM 无 unmount 守卫 ——【低】autoTitle 异步 LLM 调用,unmount 后仍执行;无 abort/销毁守卫。与 deferred 挂起面 #3(trim LLM)同型。
-2. 🔁 persistRuntime void store.save 无 .catch ——【中-低】与 deferred 挂起面 #4 合并(persist 失败 unhandled rejection);一行 .catch + debugLogs。
+1. ✅ autoTitle LLM 无 unmount 守卫 —— 已修:迟到守卫(`core.refCount > 0 && core.sessionId === 快照` 才写,LLM 在途 unmount/切会话后放弃)+ try/catch 吞错。
+2. ✅ persistRuntime void store.save 无 .catch —— 已修:`persistSave`/`persistUpdateTitle` 统一吞错出口(全文件 11 处 fire-and-forget 收敛)+ refreshSessions 内部吞错。e2e 回归锁:storage.mjs 两场景(setItem 抛错零 unhandledRejection + autoTitle 迟到守卫)。
 
 ### P3×16(各维卫生,详见各 audit-<DIM>.md)
 

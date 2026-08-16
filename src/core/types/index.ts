@@ -84,6 +84,10 @@ export interface TokenUsage {
   prompt_tokens?: number
   completion_tokens?: number
   total_tokens?: number
+  /** prompt caching 命中读取的 input tokens(Anthropic;0/缺省=未命中或端点不支持缓存) */
+  cache_read_input_tokens?: number
+  /** prompt caching 本次写入的 input tokens(Anthropic;写价格 1.25x,5m/1h TTL 内复用) */
+  cache_creation_input_tokens?: number
 }
 
 /** 批处理单任务结果(sdk.batch 返回;ok=true 含 reply,ok=false 含 error) */

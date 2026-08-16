@@ -78,6 +78,8 @@ function hasTokenField(u: Record<string, unknown>): boolean {
 /**
  * 原始 usage 对象 → 归一 TokenUsage(fix-main-sub-isolation P1-17a:sdk-events afterModel 与子栈 sub-usage 中间件共用,消重)。
  * 兼容 snake_case(prompt_tokens)与 camelCase(promptTokens);total 缺省取 prompt+completion;全 0/无效 → null。
+ * prompt caching 字段(cache_read/cache_creation input tokens,Anthropic):顶层 snake/camel 与
+ * usage_metadata.input_token_details(langchain 标准 details)两种形态都归一携带,供 llm.cacheControl 效果观测。
  */
 export function normalizeUsage(message: BaseMessage): TokenUsage | null {
   const u = extractUsage(message)
@@ -87,5 +89,13 @@ export function normalizeUsage(message: BaseMessage): TokenUsage | null {
   const c = Number(rec.completion_tokens ?? rec.completionTokens ?? rec.output_tokens ?? rec.outputTokens ?? 0) || 0
   const t = Number(rec.total_tokens ?? rec.totalTokens ?? (p + c)) || 0
   if (!p && !c && !t) return null
-  return { prompt_tokens: p, completion_tokens: c, total_tokens: t }
+  // 缓存字段:Anthropic 顶层 snake(cache_read_input_tokens)与 langchain usage_metadata.input_token_details.cache_read 两种形态
+  const details = rec.input_token_details as Record<string, unknown> | undefined
+  const cacheRead = Number(rec.cache_read_input_tokens ?? rec.cacheReadInputTokens ?? details?.cache_read ?? 0) || 0
+  const cacheCreate = Number(rec.cache_creation_input_tokens ?? rec.cacheCreationInputTokens ?? details?.cache_creation ?? 0) || 0
+  return {
+    prompt_tokens: p, completion_tokens: c, total_tokens: t,
+    ...(cacheRead ? { cache_read_input_tokens: cacheRead } : {}),
+    ...(cacheCreate ? { cache_creation_input_tokens: cacheCreate } : {}),
+  }
 }

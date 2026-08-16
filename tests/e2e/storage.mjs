@@ -154,5 +154,68 @@ export async function run() {
     sdkB.unmount()
   }
 
+  // ===== RE 修复回归:deferred 登记的「fire-and-forget 持久化无 .catch」+「autoTitle 无 unmount 守卫」=====
+  // 修前:`void store.save/updateTitle(...)` 拒绝无人接 → unhandledRejection(browser 实测:IDB 连接关闭 InvalidStateError);
+  // autoTitle LLM 在途 unmount → 迟到写已 dispose 的 store / 切会话后写错会话。修后:persistSave/persistUpdateTitle
+  // 统一吞错出口 + 迟到守卫(refCount>0 && sessionId 未变)。
+  console.log('[e2e:storage] persistSave 吞错:local setItem 抛错(配额满模拟)→ 零 unhandledRejection + 对话不受影响')
+  {
+    const { StubChatModel } = await import('./_stub-model.mjs')
+    const unhandled = []
+    const onUnhandled = (r) => unhandled.push(String(r))
+    process.on('unhandledRejection', onUnhandled)
+    const m = new Map()
+    let failNow = false
+    globalThis.localStorage = {
+      getItem: (k) => (m.has(k) ? m.get(k) : null),
+      setItem: (k, v) => { if (failNow) throw new Error('QuotaExceededError (test)'); m.set(k, String(v)) },
+      removeItem: (k) => m.delete(k),
+      key: (i) => Array.from(m.keys())[i] ?? null,
+      get length() { return m.size },
+      clear: () => m.clear(),
+    }
+    const model = new StubChatModel([{ text: '第一轮回复' }])
+    const sdk = createChatSdk({ ui: false, id: 'e2e-persist-swallow', storage: 'local', llm: model, capabilities: MIN_CAPS, autoTitle: false })
+    await sdk.mount()
+    failNow = true  // mount 完成后再失败:send 后 persistRuntime 全部 fire-and-forget save/updateTitle/refreshSessions 均走拒绝路径
+    await sdk.send('你好')
+    await new Promise((r) => setTimeout(r, 150))  // 等 fire-and-forget 微任务落定
+    assert(unhandled.length === 0, '✓ persistSave 吞错:save/updateTitle/listSessions 拒绝 → 零 unhandledRejection(修前 void 裸奔)')
+    assert(sdk.messages.some((x) => x.role === 'assistant' && x.content === '第一轮回复'), '✓ 持久化失败不影响对话流程(回复正常送达)')
+    await sdk.unmount()
+    process.off('unhandledRejection', onUnhandled)
+    delete globalThis.localStorage
+  }
+
+  console.log('[e2e:storage] autoTitle 迟到守卫:标题 LLM 在途时 unmount → 放弃写入,零 unhandledRejection')
+  {
+    const { StubChatModel } = await import('./_stub-model.mjs')
+    const unhandled = []
+    const onUnhandled = (r) => unhandled.push(String(r))
+    process.on('unhandledRejection', onUnhandled)
+    const m2 = new Map()
+    globalThis.localStorage = {
+      getItem: (k) => (m2.has(k) ? m2.get(k) : null),
+      setItem: (k, v) => m2.set(k, String(v)),
+      removeItem: (k) => m2.delete(k),
+      key: (i) => Array.from(m2.keys())[i] ?? null,
+      get length() { return m2.size },
+      clear: () => m2.clear(),
+    }
+    // 第 1 响应主轮回复;第 2 响应(delayMs 250)标题 invoke —— send 完成后 unmount,标题在途
+    const model2 = new StubChatModel([{ text: '回复完成' }, { text: '迟到的LLM标题', delayMs: 250 }])
+    const sdk2 = createChatSdk({ ui: false, id: 'e2e-autotitle-guard', storage: 'local', llm: model2, capabilities: MIN_CAPS })
+    await sdk2.mount()
+    await sdk2.send('守卫测试消息')
+    await sdk2.unmount()  // 标题 invoke(250ms)在途时 release(refCount 0)
+    await new Promise((r) => setTimeout(r, 500))  // 等迟到标题回来(守卫应跳过写入)
+    assert(unhandled.length === 0, '✓ autoTitle 迟到守卫:unmount 后迟到标题写入放弃 → 零 unhandledRejection')
+    assert(model2.calls === 2, '✓ 标题 LLM 调用确实发起过(守卫跳的是写入,不是没调用)')
+    const allValues = Array.from(m2.values()).join('\n')
+    assert(!allValues.includes('迟到的LLM标题'), '✓ 迟到标题未写入存储(保持规则 title 兜底,不覆盖已释放会话)')
+    process.off('unhandledRejection', onUnhandled)
+    delete globalThis.localStorage
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

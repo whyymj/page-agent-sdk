@@ -46,6 +46,8 @@ export interface SubagentLlmConfig {
   extraConfig?: Record<string, any>
   /** 透传 modelKwargs(如 deepseek thinking);子 agent 兜底构造时同主 LLM 生效 */
   extraBody?: Record<string, any>
+  /** Anthropic prompt caching(同主 LLM cacheControl;provider:'anthropic' 时经 constructLlmFromConfig 透传生效) */
+  cacheControl?: boolean | '5m' | '1h'
 }
 
 // ===== 子 agent 观察层(active/history 状态;纯观察,不改子 agent 生命周期/事件链)=====

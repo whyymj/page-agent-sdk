@@ -48,6 +48,18 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(!!llm && typeof (llm as any).invoke === 'function', 'constructLlmFromConfig anthropic extraConfig → clientOptions 透传不抛错')
   }
   {
+    // prompt caching(llm.cacheControl):经 invocationKwargs 透传顶层 cache_control(构造器顶层字段在
+    // @langchain/anthropic 1.5.4 不进请求体,实测只消费调用时 options;invocationKwargs 直接展开进 body)
+    const on = await constructLlmFromConfig({ provider: 'anthropic', apiKey: 'sk-ant', model: 'claude-3-5-sonnet', cacheControl: true })
+    const kwOn = (on as any).lc_kwargs || {}
+    assert(kwOn.invocationKwargs?.cache_control?.type === 'ephemeral', 'cacheControl:true → invocationKwargs.cache_control {type:ephemeral}(服务端自动断点推进)')
+    assert(kwOn.invocationKwargs?.cache_control?.ttl === undefined, 'cacheControl:true → 缺省不显式传 ttl(5m 默认)')
+    const h1 = await constructLlmFromConfig({ provider: 'anthropic', apiKey: 'sk-ant', model: 'claude-3-5-sonnet', cacheControl: '1h' })
+    assert((h1 as any).lc_kwargs?.invocationKwargs?.cache_control?.ttl === '1h', "cacheControl:'1h' → ttl 透传(长 TTL 缓存)")
+    const off = await constructLlmFromConfig({ provider: 'anthropic', apiKey: 'sk-ant', model: 'claude-3-5-sonnet' })
+    assert((off as any).lc_kwargs?.invocationKwargs === undefined, '未传 cacheControl → 不打缓存断点(默认行为零变化)')
+  }
+  {
     // ConstructOpts 覆盖 temperature/maxTokens(summary/title 用不同值,覆盖 LLMConfig)
     const llm = constructOpenLlmSync({ apiKey: 'sk', model: 'gpt-4', temperature: 0.7 }, { temperature: 0, maxTokens: 30 })
     const kw = (llm as any).lc_kwargs || {}
@@ -95,6 +107,13 @@ export async function run(ctx: TestCtx): Promise<void> {
     const nu = normalizeUsage({ usage_metadata: { input_tokens: 100, output_tokens: 40 } } as any)
     assert(nu?.prompt_tokens === 100 && nu?.completion_tokens === 40 && nu?.total_tokens === 140, 'normalizeUsage usage_metadata(input/output_tokens)→ 归一 TokenUsage(total 缺省取和)')
     assert(normalizeUsage({ usage_metadata: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } } as any) === null, 'normalizeUsage 全 0 → null')
+    // prompt caching 字段归一(prompt-caching):Anthropic 顶层 snake 与 usage_metadata.input_token_details 两种形态
+    const c1 = normalizeUsage({ additional_kwargs: { usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 900, cache_creation_input_tokens: 100 } } } as any)
+    assert(c1?.cache_read_input_tokens === 900 && c1?.cache_creation_input_tokens === 100, 'normalizeUsage Anthropic 顶层 snake 缓存字段 → 归一携带(llm.cacheControl 效果观测)')
+    const c2 = normalizeUsage({ usage_metadata: { input_tokens: 10, output_tokens: 5, input_token_details: { cache_read: 700, cache_creation: 50 } } } as any)
+    assert(c2?.cache_read_input_tokens === 700 && c2?.cache_creation_input_tokens === 50, 'normalizeUsage usage_metadata.input_token_details 缓存字段 → 归一携带(langchain 标准形态)')
+    const c3 = normalizeUsage({ usage_metadata: { input_tokens: 10, output_tokens: 5 } } as any)
+    assert(c3?.cache_read_input_tokens === undefined && c3?.cache_creation_input_tokens === undefined, 'normalizeUsage 无缓存字段 → 不携带(缺省不占位)')
   }
   {
     // 默认 fetch 包装剥 x-stainless-* 遥测头(严格 CORS 的 OpenAI 兼容网关白名单不含它们 → 浏览器预检失败;真 LLM 实测)

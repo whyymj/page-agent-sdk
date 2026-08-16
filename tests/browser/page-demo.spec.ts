@@ -191,6 +191,8 @@ test.describe('page-demo: read → write → read', () => {
    * 断言:抽屉保持打开,发消息走完 ReAct → .log-item 数量增加。
    */
   test('DebugDrawer:生成期间抽屉保持打开,日志列表实时刷新', async ({ page }) => {
+    // 高负载下 idle 等待未到点先撞默认 60s 测试预算(实测 flaky 重试才过)→ 放宽;断言在 idle 后取计数,不涉时序
+    test.setTimeout(150_000)
     await mockLlm(page, [
       { tool_calls: [{ name: 'read', arguments: { jsonPath: 'title' } }] },
       { text: '读取完成。' },
@@ -203,7 +205,7 @@ test.describe('page-demo: read → write → read', () => {
     // 抽屉保持打开,发消息走完一轮 ReAct(read → 文本)
     await fillInput(page, '读一下标题')
     await clickSend(page)
-    await waitForAgentIdle(page)
+    await waitForAgentIdle(page, 120_000)
     const after = await page.locator('.debug-drawer .log-item').count()
     expect(after, '生成期间新增 llm_request/tool 日志应实时出现').toBeGreaterThan(before)
   })
