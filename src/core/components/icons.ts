@@ -31,6 +31,8 @@ export interface DialogIcons {
   assistantAvatar?: string
   /** user 头像字形(undefined = 内置 user SVG) */
   userAvatar?: string
+  /** 发送按钮图标(undefined = 内置纸飞机 SVG;传 emoji/字符/HTML 片段替换;loading 态停止方块恒内置)。空串视为未传(防空按钮) */
+  send?: string
 }
 
 /** 默认图标集(与拆 emoji 前的硬编码值一致,默认路径行为零变化) */
@@ -57,5 +59,6 @@ export function resolveDialogIcons(partial?: Partial<DialogIcons>): DialogIcons 
   }
   if (partial.assistantAvatar) merged.assistantAvatar = partial.assistantAvatar
   if (partial.userAvatar) merged.userAvatar = partial.userAvatar
+  if (partial.send) merged.send = partial.send
   return merged
 }

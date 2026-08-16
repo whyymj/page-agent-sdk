@@ -157,6 +157,7 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
         '## 当前精修目标',
         focuses.map((f) => `· ${f.path}${f.label ? `(${f.label})` : ''}`).join('\n'),
         `仅操作上述 ${focuses.length} 个聚焦子树${focuses.length > 1 ? '之一' : ''},${defaultTarget}不要改动其他组件;${unfocusHint}`,
+        'read 不带路径时默认只返回聚焦子树;需要全量主数据时显式列顶层键(read({jsonPaths:[...]}) )',
       ]
       // 视野收敛:注入每个焦点子树 schema 描述(LLM 每轮看到所有焦点组件结构)
       const schema = opts.getSchema()
@@ -203,6 +204,18 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
           if (!scopes.length) return deny('(整体数据)')
           for (const scope of scopes) {
             if (!focuses.some((f) => isUnderFocus(scope, f.path)) && !isTailAppend(scope, opts.getBind?.())) return deny(scope)
+          }
+        }
+        // focus-scoped-read(用户反馈驱动,openspec 2026-08-16):read 空参(无 jsonPath/jsonPaths)→ 注入焦点路径,
+        // 默认只返回聚焦子树(多焦点全含);显式路径读完全自由(「读不限制」设计保留)。教学行放结果级反馈
+        // (3.4 立项教训:工具层反馈比 system prompt 引导强)。dataOps 零改动,复用多路径读(hash 供 autoLock)
+        if (ctx.name === 'read') {
+          const a = ctx.args as Record<string, unknown> | undefined
+          if (!a?.jsonPath && !a?.jsonPaths) {
+            const paths = focuses.map((f) => f.path)
+            const res = await next({ ...ctx, args: { ...a, jsonPaths: paths } })
+            const note = `【聚焦模式】read 未带路径 → 默认返回聚焦子树(${paths.join(', ')});需要全量主数据时显式列顶层键,如 read({jsonPaths:['<顶层键1>','<顶层键2>']})\n`
+            return { ...res, content: note + res.content }
           }
         }
       }

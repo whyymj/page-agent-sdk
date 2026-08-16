@@ -19,6 +19,7 @@ import { reactive, ref, type Ref } from 'vue'
 import { tool, type StructuredToolInterface } from '@langchain/core/tools'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { DialogIcons } from '../components/icons'
+import type { DialogMessages, DialogLocale } from '../components/messages'
 import { createAgent, type DebugLog } from '../harness/createAgent'
 import { asAgentError } from '../tools/toolError'
 import { isAbort } from '../harness/retry'
@@ -371,6 +372,10 @@ export interface DialogConfig {
   theme?: 'light' | 'dark'
   /** 图标局部覆盖:替换默认 emoji(🤖/🧬/🎯/📋/✏️/💡/⚠️/💬;头像两键 undefined=内置 SVG)。未传键用默认;空串=隐藏;值可为纯文本或 HTML 片段(以 '<' 开头,如内联 svg,DOMPurify 图标白名单净化) */
   icons?: Partial<DialogIcons>
+  /** 语言:'zh-CN'(默认)/'en-US';影响 UI 文案包、formatTime(12h/24h)与 autoTitle 标题语言 */
+  locale?: DialogLocale
+  /** 文案键级覆盖(Partial<DialogMessages>;优先于 locale 包 —— 换语言与改个别文案一套机制,如 statusDone:'完成') */
+  messages?: Partial<DialogMessages>
   /** ChatDialog 区块显隐(chatdialog-component-split):键=false 关闭整块(含 slot);默认全开。键:header/focus/body/queued/approval/conflict/footer/debug/skill */
   sections?: Record<string, boolean>
 }

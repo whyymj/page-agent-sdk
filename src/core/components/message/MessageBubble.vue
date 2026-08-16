@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import MessageContent from '../MessageContent.vue'
+import { MESSAGES_ZH_CN, type DialogMessages } from '../messages'
 
-defineProps<{
+withDefaults(defineProps<{
   content: string
   role: 'user' | 'assistant'
   /** 流式占位(末位 + loading + 无内容 → 三点动画) */
@@ -10,7 +11,9 @@ defineProps<{
   showTyping: boolean
   /** 流式光标(生成中有内容时尾部闪烁竖条) */
   showCursor: boolean
-}>()
+  /** 文案集(容器/父级下传;独立复用缺省中文) */
+  messages?: DialogMessages
+}>(), { messages: () => ({ ...MESSAGES_ZH_CN }) })
 </script>
 
 <template>
@@ -18,7 +21,7 @@ defineProps<{
     <template v-if="isPendingAssistant">
       <!-- 设计稿「思考中」态:8px 主色圆角方点 + 文案;showTyping 时方点呼吸脉冲 -->
       <span class="typing-dot" :class="{ pulse: showTyping }"></span>
-      <span class="typing-text">思考中...</span>
+      <span class="typing-text">{{ messages.thinking }}</span>
     </template>
     <template v-else>
       <MessageContent v-if="role === 'assistant'" :content="content" />
@@ -37,7 +40,7 @@ defineProps<{
 .message-bubble.assistant { background: var(--cs-bubble-ai, #f3f4f6); color: var(--cs-bg-text, #1f2937); border-bottom-left-radius: 4px; white-space: normal; overflow-wrap: anywhere; }
 .message-bubble.user { background: var(--cs-bubble-user, var(--cs-primary, #1f4d3a)); color: #fff; border-bottom-right-radius: 4px; }
 
-.typing { display: flex; align-items: center; gap: 6px; padding: 4px 2px; }
+.typing { display: flex; align-items: center; gap: 6px; padding: 6px 13px; /* 横向对齐气泡基础 padding(用户反馈:思考中前后贴边) */ }
 .typing-dot { width: 8px; height: 8px; border-radius: 3px; background: var(--cs-typing-dot, var(--cs-primary, #1f4d3a)); flex-shrink: 0; }
 .typing-dot.pulse { animation: cs-dot-pulse 1.2s infinite ease-in-out; }
 @keyframes cs-dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }

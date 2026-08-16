@@ -46,6 +46,8 @@
 
 | change | 状态 | 一句话 |
 |---|---|---|
+| [`2026-08-16-dialog-i18n/`](./2026-08-16-dialog-i18n/) | **待实施**(设计已定,排在排队任务之后) | 内置对话框国际化 + 文案自定义:自建轻量字典(零依赖,不引 vue-i18n);`dialog.locale`('zh-CN'缺省/'en-US')+ `dialog.messages` 键级覆盖(**优先于 locale 包** —— 切语言与改个别文案如「成功→完成」一套机制);Phase 1 聊天面 ~130 键 + formatTime/autoTitle locale 伴随点;Phase 2(DebugDrawer/SkillPanel/默认 systemPrompt 语言策略)独立立项 |
+| [`2026-08-16-focus-scoped-read/`](./2026-08-16-focus-scoped-read/) | **待实施**(用户反馈驱动;等后台真 LLM 回归跑完动工) | 聚焦模式下 `read` 空参默认返回焦点子树(经 focus 中间件参数改写注入 `jsonPaths`,多焦点全含)+ 结果教学行(显式列顶层键取全量);显式路径读自由保留(dataOps 零改动) |
 | [`2026-08-16-round2-review-hardening/`](./2026-08-16-round2-review-hardening/) | **实施完成**(待随下版发布归档) | 第二轮三路审查(rv-recent 增量面 / rv-core 跨模块不变量 / rv-coverage 盲区)22 条原始发现 → 裁决 9 修复 + 4 测试补强 + 3 deferred + 9 误报否决。修复:autoTitle 标题时序回归 / 主栈 `__pgDataScope` 兜底(3.7 同类残留,autoLock 静默放行面)/ query+get 大文本摘要 / 失败读不刷乐观锁基线 / send 孤儿轮收口 / release 后排队 send 守卫 / MessageSteps 跨实例展开 / cacheControl 注释勘误 / persistSave debugLogs 留痕。测试:+conflict overwrite-restore 顶层分支 / +wrapToolCall throw 契约 / sec-80 E3 占位重写 / +normalizeBaseUrl / +sec-82 修复锁 8 项 |
 | [`2026-08-15-parallel-subagent-delegation/`](./2026-08-15-parallel-subagent-delegation/) | proposal 已评审(三方评审裁定:冲突改立即回灌不排队 + 分两批实施);第一批实施中 | 多子 agent 同轮并行委派:第一批 = prompt 并行化 + **失败隔离**(无关联任务一个出错不批量回退)+ commit 逐组件容错;第二批 = **同组件写互斥**(组件锁:立即回灌 `COMPONENT_BUSY` + 主 agent 写检查 `COMPONENT_LOCKED`)+ **人工并发 commit 冲突检测**(checkout hash 比对,人工优先 keep_external);后台 agent 模式登记 deferred |
 

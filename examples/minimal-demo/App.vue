@@ -34,6 +34,7 @@ onMounted(() => {
         queued: '<img src="data:image/svg+xml," width="12" height="12" alt="" onerror="window.__iconXss=1">',
         assistantAvatar: '🛰️',
         userAvatar: '🙋',
+        send: '🚀',                // 发送按钮图标(缺省=内置纸飞机 SVG;loading 停止方块恒内置)
       },
     },
   })

@@ -3,17 +3,20 @@ import { computed, reactive } from 'vue'
 import type { ToolStep } from '../../types'
 import { copyText } from '../../utils/clipboard'
 import { DEFAULT_DIALOG_ICONS, type DialogIcons } from '../icons'
+import { MESSAGES_ZH_CN, type DialogMessages } from '../messages'
 import SubReasonDetails from './SubReasonDetails.vue'
 import IconGlyph from '../IconGlyph.vue'
 
 // icons 由 MessageRow 从 ctx 下传(纯 props 叶子零依赖);独立复用时缺省用默认图标集
-const props = withDefaults(defineProps<{ steps: ToolStep[]; icons?: DialogIcons }>(), {
+const props = withDefaults(defineProps<{ steps: ToolStep[]; icons?: DialogIcons; messages?: DialogMessages }>(), {
   icons: () => ({ ...DEFAULT_DIALOG_ICONS }),
+  messages: () => ({ ...MESSAGES_ZH_CN }),
 })
 
 /** 步骤状态中文标签(running/done/error → 执行中/成功/失败),配合色块 status-dot 使用 */
 function statusLabel(status: 'running' | 'done' | 'error'): string {
-  return status === 'running' ? '执行中' : status === 'error' ? '失败' : '成功'
+  const msg = props.messages
+  return status === 'running' ? msg.statusRunning : status === 'error' ? msg.statusError : msg.statusDone
 }
 
 /** 相邻同名工具合并:仅合并连续同名,count>1 显示 ×N;不相邻的同名工具分别成组。状态聚合(有 error→error,有 running→running,否则 done),children 合并,耗时求和 */
@@ -112,14 +115,14 @@ function fmtArgs(args: unknown): { text: string; truncated: boolean } {
     text = String(args)
   }
   return text.length > ARGS_DISPLAY_CAP
-    ? { text: text.slice(0, ARGS_DISPLAY_CAP) + '\n…(展示截断,复制可得全量)', truncated: true }
+    ? { text: text.slice(0, ARGS_DISPLAY_CAP) + props.messages.displayTruncatedSuffix, truncated: true }
     : { text, truncated: false }
 }
 /** 返回值展示:字符串原样;超长截断(复制可拿全量) */
 function fmtResult(result: string | undefined): { text: string; truncated: boolean } {
   if (result == null || result === '') return { text: '', truncated: false }
   return result.length > RESULT_DISPLAY_CAP
-    ? { text: result.slice(0, RESULT_DISPLAY_CAP) + '\n…(展示截断,复制可得全量)', truncated: true }
+    ? { text: result.slice(0, RESULT_DISPLAY_CAP) + props.messages.displayTruncatedSuffix, truncated: true }
     : { text: result, truncated: false }
 }
 function copyDetail(text: string, truncated: boolean, full?: unknown): void {
@@ -144,35 +147,35 @@ function copyDetail(text: string, truncated: boolean, full?: unknown): void {
       <div class="step-head">
         <span class="status-dot" :class="step.status"></span>
         <span class="step-name">{{ step.name }}</span>
-        <span v-if="isSubagentTool(step.name)" class="subagent-badge" title="子 agent 委派(独立上下文,只回结论)"><IconGlyph :icon="icons.subagent" /> 子</span>
+        <span v-if="isSubagentTool(step.name)" class="subagent-badge" :title="messages.subagentBadgeTitle"><IconGlyph :icon="icons.subagent" /> {{ messages.subagentBadge }}</span>
         <span v-if="step.count > 1" class="step-count">×{{ step.count }}</span>
         <span class="step-status" :class="step.status">{{ statusLabel(step.status) }}</span>
         <span v-if="step.durationMs != null && step.status !== 'running'" class="step-duration">{{ formatDuration(step.durationMs) }}</span>
         <!-- 行右端展开/收起(Figma 471:6389「05-思考完成」:Skill 行右「展开」置灰 / 思考过程展开中右「收起」紫色) -->
         <button v-if="hasDetail(step.calls)" type="button" class="step-detail-toggle" :class="{ open: expanded.has(sIdx) }" @click="toggleExpand(sIdx)">
-          {{ expanded.has(sIdx) ? '收起' : '展开' }}
+          {{ expanded.has(sIdx) ? messages.collapse : messages.expand }}
         </button>
       </div>
       <!-- 展开细节:每次调用的入参 + 返回值(×N 合并组逐次列出;超长截断,复制得全量) -->
       <div v-if="expanded.has(sIdx) && step.calls?.length" class="step-detail">
         <div v-for="(c, cIdx) in step.calls" :key="cIdx" class="step-detail-call">
-          <div v-if="step.count > 1" class="step-detail-call-label">第 {{ cIdx + 1 }} 次</div>
+          <div v-if="step.count > 1" class="step-detail-call-label">{{ messages.nthCallPrefix }}{{ cIdx + 1 }}{{ messages.nthCallSuffix }}</div>
           <div v-if="fmtArgs(c.args).text" class="step-detail-section">
-            <div class="step-detail-head">入参<button type="button" class="step-detail-copy" @click="copyDetail(fmtArgs(c.args).text, fmtArgs(c.args).truncated, c.args)">复制</button></div>
+            <div class="step-detail-head">{{ messages.argsLabel }}<button type="button" class="step-detail-copy" @click="copyDetail(fmtArgs(c.args).text, fmtArgs(c.args).truncated, c.args)">{{ messages.copy }}</button></div>
             <pre class="step-detail-pre">{{ fmtArgs(c.args).text }}</pre>
           </div>
           <div v-if="c.status !== 'running' && fmtResult(c.result).text" class="step-detail-section">
-            <div class="step-detail-head">返回值<button type="button" class="step-detail-copy" @click="copyDetail(fmtResult(c.result).text, fmtResult(c.result).truncated, c.result)">复制</button></div>
+            <div class="step-detail-head">{{ messages.resultLabel }}<button type="button" class="step-detail-copy" @click="copyDetail(fmtResult(c.result).text, fmtResult(c.result).truncated, c.result)">{{ messages.copy }}</button></div>
             <pre class="step-detail-pre" :class="{ err: c.status === 'error' }">{{ fmtResult(c.result).text }}</pre>
           </div>
-          <div v-else-if="c.status !== 'running' && !fmtResult(c.result).text" class="step-detail-empty">(无返回值)</div>
+          <div v-else-if="c.status !== 'running' && !fmtResult(c.result).text" class="step-detail-empty">{{ messages.noResult }}</div>
         </div>
       </div>
       <!-- 子 agent 思考过程(reasoning 增量累积;运行中字符计数+脉冲+自动滚底,完成后折叠回看) -->
-      <SubReasonDetails v-if="step.subReason" :sub-reason="step.subReason" :sub-reason-full="step.subReasonFull" :status="step.status" />
+      <SubReasonDetails v-if="step.subReason" :sub-reason="step.subReason" :sub-reason-full="step.subReasonFull" :status="step.status" :messages="messages" />
       <!-- 子 agent 工作进度(嵌套展示;紫色系与主工具区分;相邻同名工具经 groupedSteps 合并为 ×N,与主 agent 一致) -->
       <div v-if="step.children && step.children.length" class="step-children">
-        <div class="step-children-label"><IconGlyph :icon="icons.subagentProgress" /> 子 agent 进度</div>
+        <div class="step-children-label"><IconGlyph :icon="icons.subagentProgress" /> {{ messages.subagentProgress }}</div>
         <div v-for="(c, cIdx) in groupedSteps(step.children)" :key="cIdx" class="step-child" :class="c.status">
           <span class="status-dot sm" :class="c.status"></span>
           <span class="step-name">{{ c.name }}</span>

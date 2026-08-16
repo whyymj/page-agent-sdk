@@ -25,6 +25,11 @@ export async function run(ctx: TestCtx): Promise<void> {
     const a = resolveDialogIcons({ assistantAvatar: '🛰️', userAvatar: '' })
     assert(a.assistantAvatar === '🛰️', 'resolveDialogIcons assistantAvatar 传值 → 透传(文本字形替换 SVG)')
     assert(a.userAvatar === undefined, 'resolveDialogIcons userAvatar 空串 → 视为未传(undefined=内置 SVG)')
+    // send 键(发送按钮图标):传值透传;空串视为未传(防空按钮);缺省 undefined=内置纸飞机 SVG
+    const sd = resolveDialogIcons({ send: '🚀' })
+    assert(sd.send === '🚀', 'resolveDialogIcons send 传值 → 透传(替换内置纸飞机 SVG)')
+    assert(resolveDialogIcons({ send: '' }).send === undefined, 'resolveDialogIcons send 空串 → 视为未传(防空按钮)')
+    assert(resolveDialogIcons().send === undefined, 'resolveDialogIcons 缺省 send → undefined(内置 SVG,默认零变化)')
   }
   {
     // 边界:非字符串值忽略(不抛错不污染);文本键空串=隐藏合法保留

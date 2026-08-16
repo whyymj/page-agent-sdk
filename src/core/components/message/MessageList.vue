@@ -15,7 +15,7 @@ import AvatarIcon from './AvatarIcon.vue'
 defineProps<{ showAvatar: boolean; showTyping: boolean }>()
 
 const ctx = useChatContext()
-const { chat, formatTime, copiedMsg, copyMessage, isPendingAssistant, isReasoningExpanded, toggleReasoning, canUndo, undo, icons } = ctx
+const { chat, formatTime, copiedMsg, copyMessage, isPendingAssistant, isReasoningExpanded, toggleReasoning, canUndo, undo, icons, messages: m } = ctx
 // 滚动容器已上移至 ChatDialog 的 .chat-main(消息 + queued/approval/conflict 统一滚动);
 // 此处只取状态与重试方法
 const { state, retry, regenerate } = chat
@@ -30,7 +30,7 @@ const lastIsAssistant = computed(() => state.messages[state.messages.length - 1]
   <div class="chat-body">
     <div v-if="!hasMessages" class="empty-state">
       <div class="empty-icon"><IconGlyph :icon="icons.empty" /></div>
-      <p>有什么可以帮你的?</p>
+      <p>{{ m.emptyGreeting }}</p>
     </div>
 
     <MessageRow
@@ -55,15 +55,15 @@ const lastIsAssistant = computed(() => state.messages[state.messages.length - 1]
     <div v-if="state.loading && !lastIsAssistant" class="message-row assistant">
       <div v-if="showAvatar" class="message-avatar"><AvatarIcon role="assistant" :glyph="icons.assistantAvatar" /></div>
       <div class="message-content">
-        <MessageBubble content="" role="assistant" :is-pending-assistant="true" :show-typing="showTyping" :show-cursor="false" />
+        <MessageBubble content="" role="assistant" :is-pending-assistant="true" :show-typing="showTyping" :show-cursor="false" :messages="m" />
       </div>
     </div>
 
     <!-- 错误提示 + 重试 / 回退 -->
     <div v-if="state.error" class="error-bar">
       <span class="error-text">{{ state.error }}</span>
-      <button v-if="hasUserMessage" class="retry-btn" @click="retry">重试</button>
-      <button v-if="canUndo" class="undo-btn" title="回退到上次正常状态(还原对话历史 + 页面属性 + 工作区)" @click="undo">↩ 回退</button>
+      <button v-if="hasUserMessage" class="retry-btn" @click="retry">{{ m.retry }}</button>
+      <button v-if="canUndo" class="undo-btn" :title="m.undoTitle" @click="undo">{{ m.undo }}</button>
     </div>
   </div>
 </template>

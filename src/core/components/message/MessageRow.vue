@@ -51,18 +51,19 @@ const showCursor = computed(() => isAssistant.value && props.loading && props.is
     <div v-if="showAvatar" class="message-avatar"><AvatarIcon :role="message.role" :glyph="message.role === 'user' ? ctx.icons.userAvatar : ctx.icons.assistantAvatar" /></div>
     <div class="message-content">
       <MessageReasoning v-if="isAssistant" :text="reasoning" :expanded="reasoningExpanded" @toggle="$emit('toggle-reasoning')" />
-      <MessageSteps v-if="isAssistant" :steps="steps" :icons="ctx.icons" />
+      <MessageSteps v-if="isAssistant" :steps="steps" :icons="ctx.icons" :messages="ctx.messages" />
       <!-- user 消息发送时的焦点快照:历史记录只读(本体点击回看滚动);不带 ✕ —— 删历史 chip 改不了已发消息的上下文,还会误删当前焦点 -->
       <div v-if="message.role === 'user' && message.focuses?.length" class="msg-focuses">
         <span
           v-for="f in message.focuses"
           :key="f.path"
           class="msg-focus-chip"
-          :title="`回看 ${f.path}`"
+          :title="ctx.messages.historyFocusChipTitlePrefix + f.path"
           @click="ctx.focusChipClick(f)"
         ><IconGlyph :icon="ctx.icons.focus" /> {{ f.path }}</span>
       </div>
       <MessageBubble
+        :messages="ctx.messages"
         :content="message.content"
         :role="message.role"
         :is-pending-assistant="isPendingAssistant"
@@ -70,7 +71,7 @@ const showCursor = computed(() => isAssistant.value && props.loading && props.is
         :show-cursor="showCursor"
       />
       <MessageTime :time="time" />
-      <MessageActions v-if="showActions" :copied="copied" @copy="$emit('copy')" @regenerate="$emit('regenerate')" />
+      <MessageActions v-if="showActions" :messages="ctx.messages" :copied="copied" @copy="$emit('copy')" @regenerate="$emit('regenerate')" />
     </div>
   </div>
 </template>

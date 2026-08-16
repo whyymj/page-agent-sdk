@@ -10,13 +10,13 @@ import { useChatContext } from '../composables/chatContext'
 defineProps<{ placeholder: string; inputRows: number }>()
 
 const ctx = useChatContext()
-const { inputText, send, keydown, canUndo, undo, focuses, removeFocus, focusChipClick, icons } = ctx
+const { inputText, send, keydown, canUndo, undo, focuses, removeFocus, focusChipClick, icons, messages: m } = ctx
 const { state, stop } = ctx.chat
 </script>
 
 <template>
   <div class="chat-footer">
-    <button v-if="canUndo" class="undo-foot-btn" title="回退到上次正常状态(还原对话历史 + 页面属性 + 工作区)" @click="undo">↩ 回退</button>
+    <button v-if="canUndo" class="undo-foot-btn" :title="m.undoTitle" @click="undo">{{ m.undo }}</button>
     <div class="chat-input-wrap">
       <!-- 聚焦标签(inline chip):聚焦组件精修时,输入框内顶部显示多 chip(🎯 path,multi-focus)。
            chip 本体点击 → 回调(滚动/高亮组件);✕ 移除单个焦点(全移除=退出精修) -->
@@ -25,7 +25,7 @@ const { state, stop } = ctx.chat
           v-for="f in focuses"
           :key="f.path"
           class="focus-chip"
-          :title="`精修中:${f.path}(点击回看 · ✕ 移除)`"
+          :title="m.focusChipTitlePrefix + f.path + m.focusChipTitleHint"
           @click="focusChipClick(f)"
         >
           <span class="focus-chip-icon"><IconGlyph :icon="icons.focus" /></span><code class="focus-chip-path">{{ f.path }}</code>
@@ -41,17 +41,19 @@ const { state, stop } = ctx.chat
         @keydown="keydown"
       ></textarea>
       <div class="input-actions">
-        <span class="send-hint">Enter 发送 · Shift+Enter 换行</span>
+        <span class="send-hint">{{ m.sendHint }}</span>
         <button
           class="send-btn"
           :class="{ 'stop-btn': state.loading }"
           :disabled="!state.loading && !inputText.trim()"
-          :title="state.loading ? '停止生成' : '发送'"
+          :title="state.loading ? m.stopTitle : m.sendTitle"
           @click="state.loading ? stop() : send()"
         >
           <svg v-if="state.loading" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
             <rect x="6" y="6" width="12" height="12" rx="2"></rect>
           </svg>
+          <!-- 自定义发送图标(dialog.icons.send;loading 停止方块恒内置) -->
+          <IconGlyph v-else-if="icons.send" :icon="icons.send" />
           <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="22" y1="2" x2="11" y2="13"></line>
             <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>

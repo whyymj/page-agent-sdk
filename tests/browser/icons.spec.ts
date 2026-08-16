@@ -16,6 +16,9 @@ test.describe('对话框图标自定义(dialog.icons)', () => {
     await expect(page.locator('.chat-dialog .header-icon')).toHaveText('🦈')
     // empty 配置为内联 svg(HTML 形态)→ 无文本,断言 svg 节点渲染
     await expect(page.locator('.chat-dialog .empty-icon svg')).toHaveCount(1)
+    // 发送按钮自定义图标(🚀 替换内置纸飞机 SVG;loading 停止方块恒内置)
+    await expect(page.locator('.chat-dialog .send-btn')).toContainText('🚀')
+    await expect(page.locator('.chat-dialog .send-btn svg')).toHaveCount(0)
   })
 
   test('自定义头像字形生效(user 🙋 / assistant 🛰️ 替换内置 SVG)', async ({ page }) => {

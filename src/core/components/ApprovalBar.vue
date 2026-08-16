@@ -10,6 +10,7 @@ import { useChatContext } from '../composables/chatContext'
 
 const ctx = useChatContext()
 const { pendingApproval, resolveApproval } = ctx.chat
+const m = ctx.messages
 
 /** 工具调用参数 JSON 默认收起,点「查看参数」展开;新一次挂起重置 */
 const approvalArgsExpanded = ref(false)
@@ -28,7 +29,7 @@ const approvalArgsPreview = computed(() => {
   if (a == null) return ''
   try {
     const s = typeof a === 'string' ? a : JSON.stringify(a, null, 2)
-    return s.length > 400 ? s.slice(0, 400) + '\n…(已截断)' : s
+    return s.length > 400 ? s.slice(0, 400) + m.argsTruncatedSuffix : s
   } catch {
     return String(a)
   }
@@ -41,33 +42,33 @@ const approvalArgsPreview = computed(() => {
     <template v-if="isHumanConfirm">
       <div class="approval-head">
         <span class="approval-icon">❓</span>
-        <span class="approval-title">AI 需要你确认</span>
+        <span class="approval-title">{{ m.humanConfirmTitle }}</span>
       </div>
       <div v-if="pendingApproval.args?.question" class="approval-question">{{ pendingApproval.args.question }}</div>
       <div v-if="pendingApproval.args?.context" class="approval-context">{{ pendingApproval.args.context }}</div>
-      <div v-if="pendingApproval.args?.recommendation" class="approval-recommend"><IconGlyph :icon="ctx.icons.recommend" /> 推荐:{{ pendingApproval.args.recommendation }}</div>
+      <div v-if="pendingApproval.args?.recommendation" class="approval-recommend"><IconGlyph :icon="ctx.icons.recommend" />{{ m.recommendPrefix }}{{ pendingApproval.args.recommendation }}</div>
       <!-- 可选方案纵向排列(方案文案常较长,横向拥挤;整行按钮更易点选) -->
       <div v-if="approvalOptions.length" class="approval-options">
         <button v-for="opt in approvalOptions" :key="opt" class="approval-opt" @click="resolveApproval(opt)">{{ opt }}</button>
       </div>
       <div class="approval-actions">
-        <button class="approval-deny" @click="resolveApproval(false)">拒绝</button>
-        <button v-if="!approvalOptions.length" class="approval-allow" @click="resolveApproval(true)">允许</button>
+        <button class="approval-deny" @click="resolveApproval(false)">{{ m.deny }}</button>
+        <button v-if="!approvalOptions.length" class="approval-allow" @click="resolveApproval(true)">{{ m.approve }}</button>
       </div>
     </template>
     <!-- 工具调用确认:展示工具名 + 参数 -->
     <template v-else>
       <div class="approval-head">
         <span class="approval-icon">✋</span>
-        <span class="approval-title">需确认工具调用:<code>{{ pendingApproval.toolName }}</code></span>
+        <span class="approval-title">{{ m.toolConfirmPrefix }}<code>{{ pendingApproval.toolName }}</code></span>
         <button v-if="approvalArgsPreview" class="approval-toggle" @click="approvalArgsExpanded = !approvalArgsExpanded">
-          {{ approvalArgsExpanded ? '收起参数' : '查看参数' }}{{ approvalArgsExpanded ? ' ▴' : ' ▾' }}
+          {{ approvalArgsExpanded ? m.collapseArgs : m.viewArgs }}{{ approvalArgsExpanded ? ' ▴' : ' ▾' }}
         </button>
       </div>
       <pre v-if="approvalArgsPreview && approvalArgsExpanded" class="approval-args">{{ approvalArgsPreview }}</pre>
       <div class="approval-actions">
-        <button class="approval-deny" @click="resolveApproval(false)">拒绝</button>
-        <button class="approval-allow" @click="resolveApproval(true)">允许</button>
+        <button class="approval-deny" @click="resolveApproval(false)">{{ m.deny }}</button>
+        <button class="approval-allow" @click="resolveApproval(true)">{{ m.approve }}</button>
       </div>
     </template>
   </div>

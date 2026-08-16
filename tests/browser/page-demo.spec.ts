@@ -244,6 +244,32 @@ test.describe('page-demo: read → write → read', () => {
   })
 
   /**
+   * focus-scoped-read(用户反馈驱动,openspec 2026-08-16):聚焦后 read 空参 → focus 中间件注入
+   * jsonPaths=[焦点路径],默认只返回聚焦子树(结果前置教学行)。观测口 = 3.16 步骤展开细节(入参显示
+   * 改写后的 args)。
+   */
+  test('focus-scoped-read: 聚焦后 read 空参 → 注入焦点路径 + 教学行', async ({ page }) => {
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'read', arguments: {} }] },   // 空参 read → 中间件改写为 jsonPaths
+      { text: '完成' },
+    ])
+    // 两步拾取聚焦 components.0
+    await page.click('[data-path="components.0"]')
+    await page.click('.pick-overlay__btn')
+    await expect(page.locator('.focus-chip')).toBeVisible()
+    await fillInput(page, '这里是啥')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    // 展开步骤细节:入参含注入的 jsonPaths;返回值含聚焦模式教学行
+    await page.click('.step-detail-toggle')
+    await expect(page.locator('.step-detail')).toBeVisible()
+    const detail = (await page.textContent('.step-detail')) || ''
+    expect(detail).toContain('jsonPaths')
+    expect(detail).toContain('components.0')
+    expect(detail).toContain('【聚焦模式】')
+  })
+
+  /**
    * Bug 复现锁定(用户实测,page-demo 默认 simple toolMode):聚焦提示/越界文案引导调用不存在的 focus 工具。
    * 根因:focus 中间件注入提示与 PATH_DENIED 文案无条件引导「先 remove_focus / clear_focus」,
    * 但 focus 工具仅 advanced 装载 → simple 模式 agent 声称清除焦点却无工具可调,硬写反复 PATH_DENIED。

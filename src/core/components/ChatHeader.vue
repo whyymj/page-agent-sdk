@@ -32,7 +32,7 @@ const props = defineProps<{
 defineEmits<{ (e: 'close'): void }>()
 
 const ctx = useChatContext()
-const { chat, icons } = ctx
+const { chat, icons, messages: m } = ctx
 const { state, reset, clearMessages } = chat
 
 const moreOpen = ref(false)
@@ -43,8 +43,8 @@ const hasDebugLogs = computed(() => (props.debugLogs?.length ?? 0) > 0)
 /** 历史会话相对时间(刚刚 / N 分钟前 / 完整时间) */
 function fmtSessionTime(ts: number): string {
   const d = Date.now() - ts
-  if (d < 60000) return '刚刚'
-  if (d < 3600000) return Math.floor(d / 60000) + '分钟前'
+  if (d < 60000) return m.justNow
+  if (d < 3600000) return Math.floor(d / 60000) + m.minutesAgoSuffix
   return new Date(ts).toLocaleString()
 }
 
@@ -69,10 +69,10 @@ function handleOpenSession(id: string): void {
     </div>
     <div class="header-actions" @click.stop>
       <!-- 会话管理(sessions 注入 = storage 开启;不传则隐藏) -->
-      <button v-if="sessions" class="action-btn" data-test="new-chat" title="新建会话" @click="handleNewSession">
+      <button v-if="sessions" class="action-btn" data-test="new-chat" :title="m.newSession" @click="handleNewSession">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"></path></svg>
       </button>
-      <button v-if="sessions" class="action-btn" :class="{ active: historyOpen }" data-test="toggle-history" title="历史记录" @click="moreOpen = false; historyOpen = !historyOpen">
+      <button v-if="sessions" class="action-btn" :class="{ active: historyOpen }" data-test="toggle-history" :title="m.history" @click="moreOpen = false; historyOpen = !historyOpen">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path><path d="M12 7v5l3 2"></path></svg>
       </button>
       <!-- 历史面板(弹出) -->
@@ -85,7 +85,7 @@ function handleOpenSession(id: string): void {
           :data-sid="s.sessionId"
           @click="handleOpenSession(s.sessionId)"
         >
-          <div class="hist-title">{{ s.title || '会话 ' + s.sessionId.slice(-6) }}</div>
+          <div class="hist-title">{{ s.title || m.sessionFallbackPrefix + s.sessionId.slice(-6) }}</div>
           <div class="hist-meta">
             <span>{{ fmtSessionTime(s.lastAccessed) }}</span>
             <button v-if="currentSessionId !== s.sessionId" class="hist-del" data-test="del-btn" @click.stop="onRemoveSession?.(s.sessionId)">✕</button>
@@ -93,36 +93,36 @@ function handleOpenSession(id: string): void {
         </div>
       </div>
       <!-- 更多(调试 / skill / 清空 合并下拉) -->
-      <button class="action-btn more-btn" :class="{ active: moreOpen }" title="更多" @click="historyOpen = false; moreOpen = !moreOpen">
+      <button class="action-btn more-btn" :class="{ active: moreOpen }" :title="m.more" @click="historyOpen = false; moreOpen = !moreOpen">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
           <circle cx="12" cy="5" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="12" cy="19" r="1.6"></circle>
         </svg>
         <span v-if="hasDebugLogs" class="debug-badge">{{ debugLogs?.length }}</span>
       </button>
       <div v-if="moreOpen" class="more-menu" @click.stop>
-        <button class="more-item" title="日志 / 执行流程 / Agent 信息" @click="ctx.openDebug(); moreOpen = false">
+        <button class="more-item" :title="m.debugMenuTitle" @click="ctx.openDebug(); moreOpen = false">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M9 2v8l-3 3v2h12v-2l-3-3V2"></path><path d="M9 2h6"></path><path d="M9 18h6"></path>
           </svg>
-          <span>调试 / 日志</span>
+          <span>{{ m.debugMenu }}</span>
           <span v-if="hasDebugLogs" class="more-item-badge">{{ debugLogs?.length }}</span>
         </button>
-        <button v-if="skillAvailable" class="more-item" title="创建 / 管理自定义 Skill" @click="ctx.openSkill(); moreOpen = false">
+        <button v-if="skillAvailable" class="more-item" :title="m.skillMenuTitle" @click="ctx.openSkill(); moreOpen = false">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 2l2.4 7.4H22l-6 4.4 2.3 7.2L12 16.8 5.7 21l2.3-7.2-6-4.4h7.6z"></path>
           </svg>
-          <span>Skill 管理</span>
+          <span>{{ m.skillMenu }}</span>
         </button>
-        <button class="more-item" title="清空对话" :disabled="!hasMessages" @click="clearMessages(); moreOpen = false">
+        <button class="more-item" :title="m.clearChat" :disabled="!hasMessages" @click="clearMessages(); moreOpen = false">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="3 6 5 6 21 6"></polyline>
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
           </svg>
-          <span>清空对话</span>
+          <span>{{ m.clearChat }}</span>
         </button>
       </div>
       <!-- 关闭(抽屉模式) -->
-      <button v-if="drawer" class="action-btn" title="关闭" @click="$emit('close')">
+      <button v-if="drawer" class="action-btn" :title="m.close" @click="$emit('close')">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M18 6L6 18M6 6l12 12"></path>
         </svg>

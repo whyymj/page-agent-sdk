@@ -1,28 +1,112 @@
 {
-  "recordedAt": "2026-08-16T00:52:04.132Z",
+  "recordedAt": "2026-08-16T03:52:58.476Z",
   "suites": {
     "uispec": {
       "S1": {
-        "prompt": 520333,
-        "completion": 4944,
-        "toolCount": 26,
-        "elapsedSec": 336
+        "prompt": 165656,
+        "completion": 2867,
+        "toolCount": 10,
+        "elapsedSec": 366,
+        "cacheRead": 103424
+      },
+      "S2": {
+        "prompt": 58016,
+        "completion": 937,
+        "toolCount": 5,
+        "elapsedSec": 140,
+        "cacheRead": 55552
+      },
+      "S3": {
+        "prompt": 42717,
+        "completion": 416,
+        "toolCount": 2,
+        "elapsedSec": 103,
+        "cacheRead": 29696
+      },
+      "S4": {
+        "prompt": 42943,
+        "completion": 237,
+        "toolCount": 2,
+        "elapsedSec": 103,
+        "cacheRead": 20224
+      },
+      "S5": {
+        "prompt": 270628,
+        "completion": 3467,
+        "toolCount": 16,
+        "elapsedSec": 215,
+        "cacheRead": 199680
+      },
+      "S6": {
+        "prompt": 43822,
+        "completion": 191,
+        "toolCount": 2,
+        "elapsedSec": 103,
+        "cacheRead": 42240
+      },
+      "S7": {
+        "prompt": 60735,
+        "completion": 1495,
+        "toolCount": 3,
+        "elapsedSec": 193,
+        "cacheRead": 47104
+      },
+      "S8": {
+        "prompt": 115417,
+        "completion": 2024,
+        "toolCount": 6,
+        "elapsedSec": 123,
+        "cacheRead": 70656
+      },
+      "S9": {
+        "prompt": 30180,
+        "completion": 220,
+        "toolCount": 2,
+        "elapsedSec": 100,
+        "cacheRead": 29184
+      },
+      "S10": {
+        "prompt": 62680,
+        "completion": 1711,
+        "toolCount": 11,
+        "elapsedSec": 115,
+        "cacheRead": 35840
       }
     },
     "rag": {
+      "S1": {
+        "prompt": 5239,
+        "completion": 125,
+        "toolCount": 0,
+        "elapsedSec": 98
+      },
+      "S2": {
+        "prompt": 11222,
+        "completion": 451,
+        "toolCount": 1,
+        "elapsedSec": 128
+      },
       "S3": {
-        "prompt": 16866,
-        "completion": 734,
-        "toolCount": 2,
-        "elapsedSec": 160
+        "prompt": 11244,
+        "completion": 387,
+        "toolCount": 1,
+        "elapsedSec": 185
       },
       "S4": {
-        "prompt": 20889,
-        "completion": 982,
-        "toolCount": 4,
-        "elapsedSec": 108
+        "prompt": 15628,
+        "completion": 730,
+        "toolCount": 2,
+        "elapsedSec": 105
       }
     },
-    "parallel": {}
+    "parallel": {
+      "ALL": {
+        "prompt": 131683,
+        "completion": 3892,
+        "toolCount": 49,
+        "elapsedSec": 674,
+        "cacheRead": 35840
+      }
+    }
   }
 }

@@ -197,6 +197,96 @@ export interface DialogIcons {
   userAvatar?: string;
 }
 
+/** 对话框文案键空间(dialog.locale 选包 / dialog.messages 键级覆盖优先;含插值的键组件侧拼数字) */
+export interface DialogMessages {
+  defaultTitle: string;
+  inputPlaceholder: string;
+  newSession: string;
+  history: string;
+  more: string;
+  close: string;
+  debugMenu: string;
+  debugMenuTitle: string;
+  skillMenu: string;
+  skillMenuTitle: string;
+  clearChat: string;
+  sessionFallbackPrefix: string;
+  justNow: string;
+  minutesAgoSuffix: string;
+  emptyGreeting: string;
+  retry: string;
+  undo: string;
+  undoTitle: string;
+  thinking: string;
+  statusRunning: string;
+  statusDone: string;
+  statusError: string;
+  subagentBadge: string;
+  subagentBadgeTitle: string;
+  subagentProgress: string;
+  nthCallPrefix: string;
+  nthCallSuffix: string;
+  argsLabel: string;
+  resultLabel: string;
+  copy: string;
+  copied: string;
+  regenerate: string;
+  expand: string;
+  collapse: string;
+  noResult: string;
+  displayTruncatedSuffix: string;
+  thinkingCountPrefix: string;
+  charCountSuffix: string;
+  reasoningTitle: string;
+  truncatedNotePrefix: string;
+  truncatedNoteSuffix: string;
+  copyThinking: string;
+  copyThinkingTruncTitle: string;
+  focusChipTitlePrefix: string;
+  focusChipTitleHint: string;
+  historyFocusChipTitlePrefix: string;
+  removeFocus: string;
+  sendHint: string;
+  sendTitle: string;
+  stopTitle: string;
+  queuedTitle: string;
+  queuedEditTitle: string;
+  removeQueuedTitle: string;
+  humanConfirmTitle: string;
+  recommendPrefix: string;
+  approve: string;
+  deny: string;
+  toolConfirmPrefix: string;
+  viewArgs: string;
+  collapseArgs: string;
+  argsTruncatedSuffix: string;
+  conflictTitlePrefix: string;
+  conflictTitleSuffix: string;
+  conflictDetailTemplate: string;
+  conflictOpWrite: string;
+  conflictOpDelete: string;
+  viewDiff: string;
+  collapseDiff: string;
+  agentValueLabel: string;
+  currentValueLabel: string;
+  deleteNoValue: string;
+  keepExternal: string;
+  keepExternalTitle: string;
+  overwrite: string;
+  overwriteTitle: string;
+  restore: string;
+  restoreTitle: string;
+  switchFocusTitle: string;
+  exitFocusTitle: string;
+  focusPathPlaceholder: string;
+  focusLabelPlaceholder: string;
+  focusSubmit: string;
+}
+export type DialogLocale = 'zh-CN' | 'en-US';
+export declare const MESSAGES_ZH_CN: DialogMessages;
+export declare const MESSAGES_EN_US: DialogMessages;
+/** 解析:messages 覆盖 > locale 包 > zh-CN 缺省(任意键不缺) */
+export declare function resolveDialogMessages(locale?: DialogLocale, partial?: Partial<DialogMessages>): DialogMessages;
 /** 默认图标集(完整形态;dialog.icons 传 Partial 局部覆盖) */
 export declare const DEFAULT_DIALOG_ICONS: DialogIcons;
 /** 局部覆盖 → 完整图标集(非字符串忽略;头像键空串视为未传) */

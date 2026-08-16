@@ -7,6 +7,7 @@
 import { ref, computed, type Ref } from 'vue'
 import IconGlyph from './IconGlyph.vue'
 import { DEFAULT_DIALOG_ICONS, type DialogIcons } from './icons'
+import { MESSAGES_ZH_CN, type DialogMessages } from './messages'
 import type { Focus } from '../harness/state'
 
 const props = withDefaults(defineProps<{
@@ -17,8 +18,11 @@ const props = withDefaults(defineProps<{
   infoTick?: Ref<number>
   /** 图标集(容器从 ctx.icons 下传;独立复用时缺省用默认) */
   icons?: DialogIcons
+  /** 文案集(容器从 ctx.messages 下传;独立复用缺省中文) */
+  messages?: DialogMessages
 }>(), {
   icons: () => ({ ...DEFAULT_DIALOG_ICONS }),
+  messages: () => ({ ...MESSAGES_ZH_CN }),
 })
 
 // 依赖 infoTick 响应式触发:++ → 重算 → chip 显示/隐藏
@@ -54,12 +58,12 @@ function clearFocusChip(): void {
       <span v-if="focusState.label" class="focus-bar-label">{{ focusState.label }}</span>
       <code class="focus-bar-path">{{ focusState.path }}</code>
     </span>
-    <button class="focus-bar-btn" title="切换聚焦路径" @click="editingFocus = !editingFocus">▾</button>
-    <button class="focus-bar-btn" title="退出精修" data-test="focus-clear" @click="clearFocusChip">✕</button>
+    <button class="focus-bar-btn" :title="messages.switchFocusTitle" @click="editingFocus = !editingFocus">▾</button>
+    <button class="focus-bar-btn" :title="messages.exitFocusTitle" data-test="focus-clear" @click="clearFocusChip">✕</button>
     <div v-if="editingFocus" class="focus-edit-row">
-      <input v-model="focusPathInput" class="focus-edit-input" placeholder="jsonPath,如 components.3" data-test="focus-path-input" @keyup.enter="submitFocus" />
-      <input v-model="focusLabelInput" class="focus-edit-input focus-edit-label" placeholder="标签(可选)" @keyup.enter="submitFocus" />
-      <button class="focus-edit-go" data-test="focus-submit" @click="submitFocus">聚焦</button>
+      <input v-model="focusPathInput" class="focus-edit-input" :placeholder="messages.focusPathPlaceholder" data-test="focus-path-input" @keyup.enter="submitFocus" />
+      <input v-model="focusLabelInput" class="focus-edit-input focus-edit-label" :placeholder="messages.focusLabelPlaceholder" @keyup.enter="submitFocus" />
+      <button class="focus-edit-go" data-test="focus-submit" @click="submitFocus">{{ messages.focusSubmit }}</button>
     </div>
   </div>
 </template>

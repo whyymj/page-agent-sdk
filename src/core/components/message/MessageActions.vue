@@ -1,20 +1,26 @@
 <script setup lang="ts">
-defineProps<{ copied: boolean }>()
+import { MESSAGES_ZH_CN, type DialogMessages } from '../messages'
+
+withDefaults(defineProps<{
+  copied: boolean
+  /** 文案集(容器/父级下传;独立复用缺省中文) */
+  messages?: DialogMessages
+}>(), { messages: () => ({ ...MESSAGES_ZH_CN }) })
 defineEmits<{ (e: 'copy'): void; (e: 'regenerate'): void }>()
 </script>
 
 <template>
   <!-- 默认隐藏;hover MessageRow(.message-row.assistant)时由 MessageRow 侧 :deep(.msg-actions) 提到 opacity:1 -->
   <div class="msg-actions">
-    <button class="msg-action-btn" :class="{ done: copied }" :title="copied ? '已复制' : '复制'" @click="$emit('copy')">
+    <button class="msg-action-btn" :class="{ done: copied }" :title="copied ? messages.copied : messages.copy" @click="$emit('copy')">
       <!-- 复制态换对勾图标 + ok 色(主题变量,与步骤状态色一致);两按钮统一 icon+文字,不用 emoji -->
       <svg v-if="copied" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3 3 7-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
       <svg v-else viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.3" /><path d="M10.5 3.5v-.5A1.5 1.5 0 0 0 9 1.5H3.5A1.5 1.5 0 0 0 2 3v5.5A1.5 1.5 0 0 0 3.5 10H4" stroke="currentColor" stroke-width="1.3" /></svg>
-      <span>{{ copied ? '已复制' : '复制' }}</span>
+      <span>{{ copied ? messages.copied : messages.copy }}</span>
     </button>
-    <button class="msg-action-btn" title="重新生成" @click="$emit('regenerate')">
+    <button class="msg-action-btn"  @click="$emit('regenerate')">
       <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /><path d="M13.7 1.8v2.8h-2.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>
-      <span>重新生成</span>
+      <span>{{ messages.regenerate }}</span>
     </button>
   </div>
 </template>

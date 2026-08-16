@@ -18,6 +18,7 @@ import DebugDrawer from './DebugDrawer.vue'
 import SkillPanel from './SkillPanel.vue'
 import type { DebugLog } from '../harness/createAgent'
 import type { DialogIcons } from './icons'
+import type { DialogMessages, DialogLocale } from './messages'
 import type { AgentMessage, AgentInfo, StreamHandler } from '../types'
 import type { PendingConflict } from '../sdk/createChatSdk'
 import type { ConflictResolution } from '../tools/dataOps'
@@ -103,9 +104,11 @@ const props = withDefaults(defineProps<{
   csTheme?: 'light' | 'dark'
   /** 图标局部覆盖(→ ctx.icons;未传键用默认 emoji 🤖/🎯/…) */
   icons?: Partial<DialogIcons>
+  /** 语言(→ ctx.messages/locale;缺省 zh-CN;title/placeholder 缺省值随语言包) */
+  locale?: DialogLocale
+  /** 文案键级覆盖(→ ctx.messages;优先于 locale 包) */
+  messages?: Partial<DialogMessages>
 }>(), {
-  title: 'AI 助手',
-  placeholder: '输入消息,Enter 发送...',
   showAvatar: true,
   showTyping: true,
   inputRows: 2,
@@ -131,6 +134,8 @@ const ctx = createChatContext({
   onFocusChipClick: props.onFocusChipClick,
   infoTick: props.infoTick,
   icons: props.icons,
+  locale: props.locale,
+  dialogMessages: props.messages,
 })
 provide(chatContextKey, ctx)
 
@@ -165,7 +170,7 @@ const drawerWidthStyle = computed(() => {
     <template v-if="renderSection('header')">
       <slot name="header" :chat="ctx">
         <ChatHeader
-          :title="title"
+          :title="title || ctx.messages.defaultTitle"
           :drawer="drawer"
           :debug-logs="debugLogs"
           :skill-available="skillAvailable"
@@ -182,7 +187,7 @@ const drawerWidthStyle = computed(() => {
     <!-- 上下文聚焦条(指定组件精修) -->
     <template v-if="renderSection('focus')">
       <slot name="focus" :chat="ctx">
-        <FocusBar :get-focus="getFocus" :on-set-focus="onSetFocus" :on-clear-focus="onClearFocus" :info-tick="infoTick" :icons="ctx.icons" />
+        <FocusBar :get-focus="getFocus" :on-set-focus="onSetFocus" :on-clear-focus="onClearFocus" :info-tick="infoTick" :icons="ctx.icons" :messages="ctx.messages" />
       </slot>
     </template>
 
@@ -211,7 +216,7 @@ const drawerWidthStyle = computed(() => {
     <!-- 乐观锁冲突 -->
     <template v-if="renderSection('conflict')">
       <slot name="conflict" :chat="ctx">
-        <ConflictBar :pending-conflict="pendingConflict" :on-resolve="onResolveConflict" :icons="ctx.icons" />
+        <ConflictBar :pending-conflict="pendingConflict" :on-resolve="onResolveConflict" :icons="ctx.icons" :messages="ctx.messages" />
       </slot>
     </template>
     </div>
@@ -220,7 +225,7 @@ const drawerWidthStyle = computed(() => {
     <template v-if="renderSection('footer')">
       <Transition name="cs-slide">
         <slot name="footer" :chat="ctx">
-          <ChatInput :placeholder="placeholder" :input-rows="inputRows" />
+          <ChatInput :placeholder="placeholder || ctx.messages.inputPlaceholder" :input-rows="inputRows" />
         </slot>
       </Transition>
     </template>

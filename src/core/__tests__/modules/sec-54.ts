@@ -34,6 +34,41 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(mw.augmentPrompt!({} as any) === undefined, 'focus clearFocus → augmentPrompt 不再注入')
     assert(mw.getFocus() === undefined, 'focus clearFocus → getFocus undefined')
 
+    // ===== focus-scoped-read:read 空参 → 注入焦点路径 + 教学行(用户反馈驱动,openspec 2026-08-16)=====
+    {
+      mw.setFocus({ path: 'components.1' })  // augmentPrompt 段末已 clearFocus,本段自设焦距
+      const seen: any[] = []
+      const recordNext = async (c: any) => { seen.push(JSON.parse(JSON.stringify(c.args ?? {}))); return { content: '多路径读取(共 1 项,hash=abc)\n- components.1 = {...}', status: 'done' as const } }
+      // 空参 read → jsonPaths 注入 + 教学行前缀
+      const r1 = await mw.wrapToolCall!({ name: 'read', args: {} } as any, recordNext)
+      assert(Array.isArray(seen[0].jsonPaths) && seen[0].jsonPaths.join() === 'components.1', 'focus-scoped-read: read 空参 → next 收到注入 jsonPaths=[焦点路径]')
+      assert(r1.content.startsWith('【聚焦模式】'), 'focus-scoped-read: 结果前置教学行')
+      assert(r1.content.includes('全量主数据'), 'focus-scoped-read: 教学行含「显式列顶层键取全量」指引')
+      // 多焦点 → 全含
+      mw.addFocus({ path: 'title' })
+      seen.length = 0
+      await mw.wrapToolCall!({ name: 'read', args: {} } as any, recordNext)
+      assert(seen[0].jsonPaths.join(',') === 'components.1,title', 'focus-scoped-read: 多焦点 → jsonPaths 全含')
+      // 显式 jsonPath → 不改写(读自由保留)
+      seen.length = 0
+      await mw.wrapToolCall!({ name: 'read', args: { jsonPath: 'components.0' } } as any, recordNext)
+      assert(seen[0].jsonPath === 'components.0' && seen[0].jsonPaths === undefined, 'focus-scoped-read: 显式 jsonPath 读不改写(读不限制设计保留)')
+      // 仅带 fields(路径空)→ 同样注入
+      seen.length = 0
+      await mw.wrapToolCall!({ name: 'read', args: { fields: ['title'] } } as any, recordNext)
+      assert(Array.isArray(seen[0].jsonPaths), 'focus-scoped-read: 仅带 fields 的空参同样注入')
+      // 提示层同步一句
+      const p2 = mw.augmentPrompt!({} as any)!
+      assert(p2.includes('read 不带路径时默认只返回聚焦子树'), 'focus-scoped-read: augmentPrompt 提示层与工具行为一致')
+      // 无焦点 → 零变化(不注入不教学)
+      mw.clearFocus()
+      seen.length = 0
+      const r5 = await mw.wrapToolCall!({ name: 'read', args: {} } as any, recordNext)
+      assert(!seen[0].jsonPaths && !r5.content.includes('【聚焦模式】'), 'focus-scoped-read: 无聚焦 → 原样透传(默认行为零变化)')
+      // 恢复聚焦供后续既有断言使用
+      mw.setFocus({ path: 'components.1' })
+    }
+
     // ===== 范围收紧(strict):wrapToolCall 写越界 PATH_DENIED(第三层)=====
     mw.setFocus({ path: 'components.1' })
     const callNext = async () => ({ content: 'ok', status: 'done' as const })

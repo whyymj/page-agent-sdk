@@ -12,6 +12,7 @@ import { ref, computed, inject, type InjectionKey, type Ref, type ComputedRef } 
 import { useChat } from './useChat'
 import { copyText } from '../utils/clipboard'
 import { resolveDialogIcons, type DialogIcons } from '../components/icons'
+import { resolveDialogMessages, type DialogMessages, type DialogLocale } from '../components/messages'
 import type { AgentMessage, AgentInfo, StreamHandler } from '../types'
 import type { Focus } from '../harness/state'
 
@@ -50,6 +51,10 @@ export interface ChatContextOptions {
   infoTick?: Ref<number>
   /** 图标局部覆盖(dialog.icons;未传键用 DEFAULT_DIALOG_ICONS,默认路径行为零变化) */
   icons?: Partial<DialogIcons>
+  /** 语言(dialog.locale;影响文案包与 formatTime/autoTitle 语言) */
+  locale?: DialogLocale
+  /** 文案键级覆盖(dialog.messages → 此字段;命名避让既有 messages 消息数组;优先于 locale 包) */
+  dialogMessages?: Partial<DialogMessages>
 }
 
 /** 容器上下文:useChat 对话状态(chat.*) + 容器级共享 UI 状态/方法 */
@@ -104,6 +109,10 @@ export interface ChatContext {
   focusChipClick: (focus: Focus) => void
   /** 图标集(resolveDialogIcons 解析后的完整形态;原子组件经 ctx.icons.<key> 取用) */
   icons: DialogIcons
+  /** 语言(dialog.locale 解析后) */
+  locale: DialogLocale
+  /** 文案集(resolveDialogMessages 解析后的完整形态;原子组件经 ctx.messages.<key> 取用) */
+  messages: DialogMessages
 }
 
 /** provide/inject 注入键 */
@@ -181,7 +190,7 @@ export function createChatContext(opts: ChatContextOptions = {}): ChatContext {
     if (opts.onUndo?.()) state.error = null
   }
   const formatTime = (timestamp: number): string =>
-    new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    new Date(timestamp).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
 
   // 输入动作
   const send = (): void => {
@@ -225,6 +234,9 @@ export function createChatContext(opts: ChatContextOptions = {}): ChatContext {
 
   // 图标集(dialog.icons 局部覆盖 → 完整形态;注入 ctx 供各原子组件取用)
   const icons = resolveDialogIcons(opts.icons)
+  // 文案集(dialog.locale + dialog.messages 键级覆盖;formatTime 跟 locale)
+  const locale = opts.locale ?? 'zh-CN'
+  const messages = resolveDialogMessages(locale, opts.dialogMessages)
 
   return {
     chat,
@@ -256,6 +268,8 @@ export function createChatContext(opts: ChatContextOptions = {}): ChatContext {
     clearFocus,
     focusChipClick,
     icons,
+    locale,
+    messages,
   }
 }
 

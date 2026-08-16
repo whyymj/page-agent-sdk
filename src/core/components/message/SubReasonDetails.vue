@@ -7,8 +7,11 @@
  *  - 展开后运行中自动滚到底(跟随最新思考);完成保留用户展开选择;下轮 details 重随 step 重建
  */
 import { ref, watch, nextTick, computed } from 'vue'
+import { MESSAGES_ZH_CN, type DialogMessages } from '../messages'
 
-const props = defineProps<{ subReason: string; subReasonFull?: string; status: 'running' | 'done' | 'error' }>()
+const props = withDefaults(defineProps<{ subReason: string; subReasonFull?: string; status: 'running' | 'done' | 'error'; messages?: DialogMessages }>(), {
+  messages: () => ({ ...MESSAGES_ZH_CN }),
+})
 
 const bodyRef = ref<HTMLElement>()
 // 默认折叠(不刷屏;思考过程不打扰用户,点击才看)。open 经 @toggle 双向同步用户操作
@@ -50,10 +53,10 @@ async function copyReason() {
     <summary class="sub-reason-head">
       <span class="status-dot sm" :class="status === 'running' ? 'running' : 'ok'"></span>
       <span class="sub-reason-label" :class="{ pulsing: status === 'running' }">
-        {{ status === 'running' ? `思考中… ${charCountLabel}字` : '思考过程' }}
+        {{ status === 'running' ? `${messages.thinkingCountPrefix}${charCountLabel}${messages.charCountSuffix}` : messages.reasoningTitle }}
       </span>
-      <span v-if="truncated" class="sub-reason-trunc">(仅显最近 {{ subReason.length }} 字)</span>
-      <button type="button" class="sub-reason-copy" :class="{ copied }" :title="truncated ? '复制完整思考(渲染已截尾,复制取全量)' : '复制完整思考内容'" @click.stop.prevent="copyReason">{{ copied ? '已复制' : '复制' }}</button>
+      <span v-if="truncated" class="sub-reason-trunc">{{ messages.truncatedNotePrefix }}{{ subReason.length }}{{ messages.truncatedNoteSuffix }}</span>
+      <button type="button" class="sub-reason-copy" :class="{ copied }" :title="truncated ? messages.copyThinkingTruncTitle : messages.copyThinking" @click.stop.prevent="copyReason">{{ copied ? messages.copied : messages.copy }}</button>
     </summary>
     <div ref="bodyRef" class="sub-reason-body">{{ truncated ? '…(前面已截断)\n' : '' }}{{ subReason }}</div>
   </details>

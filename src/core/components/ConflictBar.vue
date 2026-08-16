@@ -7,6 +7,7 @@
 import { ref, computed, watch } from 'vue'
 import IconGlyph from './IconGlyph.vue'
 import { DEFAULT_DIALOG_ICONS, type DialogIcons } from './icons'
+import { MESSAGES_ZH_CN, type DialogMessages } from './messages'
 import type { PendingConflict } from '../sdk/createChatSdk'
 import type { ConflictResolution } from '../tools/dataOps'
 
@@ -15,8 +16,11 @@ const props = withDefaults(defineProps<{
   onResolve?: (action: ConflictResolution['action']) => void
   /** 图标集(容器从 ctx.icons 下传;独立复用时缺省用默认) */
   icons?: DialogIcons
+  /** 文案集(容器从 ctx.messages 下传;独立复用缺省中文) */
+  messages?: DialogMessages
 }>(), {
   icons: () => ({ ...DEFAULT_DIALOG_ICONS }),
+  messages: () => ({ ...MESSAGES_ZH_CN }),
 })
 
 const conflictExpanded = ref(false)
@@ -28,7 +32,7 @@ const conflictAgentPreview = computed(() => {
   if (v === undefined) return ''
   try {
     const s = JSON.stringify(v, null, 2)
-    return s.length > 400 ? s.slice(0, 400) + '\n…(已截断)' : s
+    return s.length > 400 ? s.slice(0, 400) + props.messages.argsTruncatedSuffix : s
   } catch {
     return String(v)
   }
@@ -39,7 +43,7 @@ const conflictCurrentPreview = computed(() => {
   if (v == null) return ''
   try {
     const s = JSON.stringify(v, null, 2)
-    return s.length > 400 ? s.slice(0, 400) + '\n…(已截断)' : s
+    return s.length > 400 ? s.slice(0, 400) + props.messages.argsTruncatedSuffix : s
   } catch {
     return String(v)
   }
@@ -50,28 +54,28 @@ const conflictCurrentPreview = computed(() => {
   <div v-if="pendingConflict" class="conflict-bar">
     <div class="conflict-head">
       <span class="conflict-icon"><IconGlyph :icon="icons.conflict" /></span>
-      <span class="conflict-title">写入冲突:<code>{{ pendingConflict.path }}</code> 已被外部修改</span>
+      <span class="conflict-title">{{ messages.conflictTitlePrefix }}<code>{{ pendingConflict.path }}</code>{{ messages.conflictTitleSuffix }}</span>
     </div>
     <div class="conflict-detail">
-      AI 基于「读取时的旧值」准备{{ pendingConflict.op === 'delete' ? '删除' : '写入' }},但该属性在你读取之后被外部代码/其他 agent/手动改过。
+      {{ messages.conflictDetailTemplate.replace('{op}', pendingConflict.op === 'delete' ? messages.conflictOpDelete : messages.conflictOpWrite) }}
     </div>
     <button class="conflict-toggle" @click="conflictExpanded = !conflictExpanded">
-      {{ conflictExpanded ? '收起对比' : '查看值对比' }}{{ conflictExpanded ? ' ▴' : ' ▾' }}
+      {{ conflictExpanded ? messages.collapseDiff : messages.viewDiff }}{{ conflictExpanded ? ' ▴' : ' ▾' }}
     </button>
     <div v-if="conflictExpanded" class="conflict-diff">
       <div class="conflict-diff-col">
-        <div class="conflict-diff-label">AI 想写的值</div>
-        <pre class="conflict-diff-pre">{{ conflictAgentPreview || '(delete 操作无值)' }}</pre>
+        <div class="conflict-diff-label">{{ messages.agentValueLabel }}</div>
+        <pre class="conflict-diff-pre">{{ conflictAgentPreview || messages.deleteNoValue }}</pre>
       </div>
       <div class="conflict-diff-col">
-        <div class="conflict-diff-label">外部改后的当前值</div>
+        <div class="conflict-diff-label">{{ messages.currentValueLabel }}</div>
         <pre class="conflict-diff-pre">{{ conflictCurrentPreview }}</pre>
       </div>
     </div>
     <div class="conflict-actions">
-      <button class="conflict-keep" @click="onResolve?.('keep_external')" title="不写入,保留外部修改后的值,AI 重新读取再改">保留外部</button>
-      <button class="conflict-overwrite" @click="onResolve?.('overwrite')" title="用 AI 的值覆盖外部修改">强制覆盖</button>
-      <button class="conflict-restore" @click="onResolve?.('restore')" title="回退到最近一次历史快照(agent 之前操作的检查点),撤销外部修改 + AI 不写入">回退</button>
+      <button class="conflict-keep" @click="onResolve?.('keep_external')" :title="messages.keepExternalTitle">{{ messages.keepExternal }}</button>
+      <button class="conflict-overwrite" @click="onResolve?.('overwrite')" :title="messages.overwriteTitle">{{ messages.overwrite }}</button>
+      <button class="conflict-restore" @click="onResolve?.('restore')" :title="messages.restoreTitle">{{ messages.restore }}</button>
     </div>
   </div>
 </template>

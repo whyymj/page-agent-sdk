@@ -145,6 +145,9 @@ export { default as DebugDrawer } from './components/DebugDrawer.vue'
 // chatContext 枢纽(L2 自建根组件时调 createChatContext + provide(chatContextKey);原子组件经 useChatContext inject)
 export { createChatContext, chatContextKey, useChatContext } from './composables/chatContext'
 export type { ChatContext, ChatContextOptions } from './composables/chatContext'
+// 对话框文案集(dialog.locale / dialog.messages;L2 自建 UI 亦可复用 resolveDialogMessages)
+export { MESSAGES_ZH_CN, MESSAGES_EN_US, resolveDialogMessages } from './components/messages'
+export type { DialogMessages, DialogLocale } from './components/messages'
 // 对话框图标集(dialog.icons 局部覆盖默认 emoji;L2 自建 UI 亦可复用 resolveDialogIcons)
 export { DEFAULT_DIALOG_ICONS, resolveDialogIcons } from './components/icons'
 export type { DialogIcons } from './components/icons'

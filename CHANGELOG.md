@@ -2,6 +2,19 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.20.0] - 2026-08-16
+
+### Added(用户反馈驱动)
+- **`dialog.locale` + `dialog.messages`:内置对话框国际化 + 文案键级自定义**(openspec `2026-08-16-dialog-i18n` Phase 1;双需求:切语言 + 「成功等提示文案自定义」):自建轻量字典零依赖(不引 vue-i18n —— 其需接管 Vue 实例,SDK 内嵌 Vue 不适用);**`messages` 键级覆盖优先于 locale 包** —— 换语言与改个别文案(如 `statusDone: '完成'`)一套机制。覆盖聊天面 13 组件 ~90 键(容器缺省 title/placeholder、header 会话/菜单、消息空态/重试/回退、步骤状态/展开细节/子 agent 进度、消息操作、焦点 chip、输入区、排队/确认/冲突/聚焦条);`formatTime` 跟随 locale(12h/24h);autoTitle 标题语言跟随(en 生成英文标题);导出 `DialogMessages`/`DialogLocale` + 双语言包 + `resolveDialogMessages`(L2 自建 UI 复用)。Phase 2(DebugDrawer/SkillPanel ~150 键 + 默认 systemPrompt 语言策略)独立立项。新增 `examples/i18n-demo`;selftest sec-83(+8:键集一致性/优先级/不可变)/ browser i18n.spec(+2)
+- **focus-scoped-read:聚焦模式下 `read` 空参默认返回焦点子树**(用户实测:聚焦 components.5 问「这里是啥」→ `read({})` 全量 dump 整页):focus 中间件 wrapToolCall 对空参 read(无 jsonPath/jsonPaths)注入 `jsonPaths=焦点路径数组`(多焦点全含),复用多路径读(hash 供 autoLock 语义不变,dataOps 零改动);结果前置**教学行**(「需全量时显式列顶层键 read({jsonPaths:[...]})」,工具结果级反馈强于 prompt 引导);提示段同步一句;**显式路径读完全自由**(「读不限制」设计保留)。selftest sec-54 +8 / browser page-demo 新场景(展开入参见注入的 jsonPaths + 教学行)
+- **`dialog.icons.send` 发送按钮图标自定义**(用户反馈):undefined=内置纸飞机 SVG(默认零变化)/ 传 emoji/字符/HTML 片段替换(空串视为未传防空按钮);loading 停止方块恒内置。selftest +3 / minimal-demo 挂 🚀 fixture + icons.spec 断言
+
+### Fixed(UI)
+- **思考中气泡贴边**(用户反馈):MessageBubble `.typing` 态 padding `4px 2px` → `6px 13px`(横向对齐气泡基础 padding,纵向略收紧)
+
+### Tests(真 LLM 正式基线)
+- **3.19.1 基线入库**(`tests/runtime/real-llm-baseline.json`,15 场景全采集,`npm run test:real -- --baseline-update` 框架全链路首跑):检查 38/40,S1 笔记沉淀(模型未写 [note] 行)+ S5 banner 落地(模型把「限时特惠」改写为「年中盛典」,banner 已建)均为行为波动非 SDK 回归;rag 15/15(含真实 MCP)、parallel 7/7、S2-S4/S6-S10 全过
+
 ## [3.19.1] - 2026-08-16
 
 ### Fixed(第二轮三路审查 round2-review-hardening;openspec change 同名)
