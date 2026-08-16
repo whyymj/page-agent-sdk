@@ -2,6 +2,11 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.18.0] - 2026-08-16
+
+### Added(UI)
+- **`dialog.icons` 值支持 HTML 片段**(用户诉求:希望能用 img/svg/i 等标签做图标):值以 `<` 开头 → 识别为内联 HTML 片段(如内联 `<svg>`/`<img>`),经 **DOMPurify 图标专用白名单净化**后渲染 —— 只放行形状/图像标签(svg/path/circle/rect/line/polygon/g/img/i/em/b/span)与几何/描边属性(viewBox/d/fill/stroke/src/class 等),剥 onerror 等事件属性与 javascript: 协议,**不裸 v-html**,集成方传污染字符串也不可注入脚本;纯文本值(不以 `<` 开头)照常文本插值,与 3.17 行为一致。新增 `IconGlyph` 渲染出口组件(统一净化路径,单点维护安全策略)+ `isIconHtml`/`sanitizeIconHtml` 导出;`AvatarIcon` glyph 同样支持 HTML 片段。dompurify 复用主包既有依赖(markdown 已用),headless 子路径不受影响。测试:selftest 补 8 项(2200;isIconHtml 判定 + 白名单形状:不含 script/a/on*/href);browser 补 2 项(73:内联 svg 渲染保留几何属性 + 排队图标 onerror 剥除不执行);minimal-demo empty 换内联 svg、queued 放带 onerror 的 img 作净化断言 fixture
+
 ## [3.17.0] - 2026-08-16
 
 ### Added(UI)

@@ -248,7 +248,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | `inputRows` | `number` · default `2` | Input box rows (visible height); `1` = single row; `2` = 2-row initial height, auto-expands up to max-height:100px; `>2` = taller initial height |
 | `onClose` | `() => void` | Drawer mode close callback (default `hide`; pass to override and sync external mount state) |
 | `theme` | `'light' \| 'dark'` · default `'dark'` | Built-in theme (dark = Ark design palette); fully customizable via `--cs-*` on an ancestor |
-| `icons` | `Partial<DialogIcons>` | **Icon customization**: partial override of default emojis (`header` 🤖 / `subagent` 🤖 / `subagentProgress` 🧬 / `empty` 💬 / `focus` 🎯 / `queued` 📋 / `queuedEdit` ✏️ / `recommend` 💡 / `conflict` ⚠️; `assistantAvatar`/`userAvatar` default to built-in SVG, pass a text glyph to replace). Values are plain text (emoji/char, not parsed as HTML); empty string hides the icon; unset keys keep defaults |
+| `icons` | `Partial<DialogIcons>` | **Icon customization**: partial override of default emojis (`header` 🤖 / `subagent` 🤖 / `subagentProgress` 🧬 / `empty` 💬 / `focus` 🎯 / `queued` 📋 / `queuedEdit` ✏️ / `recommend` 💡 / `conflict` ⚠️; `assistantAvatar`/`userAvatar` default to built-in SVG, pass a text glyph to replace). Values: plain text (emoji/char) **or an HTML fragment** (starting with `<`, e.g. inline `<svg>`/`<img>` — sanitized via a DOMPurify icon allowlist; event attributes/dangerous protocols stripped); empty string hides the icon; unset keys keep defaults |
 
 ### Extension points
 

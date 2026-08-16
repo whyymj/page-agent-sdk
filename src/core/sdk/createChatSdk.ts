@@ -361,7 +361,7 @@ export interface DialogConfig {
   onClose?: () => void
   /** 内置主题:'dark'(默认,深色紫调,方舟专题设计稿色板)/ 'light'(中性浅色);亦可祖先覆盖 --cs-* 完全自定义 */
   theme?: 'light' | 'dark'
-  /** 图标局部覆盖:替换默认 emoji(🤖/🧬/🎯/📋/✏️/💡/⚠️/💬;头像两键 undefined=内置 SVG)。未传键用默认;空串=隐藏该图标 */
+  /** 图标局部覆盖:替换默认 emoji(🤖/🧬/🎯/📋/✏️/💡/⚠️/💬;头像两键 undefined=内置 SVG)。未传键用默认;空串=隐藏;值可为纯文本或 HTML 片段(以 '<' 开头,如内联 svg,DOMPurify 图标白名单净化) */
   icons?: Partial<DialogIcons>
   /** ChatDialog 区块显隐(chatdialog-component-split):键=false 关闭整块(含 slot);默认全开。键:header/focus/body/queued/approval/conflict/footer/debug/skill */
   sections?: Record<string, boolean>

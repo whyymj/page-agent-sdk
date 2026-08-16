@@ -148,4 +148,7 @@ export type { ChatContext, ChatContextOptions } from './composables/chatContext'
 // 对话框图标集(dialog.icons 局部覆盖默认 emoji;L2 自建 UI 亦可复用 resolveDialogIcons)
 export { DEFAULT_DIALOG_ICONS, resolveDialogIcons } from './components/icons'
 export type { DialogIcons } from './components/icons'
+// 图标渲染出口(纯文本文本插值;以 '<' 开头的 HTML 片段经 DOMPurify 图标白名单净化后渲染)
+export { isIconHtml, sanitizeIconHtml } from './components/iconHtml'
+export { default as IconGlyph } from './components/IconGlyph.vue'
 export { useChat } from './composables/useChat'

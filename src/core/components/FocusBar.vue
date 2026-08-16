@@ -5,6 +5,7 @@
  * 纯 props(getFocus/onSetFocus/onClearFocus/infoTick),不 inject ctx;editingFocus 等内部自持。
  */
 import { ref, computed, type Ref } from 'vue'
+import IconGlyph from './IconGlyph.vue'
 import { DEFAULT_DIALOG_ICONS, type DialogIcons } from './icons'
 import type { Focus } from '../harness/state'
 
@@ -48,7 +49,7 @@ function clearFocusChip(): void {
 
 <template>
   <div v-if="focusState" class="focus-bar">
-    <span class="focus-bar-icon">{{ icons.focus }}</span>
+    <span class="focus-bar-icon"><IconGlyph :icon="icons.focus" /></span>
     <span class="focus-bar-text">
       <span v-if="focusState.label" class="focus-bar-label">{{ focusState.label }}</span>
       <code class="focus-bar-path">{{ focusState.path }}</code>

@@ -7,6 +7,7 @@
  */
 import { computed } from 'vue'
 import { useChatContext } from '../../composables/chatContext'
+import IconGlyph from '../IconGlyph.vue'
 import MessageRow from './MessageRow.vue'
 import MessageBubble from './MessageBubble.vue'
 import AvatarIcon from './AvatarIcon.vue'
@@ -28,7 +29,7 @@ const lastIsAssistant = computed(() => state.messages[state.messages.length - 1]
 <template>
   <div class="chat-body">
     <div v-if="!hasMessages" class="empty-state">
-      <div class="empty-icon">{{ icons.empty }}</div>
+      <div class="empty-icon"><IconGlyph :icon="icons.empty" /></div>
       <p>有什么可以帮你的?</p>
     </div>
 

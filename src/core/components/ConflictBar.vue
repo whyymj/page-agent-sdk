@@ -5,6 +5,7 @@
  * conflictExpanded 自持;agent/current 预览从 pendingConflict 派生。
  */
 import { ref, computed, watch } from 'vue'
+import IconGlyph from './IconGlyph.vue'
 import { DEFAULT_DIALOG_ICONS, type DialogIcons } from './icons'
 import type { PendingConflict } from '../sdk/createChatSdk'
 import type { ConflictResolution } from '../tools/dataOps'
@@ -48,7 +49,7 @@ const conflictCurrentPreview = computed(() => {
 <template>
   <div v-if="pendingConflict" class="conflict-bar">
     <div class="conflict-head">
-      <span class="conflict-icon">{{ icons.conflict }}</span>
+      <span class="conflict-icon"><IconGlyph :icon="icons.conflict" /></span>
       <span class="conflict-title">写入冲突:<code>{{ pendingConflict.path }}</code> 已被外部修改</span>
     </div>
     <div class="conflict-detail">

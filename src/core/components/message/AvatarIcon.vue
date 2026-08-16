@@ -3,13 +3,16 @@
  * 消息头像图标:user.svg(用户)/ robot.svg(AI 助手)。
  * 内联 SVG path 随库打包(无外部资产依赖);fill=currentColor 跟随 .message-avatar 容器的 color,
  * 故头像配色由 .message-avatar 按 role 设 color 控制(assistant 渐变底→白图标,user 浅底→深色图标)。
- * glyph 传入(dialog.icons.assistantAvatar/userAvatar)→ 替换为文本字形(emoji/字符),按文本插值渲染不解析 HTML。
+ * glyph 传入(dialog.icons.assistantAvatar/userAvatar)→ 替换内置 SVG:纯文本(emoji/字符)文本插值;
+ * HTML 片段(以 '<' 开头,如内联 svg)经 IconGlyph 的 DOMPurify 图标白名单净化后渲染。
  */
+import IconGlyph from '../IconGlyph.vue'
+
 defineProps<{ role: 'user' | 'assistant'; glyph?: string }>()
 </script>
 
 <template>
-  <span v-if="glyph" class="avatar-glyph">{{ glyph }}</span>
+  <IconGlyph v-if="glyph" :icon="glyph" class="avatar-glyph" />
   <svg v-else-if="role === 'user'" class="avatar-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <path d="M512 170.688a149.312 149.312 0 1 0 0 298.624 149.312 149.312 0 0 0 0-298.624zM277.312 320a234.688 234.688 0 1 1 469.376 0 234.688 234.688 0 0 1-469.376 0zM128 810.688a213.312 213.312 0 0 1 213.312-213.312h341.376A213.312 213.312 0 0 1 896 810.688v128H128v-128z m213.312-128a128 128 0 0 0-128 128v42.688h597.376v-42.688a128 128 0 0 0-128-128H341.312z" />
   </svg>

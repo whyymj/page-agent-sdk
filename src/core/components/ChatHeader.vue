@@ -7,6 +7,7 @@
  * 注:focus 条(:393-407)是独立区块(task 7 抽 FocusBar),不在 ChatHeader。
  */
 import { ref, computed } from 'vue'
+import IconGlyph from './IconGlyph.vue'
 import { useChatContext } from '../composables/chatContext'
 import type { DebugLog } from '../harness/createAgent'
 import type { SessionMeta } from '../backends/storage'
@@ -62,7 +63,7 @@ function handleOpenSession(id: string): void {
   <!-- 原 ChatDialog header 有 cursor:pointer 但未绑 click(折叠功能 dead,isExpanded 恒 true);保持原行为不接 toggleCollapse,遵守「默认路径行为零变化」(design §6) -->
   <div class="chat-header">
     <div class="header-left">
-      <span class="header-icon">{{ icons.header }}</span>
+      <span class="header-icon"><IconGlyph :icon="icons.header" /></span>
       <span class="header-title">{{ title }}</span>
       <span v-if="state.loading" class="status-dot pulse"></span>
     </div>

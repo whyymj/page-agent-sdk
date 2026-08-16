@@ -5,6 +5,7 @@
  * isHumanConfirm/approvalOptions/approvalArgsPreview 从 pendingApproval 派生(design §3)。
  */
 import { ref, computed, watch } from 'vue'
+import IconGlyph from './IconGlyph.vue'
 import { useChatContext } from '../composables/chatContext'
 
 const ctx = useChatContext()
@@ -44,7 +45,7 @@ const approvalArgsPreview = computed(() => {
       </div>
       <div v-if="pendingApproval.args?.question" class="approval-question">{{ pendingApproval.args.question }}</div>
       <div v-if="pendingApproval.args?.context" class="approval-context">{{ pendingApproval.args.context }}</div>
-      <div v-if="pendingApproval.args?.recommendation" class="approval-recommend">{{ ctx.icons.recommend }} 推荐:{{ pendingApproval.args.recommendation }}</div>
+      <div v-if="pendingApproval.args?.recommendation" class="approval-recommend"><IconGlyph :icon="ctx.icons.recommend" /> 推荐:{{ pendingApproval.args.recommendation }}</div>
       <!-- 可选方案纵向排列(方案文案常较长,横向拥挤;整行按钮更易点选) -->
       <div v-if="approvalOptions.length" class="approval-options">
         <button v-for="opt in approvalOptions" :key="opt" class="approval-opt" @click="resolveApproval(opt)">{{ opt }}</button>

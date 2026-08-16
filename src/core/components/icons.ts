@@ -1,9 +1,10 @@
 /**
  * 对话框图标集(dialog.icons 自定义内置 emoji;用户实测诉求:默认 🤖/🎯 等与业务品牌不符,希望能换)。
  *
- * 值为纯文本(emoji / 字符 / 字母),不支持 HTML —— 模板按文本插值渲染,天然防注入;
+ * 值支持两种形态:纯文本(emoji / 字符 / 字母,文本插值渲染)/ HTML 片段(以 '<' 开头,如内联 svg/img,
+ * 经 DOMPurify 图标白名单净化后渲染 —— 见 iconHtml.ts;事件属性与危险协议剥除,不可注入脚本);
  * 空串 = 隐藏该图标。头像两键(assistantAvatar/userAvatar)缺省 undefined = 用内置 SVG 字形,
- * 传字符串则替换为文本字形(要完全自定义图形建议经 ChatDialog 具名 slot 替换区块)。
+ * 传字符串则替换(同样支持 HTML 片段;要完全自定义区块建议经 ChatDialog 具名 slot)。
  */
 
 /** 对话框图标集(完整形态;dialog.icons 传 Partial 局部覆盖,未传键用默认) */

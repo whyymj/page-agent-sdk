@@ -4,6 +4,7 @@
  * inputText 绑 ctx.inputText(同一 ref,QueuedBar「修改」也写它);send/keydown 走 ctx;
  * loading/stop 走 ctx.chat;canUndo/undo 走 ctx;placeholder/inputRows 走 props(展示配置)。
  */
+import IconGlyph from './IconGlyph.vue'
 import { useChatContext } from '../composables/chatContext'
 
 defineProps<{ placeholder: string; inputRows: number }>()
@@ -27,7 +28,7 @@ const { state, stop } = ctx.chat
           :title="`精修中:${f.path}(点击回看 · ✕ 移除)`"
           @click="focusChipClick(f)"
         >
-          <span class="focus-chip-icon">{{ icons.focus }}</span><code class="focus-chip-path">{{ f.path }}</code>
+          <span class="focus-chip-icon"><IconGlyph :icon="icons.focus" /></span><code class="focus-chip-path">{{ f.path }}</code>
           <button type="button" class="focus-chip-x" data-test="focus-clear" title="移除此焦点" @click.stop="removeFocus(f.path)">✕</button>
         </span>
       </div>

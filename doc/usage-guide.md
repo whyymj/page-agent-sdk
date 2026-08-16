@@ -217,6 +217,9 @@ createChatSdk({
       focus: '📍',               // 聚焦 chip(默认 🎯)
       assistantAvatar: '🛰️',     // assistant 头像(缺省=内置 SVG;传 emoji/字符替换为文本)
       userAvatar: '🙋',          // user 头像(缺省=内置 SVG)
+      // 值也支持 HTML 片段(以 '<' 开头,如内联 svg/img —— 经 DOMPurify 图标白名单净化,
+      // 事件属性/危险协议剥除,不可注入脚本;建议片段自带 width/height 或挂 class 定制):
+      // queued: '<svg width="12" height="12" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="currentColor"/></svg>',
       // 其余:subagentProgress 🧬 / queued 📋 / queuedEdit ✏️ / recommend 💡 / conflict ⚠️
     },
   },

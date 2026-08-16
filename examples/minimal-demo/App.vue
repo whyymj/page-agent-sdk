@@ -26,10 +26,12 @@ onMounted(() => {
     dialog: {
       title: '最简 AI 对话框',
       placeholder: '问我任何问题...',
-      // 图标自定义(3.17+):局部覆盖默认 emoji(🤖/🧬/🎯/…),未传键用默认;头像两键可换成文本字形
+      // 图标自定义(3.17+):局部覆盖默认 emoji(🤖/🧬/🎯/…),未传键用默认;头像两键可换成文本字形。
+      // 值也支持 HTML 片段(以 '<' 开头,如内联 svg/img —— 经 DOMPurify 图标白名单净化,事件属性/危险协议剥除)
       icons: {
         header: '🦈',
-        empty: '🪐',
+        empty: '<svg width="40" height="40" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="#7c6ff0" stroke-width="2"/><circle cx="9" cy="10" r="1.6" fill="#7c6ff0"/><circle cx="15" cy="10" r="1.6" fill="#7c6ff0"/><path d="M8 14c1.2 1.6 2.6 2.4 4 2.4s2.8-.8 4-2.4" stroke="#7c6ff0" stroke-width="2" stroke-linecap="round"/></svg>',
+        queued: '<img src="data:image/svg+xml," width="12" height="12" alt="" onerror="window.__iconXss=1">',
         assistantAvatar: '🛰️',
         userAvatar: '🙋',
       },

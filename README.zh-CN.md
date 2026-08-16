@@ -244,7 +244,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | `inputRows` | `number` · 默认 `2` | 输入框行数(可见高度);`1` = 单行;`2` = 2 行初始高度,自动扩展至 max-height:100px;`>2` = 更高初始高度 |
 | `onClose` | `() => void` | 抽屉模式关闭回调(默认 `hide`;传此选项覆盖默认,便于同步外部挂载状态) |
 | `theme` | `'light' \| 'dark'` · 默认 `'dark'` | 内置主题(dark = 方舟设计稿深色紫调);亦可祖先覆盖 `--cs-*` 完全自定义 |
-| `icons` | `Partial<DialogIcons>` | **图标自定义**:局部覆盖默认 emoji(`header` 🤖 / `subagent` 🤖 / `subagentProgress` 🧬 / `empty` 💬 / `focus` 🎯 / `queued` 📋 / `queuedEdit` ✏️ / `recommend` 💡 / `conflict` ⚠️;`assistantAvatar`/`userAvatar` 缺省 = 内置 SVG,传文本字形替换)。值为纯文本(emoji/字符,不解析 HTML);空串 = 隐藏该图标;未传键用默认 |
+| `icons` | `Partial<DialogIcons>` | **图标自定义**:局部覆盖默认 emoji(`header` 🤖 / `subagent` 🤖 / `subagentProgress` 🧬 / `empty` 💬 / `focus` 🎯 / `queued` 📋 / `queuedEdit` ✏️ / `recommend` 💡 / `conflict` ⚠️;`assistantAvatar`/`userAvatar` 缺省 = 内置 SVG,传文本字形替换)。值为纯文本(emoji/字符)或 **HTML 片段**(以 `<` 开头,如内联 `<svg>`/`<img>`,经 DOMPurify 图标白名单净化,事件属性/危险协议剥除);空串 = 隐藏该图标;未传键用默认 |
 
 ### 扩展点
 

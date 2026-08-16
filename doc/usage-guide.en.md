@@ -212,6 +212,9 @@ createChatSdk({
       focus: '📍',              // focus chip (default 🎯)
       assistantAvatar: '🛰️',    // assistant avatar (default = built-in SVG; emoji/char replaces it)
       userAvatar: '🙋',         // user avatar (default = built-in SVG)
+      // values also accept HTML fragments (starting with '<', e.g. inline svg/img — sanitized via a
+      // DOMPurify icon allowlist; event attributes/dangerous protocols stripped, no script injection):
+      // queued: '<svg width="12" height="12" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="currentColor"/></svg>',
       // others: subagentProgress 🧬 / queued 📋 / queuedEdit ✏️ / recommend 💡 / conflict ⚠️
     },
   }, debug: false,

@@ -1,4 +1,5 @@
 import { DEFAULT_DIALOG_ICONS, resolveDialogIcons } from '../../components/icons'
+import { isIconHtml, ICON_HTML_ALLOWED_TAGS, ICON_HTML_ALLOWED_ATTR } from '../../components/iconHtml'
 import type { TestCtx } from './_ctx'
 
 // 对话框图标自定义(dialog.icons 局部覆盖默认 emoji;用户实测诉求:默认 🤖/🎯 与业务品牌不符)
@@ -33,5 +34,20 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 返回新对象,不 mutate 默认集(多次 resolve 互不污染)
     resolveDialogIcons({ header: 'X' })
     assert(DEFAULT_DIALOG_ICONS.header === '🤖', 'resolveDialogIcons 不 mutate DEFAULT_DIALOG_ICONS(默认集不可变)')
+  }
+  console.log('\n[对话框图标 · HTML 片段形态]')
+  {
+    // isIconHtml:首非空白字符 '<' → HTML 片段;纯文本(emoji/字符/空串)→ false
+    assert(isIconHtml('<svg width="12"></svg>') === true, 'isIconHtml 内联 svg → true')
+    assert(isIconHtml('  <img src="x">' ) === true, 'isIconHtml 前导空白后 '<' → true(trimStart)')
+    assert(isIconHtml('🦈') === false && isIconHtml('A') === false, 'isIconHtml 纯文本(emoji/字母)→ false')
+    assert(isIconHtml('') === false, 'isIconHtml 空串 → false(隐藏图标,非 HTML)')
+    // 白名单形状:不放行脚本/样式/链接标签;不放行事件属性/href/style(净化安全下限,浏览器 spec 锁行为)
+    const tags = [...ICON_HTML_ALLOWED_TAGS] as string[]
+    assert(!tags.some((t) => ['script', 'style', 'a', 'iframe', 'form', 'link'].includes(t)), '图标白名单标签不含 script/style/a/iframe/form/link')
+    assert(tags.includes('svg') && tags.includes('img') && tags.includes('i'), '图标白名单标签含 svg/img/i(用户诉求)')
+    const attrs = [...ICON_HTML_ALLOWED_ATTR] as string[]
+    assert(!attrs.some((a) => a.startsWith('on') || ['href', 'style', 'srcset'].includes(a)), '图标白名单属性不含 on*/href/style/srcset')
+    assert(attrs.includes('viewBox') && attrs.includes('src') && attrs.includes('class'), '图标白名单属性含 viewBox/src/class')
   }
 }

@@ -8,6 +8,7 @@ import MessageBubble from './MessageBubble.vue'
 import MessageTime from './MessageTime.vue'
 import MessageActions from './MessageActions.vue'
 import AvatarIcon from './AvatarIcon.vue'
+import IconGlyph from '../IconGlyph.vue'
 
 const props = defineProps<{
   message: AgentMessage
@@ -59,7 +60,7 @@ const showCursor = computed(() => isAssistant.value && props.loading && props.is
           class="msg-focus-chip"
           :title="`回看 ${f.path}`"
           @click="ctx.focusChipClick(f)"
-        >{{ ctx.icons.focus }} {{ f.path }}</span>
+        ><IconGlyph :icon="ctx.icons.focus" /> {{ f.path }}</span>
       </div>
       <MessageBubble
         :content="message.content"

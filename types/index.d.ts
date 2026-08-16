@@ -165,8 +165,9 @@ export interface ChatDialogSections {
 }
 
 /** 对话框图标集(dialog.icons 局部覆盖,未传键用默认 emoji 🤖/🧬/🎯/📋/✏️/💡/⚠️/💬)。
- *  值为纯文本(emoji/字符/字母,按文本插值渲染不解析 HTML);空串=隐藏该图标;
- *  头像两键缺省 undefined=内置 SVG 字形,传字符串替换为文本字形 */
+ *  值支持两种形态:纯文本(emoji/字符/字母,按文本插值渲染)/ HTML 片段(以 '<' 开头,如内联 svg/img,
+ *  经 DOMPurify 图标白名单净化后渲染 —— 事件属性与危险协议剥除,不可注入脚本);空串=隐藏该图标;
+ *  头像两键缺省 undefined=内置 SVG 字形,传字符串替换(同样支持 HTML 片段) */
 export interface DialogIcons {
   /** 头部标题前图标(默认 🤖) */
   header: string;
@@ -196,6 +197,12 @@ export interface DialogIcons {
 export declare const DEFAULT_DIALOG_ICONS: DialogIcons;
 /** 局部覆盖 → 完整图标集(非字符串忽略;头像键空串视为未传) */
 export declare function resolveDialogIcons(partial?: Partial<DialogIcons>): DialogIcons;
+/** 是否按 HTML 片段处理(首非空白字符为 '<') */
+export declare function isIconHtml(value: string): boolean;
+/** HTML 图标净化(DOMPurify 图标白名单:svg 形状族/img/i 等 + 几何/描边属性;事件属性与危险协议剥除) */
+export declare function sanitizeIconHtml(html: string): string;
+/** 图标渲染出口:纯文本文本插值;HTML 片段(以 '<' 开头)净化后 v-html 渲染。props:{ icon: string } */
+export declare const IconGlyph: DefineComponent<{ icon: string }>;
 
 export interface ChatDialogProps {
   fetchResponse?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<string>;
@@ -903,7 +910,7 @@ export interface DialogConfig {
   onClose?: () => void;
   /** Built-in theme: 'dark' (default; dark purple palette from the Ark design spec) / 'light' (neutral light). Overridable via --cs-* on an ancestor. */
   theme?: 'light' | 'dark';
-  /** Icon overrides (partial; unset keys keep default emoji 🤖/🧬/🎯/📋/✏️/💡/⚠️/💬; empty string hides the icon; avatar keys undefined = built-in SVG) */
+  /** Icon overrides (partial; unset keys keep default emojis 🤖/🧬/🎯/📋/✏️/💡/⚠️/💬; empty string hides the icon; avatar keys undefined = built-in SVG). Values: plain text, or an HTML fragment starting with '<' (inline svg/img, sanitized via a DOMPurify icon allowlist) */
   icons?: Partial<DialogIcons>;
 }
 
