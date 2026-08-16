@@ -487,18 +487,18 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
   let currentLogSink: ((e: any) => void) | undefined
 
   /** per-call 值解析:优先本次工具调用的 config 注入,降级闭包 fallback(非并发下两者同值) */
-  const callCtxOf = (config: unknown): { signal?: AbortSignal; emit?: (e: StreamEvent) => void; logSink?: (e: any) => void } => {
+  const callCtxOf = (config: unknown): { signal?: AbortSignal; emit?: (e: StreamEvent) => void; logSink?: (e: any) => void; toolCallId?: string } => {
     const c = (config as { configurable?: Record<string, unknown> } | undefined)?.configurable?.__pgSubagentCall as
-      | { signal?: AbortSignal; emit?: (e: StreamEvent) => void; logSink?: (e: any) => void }
+      | { signal?: AbortSignal; emit?: (e: StreamEvent) => void; logSink?: (e: any) => void; toolCallId?: string }
       | undefined
     return c ?? { signal: currentSignal, emit: currentEmit, logSink: currentLogSink }
   }
 
-  /** 把子进度(subagent 事件)转发到主 UI(经 per-call emit)+ 观察层累积 steps */
-  const makeForward = (taskId: string, label: string, emit?: (e: StreamEvent) => void) => (e: SubProgress): void => {
+  /** 把子进度(subagent 事件)转发到主 UI(经 per-call emit;带 toolCallId 供 UI 并行双委派各归各 step)+ 观察层累积 steps */
+  const makeForward = (taskId: string, label: string, toolCallId: string | undefined, emit?: (e: StreamEvent) => void) => (e: SubProgress): void => {
     // reasoning 是高频增量(每 token 一条):只转发到 UI 累积(spawnStep.subReason),不进 tracker 步骤摘要(防爆)
     if (e.type === 'reasoning') {
-      emit?.({ type: 'subagent', taskId, label, kind: 'reasoning', name: '', delta: e.delta })
+      emit?.({ type: 'subagent', taskId, label, kind: 'reasoning', name: '', delta: e.delta, toolCallId })
       return
     }
     // 观察层:累积子工具进度摘要(只记 kind+name+ts;全文在事件/messages)
@@ -513,6 +513,7 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
       args: e.type === 'tool_call' ? e.args : undefined,
       result: e.type === 'tool_result' ? e.result : undefined,
       status: e.type === 'tool_result' ? e.status : undefined,
+      toolCallId,
     })
   }
 
@@ -534,7 +535,7 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
       const startedAt = Date.now()
       opts.tracker?.start(taskId, prompt, label, startedAt)
       try {
-        const result = await runSubagent({ prompt, role, model }, subOpts, call.signal, makeForward(taskId, label, call.emit), onLog, call.emit)
+        const result = await runSubagent({ prompt, role, model }, subOpts, call.signal, makeForward(taskId, label, call.toolCallId, call.emit), onLog, call.emit)
         opts.tracker?.finish(taskId, 'done', result)
         return result
       } catch (e) {
@@ -574,7 +575,7 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
           const startedAt = Date.now()
           opts.tracker?.start(taskId, t.prompt, label, startedAt)
           try {
-            const r = await runSubagent(t, opts, call.signal, makeForward(taskId, label, call.emit), onLog, call.emit)
+            const r = await runSubagent(t, opts, call.signal, makeForward(taskId, label, call.toolCallId, call.emit), onLog, call.emit)
             opts.tracker?.finish(taskId, 'done', r ?? '(未完成)')
             return { ok: true as const, text: r ?? '(未完成)' }
           } catch (e) {
@@ -619,7 +620,7 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
       if (ctx.signal) currentSignal = ctx.signal
       if (ctx.emit) currentEmit = ctx.emit
       if (ctx.logSink) currentLogSink = ctx.logSink
-      ctx.callConfig = { ...(ctx.callConfig ?? {}), __pgSubagentCall: { signal: ctx.signal ?? currentSignal, emit: ctx.emit ?? currentEmit, logSink: ctx.logSink ?? currentLogSink } }
+      ctx.callConfig = { ...(ctx.callConfig ?? {}), __pgSubagentCall: { signal: ctx.signal ?? currentSignal, emit: ctx.emit ?? currentEmit, logSink: ctx.logSink ?? currentLogSink, toolCallId: ctx.id } }
       return next(ctx)
     },
   }
@@ -763,16 +764,16 @@ export function createSubagentsMiddleware(
   let currentSignal: AbortSignal | undefined
   let currentEmit: ((e: StreamEvent) => void) | undefined
   let currentLogSink: ((e: any) => void) | undefined
-  const callCtxOf = (config: unknown): { signal?: AbortSignal; emit?: (e: StreamEvent) => void; logSink?: (e: any) => void } => {
+  const callCtxOf = (config: unknown): { signal?: AbortSignal; emit?: (e: StreamEvent) => void; logSink?: (e: any) => void; toolCallId?: string } => {
     const c = (config as { configurable?: Record<string, unknown> } | undefined)?.configurable?.__pgSubagentCall as
-      | { signal?: AbortSignal; emit?: (e: StreamEvent) => void; logSink?: (e: any) => void }
+      | { signal?: AbortSignal; emit?: (e: StreamEvent) => void; logSink?: (e: any) => void; toolCallId?: string }
       | undefined
     return c ?? { signal: currentSignal, emit: currentEmit, logSink: currentLogSink }
   }
-  const makeForward = (taskId: string, label: string, emit?: (e: StreamEvent) => void) => (e: SubProgress): void => {
+  const makeForward = (taskId: string, label: string, toolCallId: string | undefined, emit?: (e: StreamEvent) => void) => (e: SubProgress): void => {
     // reasoning 高频增量:只转发 delta 到 UI(spawnStep.subReason 累积),不附 name/args
     if (e.type === 'reasoning') {
-      emit?.({ type: 'subagent', taskId, label, kind: 'reasoning', name: '', delta: e.delta })
+      emit?.({ type: 'subagent', taskId, label, kind: 'reasoning', name: '', delta: e.delta, toolCallId })
       return
     }
     if (!emit) return
@@ -781,6 +782,7 @@ export function createSubagentsMiddleware(
       args: e.type === 'tool_call' ? e.args : undefined,
       result: e.type === 'tool_result' ? e.result : undefined,
       status: e.type === 'tool_result' ? e.status : undefined,
+      toolCallId,
     })
   }
 
@@ -839,7 +841,7 @@ export function createSubagentsMiddleware(
                 logLock('acquire')
               }
             }
-            const baseForward = makeForward(`use_${s.id}`, s.id, call.emit)
+            const baseForward = makeForward(`use_${s.id}`, s.id, call.toolCallId, call.emit)
             const forward = tracker
               ? (e: SubProgress) => {
                   // reasoning 高频增量不进 tracker 步骤摘要(防爆);只 baseForward 转发到 UI
@@ -928,7 +930,7 @@ export function createSubagentsMiddleware(
       if (ctx.emit) currentEmit = ctx.emit
       if (ctx.logSink) currentLogSink = ctx.logSink
       // per-call 注入(CA 并发修复):随 ctx.callConfig 经 RunnableConfig 透传到 use_<id> fn 第二参
-      ctx.callConfig = { ...(ctx.callConfig ?? {}), __pgSubagentCall: { signal: ctx.signal ?? currentSignal, emit: ctx.emit ?? currentEmit, logSink: ctx.logSink ?? currentLogSink } }
+      ctx.callConfig = { ...(ctx.callConfig ?? {}), __pgSubagentCall: { signal: ctx.signal ?? currentSignal, emit: ctx.emit ?? currentEmit, logSink: ctx.logSink ?? currentLogSink, toolCallId: ctx.id } }
       return next(ctx)
     },
   }

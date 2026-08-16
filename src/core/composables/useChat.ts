@@ -142,25 +142,35 @@ export function useChat(
               assistantMsg.content += event.delta
               break
             case 'tool_call':
-              assistantMsg.steps.push({ name: event.name, args: event.args, status: 'running' })
+              assistantMsg.steps.push({ name: event.name, args: event.args, status: 'running', id: event.id })
               break
             case 'tool_result': {
-              for (let i = assistantMsg.steps.length - 1; i >= 0; i--) {
-                if (assistantMsg.steps[i].name === event.name && assistantMsg.steps[i].status === 'running') {
-                  assistantMsg.steps[i].result = event.result
-                  assistantMsg.steps[i].status = event.status
-                  assistantMsg.steps[i].durationMs = event.durationMs
-                  // 子 agent 思考细节:步骤完成后丢弃细节(只留短预览)—— 生成期间可展开看全文,
-                  // 收口后不再堆积长 reasoning(省 UI 内存;细节已无回看价值,结论在 result)
-                  const sr = assistantMsg.steps[i].subReason
-                  if (sr && sr.length > 80) assistantMsg.steps[i].subReason = sr.slice(0, 80) + '…'
-                  break
+              // 匹配归属 step:优先按事件 id 精确匹配(并行同轮同名工具各归各),降级 name 反向扫(旧自定义 fetchStream 无 id)
+              let idx = -1
+              if (event.id !== undefined) idx = assistantMsg.steps.findIndex((s) => s.id === event.id)
+              if (idx < 0) {
+                for (let i = assistantMsg.steps.length - 1; i >= 0; i--) {
+                  if (assistantMsg.steps[i].name === event.name && assistantMsg.steps[i].status === 'running') { idx = i; break }
                 }
+              }
+              if (idx >= 0) {
+                const step = assistantMsg.steps[idx]
+                step.result = event.result
+                step.status = event.status
+                step.durationMs = event.durationMs
+                // 子 agent 思考细节:步骤完成后丢弃细节(只留短预览)—— 生成期间可展开看全文,
+                // 收口后不再堆积长 reasoning(省 UI 内存;细节已无回看价值,结论在 result)
+                const sr = step.subReason
+                if (sr && sr.length > 80) step.subReason = sr.slice(0, 80) + '…'
               }
               break
             }
             case 'subagent': {
-              const spawnStep = assistantMsg.steps[assistantMsg.steps.length - 1]
+              // 归属解析:优先 toolCallId 精确匹配(并行同轮双 use_html 各归各 step,思考流不混流);
+              // 降级最后一步(旧路径/spawn_agents 多任务共用一个 step,label 区分 children)
+              const spawnStep = event.toolCallId !== undefined
+                ? assistantMsg.steps.find((s) => s.id === event.toolCallId)
+                : assistantMsg.steps[assistantMsg.steps.length - 1]
               if (!spawnStep) break
               // 子 agent 思考过程增量(reasoning)→ 累积到 spawnStep.subReason(UI 折叠展示"在想什么")
               // subReason 截尾(防卡死);subReasonFull 存完整(不渲染,仅供复制全量排查)

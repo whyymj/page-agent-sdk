@@ -14,10 +14,14 @@ import type { Page, Route } from '@playwright/test'
 
 export interface ToolCallResponse {
   tool_calls: { name: string; arguments: Record<string, unknown> }[]
+  /** 思考流(DeepSeek reasoning_content / Anthropic thinking;驱动子 agent subReason 累积) */
+  reasoning?: string
 }
 
 export interface TextResponse {
   text: string
+  /** 思考流(同上) */
+  reasoning?: string
 }
 
 export type MockResponse = ToolCallResponse | TextResponse
@@ -74,6 +78,11 @@ function toSse(resp: MockResponse, idx: number): string {
   const model = 'mock'
   const chunks: string[] = []
 
+  // 思考流先行(DeepSeek 风格 delta.reasoning_content → extractReasoningDelta)。
+  // 必带 role:'assistant' —— langchain chunk 合并在首 chunk 无 role 时丢弃整个聚合(tool_calls/reasoning 全丢,实测)
+  if (resp.reasoning) {
+    chunks.push(sseChunk(id, created, model, { delta: { role: 'assistant', content: null, reasoning_content: resp.reasoning }, finish_reason: null }))
+  }
   if ('tool_calls' in resp) {
     // 第一个 chunk:声明 tool_calls 骨架(name + 空 arguments)
     for (let i = 0; i < resp.tool_calls.length; i++) {
@@ -145,35 +154,57 @@ function toAnthropicSse(resp: MockResponse, idx: number): string {
     },
   }))
   if ('tool_calls' in resp) {
+    // 思考块先行(extended thinking;有 reasoning 时 tool_use 块下标从 1 起)
+    if (resp.reasoning) {
+      events.push(anthEvent('content_block_start', {
+        type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' },
+      }))
+      events.push(anthEvent('content_block_delta', {
+        type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: resp.reasoning },
+      }))
+      events.push(anthEvent('content_block_stop', { type: 'content_block_stop', index: 0 }))
+    }
+    const base = resp.reasoning ? 1 : 0
     resp.tool_calls.forEach((tc, i) => {
       events.push(anthEvent('content_block_start', {
-        type: 'content_block_start', index: i,
+        type: 'content_block_start', index: base + i,
         content_block: { type: 'tool_use', id: `toolu_${idx}_${i}`, name: tc.name, input: {} },
       }))
       events.push(anthEvent('content_block_delta', {
-        type: 'content_block_delta', index: i,
+        type: 'content_block_delta', index: base + i,
         delta: { type: 'input_json_delta', partial_json: JSON.stringify(tc.arguments) },
       }))
-      events.push(anthEvent('content_block_stop', { type: 'content_block_stop', index: i }))
+      events.push(anthEvent('content_block_stop', { type: 'content_block_stop', index: base + i }))
     })
   } else {
     // 文本响应:content_block(text)+ 分片 text_delta(与 toSse 同样切两段,验证流式拼接)
     const text = resp.text
     const mid = Math.ceil(text.length / 2)
+    // 思考块先行(有 reasoning 时 text 块下标 1)
+    if (resp.reasoning) {
+      events.push(anthEvent('content_block_start', {
+        type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' },
+      }))
+      events.push(anthEvent('content_block_delta', {
+        type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: resp.reasoning },
+      }))
+      events.push(anthEvent('content_block_stop', { type: 'content_block_stop', index: 0 }))
+    }
+    const base = resp.reasoning ? 1 : 0
     events.push(anthEvent('content_block_start', {
-      type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' },
+      type: 'content_block_start', index: base, content_block: { type: 'text', text: '' },
     }))
     if (mid > 0) {
       events.push(anthEvent('content_block_delta', {
-        type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: text.slice(0, mid) },
+        type: 'content_block_delta', index: base, delta: { type: 'text_delta', text: text.slice(0, mid) },
       }))
       if (text.length > mid) {
         events.push(anthEvent('content_block_delta', {
-          type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: text.slice(mid) },
+          type: 'content_block_delta', index: base, delta: { type: 'text_delta', text: text.slice(mid) },
         }))
       }
     }
-    events.push(anthEvent('content_block_stop', { type: 'content_block_stop', index: 0 }))
+    events.push(anthEvent('content_block_stop', { type: 'content_block_stop', index: base }))
   }
   events.push(anthEvent('message_delta', {
     type: 'message_delta',

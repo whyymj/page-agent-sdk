@@ -475,6 +475,45 @@ test.describe('complex-demo: 组件操作(调换顺序 / 改层级 / 聚焦纯�
     expect(calls(), '6 次 LLM 调用(主1 + 子×2各2 + 主收口1)').toBe(6)
   })
 
+  test('并行委派:两个 use_html 思考流各归各 step,result 不交叉(修复:固定挂最后 step + name 匹配错配)', async ({ page }) => {
+    await page.evaluate(() => {
+      window.page.components.push(
+        { type: 'custom', name: 'beer', code: '<section class="beer"><h1>old</h1></section>', __pgId: 'c_par_beer' },
+        { type: 'custom', name: 'mug', code: '<section class="mug"><h1>old</h1></section>', __pgId: 'c_par_mug' },
+      )
+    })
+    // 子响应带 reasoning 思考流(mock reasoning_content → subagent reasoning 转发 → spawnStep.subReason);
+    // 两个子 agent 谁先消费哪条脚本项不确定(commit 按 __pgId 映射),断言按 marker 集合判定(不依赖顺序)
+    await mockLlm(page, [
+      { tool_calls: [
+        { name: 'use_html', arguments: { task: '把 beer 标题改成「干杯青岛」', components: ['beer'] } },
+        { name: 'use_html', arguments: { task: '把 mug 主色改成橙色', components: ['mug'] } },
+      ] },
+      { reasoning: '思考 beer 组件:改标题文字', tool_calls: [{ name: 'vfs_write', arguments: { path: 'html/c_par_beer.html', content: '<section class="beer"><h1>干杯青岛</h1></section>' } }] },
+      { reasoning: '思考 mug 组件:改成橙色', tool_calls: [{ name: 'vfs_write', arguments: { path: 'html/c_par_mug.html', content: '<section class="mug" style="color:orange"><h1>橙色酒杯</h1></section>' } }] },
+      { text: 'beer 已改' },
+      { text: 'mug 已改' },
+      { text: '两个组件都已完成' },
+    ])
+    await fillInput(page, 'beer 和 mug 都改一下')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    const steps = await page.evaluate(() => {
+      const sdk = (window as any).__sdk
+      const last = [...sdk.messages].filter((m: any) => m.role === 'assistant').pop()
+      return (last?.steps ?? []).filter((s: any) => s.name === 'use_html')
+    })
+    expect(steps.length, '同轮两个 use_html 各一个 step').toBe(2)
+    // 修复前:两路思考全累积到最后一个 step(第一个 step subReason 空)
+    const markers = steps.map((s: any) => ((s.subReason || '').includes('beer') ? 'beer' : 'mug'))
+    expect(new Set(markers).size, '两个 step 的思考流各自独立(不混流)').toBe(2)
+    // 修复前:同名工具 tool_result 按 name 反向扫交叉错配(A 的 result 落到 B)
+    for (const s of steps) {
+      const which = (s.subReason || '').includes('beer') ? 'beer' : 'mug'
+      expect(String(s.result || ''), `use_html(${which}) 的 result 与自己的思考流同源`).toContain(`${which} 已改`)
+    }
+  })
+
   test('组件锁互斥:同轮双 use_html 同组件 → 第二个 COMPONENT_BUSY,下轮重委派成功', async ({ page }) => {
     await page.evaluate(() => {
       window.page.components.push({ type: 'custom', name: 'beer', code: '<section class="beer"><h1>old</h1></section>', __pgId: 'c_busy_beer' })

@@ -3,6 +3,8 @@ import type { SubagentRunState } from '../harness/subagent'
 /** 工具调用步骤（用于在消息内展示思考过程） */
 export interface ToolStep {
   name: string
+  /** 工具调用关联 id(与 tool_call/tool_result 事件同 id;并行同轮同名工具按 id 精确归属,缺省按 name 匹配兜底) */
+  id?: string
   args?: any
   result?: string
   status: 'running' | 'done' | 'error'
@@ -46,9 +48,9 @@ export type StreamEvent =
   | { type: 'round_start'; round: number }
   | { type: 'reasoning'; delta: string }
   | { type: 'text'; delta: string }
-  | { type: 'tool_call'; name: string; args: any }
-  | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error'; durationMs?: number }
-  | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result' | 'reasoning'; name: string; args?: any; result?: string; status?: 'done' | 'error'; delta?: string }
+  | { type: 'tool_call'; name: string; args: any; id?: string }
+  | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error'; durationMs?: number; id?: string }
+  | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result' | 'reasoning'; name: string; args?: any; result?: string; status?: 'done' | 'error'; delta?: string; /** 关联的主循环工具调用 id(并行双委派各归各的 UI step) */ toolCallId?: string }
   | { type: 'approval_request'; toolName: string; args: any; resolve: (approved: boolean | string) => void }
   | { type: 'done'; content: string }
 
@@ -64,9 +66,9 @@ export type SdkEvent =
   | { type: 'round_start'; round: number }
   | { type: 'reasoning'; delta: string }
   | { type: 'text'; delta: string }
-  | { type: 'tool_call'; name: string; args: any }
-  | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error'; durationMs?: number }
-  | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result' | 'reasoning'; name: string; args?: any; result?: string; status?: 'done' | 'error'; delta?: string }
+  | { type: 'tool_call'; name: string; args: any; id?: string }
+  | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error'; durationMs?: number; id?: string }
+  | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result' | 'reasoning'; name: string; args?: any; result?: string; status?: 'done' | 'error'; delta?: string; toolCallId?: string }
   | { type: 'done'; content: string }
   | { type: 'data_change'; operation: 'set' | 'edit' | 'delete' | 'restore'; value?: unknown }
   | { type: 'message_update'; count: number }

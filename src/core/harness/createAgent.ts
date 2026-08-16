@@ -895,7 +895,7 @@ export function createAgent(options: CreateAgentOptions) {
             if (signal?.aborted) return undefined // 双保险:abort 不启动新工具
             const toolSpan = startSpan(roundSpanId, 'tool', c.call.name, { name: c.call.name })
             const t0 = Date.now()   // 独立计时(不依赖 tracing;span 仅 tracing 开启时才有 durationMs)
-            onEvent({ type: 'tool_call', name: c.call.name, args: c.call.args })
+            onEvent({ type: 'tool_call', name: c.call.name, args: c.call.args, id: c.id })
             log('tool_call', { round: rounds + 1, name: c.call.name, args: c.call.args, id: c.id })
             let result: { content: string; status: 'done' | 'error' }
             try {
@@ -909,7 +909,7 @@ export function createAgent(options: CreateAgentOptions) {
               result = { content: `工具执行出错：${agentErr.message}`, status: 'error' }
             }
             const durationMs = Date.now() - t0
-            onEvent({ type: 'tool_result', name: c.call.name, result: result.content, status: result.status, durationMs })
+            onEvent({ type: 'tool_result', name: c.call.name, result: result.content, status: result.status, durationMs, id: c.id })
             log('tool_result', { round: rounds + 1, name: c.call.name, result: result.content, status: result.status, durationMs })
             endSpan(toolSpan, result.status === 'error' ? 'error' : 'ok', { resultSnippet: String(result.content).slice(0, 100) })
             return result

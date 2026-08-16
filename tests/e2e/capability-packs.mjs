@@ -829,6 +829,50 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:capability-packs] 并行双委派事件关联(tool_call 带独立 id + subagent 事件 toolCallId 各归各)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    // 队列确定序(同上场景):[0]主双委派 → [1]子A(hero) vfs_write → [2]子B(banner) vfs_write → [3]子A收口 → [4]子B收口 → [5]主收口
+    const llm = stubModel(
+      { toolCalls: [
+        { name: 'use_html', args: { task: '改 hero 标题', components: ['hero'] } },
+        { name: 'use_html', args: { task: '改 banner 配色', components: ['banner'] } },
+      ] },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_ev_hero.html', content: '<section>关联 hero</section>' } }] },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_ev_banner.html', content: '<section>关联 banner</section>' } }] },
+      { text: 'hero 完成' },
+      { text: 'banner 完成' },
+      { text: '两个组件都完成' },
+    )
+    const bind = { title: 't', components: [
+      { type: 'custom', name: 'hero', code: '<section>旧 hero</section>', __pgId: 'c_ev_hero' },
+      { type: 'custom', name: 'banner', code: '<section>旧 banner</section>', __pgId: 'c_ev_banner' },
+    ] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-lock-evt', storage: false, llm, maxParallelTools: 2,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
+    })
+    await sdk.mount()
+    // stream 路径经 sdk.hook 收流式事件(send 非流式不发流事件);只收本修复相关三类
+    const events = []
+    const off = sdk.hook((e) => { if (e.type === 'tool_call' || e.type === 'tool_result' || e.type === 'subagent') events.push(e) })
+    await sdk.stream([{ role: 'user', content: '两个组件并行改', timestamp: Date.now() }], () => {})
+    off()
+    const useCalls = events.filter((e) => e.type === 'tool_call' && e.name === 'use_html')
+    assert(useCalls.length === 2 && !!useCalls[0].id && !!useCalls[1].id && useCalls[0].id !== useCalls[1].id, '✓ 事件关联:同轮两个 use_html tool_call 事件带独立 id')
+    const useResults = events.filter((e) => e.type === 'tool_result' && e.name === 'use_html')
+    assert(useResults.length === 2 && useResults.every((e) => useCalls.some((c) => c.id === e.id)), '✓ 事件关联:tool_result 事件 id 与所属 tool_call 配对(不交叉)')
+    const subEvents = events.filter((e) => e.type === 'subagent')
+    assert(subEvents.length > 0 && subEvents.every((e) => useCalls.some((c) => c.id === e.toolCallId)), '✓ 事件关联:subagent 事件 toolCallId 归属两个 use_html 之一')
+    assert(new Set(subEvents.map((e) => e.toolCallId)).size === 2, '✓ 事件关联:两个 use_html 各收到子 agent 事件(思考流不丢)')
+    // 队列确定序:子A=第一个 use_html(hero) → hero 的 vfs_write 子事件归属 useCalls[0].id
+    const heroSub = subEvents.find((e) => e.kind === 'tool_call' && String(e.args?.path ?? '').includes('c_ev_hero'))
+    assert(heroSub && heroSub.toolCallId === useCalls[0].id, '✓ 事件关联:hero 子事件归属第一个 use_html(toolCallId 精确路由)')
+    sdk.unmount()
+  }
+
   console.log('[e2e:capability-packs] 组件锁 · 同组件第二个委派 → COMPONENT_BUSY 回灌,下轮重委派成功')
   {
     const { stubModel } = await import('./_stub-model.mjs')

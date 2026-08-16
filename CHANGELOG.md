@@ -2,6 +2,11 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.23.1] - 2026-08-16
+
+### Fixed(3.23.0 发布后真 LLM 实测发现:Q5e 并行委派复验)
+- **并行同轮双委派 UI 归属错乱**:`maxParallelTools>1` 同轮两个 `use_html` 时,① 子 agent 思考流(subReason)与子步骤(children)全混进最后一个 step(第一个 step 空白,用户只见一个 agent 在思考)② 同名工具 `tool_result` 按 name 反向扫交叉错配(A 的结果落到 B 的 step,result/durationMs 互换)。修:事件链补调用关联 id —— `tool_call`/`tool_result` 事件带 `id`、`subagent` 事件带 `toolCallId`(经 `__pgSubagentCall` per-call 通道透传);UI(useChat)按 id 精确归属 step,降级 name 反向扫兼容旧自定义 fetchStream。e2e capability-packs(+5:事件 id 独立/配对/toolCallId 路由)+ browser complex-demo(+1:双委派思考流各归各 step + result 同源;mockLlm 支持 reasoning 流,OpenAI 首 chunk 必带 role 否则 langchain 聚合丢弃)
+
 ## [3.23.0] - 2026-08-16
 
 ### Added(openspec `2026-08-16-preference-persistence`)
