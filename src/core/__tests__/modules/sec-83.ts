@@ -1,6 +1,7 @@
 import { MESSAGES_ZH_CN, MESSAGES_EN_US, resolveDialogMessages } from '../../components/messages'
 import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT_EN } from '../../sdk/promptBuilder'
 import { systemPromptHelpers } from '../../presets'
+import { sanitizeMessageHtml, sanitizeIconHtml } from '../../components/iconHtml'
 import type { TestCtx } from './_ctx'
 
 // 对话框文案集(顶层 i18n:{ locale, messages };openspec 2026-08-16-dialog-i18n Phase 1 + Phase 2;3.22 两键合并为 i18n 配置组)
@@ -74,5 +75,16 @@ export async function run(ctx: TestCtx): Promise<void> {
     // EN 规则键自身存在且为英文(与中文版逐条结构对齐:都以规则 6 条结尾)
     assert(systemPromptHelpers.reliableWriteRulesEn.startsWith('[Reliable write rules]'), 'reliableWriteRulesEn 导出可用')
     assert((systemPromptHelpers.reliableWriteRulesEn.match(/^6\./m)?.length ?? 0) === 1 && systemPromptHelpers.reliableWriteRulesEn.includes('optimistic-lock'), 'EN 规则含第 6 条乐观锁行为(与中文版对齐)')
+  }
+
+  // ===== 无 DOM 环境(Node/headless 服务端)兜底:净化函数不抛 + 剥标签纯文本 =====
+  // dompurify 无 window 时导出非完整实例(sanitize 缺失);公开导出的净化函数在 node 调用曾抛
+  // TypeError(3.22.0 发布后临时安装验证发现)→ 保守降级 = 剥全部标签(纯文本恒安全,不输出未净化 HTML)
+  {
+    const nodeMsg = sanitizeMessageHtml('<b onclick="x">A</b><script>bad()</script>plain')
+    assert(!nodeMsg.includes('<') && nodeMsg.includes('plain'), 'sanitizeMessageHtml 无 DOM 环境 → 剥全部标签纯文本兜底(不抛 TypeError)')
+    const nodeIcon = sanitizeIconHtml('<svg onload="x"><path d="M1 1"/></svg>icon')
+    assert(!nodeIcon.includes('<') && nodeIcon.includes('icon'), 'sanitizeIconHtml 无 DOM 环境 → 同样剥标签兜底(不抛)')
+    assert(sanitizeMessageHtml('plain text') === 'plain text', 'sanitizeMessageHtml 无 DOM 纯文本值原样(无标签可剥)')
   }
 }

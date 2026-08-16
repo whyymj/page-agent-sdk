@@ -2,6 +2,11 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.22.1] - 2026-08-16
+
+### Fixed(3.22.0 发布后临时安装验证发现)
+- **`sanitizeMessageHtml` / `sanitizeIconHtml` 在 Node/headless 服务端调用抛 TypeError**:dompurify 无 window 时导出非完整实例(`sanitize` 缺失)。修:两净化函数加无 DOM 守卫,保守降级 = 剥除全部标签只留纯文本(纯文本恒安全,不输出未净化 HTML;浏览器路径行为零变化)。selftest sec-83 +3 锁 node 兜底路径
+
 ## [3.22.0] - 2026-08-16
 
 ### Changed(breaking,用户拍板「不用兼容,直接修改」)

@@ -27,8 +27,18 @@ export const ICON_HTML_ALLOWED_ATTR = [
   'src', 'alt', 'class', 'aria-hidden',
 ] as const
 
-/** HTML 图标净化(DOMPurify 图标白名单;data-* 关闭,事件属性/危险协议默认剥) */
+/**
+ * 无 DOM 环境兜底(Node/headless 服务端):DOMPurify 无 window 时非完整实例(sanitize 缺失)。
+ * 保守降级 = 剥除全部标签只留纯文本(不执行不保留任何标签 —— 净化函数的契约是「输出可安全渲染」,
+ * 纯文本恒安全;调用方在非浏览器环境拿不到富文本,但不会拿到未净化 HTML)。
+ */
+function stripTagsFallback(html: string): string {
+  return html.replace(/<[^>]*>/g, '')
+}
+
+/** HTML 图标净化(DOMPurify 图标白名单;data-* 关闭,事件属性/危险协议默认剥;无 DOM 环境剥标签纯文本兜底) */
 export function sanitizeIconHtml(html: string): string {
+  if (typeof DOMPurify.sanitize !== 'function') return stripTagsFallback(html)
   return DOMPurify.sanitize(html, {
     ALLOWED_TAGS: [...ICON_HTML_ALLOWED_TAGS],
     ALLOWED_ATTR: [...ICON_HTML_ALLOWED_ATTR],
@@ -50,8 +60,9 @@ export const MESSAGE_HTML_ALLOWED_TAGS = [
 /** 文案白名单属性:class(挂 --cs-* 定制)+ style(内联着色;DOMPurify 剥危险 CSS 值)+ title */
 export const MESSAGE_HTML_ALLOWED_ATTR = ['class', 'style', 'title'] as const
 
-/** HTML 文案净化(DOMPurify 文案白名单;data-* 关闭,事件属性/危险协议默认剥) */
+/** HTML 文案净化(DOMPurify 文案白名单;data-* 关闭,事件属性/危险协议默认剥;无 DOM 环境剥标签纯文本兜底) */
 export function sanitizeMessageHtml(html: string): string {
+  if (typeof DOMPurify.sanitize !== 'function') return stripTagsFallback(html)
   return DOMPurify.sanitize(html, {
     ALLOWED_TAGS: [...MESSAGE_HTML_ALLOWED_TAGS],
     ALLOWED_ATTR: [...MESSAGE_HTML_ALLOWED_ATTR],
