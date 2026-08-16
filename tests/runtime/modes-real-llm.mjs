@@ -75,7 +75,9 @@ export async function runSuite(only = []) {
     let diag
     try {
       diag = await page.evaluate(() => {
-        const reqs = (window.__sdk?.debugLogs?.value ?? []).filter((l) => l.type === 'llm_request')
+        // 主 agent 请求过滤:子 agent 日志带 source 标签(子:xxx),委派后的最后一条 llm_request 是子 agent 的
+        // system prompt(不含模式段)→ 探针曾假报 none(r7 M1 实测);模式段判定只看主 agent 请求
+        const reqs = (window.__sdk?.debugLogs?.value ?? []).filter((l) => l.type === 'llm_request' && !l.source)
         const sys = String(reqs.at(-1)?.data?.messages?.[0]?.content ?? '')
         return {
           reply: ((window.__sdk?.messages ?? []).filter((m) => m.role === 'assistant').at(-1)?.content ?? '').slice(0, 300),
@@ -173,8 +175,11 @@ export async function runSuite(only = []) {
     await sendPrompt(page, '加一个纯代码组件:幸运色块(一个纯文字色块,无动画,点击换一句文案),直接做别问')
     await waitIdle(page, prev, { timeoutMs: 1200_000 })
     const idx = await page.evaluate(() => {
-      const i = [...window.page.components].map((c, i) => [c, i]).reverse().find(([c]) => c.type === 'custom' && (c.name ?? '').includes('幸运'))
-      return i ? i[1] : -1
+      // 命名兼容中/英(agent 实测会把「幸运色块」命名为 luckyBlock);名字不中则兜底取最后一个 custom(刚建的就是它)
+      const list = [...window.page.components].map((c, i) => [c, i]).reverse()
+      const hit = list.find(([c]) => c.type === 'custom' && /幸运|lucky/i.test(String(c.name ?? '')))
+        ?? list.find(([c]) => c.type === 'custom' && (c.code ?? '').length > 300)
+      return hit ? hit[1] : -1
     })
     ck(idx >= 0, `前置组件就位(components.${idx})`)
     if (idx < 0) return
@@ -182,7 +187,9 @@ export async function runSuite(only = []) {
     const warnsBefore = warns.length
     prev = await msgsNow()
     console.log('  ❯ 把幸运色块改成菱形,直接做别问(委派进行中人工将直改其 code)')
-    await sendPrompt(page, '把幸运色块改成菱形,直接做别问')
+    // 「重新生成代码」明示改代码 —— 前置实测主 agent 会绕过 use_html 直写 write(懒行为);
+    // 本场景测的是委派 commit 窗口的人工并发保护,直写则前提不成立,故引导走委派路径
+    await sendPrompt(page, '把幸运色块改成菱形(重新生成其完整代码),直接做别问')
     await page.waitForFunction(() => window.__sdk.getActiveSubagents().length > 0, { timeout: 240_000 }).catch(() => {})
     await sleep(3000) // active>0 = beforeAgent checkout 已过;留 3s 缓冲确保 hash 已记录
     const mutOk = await page.evaluate((i) => {

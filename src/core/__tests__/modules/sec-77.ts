@@ -12,8 +12,10 @@ import {
   lockedIndexPaths,
   hitsLockedPath,
   createComponentWriteGuardMiddleware,
+  codeFieldIndexPaths,
 } from '../../sdk/componentLock'
 import { createCodeAssetMiddleware, hashString } from '../../sdk/codeAssetMiddleware'
+import { decorateSubagentResult } from '../../harness/subagent'
 
 export async function run(ctx: TestCtx) {
   const { assert } = ctx
@@ -120,6 +122,34 @@ export async function run(ctx: TestCtx) {
     // 非写工具(read)不受守卫影响
     const r7 = await wrap(mkCtx('read', { jsonPath: 'components.1' }), next)
     assert(r7.content === 'ok', '✓ 写检查 → 非写工具不受影响')
+
+    // ===== m4-real-llm:codeField 主写恒守卫(flash 3 次无视提示词禁令直写代码字段 → 机制化) =====
+    {
+      // codeFieldIndexPaths:已存在代码组件产出 code 叶路径;非代码组件/越界索引不产出
+      const b = { components: [{ name: 'nav', code: 'a' }, { name: 'panel', props: { html_code: 'x' } }, { name: 'plain' }] }
+      const ps = codeFieldIndexPaths(b, [{ writablePaths: ['components'], codeField: 'code' }, { writablePaths: ['components'], codeField: 'props.html_code' }])
+      assert(ps.join() === 'components.0.code,components.1.props.html_code', '✓ codeFieldIndexPaths → 代码组件叶路径(嵌套 codeField 兼容,非代码组件不产出)')
+      assert(codeFieldIndexPaths(undefined, [{ writablePaths: ['components'], codeField: 'code' }]).length === 0, '✓ codeFieldIndexPaths → 无 bind 返回空(不抛)')
+
+      // 恒守卫:无在途锁也拒 code 字段写(回灌引导委派);同组件其他字段放行;不配 getCodeFieldPaths 零变化
+      const freeLock = createComponentLock()  // 无 acquire → 无在途锁
+      const gMw = createComponentWriteGuardMiddleware({
+        getBind: () => b, writablePaths: ['components'], getLocked: () => freeLock.locked(), tools: toolsStub as any,
+        getCodeFieldPaths: () => codeFieldIndexPaths(b, [{ writablePaths: ['components'], codeField: 'code' }]),
+      })
+      const gWrap = gMw.wrapToolCall as (ctx: any, next: () => Promise<any>) => Promise<any>
+      const g1 = await gWrap(mkCtx('write', { patch: { op: 'set', jsonPath: 'components.0.code', value: 'x' } }), next)
+      assert(String(g1.content).startsWith('CUSTOM_CODE_DELEGATION'), '✓ 恒守卫 → 无在途锁也拒 code 字段直写(CUSTOM_CODE_DELEGATION 回灌)')
+      const g2 = await gWrap(mkCtx('write', { patch: { op: 'set', jsonPath: 'components.0.name', value: 'x' } }), next)
+      assert(g2.content === 'ok', '✓ 恒守卫 → 同组件非 code 字段放行')
+      const g3 = await gWrap(mkCtx('write', { dryRun: true, patch: { op: 'set', jsonPath: 'components.0.code', value: 'x' } }), next)
+      assert(g3.content === 'ok', '✓ 恒守卫 → dryRun 不拦(试运行无写入)')
+      // 未配 getCodeFieldPaths → 行为与现状零变化(code 直写放行,守卫只认在途锁)
+      const plainMw = createComponentWriteGuardMiddleware({ getBind: () => b, writablePaths: ['components'], getLocked: () => freeLock.locked(), tools: toolsStub as any })
+      const pWrap = plainMw.wrapToolCall as (ctx: any, next: () => Promise<any>) => Promise<any>
+      const p1 = await pWrap(mkCtx('write', { patch: { op: 'set', jsonPath: 'components.0.code', value: 'x' } }), next)
+      assert(p1.content === 'ok', '✓ 恒守卫 → 不配置时零变化(code 直写放行)')
+    }
   }
 
   // ===== Q3c:hashString 纯函数 =====
@@ -158,6 +188,9 @@ export async function run(ctx: TestCtx) {
       ;(m.bind.components[0] as { code: string }).code = '<p>human-version</p>'
       ;(mw.afterAgent as (s: unknown) => void)(state)
       assert((m.bind.components[0] as { code: string }).code === '<p>human-version</p>', '✓ H1 人工改在途组件 → 人工值保留(keep_external)')
+      // keep_external 组件名记入 state 清单(runSubagent 收口装饰用,主 agent 才知道发生了人工保留)
+      const kept = (state as unknown as Record<string, unknown>).__pgKeepExternal as string[] | undefined
+      assert(Array.isArray(kept) && kept.join(',') === 'beer', '✓ H1 keep_external → 组件名记入 state.__pgKeepExternal 清单')
     }
 
     // H2:在途窗口内人工删除组件 → commit 不复活 + vfs 文件清理
@@ -184,6 +217,17 @@ export async function run(ctx: TestCtx) {
       ;((state as unknown as Record<string, unknown>).__pgTouched as Set<string>).add('html/pg1.html')
       ;(mw.afterAgent as (s: unknown) => void)(state)
       assert((m.bind.components[0] as { code: string }).code === '<p>child-ok</p>', '✓ 无人工修改 → 子 agent 版本正常 commit')
+      const kept = (state as unknown as Record<string, unknown>).__pgKeepExternal as string[] | undefined
+      assert(!kept?.length, '✓ 无人工修改 → __pgKeepExternal 清单为空(不误报)')
+    }
+
+    // ===== decorateSubagentResult:keep_external 提示随委派结果回流(m4-real-llm:主误判占位符后直写覆盖人工值) =====
+    {
+      assert(decorateSubagentResult('已完成', undefined) === '已完成', '✓ 装饰 → 无 state(非 code-asset 子 agent)原样返回')
+      assert(decorateSubagentResult('已完成', {}) === '已完成', '✓ 装饰 → 无标记原样返回(正常委派零变化)')
+      assert(decorateSubagentResult('已完成', { __pgKeepExternal: [] }) === '已完成', '✓ 装饰 → 空清单原样返回')
+      const dec = decorateSubagentResult('已完成', { __pgKeepExternal: ['beer', 'nav'] })
+      assert(dec.startsWith('已完成') && dec.includes('[keep_external]') && dec.includes('beer、nav') && dec.includes('勿直接重写'), '✓ 装饰 → keep_external 清单非空时结果尾追加提示行(组件名 + 勿直写)')
     }
   }
 }

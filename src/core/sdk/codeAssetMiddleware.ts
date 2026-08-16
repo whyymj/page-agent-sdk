@@ -25,6 +25,14 @@ const FINAL = '__pgFinalText'
 /** state 上挂载的「checkout 时组件级 code hash」holder(parallel-subagent-delegation Q3c:人工并发冲突检测,keep_external) */
 const CODE_HASHES = '__pgCodeHashes'
 
+/**
+ * state 上挂载的「commit 时检出 keep_external 的组件名」清单(m4-real-llm 实测驱动)。
+ * 仅 console.warn 主 agent 看不到 → 读到人工 stub 误判「子 agent 写了占位符」后直写覆盖人工值;
+ * 子 agent 收口时 harness 的 runSubagent 读此清单把提示追加进委派返回值(keep_external 语义随结果回流主上下文)。
+ * 同一字符串常量在 subagent.ts 以字面量使用(harness 不 import sdk,同 __pgSubagentCall 先例)。
+ */
+const KEEP_EXTERNAL = '__pgKeepExternal'
+
 /** 工匠笔记 sidecar 字段名(read 投影隐藏 __pg* 现成;框架直改 bind,不进 schema) */
 const NOTES = '__pgNotes'
 /** 每组件笔记上限(FIFO 保最近 N 条)与单条长度上限 */
@@ -202,7 +210,7 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
       //    + __pgFinalText holder(wrapModelCall 捕获子 agent 最终回复,工匠笔记提取源;对象引用 mutate,并发实例隔离)
       // ③ 注入 vfsStore.files 引用到 state.files(verify 门禁扫 state.files 见 code 工作副本;与 vfs-bridge 同引用,覆盖无副作用)
       //    __pgTouched/__pgFinalText 是框架内部 state 扩展(类 __pgId);TS 上以 Partial<typeof state> 表达,运行时浅合并保留引用
-      return { files: vfsStore.files, [TOUCHED]: new Set<string>(), [FINAL]: { text: '' }, [CODE_HASHES]: codeHashes } as unknown as Partial<typeof state>
+      return { files: vfsStore.files, [TOUCHED]: new Set<string>(), [FINAL]: { text: '' }, [CODE_HASHES]: codeHashes, [KEEP_EXTERNAL]: [] as string[] } as unknown as Partial<typeof state>
     },
     // 捕获子 agent 收口回复(无 tool_calls 的模型响应 = 最终文本;wrap-up 收口轮同经洋葱):工匠笔记提取源。
     // 不用 beforeReturn(maxVerifyAttempts>0 才跑,formatCheck:false 不覆盖)/afterAgent state.messages(createAgent 消息流
@@ -313,6 +321,11 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
                 const cur = getByPath(o, codeField)
                 if (typeof cur !== 'string' || hashString(cur) !== rec) {
                   console.warn(`[page-agent-sdk][code-asset] 组件 ${o.name ?? pgId}(${vfsPath})在修改期间被外部更新,已保留外部版本(keep_external),本次子 agent 修改未提交`)
+                  // 记入 state 清单:runSubagent 收口时追加进委派返回值(主 agent 才知道 stub 是人工修改,不会误判后直写覆盖)
+                  const kept = (state as unknown as Record<string, unknown>)[KEEP_EXTERNAL] as string[] | undefined
+                  const label = String(o.name ?? pgId)
+                  if (Array.isArray(kept)) kept.push(label)
+                  else (state as unknown as Record<string, unknown>)[KEEP_EXTERNAL] = [label]
                   return  // 跳过该组件 commit;dataPgIds 已加(孤儿清理仍认此组件在 data 中)
                 }
               }

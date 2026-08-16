@@ -144,6 +144,28 @@ export function hitsLockedPath(jsonPath: string, lockedPrefixes: string[]): bool
   return lockedPrefixes.some((p) => jsonPath === p || jsonPath.startsWith(p + '.'))
 }
 
+/**
+ * 收集「已存在代码组件的 codeField 路径」(m4-real-llm 实测驱动,主写恒守卫用)。
+ * 判定同 code-asset 惯例:该路径有 string 即代码组件(支持嵌套 codeField 如 props.html_code);
+ * 新元素(数组越界项)不产出路径 → 新建组件整体 set 不受恒守卫(仍走提示词纪律)。
+ */
+export function codeFieldIndexPaths(bind: unknown, specs: Array<{ writablePaths: string[]; codeField: string }>): string[] {
+  const out: string[] = []
+  for (const { writablePaths, codeField } of specs) {
+    for (const wp of writablePaths) {
+      const arr = getByPathSafe(bind, wp)
+      if (!Array.isArray(arr)) continue
+      for (let i = 0; i < arr.length; i++) {
+        const item = arr[i]
+        if (item && typeof item === 'object' && typeof getByPathSafe(item, codeField) === 'string') {
+          out.push(`${wp}.${i}.${codeField}`)
+        }
+      }
+    }
+  }
+  return out
+}
+
 // ===== 主 agent 写检查中间件(Q3b:与 focus strict 同一拦截模式)=====
 
 /** 提取写工具 args 的全部 jsonPath(write 高层嵌套:patch.jsonPath / patches[].jsonPath 同 focus extractScopes) */
@@ -170,6 +192,13 @@ export interface ComponentWriteGuardOptions {
   onReject?: (info: { paths: string[]; lockedPrefixes: string[]; owner: string }) => void
   /** 全部工具列表(A3 按标注判定写能力) */
   tools?: StructuredToolInterface[]
+  /**
+   * 主写恒守卫的 codeField 路径 getter(m4-real-llm 实测驱动):html code-asset 模式下主 agent 恒不可直写
+   * 已存在组件的代码字段。flash 实测 3 次无视提示词禁令(read-only 提示回流后仍读后写覆盖人工 keep_external 值),
+   * 机制化恒拒 + 回灌 CUSTOM_CODE_DELEGATION 引导委派;不传/返回空 = 关闭(现状零变化)。
+   * 边界同在途锁:整体 set(无 jsonPath)与新建元素不拦(diff 成本高,留提示词纪律)。
+   */
+  getCodeFieldPaths?: () => string[]
 }
 
 /**
@@ -210,10 +239,23 @@ export function createComponentWriteGuardMiddleware(opts: ComponentWriteGuardOpt
 
       const locked = opts.getLocked()
       const names = Object.keys(locked)
+      // 主写恒守卫(m4-real-llm):已存在代码组件的 code 字段恒拒(改代码必经委派 → vfs 工作副本 + verify 门禁)。
+      // 独立于在途锁跑(无在途锁也要拦);与锁共用 extractWriteScopes
+      const codePaths = opts.getCodeFieldPaths?.() ?? []
+      const scopes = extractWriteScopes(args)
+      if (codePaths.length) {
+        const hitCode = scopes.filter((p) => hitsLockedPath(p, codePaths))
+        if (hitCode.length) {
+          opts.onReject?.({ paths: hitCode, lockedPrefixes: codePaths, owner: '(codeField 恒守卫)' })
+          return {
+            content: `CUSTOM_CODE_DELEGATION · 写目标 [${hitCode.join(', ')}] 是代码组件的代码字段,主 agent 不可直接写(会绕过 vfs 工作副本与格式校验,且可能覆盖外部/人工修改)。修改该组件须委派代码组件子 agent(use_html / use_<id>);若此前委派结果提示 keep_external(外部修改已保留),先向用户说明并确认后再委派,勿自行改写。`,
+            status: 'error' as const,
+          }
+        }
+      }
       if (!names.length) return next(ctx)
       const prefixes = lockedIndexPaths(opts.getBind(), opts.writablePaths, names)
       if (!prefixes.length) return next(ctx)  // 锁的组件已不在 data(如人工删除)→ 名字解析不出前缀,放行(写会自然按 schema 处理)
-      const scopes = extractWriteScopes(args)
       if (!scopes.length) {
         // 整体 set(merge 语义触碰全部组件)且有在途锁 → 拒
         opts.onReject?.({ paths: ['(整体 set)'], lockedPrefixes: prefixes, owner: names.join(',') })

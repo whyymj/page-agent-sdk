@@ -57,8 +57,9 @@
 - [x] Q5b e2e(stub model):同轮双 use_html 不同组件均落地 + 同组件第二个 → COMPONENT_BUSY 回灌后重委派成功 + 主 agent 写锁组件回灌放行 + 串行默认零变化 —— capability-packs.mjs 增 4 场景 19 断言:并行双委派(acquire/release 留痕×2)/同组件 busy 后重委派(7 次调用证零 model 消耗)/主写锁组件(时序锚 slow_probe 80ms 确保锁先持有)/默认串行零变化;e2e 625→655,8+3 次连跑确定性全绿
 - [x] Q5c browser(mockLlm 同轮双 tool_calls):两 custom code 均更新;page-demo/html-page 选一 —— complex-demo.spec.ts(maxParallelTools:3)增 2 test:并行双 use_html 两组件均落地(6 调用)/同组件 busy 重委派(7 调用);browser 61→63 全绿
 - [x] Q5d 人工并发 e2e(stub 控制节奏 + 直改 bind 模拟人工):H1 同组件 code 人工改 → 人工值保留+留痕 / H2 删除组件 → 不复活+vfs 清+留痕 / H3 索引位移 → __pgId 定位落同组件 / H4 改其他组件互不覆盖;无人工修改时 commit 与现状一致 —— capability-packs.mjs H1-H4 真链路(子 model delayMs 250 撑开在途窗口 + setTimeout 80ms 直改 bind):keep_external 保留人工值+留痕 / 删组件不复活+vfs 清+留痕 / 索引位移 __pgId 落同组件 / 改其他组件互不覆盖;3 次连跑全绿
-- [ ] Q5e 真 LLM 复验(手动):两纯代码组件同改 → 并行发生 + 同组件冲突回灌可见 + 墙钟对比;**人工并发真场景**(委派进行中浏览器直改/删组件 → 冲突判定与留痕可见);记 doc/CLAUDE.md
+- [x] Q5e 真 LLM 复验(手动):两纯代码组件同改 → 并行发生 + 同组件冲突回灌可见 + 墙钟对比;**人工并发真场景**(委派进行中浏览器直改/删组件 → 冲突判定与留痕可见);记 doc/CLAUDE.md
   - 进展(2026-08-16):用户实测「轮播+粒子特效双组件」发现 **UI 归属错乱** —— 并行真发生,但两个子 agent 思考流全混进最后一个 step(只见一个 agent 在思考)+ 同名 use_html result 交叉错配。已修(tool_call/tool_result 事件带 id、subagent 事件带 toolCallId、useChat 按 id 归属;e2e+5/browser+1);余:同组件 busy 可见 + 墙钟对比 + 人工并发真场景
+  - 收口(2026-08-17,modes 套件):① 并行发生 ✓(两轮真 LLM 均复现同轮 3 委派 active=3 采样)② 同组件 busy 可见 = Q5b/Q5c mock 锁定(真 LLM 下模型遵循编排禁令不主动同组件双委,不强行构造)③ **人工并发真场景 ✓ 4/4 全过**(M4:委派中直改 code → keep_external 人工值保留到终态 + warn 留痕;并驱动两处修复:keep_external 提示回流委派返回值 + codeField 主写恒守卫 CUSTOM_CODE_DELEGATION,flash 直写 3 次无视提示词禁令 → 机制化)④ 墙钟对比量化未达 —— 两次 M3 第三并行子被 LLM 代理黑洞击杀(环境性,已登记 deferred「看门狗黑洞盲区」),并发存在性经采样证实,墙钟=max 的量化断言待环境稳定时顺手补
 
 ### 阶段 Q6:第二批文档与发布
 

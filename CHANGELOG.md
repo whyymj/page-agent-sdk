@@ -2,6 +2,16 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [Unreleased]
+
+## [3.24.1] - 2026-08-17
+
+### Fixed(M4 真 LLM 实测驱动:人工并发 keep_external 的「保护成立但终态被覆盖」)
+- **keep_external 提示回流委派返回值**:原人工并发保护只 console.warn —— 主 agent 读到人工 stub 误判「子 agent 返回占位符」(实测原话),用合法读后写直写覆盖人工值。修:codeAssetMiddleware 把 keep_external 组件名记入 state(`__pgKeepExternal`),`runSubagent` 收口时经 `decorateSubagentResult` 在委派结果尾追加提示(语义随结果回流主上下文);文案 ask-first(「先向用户说明,由用户决定是否继续」—— 人工修改是最新意图信号,不径直重新委派)。实测主 agent 收口话术:「检测到你在生成期间手动修改了该组件,已保留你的版本。请问你希望:按原任务继续…/保留你现在版本…」
+- **代码组件 codeField 主写恒守卫(`CUSTOM_CODE_DELEGATION`)**:flash 实测 3 次无视编排提示词禁令直写已存在组件的 code 字段(含提示回流后仍违反)→ 机制化:html code-asset 模式下主 agent 对已存在组件 codeField 路径的写恒拒(recoverable 回灌引导委派;与在途组件锁同层)。新 `codeFieldIndexPaths` 纯函数(嵌套 codeField 如 `props.html_code` 兼容);边界:新建元素/整体 set/dryRun 不拦(与在途锁同边界);不配 `getCodeFieldPaths` 零变化
+- **modes 真 LLM 套件 M4 修复**:前置组件名匹配兼容中/英(agent 会把「幸运色块」命名为 `luckyBlock`,原按 `includes('幸运')` 匹配假失败);正式阶段措辞明确「重新生成其完整代码」引导委派路径
+- 真 LLM M4 复验 4/4 全过(keep_external 人工值保留到终态 + warn 留痕 + 主 agent 零直写);`parallel-subagent-delegation` change Q5e 收口归档(并行存在性两轮采样证实;墙钟量化断言因环境黑洞未跑通,已留注记)
+
 ## [3.24.0] - 2026-08-17
 
 ### Added(debug 模块审计与布局优化)

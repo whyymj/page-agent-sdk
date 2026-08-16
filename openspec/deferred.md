@@ -406,6 +406,10 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 **来源**:`2026-08-16-dialog-i18n-phase2` proposal 非目标段。`dialog.locale:'en-US'` 已覆盖 UI 文案 + 默认 systemPrompt(英文版身份 + reliableWriteRulesEn);但 usageHints 中间件注入的工具用法提示与 ~14 个内置工具的 schema description 仍是中文。LLM 对中文工具描述理解无碍(实测多模型正常 tool-calling),全量双化是 ~14 工具 × (description + 参数 describe + usageHints 教学段) 的大工程且增加维护双份漂移风险。**重启触发**:海外集成方实际反馈 agent 输出/理解语言异常,或英文场景真 LLM 回归出现工具误用实例。修法候选:工具描述集中注册表 + locale 键化(同 messages 模式)。
 
 
+### [2026-08-17] 流停滞看门狗「代理黑洞」盲区 — ⏸ 暂缓(modes 真 LLM 套件环境观察)
+
+**来源**:3.24.0 后 modes 套件补跑(M1 重试/M3 第三子 agent/M4-r5 第二子 agent),一日 4 次「llm_request 发出后 900~1000s 完全无响应、无 StreamStalledError、logN 冻结」(经 vite 代理 → modelverse)。启动闸(createAgent.ts:529-543)与 chunk 间隔看门狗均未触发 —— 假设:代理返回 200+SSE 头后以 keepalive/空帧无限空转,每帧重置 chunk 间隔计时但无实质内容(看门狗量的是 chunk 间隔,非单次调用总时长)。**重启触发**:代理黑洞复现时抓 vite proxy 层响应流(区分「头都没到」vs「空转帧」)或离线 mock 复现;修法候选:单次模型调用总时长上限(需与合法长生成权衡,如 10× stallMs)或空内容 chunk 不重置计时器。关联:`memory/real-llm-suite-env-instability.md`。
+
 ## 维护约定
 
 - 暂缓项**不进** `project.md`「进行中的 change」(避免占心智);本文件是唯一索引。

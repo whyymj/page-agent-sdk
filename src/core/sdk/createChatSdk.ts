@@ -49,7 +49,7 @@ import { connectMcp, type McpServerConfig } from '../mcp/client'
 import { createSummarizationMiddleware } from '../harness/summarization'
 import { buildDataPrompt, buildSystemPrompt } from './promptBuilder'
 import { createCodeAssetMiddleware, collectComponentNames } from './codeAssetMiddleware'
-import { createComponentLock, resolveTargetComponents, createComponentWriteGuardMiddleware } from './componentLock'
+import { createComponentLock, resolveTargetComponents, createComponentWriteGuardMiddleware, codeFieldIndexPaths } from './componentLock'
 import { createHtmlSubagent } from './htmlSubagent'
 import { isChatModel, resolveLlm, deriveTitle } from './llmResolver'
 import { constructLlmFromConfig, constructOpenLlmSync } from '../llm/constructLlm'
@@ -1314,6 +1314,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         writablePaths: codeAssetPgIdPaths,
         getLocked: () => componentLock!.locked(),
         tools: allTools,  // A3 按标注判定写能力
+        // 主写恒守卫(m4-real-llm):已存在代码组件的 code 字段恒拒 —— flash 实测 3 次无视提示词禁令直写
+        // (含读后写覆盖人工 keep_external 值),机制化回灌 CUSTOM_CODE_DELEGATION 引导委派
+        getCodeFieldPaths: () => codeFieldIndexPaths(liveData()?.bind, codeAssetConfigs.map((s) => ({ writablePaths: s._codeAsset.writablePaths, codeField: s._codeAsset.codeField }))),
       })
     : undefined
   const subagentsMw = useSubagent && subagentsForAssemble !== undefined

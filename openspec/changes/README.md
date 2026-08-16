@@ -1,5 +1,7 @@
 # 活跃 Changes 优先级索引
 
+> **2026-08-16/17 发布 3.22.0 / 3.22.1 / 3.23.0 / 3.23.1**(minor + patch + minor + patch):两 change 实施完成并归档 —— ① **3.22.0**(`dialog-i18n-phase2`):i18n 顶层配置组(**breaking**:`dialog.locale`/`dialog.messages` 两键合并至顶层 `i18n`;locale 除 UI 文案外驱动默认 systemPrompt/autoTitle 语言,en → 英文身份 + reliableWriteRulesEn)+ messages 富文本渲染位行内 HTML 支持(文案白名单净化 `sanitizeMessageHtml`;~219 键全量接入 DebugDrawer/SkillPanel/CodePreview);3.22.1:净化函数无 DOM 环境(Node)剥标签纯文本兜底;② **3.23.0**(`preference-persistence`):跨会话用户偏好记忆 —— 三层信号捕获(显式命令句式零 LLM 强信号 / 模式词+小 LLM 提炼中信号 / 行为推断不做宁漏勿误)→ preferenceStore(IndexedDB 独立存储,同 topic 后说覆盖,FIFO 20)→ augmentPrompt pin 段注入;`capabilities.preferences` opt-in + `getPreferences`/`removePreference`/`clearPreferences` + DebugDrawer 视图;3.23.1:并行同轮双委派 UI 归属修复(tool_call/result 事件带 `id` + subagent 事件带 `toolCallId`,useChat 按 id 精确归属)。同窗口 3.24.0(debug:true 调试入口门控 + DebugDrawer 布局优化 + 调试日志跨轮累积 + MCP 降级可观测 + DOM 检视工具族)未立 change 直发。selftest 2396 / e2e 753 / browser 83。见 [`archive/2026-08-16-dialog-i18n-phase2/`](./archive/2026-08-16-dialog-i18n-phase2/) + [`archive/2026-08-16-preference-persistence/`](./archive/2026-08-16-preference-persistence/)。
+
 > **2026-08-16 发布 3.19.0 / 3.19.1 / 3.20.0**(minor + patch + minor):三批实施完成并归档 —— ① **3.19.0**:真 LLM 回归评估框架化(`npm run test:real` 统一入口三套件 + `--baseline-diff`/`--baseline-update` 基线对比入库 `tests/runtime/real-llm-baseline.json`)+ `llm.cacheControl` Anthropic prompt caching(invocationKwargs 路径;非流式实证 input ~1/10);② **3.19.1**(`round2-review-hardening`):第二轮三路审查 22 条 → 裁决 9 修复 + 4 测试补强 + 3 deferred + 9 误报(autoTitle 时序 / 主栈 scope token / query+get 大文本摘要 / 失败读不刷基线 / 孤儿轮收口 / release 后 send 守卫等);③ **3.20.0**:用户实测反馈三连 —— focus-scoped-read(聚焦下 read 空参默认焦点子树 + 教学行)+ `dialog.icons.send` + `dialog.locale`/`dialog.messages` 国际化与文案自定义 Phase 1(聊天面 13 组件 ~91 键 + en-US 包 + 键级覆盖)+ 思考中 padding。selftest 2241 / e2e 718 / browser 76。见 [`archive/2026-08-16-round2-review-hardening/`](./archive/2026-08-16-round2-review-hardening/) + [`archive/2026-08-16-dialog-i18n/`](./archive/2026-08-16-dialog-i18n/) + [`archive/2026-08-16-focus-scoped-read/`](./archive/2026-08-16-focus-scoped-read/)。
 
 > **2026-08-15 发布 3.11.0**(minor):`context-economy-phase2` 实施完成并归档 —— ① **`promptSoftCapTokens` 压缩触发成本上限**(token 阈值改 `min(窗口×ratio, softCap)`;窗口 ≥320K 默认 160K,显式 0 关;`resolvePromptSoftCap` 单一真源导出 + `inspect().compression` 反射);② **工具描述瘦身二批**(-40%,11 个工具,教程归 usageHints `!simple` 分支不双份);③ **agent 预算自感知**(零配置:轮次 70%/softCap 半程一行提示 + 同路径写失败 ≥2 提醒 + 计划版次计数)+ **`roundTokenBudget`** 单调用预算 opt-in;④ **真 LLM 复测修复 P0**:wrap-up/重试耗尽路径 DSML 泄漏剥离(`sanitizeGarbledContent` 导出 + observable error)+ headless send/batch error 事件外发(`makeStreamWatch`)。实测 S1 prompt **-40%**(502K→300K)、工具 **-44%**(27→15)。selftest 2011 / e2e 610 / browser 54。见 [`archive/2026-08-15-context-economy-phase2/`](./archive/2026-08-15-context-economy-phase2/)。
@@ -46,11 +48,7 @@
 
 ## 进行中
 
-| change | 状态 | 一句话 |
-|---|---|---|
-| [`2026-08-16-preference-persistence/`](./2026-08-16-preference-persistence/) | **实施中** | 跨会话用户偏好记忆:三层信号捕获(显式命令零 LLM/模式词+小 LLM 提炼/行为推断不做,宁漏勿误)→ preferenceStore(IndexedDB,同 topic 后说覆盖,FIFO 20)→ augmentPrompt pin 段注入;`capabilities.preferences` opt-in + getPreferences/removePreference/clearPreferences + DebugDrawer 只读视图 |
-| [`2026-08-16-dialog-i18n-phase2/`](./2026-08-16-dialog-i18n-phase2/) | **实施中** | dialog-i18n Phase 2:DebugDrawer/SkillPanel/CodePreview 文案接入 messages(~120 键)+ Phase 1 漏网(ChatInput chip title)+ 默认 systemPrompt 按 `dialog.locale` 切语言(en-US 英文身份 + reliableWriteRules EN + 追加规则段同语);工具 schema 描述语言登记 deferred |
-| [`2026-08-15-parallel-subagent-delegation/`](./2026-08-15-parallel-subagent-delegation/) | 实施完成 30/31(剩 Q5e 真 LLM 手动复验:并行委派 + 人工并发冲突) | 多子 agent 同轮并行委派:失败隔离 + 同组件写互斥(组件锁 `COMPONENT_BUSY`/`COMPONENT_LOCKED`)+ 人工并发 commit 冲突检测(hash 比对,人工优先 keep_external) |
+_(无 —— parallel-subagent-delegation 已于 2026-08-17 Q5e 收口归档:人工并发 M4 4/4 全过并驱动 keep_external 提示回流 + codeField 恒守卫两修复;墙钟量化断言因 LLM 代理黑洞两杀未跑通,并发存在性经采样证实,详见该 change tasks.md Q5e 注记)_
 
 ---
 

@@ -313,6 +313,19 @@ export function wrapWithScope(t: StructuredToolInterface, scopeId: string, enter
 }
 
 /**
+ * 收口装饰:委派期间组件被外部修改且 commit 走了 keep_external → 结果尾追加提示行。
+ * m4-real-llm 实测:keep_external 只 console.warn,主 agent 读到人工 stub 误判「子 agent 返回占位符」
+ * → 用合法读后写直写覆盖人工值;提示随委派结果回流主上下文后主 agent 才有正确语义。
+ * state 形状见 codeAssetMiddleware 的 '__pgKeepExternal'(字面量同层约定,harness 不 import sdk)。
+ * 纯函数可单测。
+ */
+export function decorateSubagentResult(result: string, state: unknown): string {
+  const kept = (state as { __pgKeepExternal?: string[] } | undefined)?.__pgKeepExternal
+  if (!kept?.length) return result
+  return `${result}\n\n⚠️ [keep_external] 委派期间组件「${kept.join('、')}」的代码被外部(人工/宿主)修改,已保留外部版本,本次子 agent 的修改未提交。这不是子 agent 失败。请勿直接重写、也勿立即重新委派 —— 先向用户如实说明「检测到你在生成期间手动修改了该组件,已保留你的版本」,由用户决定是否仍按原任务继续。`
+}
+
+/**
  * 构造并跑一个子 agent,返回最终文本结论。
  * 过程隔离:独立 state/messages;signal 继承(主停则子停);
  * 工具调用进度经 forward 转发到主 UI(不进入主 LLM 上下文)。
@@ -461,7 +474,8 @@ async function runSubagent(
     if (forward && (e.type === 'tool_call' || e.type === 'tool_result' || e.type === 'reasoning')) forward(e)
   }, childAc.signal)
   if (!opts.timeoutMs || opts.timeoutMs <= 0) {
-    try { return await streamP } finally { cleanup() }
+    // afterAgent 在 finally 段跑(commit/keep_external 检出),await streamP resolve 时标记已就绪,可安全装饰
+    try { return decorateSubagentResult(await streamP, child.getState()) } finally { cleanup() }
   }
   // P1-17b:子执行超时(opt-in)—— race 超时 abort 子流并抛错(spawn 工具 catch → recoverable 回灌,主 LLM 可重试/拆小子任务)
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -473,7 +487,7 @@ async function runSubagent(
   })
   // 超时收口后 streamP 的 abort rejection 无人 await → 吞掉防 unhandled(同 stallTimeout 模式;正常路径 race 直接消费 streamP)
   streamP.catch(() => {})
-  try { return await Promise.race([streamP, timeoutP]) } finally { clearTimeout(timer); cleanup() }
+  try { return decorateSubagentResult(await Promise.race([streamP, timeoutP]), child.getState()) } finally { clearTimeout(timer); cleanup() }
 }
 
 export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
