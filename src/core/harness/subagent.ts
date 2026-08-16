@@ -264,7 +264,9 @@ export function isPathWritable(jsonPath: string, prefixes: string[]): boolean {
 /** 包写工具一层 path guard:args 所有 jsonPath 必须在 writablePaths 前缀内;越界 → PATH_OUT_OF_SCOPE;整体 set(无 jsonPath)禁。 */
 export function wrapWithPathGuard(t: StructuredToolInterface, prefixes: string[]): StructuredToolInterface {
   const orig = t.invoke.bind(t)
-  const guarded = async (args: any) => {
+  // 第二参 config 透传(rv-verify A2 同族):丢弃会让子栈写工具失去 per-call __pgDataScope,
+  // 退回 ambient 兜底 —— 并行两子 scope 交错时子写基线可串 scope(A2 主栈同款窗口)
+  const guarded = async (args: any, config?: unknown) => {
     // P1-18(fix-authorization-surface):patches 含无 jsonPath 项 = 作用于根 → 拒绝。
     // 修原 extractWritePaths 只收集有 path 项 → 混合批量「收集到的合法即整体放行」的越界口子
     if (Array.isArray(args?.patches) && args.patches.some((p: any) => !p || typeof p.jsonPath !== 'string' || !p.jsonPath)) {
@@ -279,7 +281,7 @@ export function wrapWithPathGuard(t: StructuredToolInterface, prefixes: string[]
         return `PATH_OUT_OF_SCOPE:子 agent 写 "${p}" 越界(仅可写 ${prefixes.join(', ')})。`
       }
     }
-    return orig(args)
+    return config !== undefined ? (orig as unknown as (a: unknown, c?: unknown) => unknown)(args, config) : orig(args)
   }
   return new Proxy(t, {
     get(target, prop, receiver) {

@@ -1526,12 +1526,20 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   /** 登记在途流:建内部 controller + 联动外部 signal;返回 controller 与注销函数 */
   function trackActive(outer?: AbortSignal): { controller: AbortController; untrack: () => void } {
     const controller = new AbortController()
+    // rv-core F6:listener 具名 + untrack 时移除 —— 原 {once:true} 永不清理,长寿命外部 signal 复用时单调累积
+    const relay = () => controller.abort()
     if (outer) {
       if (outer.aborted) controller.abort()
-      else outer.addEventListener('abort', () => controller.abort(), { once: true })
+      else outer.addEventListener('abort', relay, { once: true })
     }
     activeControllers.add(controller)
-    return { controller, untrack: () => activeControllers.delete(controller) }
+    return {
+      controller,
+      untrack: () => {
+        activeControllers.delete(controller)
+        outer?.removeEventListener('abort', relay)
+      },
+    }
   }
   function abortAllActive(): void {
     for (const c of activeControllers) c.abort()
@@ -1665,6 +1673,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
     async send(message: string, options?: SendOptions): Promise<string> {
       await core.initDone
+      // 存活守卫(rv-core F6):runSerial 排队的 send 在等待期间双实例 unmount(release → refCount 0)后
+      // 照常执行会烧 LLM + 写已释放 core;refCount≤0 直接拒(排队等待白等比烧 token 好)
+      if (core.refCount <= 0) throw new Error('page-agent-sdk: agent 已释放(unmount),拒绝排队中的 send')
       // 容错:partial 调用(headless 实测 sdk.send(msg) 不传 options)→ 默认空对象,避免 options.interceptors 误访问 undefined
       options = options ?? {}
       // mission 显式覆盖(send({mission}) 优先于自动 capture)
@@ -1682,6 +1693,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       let pushed = false
       // P1-1(fix-hang-and-feedback):无响应方路径自动拒确认 + observable error 转发(详见 makeStreamWatch 注释)
       const streamWatch = makeStreamWatch(options.signal)
+      const sidAtSend = core.sessionId  // 孤儿收口(rv-core F5):invoke 期间 resetSession/switch 换会话的比对锚
       while (true) {
         if (!pushed) {
           messages.push({ role: 'user', content: msg, timestamp: Date.now() })
@@ -1690,6 +1702,13 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         try {
           // P1-4(fix-hang-and-feedback):signal 穿透 —— 原 invoke 不带 signal,send 完全不可中断(headless 唯一出路=刷新)
           let reply = await core.agent!.invoke(messages, options.signal, streamWatch)
+          // 孤儿收口(rv-core F5):abort 落在模型调用内 → createAgent 不抛、返回 partial;resetSession 同步
+          // 无闸,期间已清态/换 sessionId → 不向新会话推孤儿 assistant 也不落盘(返回 partial 给调用方,
+          // 留痕丢弃原因)。refCount≤0 = 已 unmount(release),同理不写已释放 core
+          if (options.signal?.aborted || core.sessionId !== sidAtSend || core.refCount <= 0) {
+            core.agent?.debugLogs?.value?.push({ timestamp: Date.now(), type: 'middleware', data: { stage: 'orphan_round_dropped', fromSession: sidAtSend, aborted: !!options.signal?.aborted, sessionChanged: core.sessionId !== sidAtSend } })
+            return reply
+          }
           // output 拦截器:返回前 postprocess(可改写最终回复)
           if (options.interceptors?.output) {
             try { const r = options.interceptors.output(reply); if (typeof r === 'string') reply = r } catch { /* 拦截器抛错忽略,用原 reply */ }
@@ -1725,6 +1744,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     async batch(tasks: string[], onProgress?: (p: BatchProgress) => void, signal?: AbortSignal): Promise<BatchResult[]> {
       await core.initDone
       if (!tasks.length) return []
+      if (core.refCount <= 0) throw new Error('page-agent-sdk: agent 已释放(unmount),拒绝排队中的 batch')  // rv-verify A6 同族:release 后剩余任务照跑烧 LLM
       const results: BatchResult[] = []
       const streamWatch = makeStreamWatch(signal)  // P1-1:批处理同样无 UI 响应方,确认超时自动拒;error 转发同 send
       for (let i = 0; i < tasks.length; i++) {
@@ -2231,23 +2251,28 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   let titleLLMDone = false   // LLM 标题是否已生成(每会话一次,主旨更准;switchSession/onClear 重置)
 
   /**
-   * fire-and-forget 落盘统一出口:吞错 + debug 留痕(deferred RE 组修复)。
+   * fire-and-forget 落盘统一出口:吞错 + debugLogs 留痕(deferred RE 组修复;rv-recent F2 补留痕)。
    * 原 `void store.save(...)` 无 .catch —— release 后迟到写(store.dispose 已关 IDB 连接)/配额满等
    * 拒绝无人接 → unhandledRejection(browser e2e 实测:InvalidStateError: The database connection is closing)。
+   * 留痕进 debugLogs(observable,DebugDrawer/集成方可见),非 debug console 噪声。
    */
+  function notePersistFailure(stage: string, e: unknown): void {
+    if (options.debug) console.warn(`[page-agent-sdk][persist] ${stage} 失败(已吞):`, e)
+    const logs = core.agent?.debugLogs
+    if (logs) {
+      logs.value.push({ timestamp: Date.now(), type: 'middleware', data: { stage: 'persist_save_failed', kind: stage, error: String(e).slice(0, 160) } })
+    }
+  }
+
   function persistSave(patch: Partial<SessionSnapshot>): void {
     if (!core.sessionId || !store) return
-    store.save(agentId, core.sessionId, patch).catch((e: unknown) => {
-      if (options.debug) console.warn('[page-agent-sdk][persist] save 失败(已吞):', e)
-    })
+    store.save(agentId, core.sessionId, patch).catch((e: unknown) => notePersistFailure('save', e))
   }
 
   /** fire-and-forget 标题更新(同 persistSave,吞错防 unhandled rejection) */
   function persistUpdateTitle(sid: string, title: string): void {
     if (!store) return
-    store.updateTitle(agentId, sid, title).catch((e: unknown) => {
-      if (options.debug) console.warn('[page-agent-sdk][persist] updateTitle 失败(已吞):', e)
-    })
+    store.updateTitle(agentId, sid, title).catch((e: unknown) => notePersistFailure('updateTitle', e))
   }
 
   /** 持久化当前会话的 messages + todos(一轮结束 / send 后调用) */
@@ -2296,7 +2321,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           const llmTitle = await titleLlmInvoke(messages)
           // 迟到守卫(deferred RE 组修复):LLM 期间卸载(refCount≤0 → store 已 dispose)或切会话(sessionId 变)→ 放弃
           if (llmTitle && core.refCount > 0 && core.sessionId === sid) {
-            persistUpdateTitle(sid, llmTitle)
+            // 时序契约:必须先等标题落盘再 refreshSessions —— updateTitle 经 storage per-key 串行链
+            // (≥1 微任务延迟)而 listSessions 的 scan 直读,fire-and-forget 会让会话列表读到旧标题
+            // (rv-recent F1,3.19 稳定性小修自引入的回归)
+            try { await store!.updateTitle(agentId, sid, llmTitle) } catch (e) { notePersistFailure('updateTitle', e) }
             await refreshSessions()
           }
         } catch {

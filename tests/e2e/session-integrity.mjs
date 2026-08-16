@@ -98,5 +98,30 @@ export async function run() {
     a.unmount(); b.unmount()
   }
 
+  console.log('[e2e:session-integrity] round2 A5:send 在途 resetSession → abort partial 不推孤儿 assistant 进新会话')
+  {
+    const bind = { title: 't' }
+    const llm = stubModel(
+      { text: '生成中的 partial 回复', delayMs: 400 },   // 延迟制造在途窗口;abort 落模型调用内 → 返 partial 不抛
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-si-orphan', storage: false, llm,
+      data: { schema: z.object({ title: z.string() }), bind },
+      capabilities: { ...CAPS, vfs: false },
+    })
+    await sdk.mount()
+    const sidBefore = sdk.sessionId
+    const p = sdk.send('会话一的消息')          // invoke 在途(400ms)
+    await new Promise((r) => setTimeout(r, 80)) // 等进入 LLM 调用
+    sdk.resetSession()                          // 同步清态 + 换 sessionId + abort
+    const reply = await p                       // abort 落模型内 → 返 partial(不抛)
+    assert(typeof reply === 'string', '前置:send 返回 partial(abort 落模型调用内不抛)')
+    assert(sdk.sessionId !== sidBefore, '前置:resetSession 已换会话')
+    const orphan = sdk.messages.filter((m) => m.role === 'assistant')
+    assert(orphan.length === 0, '✓ A5 孤儿轮被丢弃:partial assistant 未推进新会话(修前 push 进新会话并落盘)')
+    assert(sdk.messages.length === 0, '✓ A5 resetSession 后 messages 保持空(user 已被 splice,assistant 未补)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

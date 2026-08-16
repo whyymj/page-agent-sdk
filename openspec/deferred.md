@@ -393,6 +393,14 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 5. **并行写 beforeBind 快照交错**(rv-code,理论):默认串行无触发;并行写丢更新本就是已文档化已知限制(见 2026-08-15 审查暂缓项 #8)。
 6. **beforeBind 深拷贝成本优化**(rv-code 建议:浅拷贝):codeAsset 场景每写一次 deepClone;大 bind 下可评估按 pgIdPaths 局部拷贝。**触发**:大 schema 性能实测出现瓶颈。
 
+### [2026-08-16] 第二轮三路审查(rv-core)QUESTION 项 — ⏸ 暂缓(设计语义待裁决)
+
+**来源**:round2-review-hardening 修复批之外的 3 条 QUESTION(详见 `openspec/changes/2026-08-16-round2-review-hardening/proposal.md` C 段)。
+
+1. **组件锁 none 分支并发写缝**(rv-core F4):task 文本 0/≥2 命中组件名 → 不锁 → 同轮并发主写 components.N.code 与 codeAsset commit 无检测交错(recomputeBaseline 后 hash 匹配 → 静默覆盖)。**重启触发**:并行委派真 LLM 回归出现「子 agent 刚 commit 的 code 被主写覆盖」实例;修法候选:none 分支也按命中集加弱锁(仅锁 code 子树)或编排 prompt 强化。
+2. **系统段预算 PIN 段口径**(rv-core F7):25% 预算 drop 的 PIN_SEGMENT_NAMES 仅 mission/workingMemory,不含 focus/resourcesPin —— 焦点提示段可被 drop 而 strict 强制仍生效(三层收敛退化为一层,烧轮次自纠)。**重启触发**:真 LLM 回归出现「聚焦场景超预算丢提示 → 反复 PATH_DENIED」实例;修法:两键并入 PIN_SEGMENT_NAMES(行为变更,需评估 token 成本)。
+3. **spawn 自授 writablePaths 绕过组件锁**(rv-core F8):spawn_agent({writablePaths:['components']}) 子 agent 直写不经 componentLock/codeAsset checkout-commit,可与在途 use_<id> 委派并发覆盖。**重启触发**:编排 spawn+writablePaths 混用场景出现覆盖实例;修法候选:装配期拒与 codeAsset 前缀交集或同锁。
+
 ## 维护约定
 
 - 暂缓项**不进** `project.md`「进行中的 change」(避免占心智);本文件是唯一索引。

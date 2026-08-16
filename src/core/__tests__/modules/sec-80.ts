@@ -47,11 +47,24 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(true, 'E2 wrap-up 只去首条 system(修改已应用)')
   }
 
-  console.log('\nE3:streamStallMs:0 启动闸语义')
+  console.log('\nE3:withStallTimeout 真行为(ms<=0 透传 / >0 看门狗抛 StreamStalledError;round2 B2 重写占位)')
   {
-    // E3 修改:stallMs=0 不套 race 启动闸
-    // 需要 stream 测试环境,简化为验证修改存在
-    assert(true, 'E3 stallMs=0 不套 race(修改已应用)')
+    const { withStallTimeout, StreamStalledError } = await import('../../utils/stallTimeout')
+    // ms<=0(含 0 与负)→ 原样透传:正常流完整迭代,不套计时
+    const passthrough = withStallTimeout((async function* () { yield 1; yield 2 })(), 0)
+    const got: number[] = []
+    for await (const v of passthrough) got.push(v)
+    assert(got.join(',') === '1,2', 'E3 stallMs=0 → 透传(流完整迭代,不套 race 启动闸;文档承诺「设 0 关」)')
+    const passthroughNeg = withStallTimeout((async function* () { yield 'a' })(), -5)
+    const gotNeg: string[] = []
+    for await (const v of passthroughNeg) gotNeg.push(v)
+    assert(gotNeg[0] === 'a', 'E3 stallMs 负值 → 同样透传(ms>0 才启用看门狗)')
+    // ms>0 → 首 chunk 超时抛 StreamStalledError(status 408,不重试语义)
+    const blackHole = (async function* () { await new Promise(() => { /* 永不 yield:等首 chunk 超时 */ }) })()
+    let stalled: unknown = null
+    try { for await (const _v of withStallTimeout(blackHole, 60)) { void _v } } catch (e) { stalled = e }
+    assert(stalled instanceof StreamStalledError, 'E3 ms>0 黑洞流(首 chunk 停滞)→ 抛 StreamStalledError')
+    assert((stalled as { status?: number }).status === 408, 'E3 StreamStalledError 带 status=408(isRetryable 判 4xx 不当网络错重试)')
   }
 
   console.log('\nE4:vfs 超池显式报错')

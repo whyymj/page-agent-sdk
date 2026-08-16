@@ -1,4 +1,4 @@
-import { constructLlmFromConfig, constructOpenLlmSync } from '../../llm/constructLlm'
+import { constructLlmFromConfig, constructOpenLlmSync, normalizeBaseUrl } from '../../llm/constructLlm'
 import { extractTextDelta, extractReasoningDelta, extractUsage, normalizeUsage } from '../../utils/contentParts'
 import { createAgent } from '../../harness/createAgent'
 import { createSubagentMiddleware } from '../../harness/subagent'
@@ -71,6 +71,18 @@ export async function run(ctx: TestCtx): Promise<void> {
     const llm = constructOpenLlmSync({ apiKey: 'sk', model: 'deepseek', extraBody: { thinking: { type: 'enabled' } } })
     const kw = (llm as any).lc_kwargs || {}
     assert(!!kw.modelKwargs && kw.modelKwargs.thinking?.type === 'enabled', 'constructOpenLlmSync extraBody → modelKwargs 透传')
+  }
+  {
+    // normalizeBaseUrl(round2 B4:导出纯函数此前零测试):相对路径补 origin(浏览器)/ 其余原样
+    const g = globalThis as { location?: { origin: string } }
+    const origLocation = g.location
+    assert(normalizeBaseUrl(undefined) === undefined, 'normalizeBaseUrl undefined → undefined')
+    assert(normalizeBaseUrl('https://api.x.com') === 'https://api.x.com', 'normalizeBaseUrl 绝对 URL → 原样')
+    assert(normalizeBaseUrl('/llm') === '/llm', 'normalizeBaseUrl 相对路径在无 location(Node/SSR)→ 原样(由调用方抛错)')
+    g.location = { origin: 'http://localhost:3000' }
+    try {
+      assert(normalizeBaseUrl('/llm') === 'http://localhost:3000/llm', 'normalizeBaseUrl 相对路径在浏览器 → 补 location.origin 成绝对 URL')
+    } finally { if (origLocation === undefined) delete g.location; else g.location = origLocation }
   }
   console.log('\n[streaming provider 兼容 · contentParts 纯函数]')
   {

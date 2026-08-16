@@ -187,6 +187,31 @@ export async function run() {
     delete globalThis.localStorage
   }
 
+  console.log('[e2e:storage] autoTitle 标题时序:LLM 标题落盘后 sessions 响应式列表即时可见(round2 A1)')
+  {
+    const { StubChatModel } = await import('./_stub-model.mjs')
+    const m3 = new Map()
+    globalThis.localStorage = {
+      getItem: (k) => (m3.has(k) ? m3.get(k) : null),
+      setItem: (k, v) => m3.set(k, String(v)),
+      removeItem: (k) => m3.delete(k),
+      key: (i) => Array.from(m3.keys())[i] ?? null,
+      get length() { return m3.size },
+      clear: () => m3.clear(),
+    }
+    const model3 = new StubChatModel([{ text: '第一轮完成' }, { text: '真LLM会话标题' }])
+    const sdk3 = createChatSdk({ ui: false, id: 'e2e-autotitle-order', storage: 'local', llm: model3, capabilities: MIN_CAPS })
+    await sdk3.mount()
+    await sdk3.send('随便问点什么')
+    // 标题 invoke 为 fire-and-forget 异步;轮询等响应式 sessions 出现 LLM 标题(修前:refreshSessions
+    // 在 updateTitle 串行链落盘前 scan → 列表停留规则标题直到下次全量刷新)
+    const deadline = Date.now() + 5000
+    while (!(sdk3.sessions.value ?? []).some((x) => x.title === '真LLM会话标题') && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50))
+    assert((sdk3.sessions.value ?? []).some((x) => x.title === '真LLM会话标题'), '✓ A1 autoTitle 后 sessions 响应式列表即时显示 LLM 标题(写-读时序,修前显示旧规则标题)')
+    sdk3.unmount()
+    delete globalThis.localStorage
+  }
+
   console.log('[e2e:storage] autoTitle 迟到守卫:标题 LLM 在途时 unmount → 放弃写入,零 unhandledRejection')
   {
     const { StubChatModel } = await import('./_stub-model.mjs')

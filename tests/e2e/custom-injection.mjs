@@ -24,6 +24,38 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:custom-injection] 用户 wrapToolCall 抛普通 Error → 轮存活 + recoverable 错误回灌(round2 B1)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    const llm = stubModel(
+      { toolCalls: [{ name: 'read', args: {} }] },   // read 触发用户中间件爆炸
+      { text: '虽工具出错但我已收口完成' },            // 回灌自纠后正常收口
+    )
+    const results = []
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-user-mw-throw', storage: false, llm,
+      capabilities: MIN_CAPS,
+      middleware: [{
+        name: 'boomMw',
+        wrapToolCall: async (ctx, next) => {
+          if (ctx.name === 'read') throw new Error('用户中间件爆炸')
+          return next(ctx)
+        },
+      }],
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' }, description: 't' },
+    })
+    await sdk.mount()
+    // 注:invoke(send)模式只发核心事件,tool_call/tool_result 过程事件仅 stream 模式(3.15 已踩)→ 用 stream 观测
+    const unsub = sdk.hook((e) => { if (e.type === 'tool_result' && e.name === 'read') results.push({ text: String(e.result ?? ''), status: e.status }) })
+    const reply = await sdk.stream([{ role: 'user', content: '读一下', timestamp: Date.now() }], () => {})
+    unsub(); sdk.unmount()
+    const tr = results[0]
+    assert(!!tr, 'read 的 tool_result 已回灌(轮未中断)')
+    assert(tr.status === 'error', '✓ 用户中间件 throw → tool_result status=error(非 fatal 崩溃)')
+    assert(tr.text.includes('用户中间件爆炸'), '✓ 错误文本保留原信息(recoverable 回灌,非整轮 fatal)')
+    assert(reply.includes('收口完成'), '✓ 轮存活:回灌后 LLM 自纠正常收口(arch P1-1 契约,修前普通 Error 即 fatal 整轮)')
+  }
+
   console.log('[e2e:custom-injection] 自定义 middleware 注入 → inspect().middleware 含')
   {
     const myMw = { name: 'myMw', beforeAgent: () => {} }

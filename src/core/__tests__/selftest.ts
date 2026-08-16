@@ -84,6 +84,7 @@ import { run as run_sec_78 } from './modules/sec-78'
 	import { run as run_sec_79 } from './modules/sec-79'
 import { run as run_sec_80 } from './modules/sec-80'
 import { run as run_sec_81 } from './modules/sec-81'
+import { run as run_sec_82 } from './modules/sec-82'
 
 // tsx 运行时由 node 提供 process;tsc 静态检查无 @types/node,显式声明其类型
 declare const process: { exit(code?: number): never }
@@ -102,8 +103,9 @@ function assert(cond: unknown, msg: string): void {
     console.error('  ✗ FAIL:', msg)
   }
 }
-async function invoke(tool: any, args: any): Promise<string> {
-  return await tool.invoke(args)
+async function invoke(tool: any, args: any, config?: unknown): Promise<string> {
+  // config 可选:透传工具第二参(sec-82 需注入 configurable.__pgDataScope 模拟主/子 scope)
+  return await (config !== undefined ? tool.invoke(args, config) : tool.invoke(args))
 }
 const byName = (tools: any[]) => Object.fromEntries(tools.map((t) => [t.name, t])) as Record<string, any>
 
@@ -191,6 +193,7 @@ await run_sec_78(ctx)
 	await run_sec_79(ctx)
 await run_sec_80(ctx)
 await run_sec_81(ctx)
+await run_sec_82(ctx)
   console.log(`\n==== ${passed}, ${failed} failed ====`)
   if (failed > 0) process.exit(1)
 })()

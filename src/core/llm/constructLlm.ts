@@ -97,9 +97,12 @@ export async function constructLlmFromConfig(cfg: LLMConfig, opts: ConstructOpts
     ...(cfg.baseUrl ? { anthropicApiUrl: normalizeBaseUrl(cfg.baseUrl) } : {}),
     ...(cfg.extraConfig ? { clientOptions: cfg.extraConfig } : {}),
     // prompt caching:走 invocationKwargs 透传顶层 cache_control(服务端自动在最后一个可缓存块打断点并随对话推进,
-    // ReAct 多轮前缀命中 input 价格 ~1/10)。注:不能走构造器顶层 cache_control 字段 —— 实测 @langchain/anthropic
-    // 1.5.4 只消费「调用时 options.cache_control」,构造字段不进请求体;invocationKwargs 直接展开进 body 且
-    // 显式 cache_control:undefined 在 JSON 序列化被丢弃,不会覆盖。true=ephemeral(5m);'1h'=长 TTL
+    // ReAct 多轮前缀命中 input 价格 ~1/10)。机制(rv-recent F3 勘误,已验 @langchain/anthropic@1.5.4 dist):
+    // ① 构造器顶层 cache_control 字段不进请求体(invocationParams 只消费调用时 options.cache_control);
+    // ② invocationParams 里显式 cache_control:undefined 会覆盖 invocationKwargs 的同名键,真正救回它的是
+    //    createStreamWithRetry/completionWithRetry 最终请求构造的**第二次 spread**({...rest, ...this.invocationKwargs});
+    // ③ 行为因此钉死在 1.5.x 的 spread 顺序上 —— 升级后须用 cache_read_input_tokens 归零复检(真 LLM 基线兜底)。
+    // true=ephemeral(5m);'1h'=长 TTL
     ...(cfg.cacheControl
       ? {
           invocationKwargs: {

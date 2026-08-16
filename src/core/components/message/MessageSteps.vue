@@ -84,7 +84,9 @@ const expanded = {
     const key = `${uid}:${sIdx}`
     if (expandedGlobal.has(key)) expandedGlobal.delete(key)
     else {
-      expandedGlobal.clear()  // 全局单展开
+      // 单展开只收敛到本实例(uid 前缀):同页双对话框互不干扰(rv-recent F4 —— 原全局 clear 会
+      // 收起另一实例的面板);本实例内跨消息/跨步骤互斥语义保留
+      for (const k of Array.from(expandedGlobal)) if (k.startsWith(`${uid}:`)) expandedGlobal.delete(k)
       expandedGlobal.add(key)
     }
   },

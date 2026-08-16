@@ -46,6 +46,7 @@
 
 | change | 状态 | 一句话 |
 |---|---|---|
+| [`2026-08-16-round2-review-hardening/`](./2026-08-16-round2-review-hardening/) | **实施完成**(待随下版发布归档) | 第二轮三路审查(rv-recent 增量面 / rv-core 跨模块不变量 / rv-coverage 盲区)22 条原始发现 → 裁决 9 修复 + 4 测试补强 + 3 deferred + 9 误报否决。修复:autoTitle 标题时序回归 / 主栈 `__pgDataScope` 兜底(3.7 同类残留,autoLock 静默放行面)/ query+get 大文本摘要 / 失败读不刷乐观锁基线 / send 孤儿轮收口 / release 后排队 send 守卫 / MessageSteps 跨实例展开 / cacheControl 注释勘误 / persistSave debugLogs 留痕。测试:+conflict overwrite-restore 顶层分支 / +wrapToolCall throw 契约 / sec-80 E3 占位重写 / +normalizeBaseUrl / +sec-82 修复锁 8 项 |
 | [`2026-08-15-parallel-subagent-delegation/`](./2026-08-15-parallel-subagent-delegation/) | proposal 已评审(三方评审裁定:冲突改立即回灌不排队 + 分两批实施);第一批实施中 | 多子 agent 同轮并行委派:第一批 = prompt 并行化 + **失败隔离**(无关联任务一个出错不批量回退)+ commit 逐组件容错;第二批 = **同组件写互斥**(组件锁:立即回灌 `COMPONENT_BUSY` + 主 agent 写检查 `COMPONENT_LOCKED`)+ **人工并发 commit 冲突检测**(checkout hash 比对,人工优先 keep_external);后台 agent 模式登记 deferred |
 
 ---

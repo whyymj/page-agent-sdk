@@ -2,6 +2,30 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.19.1] - 2026-08-16
+
+### Fixed(第二轮三路审查 round2-review-hardening;openspec change 同名)
+- **autoTitle 标题时序回归**(rv-recent F1,3.19 稳定性小修自引入):`persistUpdateTitle` fire-and-forget(经 storage per-key 串行链 ≥1 微任务)后立即 `refreshSessions`(scan 直读)→ 会话列表显示旧标题。修:autoTitle 路径改 await updateTitle(带 catch)再 refresh
+- **主栈 scope 闭包残留**(rv-core F1,3.7 同类):主 agent 工具 config 不含 `__pgDataScope` → 恒走 ambient `activeScope` 兜底;并行委派下子 agent wrapWithScope 的 enter/exit 窗口改写 ambient → 并发主工具读到子 scope(子基线 undefined → **autoLock 静默放行** / 主 read 误判子 scope 全文灌上下文;双子窗口交叠可致 ambient 永久滞留子 scope)。修:coreExecTool 给主栈 config 兜底注入 `__pgDataScope:''`(子栈 wrapWithScope 覆盖不受影响)
+- **query_data/get_data 绕过大文本摘要**(rv-core F2):`<code Nkb>` 摘要只挂 read,query_data(simple 默认可用)原样回灌命中 value → codeAsset 场景大 code 确定性击穿。修:两工具回灌前统一过 `summarizeLargeText`(同 read 的 isMain 语义:主 scope 摘要/子 scope 全文)
+- **失败读刷乐观锁基线**(rv-core F3):read 在路径校验前 setBaseline → PATH_DENIED/UNSAFE 失败读吸收宿主改动 → 后续 autoLock 静默覆盖。修:基线刷新下移到校验通过后(多路径至少一个合法才刷;与 get_data 同序)
+- **resetSession 竞态孤儿消息**(rv-core F5):在途 send 的 invoke 被 abort 返 partial 不抛 → push 进新会话并落盘。修:invoke resolve 后校验 aborted/sessionId/refCount 三锚,孤儿轮丢弃留痕
+- **排队 send 在 release 后照跑**(rv-core F6):runSerial 排队操作无存活守卫(LLM 照烧);trackActive 的 `{once:true}` listener 永不清理。修:core.send 入口 refCount≤0 拒;untrack removeEventListener
+- **MessageSteps 跨实例展开互斥**(rv-recent F4):模块级单展开 Set 全局 clear → 同页双对话框互相收起。修:toggle 只清本实例 uid 前缀(单对话框互斥保留)
+- persistSave 吞错补 debugLogs 留痕(rv-recent F2,observable `persist_save_failed`);cacheControl 注释机制勘误(rv-recent F3:真正救回 invocationKwargs 的是 create 调用内二次 spread,已验 1.5.4,升级须 cache_read 复检)
+
+### Fixed(第二轮复审 rv-verify 残留清零:APPROVE 后同族补刀)
+- **A4 修复补完**:单路径 read 的 `setBaseline` 再下移到 `interceptors.read` try/catch 之后 —— 拦截器对**合法路径**抛错返回的 READ_INTERCEPT 不含 hash,修前仍刷基线 → 同款「静默覆盖宿主改动」构造窗口(多路径分支因输出头披露 hash 不受影响,维持原判定)
+- **A2 同族(子栈)**:`wrapWithPathGuard` 的 `guarded(args)` 丢弃第二参 → 子栈带 writablePaths 的写工具失去 per-call `__pgDataScope` token,退回 ambient 兜底(并行两子 scope 交错时子写基线可串 scope)。修:config 透传
+- **A6 同族**:`sdk.batch` 入口补 refCount 存活守卫(release 后剩余任务不再继续烧 LLM)
+- A1 一致性:autoTitle await 路径的 catch 走 `notePersistFailure`(与 A9 留痕口径统一)
+
+### Tests(第二轮审查盲区核实成立项)
+- e2e conflict:**resolveConflict 顶层 overwrite/restore 分支**(agent 值落地/回退种子快照;此前只有 keep_external)
+- e2e custom-injection:**用户 wrapToolCall throw → 轮存活 + recoverable 回灌**(sec-80 E1 原只测辅助纯函数;观测走 stream 模式 —— invoke 只发核心事件的既有约定)
+- selftest sec-80 E3 重写:**withStallTimeout 真行为**(ms≤0 透传 / >0 黑洞流抛 StreamStalledError status=408;原为 assert(true) 占位)
+- selftest:**normalizeBaseUrl 纯函数**(相对路径浏览器补 origin / Node 原样 / 绝对原样;导出 API 此前零测试)
+- selftest 2207→**2222**(+sec-81 icons 之外:sec-82 round2 修复锁 8 项)/ e2e 703→**718**(+B1/B3/A1/A5 回归锁);审查误报裁决记录(sec-26/78/79/80 既有覆盖否决 rv-coverage 7 条)与 rv-core F4/F7/F8 暂缓登记见 openspec
 ## [3.19.0] - 2026-08-16
 
 ### Added(真 LLM 回归评估框架化;deferred 触发线达成)

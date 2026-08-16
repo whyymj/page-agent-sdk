@@ -603,6 +603,9 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       const h = hashValue(bindRef)
       setBaseline(h, scope)
       if (val === undefined) return `主数据${jp ? ` @ ${jp}` : ''} = (undefined) (hash=${h})`
+      // 大文本摘要(rv-core F2):read 有 <code Nkb> 摘要而 get_data 没有 → advanced 主 agent 换工具即可确定性击穿;
+      // 与 read 同 isMain 语义(主 scope 摘要 / 子 scope 全文)
+      val = summarizeLargeText(val, scope === MAIN_SCOPE, largeTextSpecs, largeTextThreshold)
       return `主数据${jp ? ` @ ${jp}` : ''} = ${safeStringify(val)} (hash=${h})`
     },
     {
@@ -792,7 +795,8 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   )
 
   const queryData = tool(
-    async ({ expr, limit }) => {
+    async ({ expr, limit }, config) => {
+      const qScope = scopeOf(config)  // 大文本摘要的 isMain 语义用(主 scope 摘要 / 子 scope 全文)
       if (bindRef == null || typeof bindRef !== 'object') {
         return toolError({ code: 'NOT_OBJECT', message: `主数据不是对象/数组,无法查询(当前为 ${bindRef === undefined ? 'undefined' : typeof bindRef})`, hint: 'query 仅适用于对象/数组;叶子用 get_data 读' })
       }
@@ -803,7 +807,9 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       }
       const cap = limit ?? 50
       const sliced = nodes.slice(0, cap)
-      const parts = sliced.map((n) => `{"path":${JSON.stringify(n.path)},"index":${n.index === undefined ? 'null' : n.index},"value":${safeStringify(n.value)}}`)
+      // 大文本摘要(rv-core F2):query_data(simple 默认可用)原样回灌命中 value → codeAsset 场景大 code
+      // 绕过 read 的 <code Nkb> 机制直灌主上下文;与 read 同 isMain 语义
+      const parts = sliced.map((n) => `{"path":${JSON.stringify(n.path)},"index":${n.index === undefined ? 'null' : n.index},"value":${safeStringify(summarizeLargeText(n.value, qScope === MAIN_SCOPE, largeTextSpecs, largeTextThreshold))}}`)
       return `{"matched":${nodes.length},"returned":${sliced.length},"truncated":${nodes.length > cap},"results":[${parts.join(',')}]}`
     },
     {
@@ -934,12 +940,16 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     async ({ jsonPath, jsonPaths, fields, depth, offset, limit }, config) => {
       const scope = scopeOf(config)  // CA 并发修复:per-call scope token(基线归属 + 大文本摘要主/子判定)
       const h = hashValue(bindRef)  // 整体 hash(与 get_data 一致,乐观锁比对整体);多路径/分页/单路径统一取一次
-      setBaseline(h, scope)
+      // 基线刷新时机(rv-core F3):原在路径校验前 setBaseline → PATH_DENIED/UNSAFE 失败读也刷基线,
+      // 可构造「失败读吸收宿主改动 → 后续 autoLock 静默覆盖」;下移到校验通过后(与 get_data 同序,
+      // 多路径至少一个合法路径才刷)
       // 多路径模式:一次读多个不相关子路径(各路径独立投影/拦截/裁剪;非法路径单项标错,不整批失败),省多轮往返
       if (jsonPaths && jsonPaths.length) {
+        let anyAllowed = false
         const lines = jsonPaths.map((jpRaw) => {
           const jp = jpRaw || ''
           if (!isPathAllowed(jp, schema, allowKeys)) return `- ${jp || '(根)'}: [PATH_DENIED: 不在 schema 声明字段内]`
+          anyAllowed = true
           let target = jp ? getByPath(bindRef, jp) : bindRef
           if (!jp && allowKeys) target = projectBySchemaDeep(target, schema)
           else if (allowKeys) { const ss = getSchemaAtPath(schema, jp); if (ss) target = projectBySchemaDeep(target, ss) }
@@ -952,6 +962,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           if (resolved === undefined) return `- ${jp} = (undefined)`
           return `- ${jp} = ${safeStringify(resolved)}`
         })
+        if (anyAllowed) setBaseline(h, scope)
         return `多路径读取(共 ${jsonPaths.length} 项,hash=${h}):\n${lines.join('\n')}`
       }
       const jp = jsonPath || ''
@@ -973,6 +984,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           return toolError({ code: 'READ_INTERCEPT', message: `read 拦截器抛错: ${(e as Error).message}` })
         }
       }
+      setBaseline(h, scope)  // 校验 + 拦截器都通过才刷基线(rv-verify A4 残留:拦截器拒合法路径不披露 hash,刷基线可构造静默覆盖)
       if (fields && fields.length) resolved = projectFields(resolved, fields)
       if (depth !== undefined && depth !== null) resolved = limitDepth(resolved, depth)
       resolved = summarizeLargeText(resolved, scope === MAIN_SCOPE, largeTextSpecs, largeTextThreshold)

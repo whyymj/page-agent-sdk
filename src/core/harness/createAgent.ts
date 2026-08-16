@@ -617,8 +617,14 @@ export function createAgent(options: CreateAgentOptions) {
     if (!target) return { content: `工具 "${ctx.name}" 不存在`, status: 'error' }
     try {
       // per-call config 通道(CA 并发修复):中间件经 ctx.callConfig 注入的键值透传到工具 fn 第二参
-      // (config.configurable.__pgXxx);zod 校验会重建 args 对象,这是唯一的 per-call 干净通道
-      const result = await (target.invoke as any)(ctx.args, ctx.callConfig ? { configurable: ctx.callConfig } : undefined)
+      // (config.configurable.__pgXxx);zod 校验会重建 args 对象,这是唯一的 per-call 干净通道。
+      // 主栈 scope 锚定(rv-core F1):默认注入 __pgDataScope=''(MAIN),主 agent 数据工具不再落
+      // ambient activeScope 闭包兜底 —— 并行委派下子 agent wrapWithScope 的 enter/exit 窗口会改写
+      // ambient,并发主栈工具读到子 scope(子基线 undefined → autoLock 静默放行 / 主 read 误判子
+      // scope 全文灌上下文)。子栈 wrapWithScope 在 invoke 时用子 scope 覆盖此键(dataOps scopeOf
+      // per-call token 优先),不受默认值影响
+      const callConfig = { __pgDataScope: '', ...(ctx.callConfig ?? {}) }
+      const result = await (target.invoke as any)(ctx.args, { configurable: callConfig })
       let content = typeof result === 'string' ? result : JSON.stringify(result)
       // 大结果外存:经 ctx.state.files(vfs 中间件注入的共享引用),超阈值转存 vfs 只留预览+引用
       content = offloadLargeResult(content, {
