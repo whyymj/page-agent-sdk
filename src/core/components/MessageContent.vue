@@ -3,10 +3,15 @@ import { ref, onMounted, nextTick, watch } from 'vue'
 import { useMarkdown, type CodeBlock } from '../composables/useMarkdown'
 import CodePreview from './CodePreview.vue'
 import { copyText } from '../utils/clipboard'
+import { MESSAGES_ZH_CN, type DialogMessages } from './messages'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   content: string
-}>()
+  /** 文案集(透传给 CodePreview;独立复用缺省中文) */
+  messages?: DialogMessages
+}>(), {
+  messages: () => MESSAGES_ZH_CN,
+})
 
 const { html, codeBlocks } = useMarkdown(() => props.content)
 
@@ -125,6 +130,7 @@ watch(html, enhanceCodeBlocks)
       v-if="previewCode"
       :code="previewCode.code"
       :lang="previewCode.lang"
+      :messages="messages"
       @close="previewCode = null"
     />
   </Teleport>

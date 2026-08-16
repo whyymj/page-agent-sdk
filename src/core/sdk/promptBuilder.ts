@@ -7,6 +7,7 @@
  */
 import { systemPromptHelpers, extractSchemaHint, type SchemaHintOptions } from '../presets'
 import type { DataConfig } from '../tools/dataOps'
+import type { DialogLocale } from '../components/messages'
 
 /**
  * 默认 systemPrompt —— 用户未传 systemPrompt 时使用。
@@ -22,6 +23,20 @@ export const DEFAULT_SYSTEM_PROMPT = [
   systemPromptHelpers.reliableWriteRules,
 ].join('\n\n')
 
+/**
+ * 默认 systemPrompt 英文版 —— dialog.locale:'en-US' 且用户未传 systemPrompt 时使用
+ * (dialog-i18n Phase 2:默认 prompt 与 UI 同语言;末行语言锚确保 agent 输出英文)。
+ * 自定义 systemPrompt 不受影响(语言由集成方定),但追加的 reliableWriteRules 段跟随 locale。
+ */
+export const DEFAULT_SYSTEM_PROMPT_EN = [
+  'You are a JSON operations assistant. The integrator declared a main data object (with zod schema validation); you complete tasks by reading and writing it safely through dedicated tools.',
+  'All writes go through scope control (only schema-declared fields) and schema validation (invalid writes return a structured error instead of being applied), with automatic snapshots for rollback.',
+  'For large objects/arrays prefer incremental patches (send only the change) over resending the whole value, to avoid output truncation.',
+  'Respond in English.',
+  '---',
+  systemPromptHelpers.reliableWriteRulesEn,
+].join('\n\n')
+
 /** 拼接「可操作数据」段到 systemPrompt:从 data 的 schema 字段 .describe() 自动提取注入 */
 export function buildDataPrompt(data: DataConfig | undefined, schemaHint?: SchemaHintOptions): string {
   if (!data) return ''
@@ -33,11 +48,13 @@ export function buildDataPrompt(data: DataConfig | undefined, schemaHint?: Schem
  * 统一 systemPrompt 的 base 段入口:处理 appendReliableWriteRules 分支 + '---' 分割线。
  *  - 传 systemPrompt:默认末尾追加 reliableWriteRules(用 '---' 分隔用户内容与 SDK 追加的写入规则);设 appendReliableWriteRules:false 则不追加
  *  - 不传 systemPrompt:用 DEFAULT_SYSTEM_PROMPT(已内置 reliableWriteRules,不重复追加)
+ *  - locale:'en-US' 时默认 prompt 用英文版,追加规则段用 reliableWriteRulesEn(默认 prompt 与 UI 语言一致)
  * 纯函数(结构化入参,无闭包依赖),返回值不含「可操作数据」段(该段由 dataHint 中间件每轮动态拼)。
  */
-export function buildSystemPrompt(opts: { systemPrompt?: string; appendReliableWriteRules?: boolean }): string {
+export function buildSystemPrompt(opts: { systemPrompt?: string; appendReliableWriteRules?: boolean; locale?: DialogLocale }): string {
+  const en = opts.locale === 'en-US'
+  const rules = en ? systemPromptHelpers.reliableWriteRulesEn : systemPromptHelpers.reliableWriteRules
   const appendRwr = opts.appendReliableWriteRules !== false
-  return opts.systemPrompt
-    ? (appendRwr ? opts.systemPrompt + '\n\n---\n\n' + systemPromptHelpers.reliableWriteRules : opts.systemPrompt)
-    : DEFAULT_SYSTEM_PROMPT
+  if (opts.systemPrompt) return appendRwr ? opts.systemPrompt + '\n\n---\n\n' + rules : opts.systemPrompt
+  return en ? DEFAULT_SYSTEM_PROMPT_EN : DEFAULT_SYSTEM_PROMPT
 }

@@ -401,6 +401,11 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 2. **系统段预算 PIN 段口径**(rv-core F7):25% 预算 drop 的 PIN_SEGMENT_NAMES 仅 mission/workingMemory,不含 focus/resourcesPin —— 焦点提示段可被 drop 而 strict 强制仍生效(三层收敛退化为一层,烧轮次自纠)。**重启触发**:真 LLM 回归出现「聚焦场景超预算丢提示 → 反复 PATH_DENIED」实例;修法:两键并入 PIN_SEGMENT_NAMES(行为变更,需评估 token 成本)。
 3. **spawn 自授 writablePaths 绕过组件锁**(rv-core F8):spawn_agent({writablePaths:['components']}) 子 agent 直写不经 componentLock/codeAsset checkout-commit,可与在途 use_<id> 委派并发覆盖。**重启触发**:编排 spawn+writablePaths 混用场景出现覆盖实例;修法候选:装配期拒与 codeAsset 前缀交集或同锁。
 
+### [2026-08-16] 工具 schema 描述语言国际化 — ⏸ 暂缓(dialog-i18n Phase 2 裁剪)
+
+**来源**:`2026-08-16-dialog-i18n-phase2` proposal 非目标段。`dialog.locale:'en-US'` 已覆盖 UI 文案 + 默认 systemPrompt(英文版身份 + reliableWriteRulesEn);但 usageHints 中间件注入的工具用法提示与 ~14 个内置工具的 schema description 仍是中文。LLM 对中文工具描述理解无碍(实测多模型正常 tool-calling),全量双化是 ~14 工具 × (description + 参数 describe + usageHints 教学段) 的大工程且增加维护双份漂移风险。**重启触发**:海外集成方实际反馈 agent 输出/理解语言异常,或英文场景真 LLM 回归出现工具误用实例。修法候选:工具描述集中注册表 + locale 键化(同 messages 模式)。
+
+
 ## 维护约定
 
 - 暂缓项**不进** `project.md`「进行中的 change」(避免占心智);本文件是唯一索引。

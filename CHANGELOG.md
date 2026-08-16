@@ -2,6 +2,13 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.21.0] - 2026-08-16
+
+### Added(dialog-i18n Phase 2;openspec `2026-08-16-dialog-i18n-phase2`)
+- **调试/技能/预览面板文案纳入 i18n**:`dialog.locale` 覆盖扩展到 DebugDrawer(6 tab/7 过滤器/状态标签/trace 指标/上下文构成/子 agent 面板/Agent 信息 ~30 kv/skill 错误,~90 键)+ SkillPanel(表单/校验/列表/提示,~25 键)+ CodePreview(标题/tab/按钮 title/CSS 示例,~10 键);`DialogMessages` 总键空间 ~91→219;三组件新增 `messages` prop(纯 props 独立复用缺省中文,ChatDialog 自动透传);DebugDrawer `formatTime` 跟 locale。补 Phase 1 漏网:ChatInput 焦点 chip ✕ title 接线
+- **默认 systemPrompt 语言策略**:`dialog.locale:'en-US'` 且未传 `systemPrompt` → 英文版默认 prompt(`DEFAULT_SYSTEM_PROMPT_EN` 导出;含 "Respond in English" 语言锚,agent 回复语言与 UI 一致);自定义 systemPrompt 不受影响,但自动追加的 reliableWriteRules 段跟随 locale(`systemPromptHelpers.reliableWriteRulesEn` 导出);`buildSystemPrompt` 增 `locale` 参数。工具 schema 描述语言登记 deferred(量 ~14 工具全量描述,LLM 对中文描述理解无碍,待海外用户实际反馈再启)
+- selftest sec-83 +10(Phase2 键齐备/双语区分 + buildSystemPrompt locale 四分支)/ browser i18n.spec +3(Debug 抽屉/Skill 面板英文 + 默认 systemPrompt 英文断言)
+
 ## [3.20.0] - 2026-08-16
 
 ### Added(用户反馈驱动)

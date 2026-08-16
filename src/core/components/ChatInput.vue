@@ -29,7 +29,7 @@ const { state, stop } = ctx.chat
           @click="focusChipClick(f)"
         >
           <span class="focus-chip-icon"><IconGlyph :icon="icons.focus" /></span><code class="focus-chip-path">{{ f.path }}</code>
-          <button type="button" class="focus-chip-x" data-test="focus-clear" title="移除此焦点" @click.stop="removeFocus(f.path)">✕</button>
+          <button type="button" class="focus-chip-x" data-test="focus-clear" :title="m.removeFocus" @click.stop="removeFocus(f.path)">✕</button>
         </span>
       </div>
       <textarea

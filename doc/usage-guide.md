@@ -222,6 +222,12 @@ createChatSdk({
       // queued: '<svg width="12" height="12" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="currentColor"/></svg>',
       // 其余:subagentProgress 🧬 / queued 📋 / queuedEdit ✏️ / recommend 💡 / conflict ⚠️
     },
+    locale: 'en-US',             // 国际化(3.20+):切内置文案包('zh-CN' 缺省)—— 聊天面 + Debug 抽屉 +
+                                  // Skill 面板 + 代码预览全量;formatTime/autoTitle 跟随;**默认 systemPrompt
+                                  // 用英文版**(含 "Respond in English" 锚,agent 回复与 UI 同语言;自定义
+                                  // systemPrompt 不受影响,但自动追加的 reliableWriteRules 段切英文)
+    messages: { statusDone: 'Done ✓' },  // 文案键级覆盖(优先于 locale 包):只改想改的键(如「成功」),
+                                  // 其余保持;漏配回退;完整键清单(~220 键)见 types 的 DialogMessages
   },
   debug: false,                 // 调试日志
 }).mount()

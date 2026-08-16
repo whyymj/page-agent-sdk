@@ -217,6 +217,14 @@ createChatSdk({
       // queued: '<svg width="12" height="12" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="currentColor"/></svg>',
       // others: subagentProgress 🧬 / queued 📋 / queuedEdit ✏️ / recommend 💡 / conflict ⚠️
     },
+    locale: 'en-US',            // i18n (3.20+): switch the built-in message pack ('zh-CN' default) — chat surface +
+                                // Debug drawer + Skill panel + code preview; formatTime/autoTitle follow; the
+                                // **default systemPrompt switches to English** (with a "Respond in English"
+                                // anchor so agent replies match the UI language; a custom systemPrompt is
+                                // untouched, but the auto-appended reliableWriteRules segment goes English)
+    messages: { statusDone: 'Done ✓' },  // per-key message overrides (priority over the locale pack): tweak only
+                                // the keys you want, the rest keep pack values; missing keys fall back;
+                                // full key list (~220 keys) in the DialogMessages type
   }, debug: false,
 }).mount()
 ```

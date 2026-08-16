@@ -1,11 +1,16 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from 'vue'
 import { copyText } from '../utils/clipboard'
+import { MESSAGES_ZH_CN, type DialogMessages } from './messages'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   code: string
   lang: string
-}>()
+  /** 文案集(dialog.locale/messages 解析结果;独立复用缺省中文) */
+  messages?: DialogMessages
+}>(), {
+  messages: () => MESSAGES_ZH_CN,
+})
 
 const emit = defineEmits<{ (e: 'close'): void }>()
 
@@ -37,7 +42,8 @@ const previewDoc = computed(() => {
   }
 
   if (l === 'css') {
-    return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${props.code}</style></head><body><div class="demo"><h1>CSS 预览</h1><p>这是一段示例文字，用于展示 CSS 效果。</p><button>按钮</button><input placeholder="输入框"/></div></body></html>`
+    const msg = props.messages
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${props.code}</style></head><body><div class="demo"><h1>${msg.codeDemoTitle}</h1><p>${msg.codeDemoText}</p><button>${msg.codeDemoButton}</button><input placeholder="${msg.codeDemoInput}"/></div></body></html>`
   }
 
   return props.code
@@ -109,21 +115,21 @@ function openInNewTab() {
   <div class="code-preview-overlay" @click.self="emit('close')">
     <div class="code-preview-modal">
       <div class="preview-header">
-        <span class="preview-title">代码预览 · {{ lang }}</span>
+        <span class="preview-title">{{ messages.codePreviewTitlePrefix }}{{ lang }}</span>
         <div class="preview-tabs">
-          <button :class="{ active: mode === 'preview' }" :disabled="!isPreviewable" @click="mode = 'preview'">预览</button>
-          <button :class="{ active: mode === 'source' }" @click="mode = 'source'">源码</button>
+          <button :class="{ active: mode === 'preview' }" :disabled="!isPreviewable" @click="mode = 'preview'">{{ messages.codePreviewTab }}</button>
+          <button :class="{ active: mode === 'source' }" @click="mode = 'source'">{{ messages.codeSourceTab }}</button>
         </div>
         <div class="preview-actions">
-          <button class="icon-btn" :class="{ done: copied }" :title="copied ? '已复制' : '复制代码'" @click="copyCode">
+          <button class="icon-btn" :class="{ done: copied }" :title="copied ? messages.copied : messages.codeCopyTitle" @click="copyCode">
             <!-- icon 与 MessageContent 代码工具栏/MessageActions 统一(icon+状态色,不用 emoji) -->
             <svg v-if="copied" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3 3 7-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
             <svg v-else viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.3" /><path d="M10.5 3.5v-.5A1.5 1.5 0 0 0 9 1.5H3.5A1.5 1.5 0 0 0 2 3v5.5A1.5 1.5 0 0 0 3.5 10H4" stroke="currentColor" stroke-width="1.3" /></svg>
           </button>
-          <button class="icon-btn" title="新窗口打开" @click="openInNewTab">
+          <button class="icon-btn" :title="messages.codeOpenTitle" @click="openInNewTab">
             <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3H4a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /><path d="M9 2.5h4.5V7M13 3l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>
           </button>
-          <button class="icon-btn" title="关闭" @click="emit('close')">
+          <button class="icon-btn" :title="messages.close" @click="emit('close')">
             <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
           </button>
         </div>

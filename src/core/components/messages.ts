@@ -103,6 +103,146 @@ export interface DialogMessages {
   focusPathPlaceholder: string
   focusLabelPlaceholder: string
   focusSubmit: string
+  // ===== DebugDrawer(phase2;tab/过滤器/状态/各面板)=====
+  debugTabLogs: string
+  debugTabFlow: string
+  debugTabContext: string
+  debugTabSubagent: string
+  debugTabInfo: string
+  debugClearLogs: string
+  debugTypeContext: string
+  debugTypeLlmRequest: string
+  debugTypeLlmResponse: string
+  debugTypeToolCall: string
+  debugTypeToolResult: string
+  debugTypeError: string
+  debugTypeMiddleware: string
+  debugFilterAll: string
+  debugFlowPrep: string              // 准备 / 其他(流程视图无 round 分组标题)
+  debugLogsEmpty: string
+  debugFlowEmpty: string
+  debugNoInfo: string
+  debugCardView: string
+  debugRequestBody: string
+  debugViewRawJson: string
+  debugCollapseRawJson: string
+  debugModel: string
+  debugTemperature: string
+  debugMessageCount: string
+  debugToolsLabel: string
+  debugContextMessages: string
+  debugRoundPrefix: string           // 第 / Round(n 在中间)
+  debugRoundSuffix: string           // 轮 / ''(空)
+  debugMsgCountSuffix: string        // 条消息 / messages(n 在前)
+  debugToolCountSuffix: string       // 工具 / tools(n 在前)
+  debugToolCallsSuffix: string       // 个工具调用 / tool calls(n 在前)
+  debugResultSuffix: string          // 结果 / result(name 在前)
+  debugTodoPending: string
+  debugTodoInProgress: string
+  debugTodoCompleted: string
+  debugSubRunning: string
+  debugSubDone: string
+  debugSubError: string
+  debugLocksTitle: string            // 组件锁 / Component locks
+  debugSubagentEmpty: string
+  debugSubRunningTitle: string       // 运行中 / Running
+  debugSubHistoryTitle: string       // 历史 / History
+  debugStepsBtn: string
+  debugStepsCountSuffix: string      // 步 / steps(n 在前)
+  debugTraceEmpty: string
+  debugMetricRounds: string
+  debugMetricTotal: string
+  debugMetricAvg: string
+  debugMetricTools: string
+  debugMetricCompressions: string
+  debugCtxEmpty: string
+  debugCtxOccupancy: string          // 占用 / Occupancy(title)
+  debugCtxThreshold: string          // 压缩阈值 / compress threshold
+  debugCtxTokens: string             // 估算 / est.(token 前缀)
+  debugCtxWindow: string             // 窗口 / window(数值前缀)
+  debugCtxThresholdPct: string       // 阈值 / threshold(数值前缀)
+  debugCtxCategories: string
+  debugCtxLastCompression: string
+  debugCtxSummarized: string         // 摘要 / summarized(N/M 轮前缀)
+  debugCtxRoundsSuffix: string       // 轮 / rounds(N/M 后缀)
+  debugCtxRecalled: string           // 召回 / recalled(数值前缀)
+  debugCtxAgentDecision: string      // agent 决策: / agent decision:
+  debugInfoBasic: string
+  debugToolCount: string             // 工具数 / Tools
+  debugMiddleware: string
+  debugMiddlewareStack: string
+  debugSkillsTitle: string
+  debugSkillsHint: string
+  debugLoading: string
+  debugDataTitle: string
+  debugDataFallback: string          // 主数据对象 / main data object(无 description 兜底)
+  debugSchemaPrefix: string          // schema: (zh/en 同,占位保持结构)
+  debugSchemaDeclared: string
+  debugSchemaMissing: string
+  debugSubagentTitle: string
+  debugEnabled: string
+  debugYes: string
+  debugNo: string
+  debugMaxDepth: string
+  debugMaxParallel: string
+  debugExtraTools: string
+  debugDefaultReadonly: string
+  debugVerifyTitle: string
+  debugMaxAttempts: string
+  debugAdversarial: string
+  debugOn: string
+  debugOff: string
+  debugAdversarialModel: string
+  debugSameAsMain: string            // (同主) / (same as main)
+  debugTodosTitle: string
+  debugMemoryTitle: string
+  debugLastCompTitle: string
+  debugTriggered: string
+  debugNotTriggered: string          // ✗(未达阈值) / ✗ (below threshold)
+  debugRoundsSummarized: string
+  debugCountSuffix: string           // 条 / ''(召回 N 条)
+  debugStrategy: string
+  debugDecision: string
+  debugSummaryMode: string           // 摘要 / summary(决策摘要 mode 后缀)
+  debugSkillNoReader: string
+  debugSkillEmpty: string
+  // ===== SkillPanel(phase2)=====
+  skillPanelTitle: string
+  skillEditingPrefix: string         // 编辑 Skill: / Edit skill:
+  skillCreateNew: string
+  skillCancelEdit: string
+  skillNameLabel: string
+  skillNamePlaceholder: string
+  skillDescLabel: string
+  skillDescPlaceholder: string
+  skillContentLabel: string
+  skillContentPlaceholder: string
+  skillSave: string
+  skillAdd: string
+  skillCreatedTitle: string          // 已创建 Skill / Created skills(n 在后)
+  skillEmpty: string
+  skillEditBtn: string
+  skillEditTitle: string
+  skillDeleteBtn: string
+  skillDeleteTitle: string
+  skillErrName: string
+  skillErrDesc: string
+  skillErrContent: string
+  skillDupWarnPrefix: string         // 已存在同名用户 skill " / User skill " exists: "
+  skillDupWarnSuffix: string         // ",将覆盖 / " will be overwritten
+  skillHintA: string                 // 底部提示三段(code 标签留在模板混排)
+  skillHintB: string
+  skillHintC: string
+  // ===== CodePreview(phase2)=====
+  codeCopyTitle: string
+  codeOpenTitle: string
+  codePreviewTitlePrefix: string  // 代码预览 · / Code preview · (lang 在后)
+  codePreviewTab: string
+  codeSourceTab: string
+  codeDemoTitle: string
+  codeDemoText: string
+  codeDemoButton: string
+  codeDemoInput: string
 }
 
 export const MESSAGES_ZH_CN: DialogMessages = {
@@ -188,6 +328,146 @@ export const MESSAGES_ZH_CN: DialogMessages = {
   focusPathPlaceholder: 'jsonPath,如 components.3',
   focusLabelPlaceholder: '标签(可选)',
   focusSubmit: '聚焦',
+  // ===== DebugDrawer =====
+  debugTabLogs: '日志',
+  debugTabFlow: '流程',
+  debugTabContext: '上下文',
+  debugTabSubagent: '子 agent',
+  debugTabInfo: 'Agent 信息',
+  debugClearLogs: '清空日志',
+  debugTypeContext: '上下文',
+  debugTypeLlmRequest: 'LLM请求',
+  debugTypeLlmResponse: 'LLM响应',
+  debugTypeToolCall: '工具调用',
+  debugTypeToolResult: '工具结果',
+  debugTypeError: '错误',
+  debugTypeMiddleware: '中间件',
+  debugFilterAll: '全部',
+  debugFlowPrep: '准备 / 其他',
+  debugLogsEmpty: '暂无日志，发送消息后这里会显示 Agent 的完整上下文、工具调用等信息',
+  debugFlowEmpty: '暂无日志，发送消息后这里按轮次展示执行流程',
+  debugNoInfo: '暂无信息',
+  debugCardView: '🗂 卡片视图',
+  debugRequestBody: '📋 请求体',
+  debugViewRawJson: '查看原始 JSON',
+  debugCollapseRawJson: '收起原始 JSON',
+  debugModel: '模型',
+  debugTemperature: '温度',
+  debugMessageCount: '消息数',
+  debugToolsLabel: '工具',
+  debugContextMessages: '上下文消息',
+  debugRoundPrefix: '第 ',
+  debugRoundSuffix: ' 轮',
+  debugMsgCountSuffix: ' 条消息',
+  debugToolCountSuffix: ' 工具',
+  debugToolCallsSuffix: ' 个工具调用',
+  debugResultSuffix: ' 结果',
+  debugTodoPending: '待办',
+  debugTodoInProgress: '进行中',
+  debugTodoCompleted: '完成',
+  debugSubRunning: '运行中',
+  debugSubDone: '完成',
+  debugSubError: '错误',
+  debugLocksTitle: '组件锁',
+  debugSubagentEmpty: '尚未委派子 agent。主 agent 调用 use_<id> 或 spawn_agent 后,这里展示运行状态与委派历史。',
+  debugSubRunningTitle: '运行中',
+  debugSubHistoryTitle: '历史',
+  debugStepsBtn: '步骤',
+  debugStepsCountSuffix: ' 步',
+  debugTraceEmpty: '未开启 tracing(capabilities.tracing:true)或暂无 trace。跑一轮 agent 后刷新。',
+  debugMetricRounds: '轮次',
+  debugMetricTotal: '总耗时',
+  debugMetricAvg: '平均/轮',
+  debugMetricTools: '工具',
+  debugMetricCompressions: '压缩',
+  debugCtxEmpty: '未开启 contextInspector(默认开)或暂无快照。跑一轮 agent 后切回刷新。',
+  debugCtxOccupancy: '占用',
+  debugCtxThreshold: '压缩阈值',
+  debugCtxTokens: '估算',
+  debugCtxWindow: '窗口',
+  debugCtxThresholdPct: '阈值',
+  debugCtxCategories: '分类构成(近似)',
+  debugCtxLastCompression: '最近压缩',
+  debugCtxSummarized: '摘要',
+  debugCtxRoundsSuffix: ' 轮',
+  debugCtxRecalled: '召回',
+  debugCtxAgentDecision: 'agent 决策:',
+  debugInfoBasic: '基本信息',
+  debugToolCount: '工具数',
+  debugMiddleware: '中间件',
+  debugMiddlewareStack: '中间件栈',
+  debugSkillsTitle: '技能',
+  debugSkillsHint: '点击展开查看全文',
+  debugLoading: '加载中…',
+  debugDataTitle: '可操作数据',
+  debugDataFallback: '主数据对象',
+  debugSchemaPrefix: 'schema: ',
+  debugSchemaDeclared: '已声明',
+  debugSchemaMissing: '未声明',
+  debugSubagentTitle: '子 Agent',
+  debugEnabled: '启用',
+  debugYes: '是',
+  debugNo: '否',
+  debugMaxDepth: '最大递归',
+  debugMaxParallel: '并行上限',
+  debugExtraTools: '额外工具',
+  debugDefaultReadonly: '默认只读',
+  debugVerifyTitle: 'Verify 自检',
+  debugMaxAttempts: '自纠上限',
+  debugAdversarial: '对抗验证',
+  debugOn: '开启',
+  debugOff: '关闭',
+  debugAdversarialModel: '对抗模型',
+  debugSameAsMain: '(同主)',
+  debugTodosTitle: '任务清单',
+  debugMemoryTitle: '持久指令 (memory)',
+  debugLastCompTitle: '上轮压缩',
+  debugTriggered: '触发',
+  debugNotTriggered: '✗(未达阈值)',
+  debugRoundsSummarized: '摘要轮次',
+  debugCountSuffix: ' 条',
+  debugStrategy: '策略',
+  debugDecision: '压缩决策',
+  debugSummaryMode: '摘要',
+  debugSkillNoReader: '当前 SDK 未注入 getSkillContent,无法查看 skill 全文',
+  debugSkillEmpty: 'skill 无内容或读取失败',
+  // ===== SkillPanel =====
+  skillPanelTitle: '🧩 Skill 管理',
+  skillEditingPrefix: '编辑 Skill: ',
+  skillCreateNew: '创建新 Skill',
+  skillCancelEdit: '取消编辑',
+  skillNameLabel: '名称',
+  skillNamePlaceholder: '如:my-writer',
+  skillDescLabel: '描述',
+  skillDescPlaceholder: '一句话说明用途与触发时机',
+  skillContentLabel: '内容',
+  skillContentPlaceholder: 'skill 全文指令(支持 Markdown)',
+  skillSave: '保存修改',
+  skillAdd: '添加 Skill',
+  skillCreatedTitle: '已创建 Skill',
+  skillEmpty: '暂无用户创建的 skill',
+  skillEditBtn: '编辑',
+  skillEditTitle: '加载到表单编辑',
+  skillDeleteBtn: '删除',
+  skillDeleteTitle: '删除该用户 skill',
+  skillErrName: 'skill 名不能为空',
+  skillErrDesc: '描述不能为空',
+  skillErrContent: '内容不能为空',
+  skillDupWarnPrefix: '已存在同名用户 skill "',
+  skillDupWarnSuffix: '",将覆盖',
+  skillHintA: '创建/编辑的 skill 会自动加入 agent(下轮 system prompt 索引可见),agent 经',
+  skillHintB: '按需加载全文;持久化由独立 SkillStore 管理(默认 indexedDB,与 storage 选项分离),跨刷新自动恢复;可经',
+  skillHintC: '跨页面复用。',
+  // ===== CodePreview =====
+  codeCopyTitle: '复制代码',
+  codeOpenTitle: '新窗口打开',
+  codePreviewTitlePrefix: '代码预览 · ',
+  codePreviewTab: '预览',
+  codeSourceTab: '源码',
+  codeDemoTitle: 'CSS 预览',
+  codeDemoText: '这是一段示例文字，用于展示 CSS 效果。',
+  codeDemoButton: '按钮',
+  codeDemoInput: '输入框',
 }
 
 export const MESSAGES_EN_US: DialogMessages = {
@@ -273,6 +553,146 @@ export const MESSAGES_EN_US: DialogMessages = {
   focusPathPlaceholder: 'jsonPath, e.g. components.3',
   focusLabelPlaceholder: 'Label (optional)',
   focusSubmit: 'Focus',
+  // ===== DebugDrawer =====
+  debugTabLogs: 'Logs',
+  debugTabFlow: 'Flow',
+  debugTabContext: 'Context',
+  debugTabSubagent: 'Sub-agents',
+  debugTabInfo: 'Agent info',
+  debugClearLogs: 'Clear logs',
+  debugTypeContext: 'Context',
+  debugTypeLlmRequest: 'LLM request',
+  debugTypeLlmResponse: 'LLM response',
+  debugTypeToolCall: 'Tool call',
+  debugTypeToolResult: 'Tool result',
+  debugTypeError: 'Error',
+  debugTypeMiddleware: 'Middleware',
+  debugFilterAll: 'All',
+  debugFlowPrep: 'Preparation / other',
+  debugLogsEmpty: 'No logs yet. After you send a message, the full agent context and tool calls appear here.',
+  debugFlowEmpty: 'No logs yet. After you send a message, the execution flow appears here by round.',
+  debugNoInfo: 'No info',
+  debugCardView: '🗂 Cards',
+  debugRequestBody: '📋 Request body',
+  debugViewRawJson: 'View raw JSON',
+  debugCollapseRawJson: 'Collapse raw JSON',
+  debugModel: 'Model',
+  debugTemperature: 'Temp',
+  debugMessageCount: 'Messages',
+  debugToolsLabel: 'Tools',
+  debugContextMessages: 'Context messages',
+  debugRoundPrefix: 'Round ',
+  debugRoundSuffix: '',
+  debugMsgCountSuffix: ' messages',
+  debugToolCountSuffix: ' tools',
+  debugToolCallsSuffix: ' tool calls',
+  debugResultSuffix: ' result',
+  debugTodoPending: 'Pending',
+  debugTodoInProgress: 'In progress',
+  debugTodoCompleted: 'Done',
+  debugSubRunning: 'Running',
+  debugSubDone: 'Done',
+  debugSubError: 'Error',
+  debugLocksTitle: 'Component locks',
+  debugSubagentEmpty: 'No sub-agents yet. Once the main agent calls use_<id> or spawn_agent, run status and delegation history appear here.',
+  debugSubRunningTitle: 'Running',
+  debugSubHistoryTitle: 'History',
+  debugStepsBtn: 'Steps',
+  debugStepsCountSuffix: ' steps',
+  debugTraceEmpty: 'Tracing not enabled (capabilities.tracing:true) or no trace yet. Run a round then refresh.',
+  debugMetricRounds: 'Rounds',
+  debugMetricTotal: 'Total',
+  debugMetricAvg: 'Avg/round',
+  debugMetricTools: 'Tools',
+  debugMetricCompressions: 'Compressions',
+  debugCtxEmpty: 'contextInspector not enabled (on by default) or no snapshot yet. Run a round then switch back.',
+  debugCtxOccupancy: 'Occupancy',
+  debugCtxThreshold: 'compress threshold',
+  debugCtxTokens: 'est.',
+  debugCtxWindow: 'window',
+  debugCtxThresholdPct: 'threshold',
+  debugCtxCategories: 'Categories (approx.)',
+  debugCtxLastCompression: 'Last compression',
+  debugCtxSummarized: 'summarized',
+  debugCtxRoundsSuffix: ' rounds',
+  debugCtxRecalled: 'recalled',
+  debugCtxAgentDecision: 'agent decision: ',
+  debugInfoBasic: 'Basics',
+  debugToolCount: 'Tools',
+  debugMiddleware: 'Middleware',
+  debugMiddlewareStack: 'Middleware stack',
+  debugSkillsTitle: 'Skills',
+  debugSkillsHint: 'click to expand',
+  debugLoading: 'Loading…',
+  debugDataTitle: 'Operable data',
+  debugDataFallback: 'main data object',
+  debugSchemaPrefix: 'schema: ',
+  debugSchemaDeclared: 'declared',
+  debugSchemaMissing: 'not declared',
+  debugSubagentTitle: 'Sub-agents',
+  debugEnabled: 'Enabled',
+  debugYes: 'Yes',
+  debugNo: 'No',
+  debugMaxDepth: 'Max depth',
+  debugMaxParallel: 'Max parallel',
+  debugExtraTools: 'Extra tools',
+  debugDefaultReadonly: 'read-only by default',
+  debugVerifyTitle: 'Verify self-check',
+  debugMaxAttempts: 'Max attempts',
+  debugAdversarial: 'Adversarial',
+  debugOn: 'On',
+  debugOff: 'Off',
+  debugAdversarialModel: 'Adversarial model',
+  debugSameAsMain: ' (same as main)',
+  debugTodosTitle: 'Todos',
+  debugMemoryTitle: 'Persistent instructions (memory)',
+  debugLastCompTitle: 'Last compression',
+  debugTriggered: 'Triggered',
+  debugNotTriggered: '✗ (below threshold)',
+  debugRoundsSummarized: 'Rounds summarized',
+  debugCountSuffix: '',
+  debugStrategy: 'Strategy',
+  debugDecision: 'Decision',
+  debugSummaryMode: 'summary',
+  debugSkillNoReader: 'getSkillContent is not injected in this SDK build; cannot view skill content',
+  debugSkillEmpty: 'skill has no content or the read failed',
+  // ===== SkillPanel =====
+  skillPanelTitle: '🧩 Skills',
+  skillEditingPrefix: 'Edit skill: ',
+  skillCreateNew: 'Create new skill',
+  skillCancelEdit: 'Cancel editing',
+  skillNameLabel: 'Name',
+  skillNamePlaceholder: 'e.g. my-writer',
+  skillDescLabel: 'Description',
+  skillDescPlaceholder: 'One line: what it does and when to trigger',
+  skillContentLabel: 'Content',
+  skillContentPlaceholder: 'Full skill instructions (Markdown supported)',
+  skillSave: 'Save changes',
+  skillAdd: 'Add skill',
+  skillCreatedTitle: 'Created skills',
+  skillEmpty: 'No user-created skills yet',
+  skillEditBtn: 'Edit',
+  skillEditTitle: 'Load into the form to edit',
+  skillDeleteBtn: 'Delete',
+  skillDeleteTitle: 'Delete this user skill',
+  skillErrName: 'Skill name cannot be empty',
+  skillErrDesc: 'Description cannot be empty',
+  skillErrContent: 'Content cannot be empty',
+  skillDupWarnPrefix: 'User skill "',
+  skillDupWarnSuffix: '" already exists and will be overwritten',
+  skillHintA: 'Created/edited skills are automatically added to the agent (visible in the next system prompt index); the agent loads the full text via',
+  skillHintB: 'on demand. Persistence is handled by a separate SkillStore (indexedDB by default, independent of the storage option) and survives refreshes; share across pages via',
+  skillHintC: 'cross-page reuse.',
+  // ===== CodePreview =====
+  codeCopyTitle: 'Copy code',
+  codeOpenTitle: 'Open in new tab',
+  codePreviewTitlePrefix: 'Code preview · ',
+  codePreviewTab: 'Preview',
+  codeSourceTab: 'Source',
+  codeDemoTitle: 'CSS Preview',
+  codeDemoText: 'Sample text to demonstrate the CSS effect.',
+  codeDemoButton: 'Button',
+  codeDemoInput: 'Input',
 }
 
 const LOCALE_PACKS: Record<DialogLocale, DialogMessages> = {

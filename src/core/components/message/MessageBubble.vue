@@ -24,7 +24,7 @@ withDefaults(defineProps<{
       <span class="typing-text">{{ messages.thinking }}</span>
     </template>
     <template v-else>
-      <MessageContent v-if="role === 'assistant'" :content="content" />
+      <MessageContent v-if="role === 'assistant'" :content="content" :messages="messages" />
       <template v-else>{{ content }}</template>
     </template>
   </div>

@@ -4,6 +4,7 @@ import type { DebugLog } from '../harness/createAgent'
 import type { AgentInfo } from '../types'
 import type { TraceSpan } from '../harness/createAgent'
 import { copyText } from '../utils/clipboard'
+import { MESSAGES_ZH_CN, type DialogLocale, type DialogMessages } from './messages'
 
 const props = withDefaults(defineProps<{
   logs?: DebugLog[]
@@ -16,8 +17,14 @@ const props = withDefaults(defineProps<{
   getSkillContent?: (name: string) => Promise<string | null>
   /** 内置主题:'light'(默认)/ 'dark'(方舟设计稿色板;ChatDialog 自动透传自身 theme) */
   csTheme?: 'light' | 'dark'
+  /** 文案集(dialog.locale/messages 解析结果;独立复用缺省中文) */
+  messages?: DialogMessages
+  /** 时间格式 locale(formatTime;缺省 zh-CN 24h) */
+  locale?: DialogLocale
 }>(), {
   logs: () => [],
+  messages: () => MESSAGES_ZH_CN,
+  locale: 'zh-CN',
 })
 
 const emit = defineEmits<{
@@ -28,16 +35,17 @@ const emit = defineEmits<{
 const filter = ref<DebugLog['type'] | 'all'>('all')
 const rawExpanded = ref<Set<number>>(new Set())
 const bodyExpanded = ref<Set<number>>(new Set())
+const m = computed(() => props.messages)
 
-const typeMeta: Record<string, { label: string; color: string; icon: string }> = {
-  context: { label: '上下文', color: 'var(--cs-primary)', icon: '🧩' },
-  llm_request: { label: 'LLM请求', color: '#059669', icon: '➡️' },
-  llm_response: { label: 'LLM响应', color: '#d97706', icon: '⬅️' },
-  tool_call: { label: '工具调用', color: '#7c3aed', icon: '🔧' },
-  tool_result: { label: '工具结果', color: '#2563eb', icon: '✅' },
-  error: { label: '错误', color: '#dc2626', icon: '❌' },
-  middleware: { label: '中间件', color: '#0891b2', icon: '⚙️' },
-}
+const typeMeta = computed<Record<string, { label: string; color: string; icon: string }>>(() => ({
+  context: { label: m.value.debugTypeContext, color: 'var(--cs-primary)', icon: '🧩' },
+  llm_request: { label: m.value.debugTypeLlmRequest, color: '#059669', icon: '➡️' },
+  llm_response: { label: m.value.debugTypeLlmResponse, color: '#d97706', icon: '⬅️' },
+  tool_call: { label: m.value.debugTypeToolCall, color: '#7c3aed', icon: '🔧' },
+  tool_result: { label: m.value.debugTypeToolResult, color: '#2563eb', icon: '✅' },
+  error: { label: m.value.debugTypeError, color: '#dc2626', icon: '❌' },
+  middleware: { label: m.value.debugTypeMiddleware, color: '#0891b2', icon: '⚙️' },
+}))
 
 const logs = computed(() => (Array.isArray(props.logs) ? props.logs : []))
 const filteredLogs = computed(() =>
@@ -51,7 +59,7 @@ const counts = computed(() => {
 })
 
 function formatTime(ts: number) {
-  return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false }) +
+  return new Date(ts).toLocaleTimeString(props.locale, { hour12: false }) +
     '.' + String(ts % 1000).padStart(3, '0')
 }
 
@@ -101,13 +109,13 @@ async function toggleSkill(name: string) {
   }
   // 展开:若无 getSkillContent,提示不可用
   if (!props.getSkillContent) {
-    skillExpanded.value = { ...skillExpanded.value, [name]: { loading: false, content: null, error: '当前 SDK 未注入 getSkillContent,无法查看 skill 全文' } }
+    skillExpanded.value = { ...skillExpanded.value, [name]: { loading: false, content: null, error: m.value.debugSkillNoReader } }
     return
   }
   skillExpanded.value = { ...skillExpanded.value, [name]: { loading: true, content: null } }
   try {
     const content = await props.getSkillContent(name)
-    skillExpanded.value = { ...skillExpanded.value, [name]: { loading: false, content, error: content == null ? 'skill 无内容或读取失败' : undefined } }
+    skillExpanded.value = { ...skillExpanded.value, [name]: { loading: false, content, error: content == null ? m.value.debugSkillEmpty : undefined } }
   } catch (e: any) {
     skillExpanded.value = { ...skillExpanded.value, [name]: { loading: false, content: null, error: String(e?.message || e) } }
   }
@@ -126,12 +134,12 @@ function switchTab(t: 'logs' | 'flow' | 'trace' | 'context' | 'subagent' | 'info
 watch(() => props.infoTick?.value, () => {
   if (props.visible && (tab.value === 'subagent' || tab.value === 'info' || tab.value === 'context')) refreshInfo()
 })
-const statusMeta: Record<string, { label: string; color: string }> = {
-  pending: { label: '待办', color: '#9ca3af' },
-  in_progress: { label: '进行中', color: '#d97706' },
-  completed: { label: '完成', color: '#059669' },
-}
-function statusLabel(s: string) { return statusMeta[s]?.label ?? s }
+const statusMeta = computed<Record<string, { label: string; color: string }>>(() => ({
+  pending: { label: m.value.debugTodoPending, color: '#9ca3af' },
+  in_progress: { label: m.value.debugTodoInProgress, color: '#d97706' },
+  completed: { label: m.value.debugTodoCompleted, color: '#059669' },
+}))
+function statusLabel(s: string) { return statusMeta.value[s]?.label ?? s }
 /** 工具来源标签样式类(builtin/mcp/user) */
 function srcClass(s?: string) {
   if (!s) return ''
@@ -184,11 +192,11 @@ const subagentActive = computed(() => agentInfo.value?.subagent?.active ?? [])
 const subagentHistory = computed(() => agentInfo.value?.subagent?.history ?? [])
 /** 组件锁视图(组件名 → 占用委派 taskId;parallel-subagent-delegation Q4b) */
 const lockedEntries = computed(() => Object.entries(agentInfo.value?.subagent?.lockedComponents ?? {}))
-const subStatusMeta: Record<string, { label: string; color: string }> = {
-  running: { label: '运行中', color: '#059669' },
-  done: { label: '完成', color: '#6b7280' },
-  error: { label: '错误', color: '#dc2626' },
-}
+const subStatusMeta = computed<Record<string, { label: string; color: string }>>(() => ({
+  running: { label: m.value.debugSubRunning, color: '#059669' },
+  done: { label: m.value.debugSubDone, color: '#6b7280' },
+  error: { label: m.value.debugSubError, color: '#dc2626' },
+}))
 const subExpanded = ref<Set<number>>(new Set())
 function toggleSub(idx: number) {
   const s = new Set(subExpanded.value)
@@ -199,15 +207,15 @@ function spanIcon(t: string) { return t === 'round' ? '🔄' : t === 'model' ? '
 // 压缩决策摘要(agent-driven-compression;DebugDrawer 上下文 tab + lastCompression 显示)
 function decisionSummary(d: { keepRounds?: number; windowRatio?: number; summarize: { mode: string }; recallTopK?: number; reason?: string }): string {
   const main = d.windowRatio != null ? `windowRatio=${d.windowRatio}` : `keepRounds=${d.keepRounds ?? '?'}`
-  return `${main} · ${d.summarize.mode}摘要 · 召回${d.recallTopK ?? '?'}${d.reason ? ' · ' + d.reason : ''}`
+  return `${main} · ${d.summarize.mode}${m.value.debugSummaryMode} · ${m.value.debugCtxRecalled}${d.recallTopK ?? '?'}${d.reason ? ' · ' + d.reason : ''}`
 }
 /** 流程节点摘要(每轮流水一览;详情看「日志」tab) */
 function flowNodeDetail(lg: DebugLog): string {
   const d = (lg.data || {}) as any
   switch (lg.type) {
-    case 'context': return `${d.tools?.length ?? 0} 工具 · ${d.totalMessages ?? 0} 消息`
-    case 'llm_request': return `${(d.messages || []).length} 消息${d.tools?.length ? ' · ' + d.tools.length + ' 工具' : ''}`
-    case 'llm_response': return d.toolCalls?.length ? `${d.toolCalls.length} 个工具调用` : (d.content ? truncate(String(d.content), 50) : '')
+    case 'context': return `${d.tools?.length ?? 0}${m.value.debugToolCountSuffix} · ${d.totalMessages ?? 0}${m.value.debugMsgCountSuffix}`
+    case 'llm_request': return `${(d.messages || []).length}${m.value.debugMsgCountSuffix}${d.tools?.length ? ' · ' + d.tools.length + m.value.debugToolCountSuffix : ''}`
+    case 'llm_response': return d.toolCalls?.length ? `${d.toolCalls.length}${m.value.debugToolCallsSuffix}` : (d.content ? truncate(String(d.content), 50) : '')
     case 'tool_call': return String(d.name ?? '')
     case 'tool_result': return `${d.name ?? ''} · ${d.status === 'error' ? '❌' : '✅'}`
     case 'error': return truncate(String(d.error ?? d.tool ?? ''), 60)
@@ -224,16 +232,16 @@ function flowNodeDetail(lg: DebugLog): string {
         <div class="drawer-panel" :class="{ 'cs-theme-dark': csTheme === 'dark' }">
           <div class="drawer-header">
             <div class="tab-group">
-              <button class="tab-btn" :class="{ active: tab === 'logs' }" @click="switchTab('logs')">🐛 日志</button>
-              <button class="tab-btn" :class="{ active: tab === 'flow' }" @click="switchTab('flow')">🔀 流程</button>
+              <button class="tab-btn" :class="{ active: tab === 'logs' }" @click="switchTab('logs')">🐛 {{ m.debugTabLogs }}</button>
+              <button class="tab-btn" :class="{ active: tab === 'flow' }" @click="switchTab('flow')">🔀 {{ m.debugTabFlow }}</button>
               <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'trace' }" @click="switchTab('trace')">🌳 Trace</button>
-              <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'context' }" @click="switchTab('context')">📊 上下文</button>
-              <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'subagent' }" @click="switchTab('subagent')">🤖 子 agent</button>
-              <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'info' }" @click="switchTab('info')">🧬 Agent 信息</button>
+              <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'context' }" @click="switchTab('context')">📊 {{ m.debugTabContext }}</button>
+              <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'subagent' }" @click="switchTab('subagent')">🤖 {{ m.debugTabSubagent }}</button>
+              <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'info' }" @click="switchTab('info')">🧬 {{ m.debugTabInfo }}</button>
             </div>
             <div class="header-actions">
-              <button v-if="tab === 'logs'" class="hd-btn" title="清空日志" @click="clearLogs">🗑️</button>
-              <button class="hd-btn" title="关闭" @click="close">✕</button>
+              <button v-if="tab === 'logs'" class="hd-btn" :title="m.debugClearLogs" @click="clearLogs">🗑️</button>
+              <button class="hd-btn" :title="m.close" @click="close">✕</button>
             </div>
           </div>
 
@@ -250,20 +258,20 @@ function flowNodeDetail(lg: DebugLog): string {
               <span class="chip-count">{{ counts[key] || 0 }}</span>
             </button>
             <button class="filter-chip all" :class="{ active: filter === 'all' }" @click="filter = 'all'">
-              全部 <span class="chip-count">{{ counts.all || 0 }}</span>
+              {{ m.debugFilterAll }} <span class="chip-count">{{ counts.all || 0 }}</span>
             </button>
           </div>
 
           <div class="drawer-body">
             <div v-if="tab === 'trace'" class="trace-panel">
-              <div v-if="!traceMetrics" class="trace-empty">未开启 tracing(<code>capabilities.tracing:true</code>)或暂无 trace。跑一轮 agent 后刷新。</div>
+              <div v-if="!traceMetrics" class="trace-empty">{{ m.debugTraceEmpty }}</div>
               <template v-else>
                 <div class="trace-metrics">
-                  <div class="metric-card"><span>轮次</span><b>{{ traceMetrics.rounds }}</b></div>
-                  <div class="metric-card"><span>总耗时</span><b>{{ traceMetrics.totalDurationMs }}ms</b></div>
-                  <div class="metric-card"><span>平均/轮</span><b>{{ traceMetrics.avgRoundMs }}ms</b></div>
-                  <div class="metric-card"><span>工具</span><b>{{ traceMetrics.toolCalls }}(✅{{ Math.round(traceMetrics.toolSuccessRate * 100) }}%)</b></div>
-                  <div class="metric-card" v-if="traceMetrics.compressions"><span>压缩</span><b>{{ traceMetrics.compressions }}</b></div>
+                  <div class="metric-card"><span>{{ m.debugMetricRounds }}</span><b>{{ traceMetrics.rounds }}</b></div>
+                  <div class="metric-card"><span>{{ m.debugMetricTotal }}</span><b>{{ traceMetrics.totalDurationMs }}ms</b></div>
+                  <div class="metric-card"><span>{{ m.debugMetricAvg }}</span><b>{{ traceMetrics.avgRoundMs }}ms</b></div>
+                  <div class="metric-card"><span>{{ m.debugMetricTools }}</span><b>{{ traceMetrics.toolCalls }}(✅{{ Math.round(traceMetrics.toolSuccessRate * 100) }}%)</b></div>
+                  <div class="metric-card" v-if="traceMetrics.compressions"><span>{{ m.debugMetricCompressions }}</span><b>{{ traceMetrics.compressions }}</b></div>
                   <div class="metric-card" v-if="traceMetrics.totalTokens"><span>Token</span><b>{{ traceMetrics.totalTokens.total }}</b></div>
                 </div>
                 <div class="trace-spans">
@@ -277,35 +285,35 @@ function flowNodeDetail(lg: DebugLog): string {
               </template>
             </div>
             <div v-if="tab === 'context'" class="context-panel">
-              <div v-if="!contextSnap" class="trace-empty">未开启 contextInspector(默认开)或暂无快照。跑一轮 agent 后切回刷新。</div>
+              <div v-if="!contextSnap" class="trace-empty">{{ m.debugCtxEmpty }}</div>
               <template v-else>
                 <div class="ctx-overview">
                   <div class="ctx-occupancy">
-                    <div class="ctx-bar-track" :title="`占用 ${Math.round(contextSnap.occupancy * 100)}%`">
+                    <div class="ctx-bar-track" :title="`${m.debugCtxOccupancy} ${Math.round(contextSnap.occupancy * 100)}%`">
                       <div class="ctx-bar-fill" :class="ctxOccupancyLevel" :style="{ width: Math.min(contextSnap.occupancy * 100, 100) + '%' }"></div>
-                      <div v-if="contextSnap.thresholdRatio > 0" class="ctx-threshold-mark" :style="{ left: Math.min(contextSnap.thresholdRatio * 100, 100) + '%' }" title="压缩阈值"></div>
+                      <div v-if="contextSnap.thresholdRatio > 0" class="ctx-threshold-mark" :style="{ left: Math.min(contextSnap.thresholdRatio * 100, 100) + '%' }" :title="m.debugCtxThreshold"></div>
                     </div>
                     <span class="ctx-pct">{{ Math.round(contextSnap.occupancy * 100) }}%</span>
                   </div>
                   <div class="ctx-kv-row">
-                    <span class="ctx-kv">估算 {{ contextSnap.totalTokens }} token</span>
-                    <span class="ctx-kv" v-if="contextSnap.contextWindow">窗口 {{ contextSnap.contextWindow }}</span>
-                    <span class="ctx-kv" v-if="contextSnap.thresholdRatio > 0">阈值 {{ Math.round(contextSnap.thresholdRatio * 100) }}%</span>
+                    <span class="ctx-kv">{{ m.debugCtxTokens }} {{ contextSnap.totalTokens }} token</span>
+                    <span class="ctx-kv" v-if="contextSnap.contextWindow">{{ m.debugCtxWindow }} {{ contextSnap.contextWindow }}</span>
+                    <span class="ctx-kv" v-if="contextSnap.thresholdRatio > 0">{{ m.debugCtxThresholdPct }} {{ Math.round(contextSnap.thresholdRatio * 100) }}%</span>
                   </div>
                 </div>
-                <div class="ctx-section-title">分类构成(近似)</div>
+                <div class="ctx-section-title">{{ m.debugCtxCategories }}</div>
                 <div v-for="c in contextSnap.categories" :key="c.key" class="ctx-cat">
                   <span class="ctx-cat-label" :title="c.label">{{ c.label }}</span>
                   <div class="ctx-cat-bar"><div class="ctx-cat-fill" :style="{ width: Math.max(Math.round(c.pct * 100), 2) + '%' }"></div></div>
                   <span class="ctx-cat-tokens">{{ c.tokens }} <i>({{ Math.round(c.pct * 100) }}%)</i></span>
                 </div>
                 <div v-if="contextSnap.compression" class="ctx-compression">
-                  <div class="ctx-section-title">最近压缩</div>
+                  <div class="ctx-section-title">{{ m.debugCtxLastCompression }}</div>
                   <div class="ctx-kv-row">
-                    <span class="ctx-kv">摘要 {{ contextSnap.compression.roundsSummarized }}/{{ contextSnap.compression.roundsTotal }} 轮</span>
-                    <span class="ctx-kv">召回 {{ contextSnap.compression.roundsRecalled }}</span>
+                    <span class="ctx-kv">{{ m.debugCtxSummarized }} {{ contextSnap.compression.roundsSummarized }}/{{ contextSnap.compression.roundsTotal }}{{ m.debugCtxRoundsSuffix }}</span>
+                    <span class="ctx-kv">{{ m.debugCtxRecalled }} {{ contextSnap.compression.roundsRecalled }}</span>
                     <span class="ctx-kv">{{ contextSnap.compression.strategy }}</span>
-                    <span class="ctx-kv" v-if="contextSnap.compression.decision">🤖 agent 决策:{{ decisionSummary(contextSnap.compression.decision) }}</span>
+                    <span class="ctx-kv" v-if="contextSnap.compression.decision">🤖 {{ m.debugCtxAgentDecision }}{{ decisionSummary(contextSnap.compression.decision) }}</span>
                   </div>
                 </div>
               </template>
@@ -313,32 +321,32 @@ function flowNodeDetail(lg: DebugLog): string {
             <div v-if="tab === 'subagent'" class="subagent-panel">
               <!-- 组件锁视图(同组件单委派互斥;委派结束自动解锁) -->
               <div v-if="lockedEntries.length" class="sub-section">
-                <div class="sub-section-title">🔒 组件锁 ({{ lockedEntries.length }})</div>
+                <div class="sub-section-title">🔒 {{ m.debugLocksTitle }} ({{ lockedEntries.length }})</div>
                 <div v-for="[name, owner] in lockedEntries" :key="'lock-'+name" class="sub-task">🔒 {{ name }} ← {{ owner }}</div>
               </div>
               <div v-if="!subagentActive.length && !subagentHistory.length" class="trace-empty">
-                尚未委派子 agent。主 agent 调用 <code>use_&lt;id&gt;</code> 或 <code>spawn_agent</code> 后,这里展示运行状态与委派历史。
+                {{ m.debugSubagentEmpty }}
               </div>
               <template v-else>
                 <div v-if="subagentActive.length" class="sub-section">
-                  <div class="sub-section-title">▶ 运行中 ({{ subagentActive.length }})</div>
+                  <div class="sub-section-title">▶ {{ m.debugSubRunningTitle }} ({{ subagentActive.length }})</div>
                   <div v-for="(s, i) in subagentActive" :key="'a'+i" class="sub-card" :class="s.status">
                     <div class="sub-head">
                       <span class="sub-status" :style="{ background: (subStatusMeta[s.status] && subStatusMeta[s.status].color) || '#9ca3af' }">{{ (subStatusMeta[s.status] && subStatusMeta[s.status].label) || s.status }}</span>
                       <span class="sub-label">{{ s.label }}</span>
-                      <span class="sub-steps-badge">{{ s.steps.length }} 步</span>
+                      <span class="sub-steps-badge">{{ s.steps.length }}{{ m.debugStepsCountSuffix }}</span>
                     </div>
                     <div class="sub-task">{{ truncate(s.task, 80) }}</div>
                   </div>
                 </div>
                 <div v-if="subagentHistory.length" class="sub-section">
-                  <div class="sub-section-title">🕐 历史 ({{ subagentHistory.length }})</div>
+                  <div class="sub-section-title">🕐 {{ m.debugSubHistoryTitle }} ({{ subagentHistory.length }})</div>
                   <div v-for="(s, i) in subagentHistory" :key="'h'+i" class="sub-card" :class="s.status">
                     <div class="sub-head">
                       <span class="sub-status" :style="{ background: (subStatusMeta[s.status] && subStatusMeta[s.status].color) || '#9ca3af' }">{{ (subStatusMeta[s.status] && subStatusMeta[s.status].label) || s.status }}</span>
                       <span class="sub-label">{{ s.label }}</span>
                       <span v-if="s.durationMs != null" class="sub-dur">{{ formatDuration(s.durationMs) }}</span>
-                      <button v-if="s.steps.length" class="sub-toggle" @click="toggleSub(i)">{{ subExpanded.has(i) ? '收起' : '步骤' }}</button>
+                      <button v-if="s.steps.length" class="sub-toggle" @click="toggleSub(i)">{{ subExpanded.has(i) ? m.collapse : m.debugStepsBtn }}</button>
                     </div>
                     <div class="sub-task">{{ truncate(s.task, 80) }}</div>
                     <div v-if="s.resultPreview" class="sub-result">{{ s.resultPreview }}</div>
@@ -355,7 +363,7 @@ function flowNodeDetail(lg: DebugLog): string {
             </div>
             <template v-if="tab === 'logs'">
             <div v-if="filteredLogs.length === 0" class="empty">
-              暂无日志，发送消息后这里会显示 Agent 的完整上下文、工具调用等信息
+              {{ m.debugLogsEmpty }}
             </div>
 
             <div v-for="(log, idx) in filteredLogs" :key="idx" class="log-item">
@@ -371,16 +379,16 @@ function flowNodeDetail(lg: DebugLog): string {
                 <!-- 上下文：模型配置 + 工具列表 + 消息列表 -->
                 <template v-if="log.type === 'context'">
                   <div class="kv-grid">
-                    <div class="kv"><span class="k">模型</span><span class="v">{{ log.data.model }}</span></div>
-                    <div class="kv"><span class="k">温度</span><span class="v">{{ log.data.temperature }}</span></div>
+                    <div class="kv"><span class="k">{{ m.debugModel }}</span><span class="v">{{ log.data.model }}</span></div>
+                    <div class="kv"><span class="k">{{ m.debugTemperature }}</span><span class="v">{{ log.data.temperature }}</span></div>
                     <div class="kv"><span class="k">MaxTokens</span><span class="v">{{ log.data.maxTokens }}</span></div>
-                    <div class="kv"><span class="k">消息数</span><span class="v">{{ log.data.totalMessages }}</span></div>
+                    <div class="kv"><span class="k">{{ m.debugMessageCount }}</span><span class="v">{{ log.data.totalMessages }}</span></div>
                   </div>
-                  <div class="section-label">工具 ({{ log.data.tools?.length || 0 }})</div>
+                  <div class="section-label">{{ m.debugToolsLabel }} ({{ log.data.tools?.length || 0 }})</div>
                   <div class="chip-row">
                     <span v-for="t in log.data.tools" :key="t" class="tool-chip">{{ t }}</span>
                   </div>
-                  <div class="section-label">上下文消息</div>
+                  <div class="section-label">{{ m.debugContextMessages }}</div>
                   <div class="msg-list">
                     <div v-for="(m, mi) in log.data.messages" :key="mi" class="msg-row">
                       <span class="msg-role" :style="{ background: roleOf(m.type).color }">{{ roleOf(m.type).label }}</span>
@@ -392,12 +400,12 @@ function flowNodeDetail(lg: DebugLog): string {
                 <!-- LLM 请求：轮次 + 消息列表 -->
                 <template v-else-if="log.type === 'llm_request'">
                   <div class="badge-row">
-                    <span class="badge">第 {{ log.data.round }} 轮</span>
+                    <span class="badge">{{ m.debugRoundPrefix }}{{ log.data.round }}{{ m.debugRoundSuffix }}</span>
                     <span v-if="log.data.model" class="badge muted">{{ log.data.model }}</span>
-                    <span class="badge muted">{{ (log.data.messages || []).length }} 条消息</span>
-                    <span v-if="log.data.tools?.length" class="badge muted">{{ log.data.tools.length }} 工具</span>
+                    <span class="badge muted">{{ (log.data.messages || []).length }}{{ m.debugMsgCountSuffix }}</span>
+                    <span v-if="log.data.tools?.length" class="badge muted">{{ log.data.tools.length }}{{ m.debugToolCountSuffix }}</span>
                     <button class="view-toggle" @click="toggleBody(idx)">
-                      {{ bodyExpanded.has(idx) ? '🗂 卡片视图' : '📋 请求体' }}
+                      {{ bodyExpanded.has(idx) ? m.debugCardView : m.debugRequestBody }}
                     </button>
                   </div>
                   <div v-if="!bodyExpanded.has(idx)" class="msg-list">
@@ -419,8 +427,8 @@ function flowNodeDetail(lg: DebugLog): string {
                 <!-- LLM 响应：内容 + 工具调用 + 用量 -->
                 <template v-else-if="log.type === 'llm_response'">
                   <div class="badge-row">
-                    <span class="badge">第 {{ log.data.round }} 轮</span>
-                    <span v-if="log.data.toolCalls?.length" class="badge warn">🔧 {{ log.data.toolCalls.length }} 个工具调用</span>
+                    <span class="badge">{{ m.debugRoundPrefix }}{{ log.data.round }}{{ m.debugRoundSuffix }}</span>
+                    <span v-if="log.data.toolCalls?.length" class="badge warn">🔧 {{ log.data.toolCalls.length }}{{ m.debugToolCallsSuffix }}</span>
                   </div>
                   <div v-if="log.data.content" class="resp-content">{{ log.data.content }}</div>
                   <div v-if="log.data.toolCalls?.length" class="tc-list">
@@ -447,7 +455,7 @@ function flowNodeDetail(lg: DebugLog): string {
                 <!-- 工具结果 -->
                 <template v-else-if="log.type === 'tool_result'">
                   <div class="tc-card inline">
-                    <div class="tc-name">✅ {{ log.data.name }} 结果</div>
+                    <div class="tc-name">✅ {{ log.data.name }}{{ m.debugResultSuffix }}</div>
                     <pre class="tc-args">{{ log.data.result }}</pre>
                   </div>
                 </template>
@@ -460,9 +468,9 @@ function flowNodeDetail(lg: DebugLog): string {
 
               <div class="log-footer">
                 <button class="raw-toggle" @click="toggleRaw(idx)">
-                  {{ rawExpanded.has(idx) ? '收起原始 JSON' : '查看原始 JSON' }}
+                  {{ rawExpanded.has(idx) ? m.debugCollapseRawJson : m.debugViewRawJson }}
                 </button>
-                <button class="raw-toggle" @click="copyText(formatJson(log.data))">复制</button>
+                <button class="raw-toggle" @click="copyText(formatJson(log.data))">{{ m.copy }}</button>
               </div>
               <pre v-if="rawExpanded.has(idx)" class="log-raw"><code>{{ formatJson(log.data) }}</code></pre>
             </div>
@@ -470,9 +478,9 @@ function flowNodeDetail(lg: DebugLog): string {
 
             <!-- 执行流程:按轮次分组的流水视图(走到哪个模块 + 结果)-->
             <template v-else-if="tab === 'flow'">
-              <div v-if="!logs.length" class="empty">暂无日志，发送消息后这里按轮次展示执行流程</div>
+              <div v-if="!logs.length" class="empty">{{ m.debugFlowEmpty }}</div>
               <div v-if="flowRounds.pre.length" class="flow-section">
-                <div class="flow-section-title">⚙️ 准备 / 其他</div>
+                <div class="flow-section-title">⚙️ {{ m.debugFlowPrep }}</div>
                 <div v-for="(lg, i) in flowRounds.pre" :key="'p'+i" class="flow-node" :class="lg.type">
                   <span class="flow-ico">{{ typeMeta[lg.type]?.icon }}</span>
                   <span class="flow-label">{{ typeMeta[lg.type]?.label }}</span>
@@ -481,7 +489,7 @@ function flowNodeDetail(lg: DebugLog): string {
                 </div>
               </div>
               <div v-for="r in flowRounds.rounds" :key="r.round" class="flow-round">
-                <div class="flow-round-head">🔁 第 {{ r.round }} 轮</div>
+                <div class="flow-round-head">🔁 {{ m.debugRoundPrefix }}{{ r.round }}{{ m.debugRoundSuffix }}</div>
                 <div class="flow-round-body">
                   <div v-for="(lg, i) in r.items" :key="i" class="flow-node" :class="lg.type">
                     <span class="flow-ico">{{ typeMeta[lg.type]?.icon }}</span>
@@ -495,21 +503,21 @@ function flowNodeDetail(lg: DebugLog): string {
 
             <!-- Agent 信息 -->
             <div v-else class="info-body">
-              <div v-if="!agentInfo" class="empty">暂无信息</div>
+              <div v-if="!agentInfo" class="empty">{{ m.debugNoInfo }}</div>
               <template v-else>
                 <div class="info-section">
-                  <div class="info-title">基本信息</div>
+                  <div class="info-title">{{ m.debugInfoBasic }}</div>
                   <div class="kv-grid">
                     <div class="kv"><span class="k">ID</span><span class="v">{{ agentInfo.id }}</span></div>
-                    <div class="kv"><span class="k">模型</span><span class="v">{{ agentInfo.model || '-' }}</span></div>
-                    <div class="kv"><span class="k">工具数</span><span class="v">{{ agentInfo.tools.length }}</span></div>
-                    <div class="kv"><span class="k">中间件</span><span class="v">{{ agentInfo.middleware.length }}</span></div>
+                    <div class="kv"><span class="k">{{ m.debugModel }}</span><span class="v">{{ agentInfo.model || '-' }}</span></div>
+                    <div class="kv"><span class="k">{{ m.debugToolCount }}</span><span class="v">{{ agentInfo.tools.length }}</span></div>
+                    <div class="kv"><span class="k">{{ m.debugMiddleware }}</span><span class="v">{{ agentInfo.middleware.length }}</span></div>
                   </div>
-                  <div class="kv" style="margin-top: 6px"><span class="k">中间件栈</span><span class="v" style="font-size: 11px">{{ agentInfo.middleware.join(' → ') || '-' }}</span></div>
+                  <div class="kv" style="margin-top: 6px"><span class="k">{{ m.debugMiddlewareStack }}</span><span class="v" style="font-size: 11px">{{ agentInfo.middleware.join(' → ') || '-' }}</span></div>
                 </div>
 
                 <div class="info-section">
-                  <div class="info-title">🔧 工具 ({{ agentInfo.tools.length }})</div>
+                  <div class="info-title">🔧 {{ m.debugToolsLabel }} ({{ agentInfo.tools.length }})</div>
                   <div v-for="t in agentInfo.tools" :key="t.name" class="info-item">
                     <div class="info-name">{{ t.name }}<span v-if="t.source" class="src-tag" :class="srcClass(t.source)">{{ t.source }}</span></div>
                     <div class="info-desc">{{ t.description }}</div>
@@ -517,7 +525,7 @@ function flowNodeDetail(lg: DebugLog): string {
                 </div>
 
                 <div v-if="agentInfo.skills.length" class="info-section">
-                  <div class="info-title">📘 技能 ({{ agentInfo.skills.length }})<span class="info-hint">点击展开查看全文</span></div>
+                  <div class="info-title">📘 {{ m.debugSkillsTitle }} ({{ agentInfo.skills.length }})<span class="info-hint">{{ m.debugSkillsHint }}</span></div>
                   <div v-for="s in agentInfo.skills" :key="s.name" class="info-item">
                     <div class="info-name skill-toggle" @click="toggleSkill(s.name)">
                       <span class="skill-arrow" :class="{ open: !!skillExpanded[s.name] }">▶</span>
@@ -525,7 +533,7 @@ function flowNodeDetail(lg: DebugLog): string {
                     </div>
                     <div class="info-desc">{{ s.description }}</div>
                     <div v-if="skillExpanded[s.name]" class="skill-content">
-                      <div v-if="skillExpanded[s.name].loading" class="skill-loading">加载中…</div>
+                      <div v-if="skillExpanded[s.name].loading" class="skill-loading">{{ m.debugLoading }}</div>
                       <div v-else-if="skillExpanded[s.name].error" class="skill-error">{{ skillExpanded[s.name].error }}</div>
                       <pre v-else-if="skillExpanded[s.name].content" class="skill-pre">{{ skillExpanded[s.name].content }}</pre>
                     </div>
@@ -533,43 +541,43 @@ function flowNodeDetail(lg: DebugLog): string {
                 </div>
 
                 <div v-if="agentInfo.data" class="info-section">
-                  <div class="info-title">📊 可操作数据</div>
+                  <div class="info-title">📊 {{ m.debugDataTitle }}</div>
                   <div class="info-item">
-                    <div class="info-name">{{ agentInfo.data.description || '主数据对象' }}</div>
-                    <div class="info-desc">schema: {{ agentInfo.data.schema ? '已声明' : '未声明' }}</div>
+                    <div class="info-name">{{ agentInfo.data.description || m.debugDataFallback }}</div>
+                    <div class="info-desc">{{ m.debugSchemaPrefix }}{{ agentInfo.data.schema ? m.debugSchemaDeclared : m.debugSchemaMissing }}</div>
                   </div>
                 </div>
 
                 <div class="info-section">
-                  <div class="info-title">🧬 子 Agent</div>
+                  <div class="info-title">🧬 {{ m.debugSubagentTitle }}</div>
                   <div class="kv-grid">
-                    <div class="kv"><span class="k">启用</span><span class="v">{{ agentInfo.subagent.enabled ? '是' : '否' }}</span></div>
-                    <div class="kv"><span class="k">最大递归</span><span class="v">{{ agentInfo.subagent.maxDepth }}</span></div>
-                    <div class="kv"><span class="k">并行上限</span><span class="v">{{ agentInfo.subagent.maxParallel }}</span></div>
-                    <div class="kv"><span class="k">额外工具</span><span class="v" style="font-size: 11px">{{ agentInfo.subagent.allowedTools.length ? agentInfo.subagent.allowedTools.join(', ') : '默认只读' }}</span></div>
+                    <div class="kv"><span class="k">{{ m.debugEnabled }}</span><span class="v">{{ agentInfo.subagent.enabled ? m.debugYes : m.debugNo }}</span></div>
+                    <div class="kv"><span class="k">{{ m.debugMaxDepth }}</span><span class="v">{{ agentInfo.subagent.maxDepth }}</span></div>
+                    <div class="kv"><span class="k">{{ m.debugMaxParallel }}</span><span class="v">{{ agentInfo.subagent.maxParallel }}</span></div>
+                    <div class="kv"><span class="k">{{ m.debugExtraTools }}</span><span class="v" style="font-size: 11px">{{ agentInfo.subagent.allowedTools.length ? agentInfo.subagent.allowedTools.join(', ') : m.debugDefaultReadonly }}</span></div>
                   </div>
                 </div>
 
                 <div v-if="agentInfo.mcp?.servers?.length" class="info-section">
                   <div class="info-title">🔌 MCP ({{ agentInfo.mcp.servers.length }})</div>
                   <div v-for="s in agentInfo.mcp.servers" :key="s.name" class="info-item">
-                    <div class="info-name">{{ s.name }} <span class="src-tag mcp">{{ s.toolCount }} 工具</span></div>
+                    <div class="info-name">{{ s.name }} <span class="src-tag mcp">{{ s.toolCount }}{{ m.debugToolCountSuffix }}</span></div>
                     <div class="info-desc">{{ s.url }}</div>
                   </div>
                 </div>
 
                 <div v-if="agentInfo.verify" class="info-section">
-                  <div class="info-title">✅ Verify 自检</div>
+                  <div class="info-title">✅ {{ m.debugVerifyTitle }}</div>
                   <div class="kv-grid">
-                    <div class="kv"><span class="k">启用</span><span class="v">{{ agentInfo.verify.enabled ? '是' : '否' }}</span></div>
-                    <div class="kv"><span class="k">自纠上限</span><span class="v">{{ agentInfo.verify.maxAttempts }}</span></div>
-                    <div class="kv"><span class="k">对抗验证</span><span class="v">{{ agentInfo.verify.adversarial ? '开启' : '关闭' }}</span></div>
-                    <div v-if="agentInfo.verify.adversarial" class="kv"><span class="k">对抗模型</span><span class="v" style="font-size: 11px">{{ agentInfo.model || '-' }}(同主)</span></div>
+                    <div class="kv"><span class="k">{{ m.debugEnabled }}</span><span class="v">{{ agentInfo.verify.enabled ? m.debugYes : m.debugNo }}</span></div>
+                    <div class="kv"><span class="k">{{ m.debugMaxAttempts }}</span><span class="v">{{ agentInfo.verify.maxAttempts }}</span></div>
+                    <div class="kv"><span class="k">{{ m.debugAdversarial }}</span><span class="v">{{ agentInfo.verify.adversarial ? m.debugOn : m.debugOff }}</span></div>
+                    <div v-if="agentInfo.verify.adversarial" class="kv"><span class="k">{{ m.debugAdversarialModel }}</span><span class="v" style="font-size: 11px">{{ agentInfo.model || '-' }}{{ m.debugSameAsMain }}</span></div>
                   </div>
                 </div>
 
                 <div v-if="agentInfo.todos.length" class="info-section">
-                  <div class="info-title">📋 任务清单 ({{ agentInfo.todos.length }})</div>
+                  <div class="info-title">📋 {{ m.debugTodosTitle }} ({{ agentInfo.todos.length }})</div>
                   <div v-for="(td, i) in agentInfo.todos" :key="i" class="info-todo">
                     <span class="todo-tag" :style="{ background: (statusMeta[td.status] && statusMeta[td.status].color) || '#9ca3af' }">{{ statusLabel(td.status) }}</span>
                     <span>{{ td.content }}</span>
@@ -577,19 +585,19 @@ function flowNodeDetail(lg: DebugLog): string {
                 </div>
 
                 <div v-if="agentInfo.memory" class="info-section">
-                  <div class="info-title">📝 持久指令 (memory)</div>
+                  <div class="info-title">📝 {{ m.debugMemoryTitle }}</div>
                   <pre class="info-pre">{{ agentInfo.memory }}</pre>
                 </div>
 
                 <div v-if="agentInfo.lastCompression" class="info-section">
-                  <div class="info-title">🗜️ 上轮压缩</div>
+                  <div class="info-title">🗜️ {{ m.debugLastCompTitle }}</div>
                   <div class="info-kv">
-                    <div class="kv"><span class="k">触发</span><span class="v">{{ agentInfo.lastCompression.triggered ? '✓' : '✗(未达阈值)' }}</span></div>
-                    <div class="kv"><span class="k">摘要轮次</span><span class="v">{{ agentInfo.lastCompression.roundsSummarized }} / {{ agentInfo.lastCompression.roundsTotal }}</span></div>
-                    <div class="kv"><span class="k">召回</span><span class="v">{{ agentInfo.lastCompression.roundsRecalled }} 条</span></div>
-                    <div class="kv"><span class="k">消息数</span><span class="v">{{ agentInfo.lastCompression.originalMessages }} → {{ agentInfo.lastCompression.compressedMessages }}</span></div>
-                    <div class="kv"><span class="k">策略</span><span class="v" style="font-size: 11px">{{ agentInfo.lastCompression.strategy }}</span></div>
-                    <div class="kv" v-if="agentInfo.lastCompression.decision"><span class="k">压缩决策</span><span class="v" style="font-size: 11px">🤖 {{ decisionSummary(agentInfo.lastCompression.decision) }}</span></div>
+                    <div class="kv"><span class="k">{{ m.debugTriggered }}</span><span class="v">{{ agentInfo.lastCompression.triggered ? '✓' : m.debugNotTriggered }}</span></div>
+                    <div class="kv"><span class="k">{{ m.debugRoundsSummarized }}</span><span class="v">{{ agentInfo.lastCompression.roundsSummarized }} / {{ agentInfo.lastCompression.roundsTotal }}</span></div>
+                    <div class="kv"><span class="k">{{ m.debugCtxRecalled }}</span><span class="v">{{ agentInfo.lastCompression.roundsRecalled }}{{ m.debugCountSuffix }}</span></div>
+                    <div class="kv"><span class="k">{{ m.debugMessageCount }}</span><span class="v">{{ agentInfo.lastCompression.originalMessages }} → {{ agentInfo.lastCompression.compressedMessages }}</span></div>
+                    <div class="kv"><span class="k">{{ m.debugStrategy }}</span><span class="v" style="font-size: 11px">{{ agentInfo.lastCompression.strategy }}</span></div>
+                    <div class="kv" v-if="agentInfo.lastCompression.decision"><span class="k">{{ m.debugDecision }}</span><span class="v" style="font-size: 11px">🤖 {{ decisionSummary(agentInfo.lastCompression.decision) }}</span></div>
                   </div>
                 </div>
               </template>

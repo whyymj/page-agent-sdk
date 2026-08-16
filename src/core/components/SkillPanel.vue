@@ -7,8 +7,9 @@
  * 可经 skillStorage.id 手动指定同一 id 实现跨页面/跨 agent 复用);删除经 onRemoveSkill → sdk.removeSkill。
  */
 import { ref, watch } from 'vue'
+import { MESSAGES_ZH_CN, type DialogMessages } from './messages'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   visible: boolean
   /** 提交创建/编辑:调 sdk.addSkill(skill)(同名覆盖,即编辑) */
   onAddSkill?: (skill: { name: string; description: string; getContent: () => string }) => void
@@ -18,7 +19,11 @@ const props = defineProps<{
   getUserSkillNames?: () => string[]
   /** 读取用户创建的 skill 详情(点击编辑时调,返回 {name, description, content};不存在返回 undefined) */
   onGetSkill?: (name: string) => { name: string; description: string; content: string } | undefined
-}>()
+  /** 文案集(dialog.locale/messages 解析结果;独立复用缺省中文) */
+  messages?: DialogMessages
+}>(), {
+  messages: () => MESSAGES_ZH_CN,
+})
 
 const emit = defineEmits<{ (e: 'close'): void }>()
 
@@ -43,13 +48,13 @@ function refresh() {
 
 function submit() {
   error.value = ''
-  if (!name.value.trim()) { error.value = 'skill 名不能为空'; return }
-  if (!description.value.trim()) { error.value = '描述不能为空'; return }
-  if (!content.value.trim()) { error.value = '内容不能为空'; return }
+  if (!name.value.trim()) { error.value = props.messages.skillErrName; return }
+  if (!description.value.trim()) { error.value = props.messages.skillErrDesc; return }
+  if (!content.value.trim()) { error.value = props.messages.skillErrContent; return }
   const n = name.value.trim()
   // 同名检查(非编辑模式下,用户已创建的)
   if (editingName.value === null && userSkills.value.includes(n)) {
-    error.value = `已存在同名用户 skill "${n}",将覆盖`
+    error.value = `${props.messages.skillDupWarnPrefix}${n}${props.messages.skillDupWarnSuffix}`
   }
   props.onAddSkill?.({
     name: n,
@@ -98,48 +103,47 @@ function resetForm() {
       <div v-if="visible" class="skill-mask" @click.self="emit('close')">
         <div class="skill-panel">
           <div class="skill-header">
-            <span class="skill-title">🧩 Skill 管理</span>
-            <button class="skill-close" title="关闭" @click="emit('close')">✕</button>
+            <span class="skill-title">{{ messages.skillPanelTitle }}</span>
+            <button class="skill-close" :title="messages.close" @click="emit('close')">✕</button>
           </div>
 
           <div class="skill-section">
             <div class="section-title">
-              {{ editingName ? `编辑 Skill: ${editingName}` : '创建新 Skill' }}
-              <button v-if="editingName" class="btn btn-ghost btn-cancel" title="取消编辑,回到新建" @click="resetForm">取消编辑</button>
+              {{ editingName ? `${messages.skillEditingPrefix}${editingName}` : messages.skillCreateNew }}
+              <button v-if="editingName" class="btn btn-ghost btn-cancel" :title="messages.skillCancelEdit" @click="resetForm">{{ messages.skillCancelEdit }}</button>
             </div>
             <label class="field">
-              <span class="field-label">名称</span>
-              <input v-model="name" :disabled="!!editingName" placeholder="如:my-writer" class="field-input" />
+              <span class="field-label">{{ messages.skillNameLabel }}</span>
+              <input v-model="name" :disabled="!!editingName" :placeholder="messages.skillNamePlaceholder" class="field-input" />
             </label>
             <label class="field">
-              <span class="field-label">描述</span>
-              <input v-model="description" placeholder="一句话说明用途与触发时机" class="field-input" />
+              <span class="field-label">{{ messages.skillDescLabel }}</span>
+              <input v-model="description" :placeholder="messages.skillDescPlaceholder" class="field-input" />
             </label>
             <label class="field field-textarea">
-              <span class="field-label">内容</span>
-              <textarea v-model="content" placeholder="skill 全文指令(支持 Markdown)" rows="6" class="field-input"></textarea>
+              <span class="field-label">{{ messages.skillContentLabel }}</span>
+              <textarea v-model="content" :placeholder="messages.skillContentPlaceholder" rows="6" class="field-input"></textarea>
             </label>
             <div v-if="error" class="skill-error">{{ error }}</div>
-            <button class="btn btn-primary" @click="submit">{{ editingName ? '保存修改' : '添加 Skill' }}</button>
+            <button class="btn btn-primary" @click="submit">{{ editingName ? messages.skillSave : messages.skillAdd }}</button>
           </div>
 
           <div class="skill-section">
-            <div class="section-title">已创建 Skill({{ userSkills.length }})</div>
-            <div v-if="!userSkills.length" class="empty-hint">暂无用户创建的 skill</div>
+            <div class="section-title">{{ messages.skillCreatedTitle }}({{ userSkills.length }})</div>
+            <div v-if="!userSkills.length" class="empty-hint">{{ messages.skillEmpty }}</div>
             <ul v-else class="skill-list">
               <li v-for="n in userSkills" :key="n" class="skill-item">
                 <span class="skill-name" :class="{ active: editingName === n }">{{ n }}</span>
                 <span class="skill-actions">
-                  <button class="btn btn-ghost btn-edit" title="加载到表单编辑" @click="editSkill(n)">编辑</button>
-                  <button class="btn btn-ghost btn-del" title="删除该用户 skill" @click="removeSkill(n)">删除</button>
+                  <button class="btn btn-ghost btn-edit" :title="messages.skillEditTitle" @click="editSkill(n)">{{ messages.skillEditBtn }}</button>
+                  <button class="btn btn-ghost btn-del" :title="messages.skillDeleteTitle" @click="removeSkill(n)">{{ messages.skillDeleteBtn }}</button>
                 </span>
               </li>
             </ul>
           </div>
 
           <div class="skill-hint">
-            💡 创建/编辑的 skill 会自动加入 agent(下轮 system prompt 索引可见),agent 经 <code>load_skill(name)</code> 按需加载全文;
-            持久化由独立 SkillStore 管理(默认 indexedDB,与 storage 选项分离),跨刷新自动恢复;可经 <code>skillStorage.id</code> 跨页面复用。
+            💡 {{ messages.skillHintA }} <code>load_skill(name)</code> {{ messages.skillHintB }} <code>skillStorage.id</code> {{ messages.skillHintC }}
           </div>
         </div>
       </div>

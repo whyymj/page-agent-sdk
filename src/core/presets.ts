@@ -83,6 +83,20 @@ export const systemPromptHelpers = {
   ].join('\n'),
 
   /**
+   * 可靠写入规则(英文版)—— dialog.locale:'en-US' 时 buildSystemPrompt 追加/默认 prompt 用此版
+   * (与 reliableWriteRules 逐条对齐;未传 systemPrompt 的默认身份段见 DEFAULT_SYSTEM_PROMPT_EN)。
+   */
+  reliableWriteRulesEn: [
+    '[Reliable write rules]',
+    '1. Before changing any field, read its current real value with read({ jsonPath }) and edit based on that value, never from memory;',
+    '2. If unsure which fields are operable, call read() without jsonPath first to see the data description + schema-declared fields (the integrator can replace the schema at runtime via sdk.setData; trust the tool response over stale memory);',
+    '3. When unsure about a field structure, the read({ jsonPath }) response includes a format description; treat the response as the source of truth;',
+    '4. If a write is rejected by schema validation (the structured error names the field and expected type), fix it per the error and retry; do not give up;',
+    '5. Prefer incremental write patches (send only the change, e.g. write({ value, patch:{ op, jsonPath } })) over resending the whole large JSON, which risks truncation;',
+    '6. If a write hits an optimistic-lock conflict (VERSION_CONFLICT returned, or the tool suspends awaiting the user decision): after the tool returns, follow its instruction (keep external → re-read then edit; overwritten/restored → continue from the result); do not abandon the task.',
+  ].join('\n'),
+
+  /**
    * HTML 页面搭建主 agent 编排规则(htmlOrchestratorPrompt('html') 静态快照,单一数据源)。
    * 用 createHtmlSubagent 且关闭自动注入(orchestratorPrompt:false),或自定义编排时,把这段拼进自己的 systemPrompt。
    */

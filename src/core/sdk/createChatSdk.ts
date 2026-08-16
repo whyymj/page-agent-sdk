@@ -981,7 +981,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
   // 最终 systemPrompt 的 base 段(不含数据段):用户 systemPrompt(或默认)+ 可选 reliableWriteRules 追加,统一由 buildSystemPrompt 处理
   // 数据段移交 dataHint 中间件每轮从 liveData() 动态重算(修 setData 不同步 Bug);inspect 与 createAgent 共用 baseSystemPrompt 保持一致
-  const baseSystemPromptRaw = buildSystemPrompt(options)
+  // dialog-i18n Phase 2:locale='en-US' 时默认 prompt/追加规则段用英文版(与 UI 同语言;自定义 systemPrompt 不受影响)
+  const baseSystemPromptRaw = buildSystemPrompt({ ...options, locale: options.dialog?.locale })
   // 主 agent 编排自适应注入(集成方零配置):有 html 子 agent→委派编排 / 无 agent+schema 有 code 字段→自己写编排+warn / 无 code 字段→不注入
   let baseSystemPrompt = baseSystemPromptRaw
   if (hasCodeAsset) {

@@ -199,88 +199,239 @@ export interface DialogIcons {
 
 /** 对话框文案键空间(dialog.locale 选包 / dialog.messages 键级覆盖优先;含插值的键组件侧拼数字) */
 export interface DialogMessages {
-  defaultTitle: string;
-  inputPlaceholder: string;
-  newSession: string;
-  history: string;
-  more: string;
-  close: string;
-  debugMenu: string;
-  debugMenuTitle: string;
-  skillMenu: string;
-  skillMenuTitle: string;
-  clearChat: string;
-  sessionFallbackPrefix: string;
-  justNow: string;
-  minutesAgoSuffix: string;
-  emptyGreeting: string;
-  retry: string;
-  undo: string;
-  undoTitle: string;
-  thinking: string;
-  statusRunning: string;
-  statusDone: string;
-  statusError: string;
-  subagentBadge: string;
-  subagentBadgeTitle: string;
-  subagentProgress: string;
-  nthCallPrefix: string;
-  nthCallSuffix: string;
-  argsLabel: string;
-  resultLabel: string;
-  copy: string;
-  copied: string;
-  regenerate: string;
-  expand: string;
-  collapse: string;
-  noResult: string;
-  displayTruncatedSuffix: string;
-  thinkingCountPrefix: string;
-  charCountSuffix: string;
-  reasoningTitle: string;
-  truncatedNotePrefix: string;
-  truncatedNoteSuffix: string;
-  copyThinking: string;
-  copyThinkingTruncTitle: string;
-  focusChipTitlePrefix: string;
-  focusChipTitleHint: string;
-  historyFocusChipTitlePrefix: string;
-  removeFocus: string;
-  sendHint: string;
-  sendTitle: string;
-  stopTitle: string;
-  queuedTitle: string;
-  queuedEditTitle: string;
-  removeQueuedTitle: string;
-  humanConfirmTitle: string;
-  recommendPrefix: string;
-  approve: string;
-  deny: string;
-  toolConfirmPrefix: string;
-  viewArgs: string;
-  collapseArgs: string;
-  argsTruncatedSuffix: string;
-  conflictTitlePrefix: string;
-  conflictTitleSuffix: string;
-  conflictDetailTemplate: string;
-  conflictOpWrite: string;
-  conflictOpDelete: string;
-  viewDiff: string;
-  collapseDiff: string;
-  agentValueLabel: string;
-  currentValueLabel: string;
-  deleteNoValue: string;
-  keepExternal: string;
-  keepExternalTitle: string;
-  overwrite: string;
-  overwriteTitle: string;
-  restore: string;
-  restoreTitle: string;
-  switchFocusTitle: string;
-  exitFocusTitle: string;
-  focusPathPlaceholder: string;
-  focusLabelPlaceholder: string;
-  focusSubmit: string;
+  // ===== 容器缺省(ChatDialog 默认 title/placeholder 跟随 locale)=====
+  defaultTitle: string
+  inputPlaceholder: string
+  // ===== ChatHeader =====
+  newSession: string
+  history: string
+  more: string
+  close: string
+  debugMenu: string
+  debugMenuTitle: string
+  skillMenu: string
+  skillMenuTitle: string
+  clearChat: string
+  sessionFallbackPrefix: string   // 会话 / Session(截尾 id 前缀)
+  justNow: string
+  minutesAgoSuffix: string        // 分钟前 / min ago(数字在前拼接)
+  // ===== MessageList =====
+  emptyGreeting: string
+  retry: string
+  undo: string
+  undoTitle: string
+  // ===== MessageBubble =====
+  thinking: string                // 思考中... / Thinking...
+  // ===== MessageSteps / SubReasonDetails =====
+  statusRunning: string
+  statusDone: string
+  statusError: string
+  subagentBadge: string           // 「子」字标 / "sub"
+  subagentBadgeTitle: string
+  subagentProgress: string        // 子 agent 进度(图标后的词)
+  nthCallPrefix: string           // 第 / #(第 {n} 次 → prefix + n + suffix)
+  nthCallSuffix: string           // 次 / of calls
+  argsLabel: string
+  resultLabel: string
+  copy: string
+  copied: string
+  regenerate: string
+  expand: string
+  collapse: string
+  noResult: string
+  displayTruncatedSuffix: string  // …(展示截断,复制可得全量)
+  thinkingCountPrefix: string     // 思考中… / Thinking…(+ N字)
+  charCountSuffix: string         // 字 / chars
+  reasoningTitle: string          // 思考过程
+  truncatedNotePrefix: string     // 仅显最近 / Last(+ N 字)
+  truncatedNoteSuffix: string     // 字 / chars
+  copyThinking: string
+  copyThinkingTruncTitle: string
+  // ===== MessageRow / ChatInput 焦点 chip =====
+  focusChipTitlePrefix: string    // 精修中: / Focus:(+ path)
+  focusChipTitleHint: string      // (点击回看 · ✕ 移除)
+  historyFocusChipTitlePrefix: string // 回看 / View(+ path)
+  removeFocus: string
+  // ===== ChatInput =====
+  sendHint: string
+  sendTitle: string
+  stopTitle: string
+  // ===== QueuedBar =====
+  queuedTitle: string
+  queuedEditTitle: string
+  removeQueuedTitle: string
+  // ===== ApprovalBar =====
+  humanConfirmTitle: string
+  recommendPrefix: string         // 推荐 / Recommend:(值在后)
+  approve: string
+  deny: string
+  toolConfirmPrefix: string       // 需确认工具调用: / Confirm tool call:
+  viewArgs: string
+  collapseArgs: string
+  argsTruncatedSuffix: string     // …(已截断)
+  // ===== ConflictBar =====
+  conflictTitlePrefix: string     // 写入冲突: / Write conflict:
+  conflictTitleSuffix: string     // 已被外部修改 / was modified externally
+  conflictDetailTemplate: string  // 含 {op} 占位(写入/删除)
+  conflictOpWrite: string
+  conflictOpDelete: string
+  viewDiff: string
+  collapseDiff: string
+  agentValueLabel: string         // AI 想写的值
+  currentValueLabel: string       // 外部改后的当前值
+  deleteNoValue: string           // (delete 操作无值)
+  keepExternal: string
+  keepExternalTitle: string
+  overwrite: string
+  overwriteTitle: string
+  restore: string
+  restoreTitle: string
+  // ===== FocusBar =====
+  switchFocusTitle: string
+  exitFocusTitle: string
+  focusPathPlaceholder: string
+  focusLabelPlaceholder: string
+  focusSubmit: string
+  // ===== DebugDrawer(phase2;tab/过滤器/状态/各面板)=====
+  debugTabLogs: string
+  debugTabFlow: string
+  debugTabContext: string
+  debugTabSubagent: string
+  debugTabInfo: string
+  debugClearLogs: string
+  debugTypeContext: string
+  debugTypeLlmRequest: string
+  debugTypeLlmResponse: string
+  debugTypeToolCall: string
+  debugTypeToolResult: string
+  debugTypeError: string
+  debugTypeMiddleware: string
+  debugFilterAll: string
+  debugFlowPrep: string              // 准备 / 其他(流程视图无 round 分组标题)
+  debugLogsEmpty: string
+  debugFlowEmpty: string
+  debugNoInfo: string
+  debugCardView: string
+  debugRequestBody: string
+  debugViewRawJson: string
+  debugCollapseRawJson: string
+  debugModel: string
+  debugTemperature: string
+  debugMessageCount: string
+  debugToolsLabel: string
+  debugContextMessages: string
+  debugRoundPrefix: string           // 第 / Round(n 在中间)
+  debugRoundSuffix: string           // 轮 / ''(空)
+  debugMsgCountSuffix: string        // 条消息 / messages(n 在前)
+  debugToolCountSuffix: string       // 工具 / tools(n 在前)
+  debugToolCallsSuffix: string       // 个工具调用 / tool calls(n 在前)
+  debugResultSuffix: string          // 结果 / result(name 在前)
+  debugTodoPending: string
+  debugTodoInProgress: string
+  debugTodoCompleted: string
+  debugSubRunning: string
+  debugSubDone: string
+  debugSubError: string
+  debugLocksTitle: string            // 组件锁 / Component locks
+  debugSubagentEmpty: string
+  debugSubRunningTitle: string       // 运行中 / Running
+  debugSubHistoryTitle: string       // 历史 / History
+  debugStepsBtn: string
+  debugStepsCountSuffix: string      // 步 / steps(n 在前)
+  debugTraceEmpty: string
+  debugMetricRounds: string
+  debugMetricTotal: string
+  debugMetricAvg: string
+  debugMetricTools: string
+  debugMetricCompressions: string
+  debugCtxEmpty: string
+  debugCtxOccupancy: string          // 占用 / Occupancy(title)
+  debugCtxThreshold: string          // 压缩阈值 / compress threshold
+  debugCtxTokens: string             // 估算 / est.(token 前缀)
+  debugCtxWindow: string             // 窗口 / window(数值前缀)
+  debugCtxThresholdPct: string       // 阈值 / threshold(数值前缀)
+  debugCtxCategories: string
+  debugCtxLastCompression: string
+  debugCtxSummarized: string         // 摘要 / summarized(N/M 轮前缀)
+  debugCtxRoundsSuffix: string       // 轮 / rounds(N/M 后缀)
+  debugCtxRecalled: string           // 召回 / recalled(数值前缀)
+  debugCtxAgentDecision: string      // agent 决策: / agent decision:
+  debugInfoBasic: string
+  debugToolCount: string             // 工具数 / Tools
+  debugMiddleware: string
+  debugMiddlewareStack: string
+  debugSkillsTitle: string
+  debugSkillsHint: string
+  debugLoading: string
+  debugDataTitle: string
+  debugDataFallback: string          // 主数据对象 / main data object(无 description 兜底)
+  debugSchemaPrefix: string          // schema: (zh/en 同,占位保持结构)
+  debugSchemaDeclared: string
+  debugSchemaMissing: string
+  debugSubagentTitle: string
+  debugEnabled: string
+  debugYes: string
+  debugNo: string
+  debugMaxDepth: string
+  debugMaxParallel: string
+  debugExtraTools: string
+  debugDefaultReadonly: string
+  debugVerifyTitle: string
+  debugMaxAttempts: string
+  debugAdversarial: string
+  debugOn: string
+  debugOff: string
+  debugAdversarialModel: string
+  debugSameAsMain: string            // (同主) / (same as main)
+  debugTodosTitle: string
+  debugMemoryTitle: string
+  debugLastCompTitle: string
+  debugTriggered: string
+  debugNotTriggered: string          // ✗(未达阈值) / ✗ (below threshold)
+  debugRoundsSummarized: string
+  debugCountSuffix: string           // 条 / ''(召回 N 条)
+  debugStrategy: string
+  debugDecision: string
+  debugSummaryMode: string           // 摘要 / summary(决策摘要 mode 后缀)
+  debugSkillNoReader: string
+  debugSkillEmpty: string
+  // ===== SkillPanel(phase2)=====
+  skillPanelTitle: string
+  skillEditingPrefix: string         // 编辑 Skill: / Edit skill:
+  skillCreateNew: string
+  skillCancelEdit: string
+  skillNameLabel: string
+  skillNamePlaceholder: string
+  skillDescLabel: string
+  skillDescPlaceholder: string
+  skillContentLabel: string
+  skillContentPlaceholder: string
+  skillSave: string
+  skillAdd: string
+  skillCreatedTitle: string          // 已创建 Skill / Created skills(n 在后)
+  skillEmpty: string
+  skillEditBtn: string
+  skillEditTitle: string
+  skillDeleteBtn: string
+  skillDeleteTitle: string
+  skillErrName: string
+  skillErrDesc: string
+  skillErrContent: string
+  skillDupWarnPrefix: string         // 已存在同名用户 skill " / User skill " exists: "
+  skillDupWarnSuffix: string         // ",将覆盖 / " will be overwritten
+  skillHintA: string                 // 底部提示三段(code 标签留在模板混排)
+  skillHintB: string
+  skillHintC: string
+  // ===== CodePreview(phase2)=====
+  codeCopyTitle: string
+  codeOpenTitle: string
+  codePreviewTitlePrefix: string  // 代码预览 · / Code preview · (lang 在后)
+  codePreviewTab: string
+  codeSourceTab: string
+  codeDemoTitle: string
+  codeDemoText: string
+  codeDemoButton: string
+  codeDemoInput: string
 }
 export type DialogLocale = 'zh-CN' | 'en-US';
 export declare const MESSAGES_ZH_CN: DialogMessages;
@@ -1209,13 +1360,16 @@ export declare function createChatSdk(options: ChatSdkOptions): ChatSdk;
 // ============ system prompt 构建(promptBuilder,refactor-module-extraction 从 createChatSdk 抽离)============
 /** 默认 systemPrompt(用户未传 systemPrompt 时用);含身份 + 能力概述 + 可靠写入规则 */
 export declare const DEFAULT_SYSTEM_PROMPT: string;
+/** 默认 systemPrompt 英文版(dialog.locale:'en-US' 且未传 systemPrompt 时用;末行语言锚确保英文输出) */
+export declare const DEFAULT_SYSTEM_PROMPT_EN: string;
 /** 拼接「可操作数据」段(从 data schema .describe() 自动提取注入) */
 export declare function buildDataPrompt(data: DataConfig | undefined): string;
 /**
  * 统一 systemPrompt base 段入口:处理 appendReliableWriteRules 分支 + '---' 分割线。
  * 传 systemPrompt 默认追加 reliableWriteRules(设 appendReliableWriteRules:false 关闭);不传用 DEFAULT_SYSTEM_PROMPT(已内置)。纯函数。
+ * locale:'en-US' 时默认 prompt 用 DEFAULT_SYSTEM_PROMPT_EN、追加规则段用 reliableWriteRulesEn(默认 prompt 与 UI 同语言)。
  */
-export declare function buildSystemPrompt(opts: { systemPrompt?: string; appendReliableWriteRules?: boolean }): string;
+export declare function buildSystemPrompt(opts: { systemPrompt?: string; appendReliableWriteRules?: boolean; locale?: DialogLocale }): string;
 export declare function defineTool(opts: {
   name: string;
   description: string;
@@ -1395,6 +1549,8 @@ export declare const presets: Record<string, any>;
 export declare const systemPromptHelpers: {
   /** 可靠写入规则:改前先读、动态先 list、字段以 describe 为准、写错看校验错误重试、优先增量 patch */
   readonly reliableWriteRules: string;
+  /** 可靠写入规则(英文版;dialog.locale:'en-US' 时 buildSystemPrompt 自动使用) */
+  readonly reliableWriteRulesEn: string;
   /** HTML 页面搭建主 agent 编排规则(与 createHtmlSubagent 配套;职责边界 / 逐个委派 / 修改排查 / 预算暂停) */
   readonly htmlPageOrchestrator: string;
   /** HTML 页面搭建「先出方案再生成」(新建/创意类先给 2~3 套方案问用户;产品决策,opt-in 拼进 systemPrompt) */

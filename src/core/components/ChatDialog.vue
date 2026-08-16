@@ -233,7 +233,7 @@ const drawerWidthStyle = computed(() => {
     <!-- 调试抽屉 -->
     <template v-if="renderSection('debug')">
       <slot name="debug" :chat="ctx">
-        <DebugDrawer v-model:visible="debugVisible" :logs="debugLogs" :get-info="getInfo" :info-tick="infoTick" :get-skill-content="getSkillContent" :cs-theme="csTheme" />
+        <DebugDrawer v-model:visible="debugVisible" :logs="debugLogs" :get-info="getInfo" :info-tick="infoTick" :get-skill-content="getSkillContent" :cs-theme="csTheme" :messages="ctx.messages" :locale="ctx.locale" />
       </slot>
     </template>
 
@@ -246,6 +246,7 @@ const drawerWidthStyle = computed(() => {
           :on-remove-skill="onRemoveSkill"
           :get-user-skill-names="getUserSkillNames"
           :on-get-skill="onGetSkill"
+          :messages="ctx.messages"
           @close="closeSkill"
         />
       </slot>
