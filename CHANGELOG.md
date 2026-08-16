@@ -2,6 +2,16 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.24.0] - 2026-08-17
+
+### Added(debug 模块审计与布局优化)
+- **DebugDrawer 调试布局优化(每步提示词/工具调用详情可读)**:① 工具配对卡 —— tool_call 与 tool_result 自动配对(同名 FIFO),args+result+耗时一屏看全一步调用(未配对 call 显示在途)② 提示词「只看新增」差分视图 —— llm_request 相对上一次请求切掉重复前缀(badge 显示 +N/M),逐轮看本轮真实增量 ③ 长消息折叠 —— 超 400 字消息默认 3 行截断点击展开(system prompt 数 KB 不再淹没列表)④ 复制按钮 —— 提示词全文 JSON/工具结果一键复制。i18n 新增 2 键(debugOnlyNew/debugShowAll)
+- **调试日志跨轮累积(修:每次 stream 清空)**:原 `createAgent.stream()` 入口 `debugLogs.value = []` → 每次 send 抽屉只剩最后一轮,上一轮提示词/工具调用无法回看。改为跨 stream 累积(300 条 FIFO 上限自兜底);会话级清理仍归 switchSession/resetSession;spans/trace 保持按次重置(「最近一次」语义)
+- **调试入口门控(`debug: true`)**:「更多」菜单的调试项 + 日志数 badge 仅 `debug:true` 时展示(ChatDialogProps.debug / DialogMountContext.debug;日志仍恒收集,供 `sdk.debugLogs` 与 headless DebugDrawer 复用;i18n-demo 补 debug:true)
+- **send()/batch 全量事件外发(headless 审计 F1)**:原 `send()` 路径只 emit error(headless 用 send 的集成方经 `sdk.hook` 听不到 tool_call/reasoning/text 过程,「聋子」路径)→ 现全量转发(approval_request 仍不外发,由 30s 自动拒收口,语义不变)
+- **DOM 检视工具族(`capabilities.domInspect`,经 skill 按需注入)**:`dom_search`(CSS 选择器/可见文本双模检索,返回 CSS 路径 + 文本片段,≤20 处)+ `dom_info`(单元素完整信息:内容/outerHTML 片段/计算样式(默认排障高频 ~30 项,可指定属性)/几何位置/伪元素摘要/**事件绑定三源**(inline on* 属性 + Vue vnode props + addEventListener 记录器;记录器仅覆盖 SDK 加载后注册的监听,诚实标注));两工具经内置 `dom-inspect` skill `load_skill` 按需进工具池(**不占常驻 tool schema 上下文** —— 不常用工具 skill 化,load 前仅索引一行);`get_dom` 保持常驻向后兼容;skills 能力关时降级直插工具池;导出 `domInspectSkill` + 纯函数(searchDom/getElementInfo/buildCssPath/ensureDomListenerRecorder 等)
+- **MCP 连接失败可观测**:握手超时/拒连降级原只有 console.warn —— 补 emit observable error(code `MCP_CONNECT_FAILED`,含 server/url)+ `inspect().mcp.failed` 反射失败清单(headless/无 console 集成方可提示用户,不再误诊为「工具不存在」代码问题)
+
 ## [3.23.1] - 2026-08-16
 
 ### Fixed(3.23.0 发布后真 LLM 实测发现:Q5e 并行委派复验)

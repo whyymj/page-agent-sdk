@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-2377%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-2396%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -136,7 +136,7 @@ CDN zero-config: `<script src="https://unpkg.com/page-agent-sdk"></script>` → 
 | 🛡️ compression-safe | Live data snapshot + preserved tool results in summary; write returns hint available paths; `systemPromptHelpers.reliableWriteRules` | built-in |
 | 💰 Context economy (3.10/3.11+) | Compression cost cap `promptSoftCapTokens` (defaults to 160K when window ≥320K — huge-window models no longer burn hundreds of thousands of tokens before compressing; reflected via `inspect().compression`) + agent budget self-awareness (70%-rounds / half-cap token hint, consecutive write-failure reminder, per-invocation `roundTokenBudget` friendly wrap-up) + tool-description slimming (-40% prompt) | `contextOptions.promptSoftCapTokens`, `roundTokenBudget` |
 | 💾 persistence | IndexedDB multi-session + quota eviction + switch | `storage` |
-| 👁 DOM read (2.20+) | Read rendered DOM structure (depth-cutoff + attr whitelist); verify modifications took effect — distinct from `eval_script` (structured + read-only) | `capabilities.domInspect` |
+| 👁 DOM inspect (2.20+) | `get_dom` structure read + `dom_search` (selector/text) + `dom_info` (content/computed styles/event bindings from inline/Vue props/listener recorder) — lazy-injected via the `dom-inspect` skill so they don't occupy standing tool context | `capabilities.domInspect` |
 | 📊 Context inspector | Snapshot actual-LLM-message composition (total / occupancy / category ratio); DebugDrawer `📊 上下文` tab + `inspectContext()`; zero LLM cost, default on | `capabilities.contextInspector` |
 | 🤖 Agent-driven compression (2.33+) | `capabilities.agentCompression` (opt-in) lets the summary LLM decide per-trigger compression strategy via an `inspect_context` tool loop (keepRounds / windowRatio / summary mode / recall / preserve); `shouldTriggerCompression` gate avoids per-message LLM cost; decide failure/timeout degrades to static; `decisionTimeoutMs` / `decisionMaxTokens` configurable | `capabilities.agentCompression` + `summaryLlm` |
 | 🎯 Cross-session user preference memory | `capabilities.preferences` (**opt-in, default off** — auto-writing the user's browser is behavior-sensitive): the agent captures durable user preferences from conversation — strong signal (explicit commands like "Remember: …", zero LLM) / medium signal (pattern-word prefilter + small-LLM extraction; the core test is **durable taste vs this-round task instruction**) / behavioral inference **not captured** (better to miss than to learn wrong — one false preference would ride along every future session); preferences persist independently (preferenceStore, IndexedDB, same shape as storage/skillStorage; same topic **later statement overrides earlier**, FIFO ≤20); injected as a pin segment into the system prompt each round (survives sessions and compression); manage wrongly-learned entries via `sdk.getPreferences()/removePreference(id)/clearPreferences()`, plus a read-only DebugDrawer "User preferences" section | `capabilities: { preferences: true }` + optional `preferenceStorage` |
@@ -533,8 +533,8 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 2377 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 742 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm test            # 2396 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 753 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test

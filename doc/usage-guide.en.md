@@ -446,6 +446,12 @@ Four complementary capabilities that together yield a "competent automation agen
 
 Let the agent read the **rendered** DOM structure (unlike `read`, which reads the data JSON). Use cases: verify rendering after a data change, locate elements, confirm styles landed, assist with UI/design questions. `capabilities.domInspect` defaults to **off** (reading DOM costs tokens; opt in as needed).
 
+Since 3.24 enabling it also provides a **DOM inspection toolset** (lazy-injected via the built-in `dom-inspect` skill — before `load_skill("dom-inspect")` it only occupies one index line, not standing tool-schema context; falls back to direct injection when the skills capability is off):
+
+- `dom_search({ query, mode, limit?, root? })`: find elements — `mode:"selector"` (CSS selector) or `mode:"text"` (keyword in visible text); returns CSS path + text snippet per hit (≤20, total noted when truncated)
+- `dom_info({ selector, styles?, includeHtml?, pseudo?, ... })`: full info for one element — content (direct/all text/HTML snippet) + **computed styles** (defaults to a ~30-prop debugging preset, or your own list) + viewport rect + **event bindings from three sources** (inline `on*` attributes / Vue vnode props / an addEventListener recorder; ⚠ the recorder only covers listeners registered after the SDK loaded — prefer inline + Vue props for earlier mounts)
+- Debugging loop: `dom_search` (text mode, find by button copy) → `dom_info` (styles: display/pointer-events/background) → fix the data → `get_dom` to cross-check structure
+
 ```ts
 createChatSdk({
   capabilities: { domInspect: true },  // opt-in, default off

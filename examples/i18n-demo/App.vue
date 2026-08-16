@@ -21,6 +21,7 @@ onMounted(() => {
       model: import.meta.env.VITE_AI_MODEL,
     },
     storage: 'memory',
+    debug: true, // 展示 Debug 抽屉文案 i18n(3.23.2+ 调试入口需 debug:true 才显示)
     data: {
       schema: z.object({ title: z.string().describe('Page title'), theme: z.enum(['light', 'dark']).describe('Theme') }),
       bind: { title: 'i18n Demo', theme: 'dark' },

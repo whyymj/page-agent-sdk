@@ -1,12 +1,15 @@
 /**
- * sec-36:宿主动作 actions + DOM 读取纯函数 domToStructure(胜任自动化 agent)
+ * sec-36:宿主动作 actions + DOM 读取纯函数 domToStructure + DOM 检视工具族(dom_search/dom_info)
  * - actionsToTools:每个 action 一个命名 tool / 非法名跳过 / invoke 调 run / 异常隔离 / undefined 默认文案
  * - actionsToInspectInfo:元信息(description + hasParams)
  * - domToStructure:tag/attrs 默认白名单 + data-* / text / depth 截断 childCount / 严格白名单 / includeText=false / null
+ * - searchDom:selector/text 双模 + limit 截断 + CSS 路径
+ * - getElementInfo:内容/计算样式(注入 fake gcs)/几何/事件三源(inline+vue+记录器)
+ * - buildCssPath:id 短路 + nth-of-type;listener 记录器:add/remove 计数
  */
 import { z } from 'zod'
 import { actionsToTools, actionsToInspectInfo } from '../../sdk/actions'
-import { domToStructure } from '../../tools/domTool'
+import { domToStructure, searchDom, getElementInfo, buildCssPath, ensureDomListenerRecorder, getRecordedListeners, domInspectSkill } from '../../tools/domTool'
 import type { TestCtx } from './_ctx'
 
 export async function run(ctx: TestCtx): Promise<void> {
@@ -96,4 +99,71 @@ export async function run(ctx: TestCtx): Promise<void> {
   // 敏感命名 attr(data-token / data-api-key)即使默认 data-* 白名单也 DENY(data-id 正常保留)
   const s7 = domToStructure(mockEl('div', { 'data-token': 'abc', 'data-id': '7' }), { depth: 0 })
   assert(s7?.attrs['data-token'] === undefined && s7?.attrs['data-id'] === '7', '✓ domToStructure → data-token 等 DENY_ATTR_SENSITIVE_RE 排除(data-id 保留)')
+
+  // ===== DOM 检视工具族(dom-inspect skill 注入;纯函数层)=====
+  // mock 子树:parent#app > h1(文本「大促标题」) + button(文本「立即抢购」)
+  const h1 = mockEl('h1', { class: 'title' }, '大促标题')
+  const btn = { ...mockEl('button', { class: 'cta', onclick: 'track()' }, '', []), textContent: '立即抢购' }
+  const root: any = { querySelectorAll: (q: string) => (q === '*' ? [h1, btn] : q === '.cta' ? [btn] : []) }
+  // textContent 挂在元素上(searchDom text 模式读 textContent;childNodes 直接文本走 nodeType 3)
+  h1.textContent = '大促标题'
+
+  // ✓ searchDom → text 模式:命中含关键词元素(跳过空文本),返回 CSS 路径 + 片段
+  const r1 = searchDom(root as any, '大促', { mode: 'text' })
+  assert(r1.total === 1 && r1.hits[0].tag === 'h1' && r1.hits[0].text.includes('大促'), '✓ searchDom → text 模式命中 h1(CSS 路径 + 文本片段)')
+  // ✓ searchDom → selector 模式 + limit 截断标注
+  const rootMany: any = { querySelectorAll: () => Array.from({ length: 15 }, (_, i) => mockEl('li', { class: 'it' }, `项${i}`)) }
+  const r2 = searchDom(rootMany as any, '.it', { mode: 'selector', limit: 5 })
+  assert(r2.total === 15 && r2.hits.length === 5 && r2.truncated, '✓ searchDom → limit 截断(15 命中返 5 + truncated 标注)')
+  // ✓ searchDom → 无命中/非法 selector 容错
+  const r3 = searchDom(root as any, '.none', {})
+  assert(r3.total === 0 && r3.hits.length === 0, '✓ searchDom → 无命中返回空(不抛)')
+  const r4 = searchDom({ querySelectorAll: () => { throw new Error('bad') } } as any, '!!', {})
+  assert(r4.total === 0, '✓ searchDom → 非法 selector 容错返回空')
+
+  // ✓ buildCssPath → 有 id 短路(路径即定位;mock 的 id 是元素属性而非 attributes 项)
+  const withId = { ...mockEl('div', { id: 'app' }), id: 'app', parentElement: null }
+  assert(buildCssPath(withId as any) === 'div#app', '✓ buildCssPath → 有 id 短路(div#app)')
+
+  // ✓ getElementInfo → 内容/样式(注入 fake gcs)/几何/inline 事件/vue props
+  const el: any = {
+    ...mockEl('button', { class: 'cta', onclick: 'track(1)', 'data-token': 'sec' }, '抢购', []),
+    textContent: '立即抢购',
+    innerText: '立即抢购',
+    outerHTML: '<button class="cta" onclick="track(1)">立即抢购</button>',
+    getBoundingClientRect: () => ({ x: 10.4, y: 20.6, width: 100.2, height: 40.8 }),
+    __vueParentComponent: { vnode: { props: { onClick: () => {}, class: 'cta' } } },
+  }
+  const elInfo = getElementInfo(el as any, {
+    styles: ['display', 'background-color'],
+    includeHtml: true,
+    getComputedStyle: () => ({ getPropertyValue: (k: string) => ({ display: 'inline-block', 'background-color': 'rgb(247, 201, 72)' })[k] ?? '' }),
+  })
+  assert(elInfo?.tag === 'button' && elInfo.text === '抢购' && elInfo.textAll === '立即抢购', '✓ getElementInfo → 直接文本 + 全文本')
+  assert(elInfo?.styles?.display === 'inline-block' && elInfo.styles['background-color'] === 'rgb(247, 201, 72)', '✓ getElementInfo → 计算样式(注入 gcs 求值)')
+  assert(elInfo?.rect && elInfo.rect.x === 10 && elInfo.rect.height === 41, '✓ getElementInfo → 几何取整')
+  assert(elInfo?.html?.includes('<button'), '✓ getElementInfo → outerHTML 片段')
+  assert(elInfo?.events?.inline.length === 1 && elInfo.events.inline[0].type === 'click' && elInfo.events.inline[0].snippet === 'track(1)', '✓ getElementInfo → inline on* 事件(type+片段)')
+  assert(elInfo?.events?.vue.length === 1 && elInfo.events.vue[0] === 'click', '✓ getElementInfo → Vue vnode props onClick → click')
+  assert(elInfo?.attrs['data-token'] === undefined, '✓ getElementInfo → attrs 沿用敏感 DENY(data-token 排除)')
+
+  // ✓ listener 记录器:addEventListener 计数 / removeEventListener 归零(node EventTarget 可 patch)
+  ensureDomListenerRecorder()
+  const t = new EventTarget()
+  t.addEventListener('ping', () => {})
+  t.addEventListener('ping', () => {})
+  assert(getRecordedListeners(t).includes('ping'), '✓ listener 记录器 → addEventListener 登记类型')
+  const h = () => {}
+  t.addEventListener('pong', h)
+  t.removeEventListener('pong', h)
+  assert(!getRecordedListeners(t).includes('pong'), '✓ listener 记录器 → removeEventListener 后清除')
+  ensureDomListenerRecorder() // 幂等(二次调用不重复 patch)
+  assert(true, '✓ listener 记录器 → ensure 幂等')
+
+  // ✓ domInspectSkill → skill 形状(name/description/getContent 用法文档/tools 工厂返回两工具)
+  assert(domInspectSkill.name === 'dom-inspect' && domInspectSkill.description.includes('计算样式'), '✓ domInspectSkill → 名称 + 描述(何时加载)')
+  const doc = (domInspectSkill.getContent as () => string)()
+  assert(doc.includes('dom_search') && doc.includes('events 三源'), '✓ domInspectSkill → getContent 用法文档(工具要点 + 事件三源限制说明)')
+  const skillTools = (domInspectSkill.tools as (() => unknown[])[])[0]()
+  assert(Array.isArray(skillTools) && skillTools.length === 2 && (skillTools[0] as any).name === 'dom_search' && (skillTools[1] as any).name === 'dom_info', '✓ domInspectSkill → tools 工厂返回 dom_search/dom_info')
 }

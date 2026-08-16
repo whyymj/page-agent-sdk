@@ -186,8 +186,8 @@ export interface AgentInfo {
   subagent: SubagentInfo
   /** verify 自检装载状态(默认未装载 → undefined) */
   verify?: { enabled: boolean; maxAttempts: number; adversarial: boolean }
-  /** 已连 MCP server 列表(无 MCP → undefined) */
-  mcp?: { servers: { name: string; url: string; toolCount: number }[] }
+  /** 已连 MCP server 列表 + 连接失败清单(无 MCP → undefined;failed 仅在有失败时存在) */
+  mcp?: { servers: { name: string; url: string; toolCount: number }[]; failed?: { name: string; url: string; error: string }[] }
   /** 最近一次跨轮压缩统计(未触发过 → undefined;供 DebugDrawer 可观测) */
   lastCompression?: {
     triggered: boolean

@@ -124,6 +124,8 @@ export interface DialogMessages {
   debugNoInfo: string
   debugCardView: string
   debugRequestBody: string
+  debugOnlyNew: string           // 只看新增 / New only(llm_request 差分视图切换)
+  debugShowAll: string           // 全部消息 / All messages
   debugViewRawJson: string
   debugCollapseRawJson: string
   debugModel: string
@@ -356,6 +358,8 @@ export const MESSAGES_ZH_CN: DialogMessages = {
   debugNoInfo: '暂无信息',
   debugCardView: '🗂 卡片视图',
   debugRequestBody: '📋 请求体',
+  debugOnlyNew: '只看新增',
+  debugShowAll: '全部消息',
   debugViewRawJson: '查看原始 JSON',
   debugCollapseRawJson: '收起原始 JSON',
   debugModel: '模型',
@@ -588,6 +592,8 @@ export const MESSAGES_EN_US: DialogMessages = {
   debugNoInfo: 'No info',
   debugCardView: '🗂 Cards',
   debugRequestBody: '📋 Request body',
+  debugOnlyNew: 'New only',
+  debugShowAll: 'All messages',
   debugViewRawJson: 'View raw JSON',
   debugCollapseRawJson: 'Collapse raw JSON',
   debugModel: 'Model',

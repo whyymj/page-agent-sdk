@@ -202,6 +202,9 @@ export async function run() {
         { transport: 'http', url: 'http://127.0.0.1:3196/mcp', name: 'good' },
       ],
     })
+    // MCP_CONNECT_FAILED 可观测:hook 必须在 mount 前注册(dead 1.2s 即降级,晚注册会错过事件)
+    const failedEvents = []
+    const offFailed = sdk.hook((e) => { if (e.type === 'error' && e.code === 'MCP_CONNECT_FAILED') failedEvents.push(e) })
     await sdk.mount()
     // 轮询等好 server 注入(dead 1.2s 后超时降级,不拖累 good)
     let injected = false
@@ -211,9 +214,12 @@ export async function run() {
     }
     assert(injected, '双 server 一坏一好:好 server 工具照常注入(get_weather/search/calc)')
     await new Promise((r) => setTimeout(r, 1500))  // 等 dead 超时降级落定
+    offFailed()
     const info = sdk.inspect()
     assert(!info.mcp.servers.some((sv) => sv.name === 'dead'), '坏 server 握手超时 → 降级不进 servers(故障隔离)')
     assert(info.tools.some((t) => t.source === 'mcp:good'), '坏 server 降级后,好 server 工具仍在(allSettled 隔离)')
+    assert(failedEvents.length >= 1 && failedEvents[0].severity === 'observable' && failedEvents[0].context?.server === 'dead', '✓ MCP 连接失败 → MCP_CONNECT_FAILED observable 事件(server=dead)')
+    assert((info.mcp.failed ?? []).some((f) => f.name === 'dead' && f.error.length > 0), '✓ inspect().mcp.failed 反射失败清单(dead 含错误摘要)')
     sdk.unmount()
     good.stop()
     dead.stop()

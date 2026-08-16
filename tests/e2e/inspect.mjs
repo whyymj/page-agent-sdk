@@ -577,5 +577,43 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:inspect] DOM 检视工具族:domInspect 开 → dom-inspect skill 注入(skills 开)或降级直插工具池(skills 关)')
+  {
+    // ① skills 开(默认):dom_search/dom_info 不进常驻工具池,经 dom-inspect skill 索引按需 load
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-dom-skill', storage: false, llm: FAKE_LLM,
+      capabilities: { dataOps: false, fetch: false, planning: false, vfs: false, summarization: false, memory: false, subagent: false, focus: false, workingMemory: false, missionAnchor: false, contextInspector: false, domInspect: true },
+      data: { schema: z.object({ x: z.string() }), bind: { x: '1' } },
+    })
+    await sdk.mount()
+    const info = sdk.inspect()
+    assert(info.skills.some((s) => s.name === 'dom-inspect'), '✓ domInspect 开 + skills 开 → dom-inspect skill 进索引(按需 load_skill 注入)')
+    assert(!info.tools.some((t) => t.name === 'dom_search' || t.name === 'dom_info'), '✓ dom_search/dom_info 不占常驻工具池(schema 不进每轮上下文)')
+    assert(info.tools.some((t) => t.name === 'get_dom'), '✓ get_dom 保持常驻(向后兼容)')
+    sdk.unmount()
+
+    // ② skills 关:降级直插工具池(功能可达优先)
+    const sdk2 = createChatSdk({
+      ui: false, id: 'e2e-dom-noskill', storage: false, llm: FAKE_LLM,
+      capabilities: { dataOps: false, fetch: false, planning: false, skills: false, vfs: false, summarization: false, memory: false, subagent: false, focus: false, workingMemory: false, missionAnchor: false, contextInspector: false, domInspect: true },
+      data: { schema: z.object({ x: z.string() }), bind: { x: '1' } },
+    })
+    await sdk2.mount()
+    const info2 = sdk2.inspect()
+    assert(info2.tools.some((t) => t.name === 'dom_search') && info2.tools.some((t) => t.name === 'dom_info'), '✓ skills 关 → dom_search/dom_info 降级直插工具池')
+    assert(!info2.skills.some((s) => s.name === 'dom-inspect'), '✓ skills 关 → skill 不注册(skill 能力本身关)')
+    sdk2.unmount()
+
+    // ③ domInspect 关:零痕迹(默认行为不变)
+    const sdk3 = createChatSdk({
+      ui: false, id: 'e2e-dom-off', storage: false, llm: FAKE_LLM, capabilities: MIN_CAPS,
+      data: { schema: z.object({ x: z.string() }), bind: { x: '1' } },
+    })
+    await sdk3.mount()
+    const info3 = sdk3.inspect()
+    assert(!info3.skills.some((s) => s.name === 'dom-inspect') && !info3.tools.some((t) => t.name === 'dom_search'), '✓ domInspect 关 → skill 与工具均不出现(默认零变化)')
+    sdk3.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

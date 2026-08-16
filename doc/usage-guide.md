@@ -500,6 +500,12 @@ sdk.hook((e) => {
 
 让 agent 读**渲染后**的 DOM 结构(区别于 `read` 读的是数据 JSON)。用途:改完数据回看渲染是否生效、定位元素、验证样式落地、辅助 UI 设计问答。`capabilities.domInspect` 默认**关闭**(读 DOM 有 token 成本,按需开启)。
 
+3.23+ 开启后额外获得** DOM 检视工具族**(经内置 `dom-inspect` skill 按需注入 —— `load_skill("dom-inspect")` 前仅占 skill 索引一行,不占常驻 tool schema 上下文;skills 能力关时自动降级直插工具池):
+
+- `dom_search({ query, mode, limit?, root? })`:搜索元素 —— `mode:"selector"`(CSS 选择器)或 `mode:"text"`(文本关键词),返回命中元素的 CSS 路径 + 文本片段(≤20 处,超限标注总数)
+- `dom_info({ selector, styles?, includeHtml?, pseudo?, ... })`:单元素完整信息 —— 内容(直接/全文本/HTML 片段)+ **计算样式**(不传 = 排障高频预设 ~30 项,传数组 = 指定属性)+ 几何位置 + **事件绑定三源**(inline `on*` 属性 / Vue vnode props / addEventListener 记录器;⚠ 记录器仅覆盖 SDK 加载后注册的监听,更早挂载的捕不到 —— 排查时以 inline + Vue props 为主)
+- 排障套路:`dom_search`(text 模式找按钮文案)→ `dom_info`(styles 验证 display/pointer-events/背景色)→ 不符改数据 → `get_dom` 看结构对照
+
 ```ts
 createChatSdk({
   capabilities: { domInspect: true },  // opt-in,默认关

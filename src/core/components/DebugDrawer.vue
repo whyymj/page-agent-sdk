@@ -35,6 +35,22 @@ const emit = defineEmits<{
 const filter = ref<DebugLog['type'] | 'all'>('all')
 const rawExpanded = ref<Set<number>>(new Set())
 const bodyExpanded = ref<Set<number>>(new Set())
+/** llm_request 长消息展开状态(key=`${日志序}:${消息序}`);超长消息默认 3 行截断点击展开 —— system prompt 动辄数 KB,全展开淹没列表 */
+const msgExpanded = ref<Set<string>>(new Set())
+function toggleMsg(key: string) { const s = msgExpanded.value; s.has(key) ? s.delete(key) : s.add(key) }
+/** 长消息折叠阈值(字符) */
+const MSG_COLLAPSE_CHARS = 400
+/** llm_request「只看新增」(key=日志序;默认关保持全量语义;开=只渲染相对上一次请求新增的消息) */
+const onlyNewSet = ref<Set<number>>(new Set())
+function toggleOnlyNew(idx: number) { const s = onlyNewSet.value; s.has(idx) ? s.delete(idx) : s.add(idx) }
+/** 复制反馈(1.2s 显示 ✓;key=按钮标识) */
+const copiedKey = ref('')
+async function copyJson(text: string, key: string) {
+  const ok = await copyText(text)
+  if (!ok) return
+  copiedKey.value = key
+  setTimeout(() => { if (copiedKey.value === key) copiedKey.value = '' }, 1200)
+}
 const m = computed(() => props.messages)
 
 const typeMeta = computed<Record<string, { label: string; color: string; icon: string }>>(() => ({
@@ -57,6 +73,53 @@ const counts = computed(() => {
   for (const l of logs.value) c[l.type] = (c[l.type] || 0) + 1
   return c
 })
+
+/**
+ * 展示条目(logs tab):tool_call ↔ tool_result 配对(同名 FIFO)+ llm_request 相对上一次请求的消息基线。
+ * - 配对:result 到达时与最近的未配对同名 call 合并为一张卡(args+result+耗时一屏看完一步调用);未配对 call = 在途
+ * - prevMsgCount:按全量 logs 序(不受 filter 影响)记录上一个 llm_request 的消息数 →「只看新增」差分视图
+ */
+interface DisplayEntry { log: DebugLog; pairCall?: DebugLog; prevMsgCount?: number }
+const displayLogs = computed<DisplayEntry[]>(() => {
+  const src = filteredLogs.value
+  const doPair = filter.value === 'all' || filter.value === 'tool_call' || filter.value === 'tool_result'
+  const prevMap = new Map<DebugLog, number>()
+  let lastLen = 0
+  for (const lg of logs.value) {
+    if (lg.type === 'llm_request') {
+      prevMap.set(lg, lastLen)
+      lastLen = (lg.data as any)?.messages?.length ?? 0
+    }
+  }
+  const out: DisplayEntry[] = []
+  const pending = new Map<string, DebugLog[]>()
+  for (const log of src) {
+    if (log.type === 'llm_request') { out.push({ log, prevMsgCount: prevMap.get(log) }); continue }
+    if (!doPair || (log.type !== 'tool_call' && log.type !== 'tool_result')) { out.push({ log }); continue }
+    if (log.type === 'tool_call') {
+      const name = String(log.data?.name ?? '')
+      const q = pending.get(name) ?? []
+      q.push(log); pending.set(name, q)
+      out.push({ log })
+    } else {
+      const call = pending.get(String(log.data?.name ?? ''))?.shift()
+      if (call) {
+        const i = out.findIndex((e) => e.log === call)
+        const entry: DisplayEntry = { log, pairCall: call }
+        if (i >= 0) out[i] = entry
+        else out.push(entry)
+      } else out.push({ log })
+    }
+  }
+  return out
+})
+
+/** llm_request 消息视图(只看新增=切掉与上一次请求重复的前缀;base=切掉数,供消息 key/折叠 key 锚定原始下标) */
+function reqMsgView(log: DebugLog, prev: number | undefined, only: boolean): { list: any[]; base: number } {
+  const all: any[] = (log.data as any)?.messages ?? []
+  if (only && prev != null && prev > 0 && prev < all.length) return { list: all.slice(prev), base: prev }
+  return { list: all, base: 0 }
+}
 
 function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString(props.locale, { hour12: false }) +
@@ -371,7 +434,7 @@ function flowNodeDetail(lg: DebugLog): string {
               {{ m.debugLogsEmpty }}
             </div>
 
-            <div v-for="(log, idx) in filteredLogs" :key="idx" class="log-item">
+            <div v-for="({ log, pairCall, prevMsgCount }, idx) in displayLogs" :key="idx" class="log-item">
               <div class="log-head">
                 <span class="log-type" :style="{ background: typeMeta[log.type].color }">
                   {{ typeMeta[log.type].icon }} {{ typeMeta[log.type].label }}
@@ -402,30 +465,47 @@ function flowNodeDetail(lg: DebugLog): string {
                   </div>
                 </template>
 
-                <!-- LLM 请求：轮次 + 消息列表 -->
+                <!-- LLM 请求：轮次 + 消息列表（只看新增差分 + 长消息折叠 + 复制全文） -->
                 <template v-else-if="log.type === 'llm_request'">
                   <div class="badge-row">
                     <span class="badge">{{ m.debugRoundPrefix }}{{ log.data.round }}{{ m.debugRoundSuffix }}</span>
                     <span v-if="log.data.model" class="badge muted">{{ log.data.model }}</span>
-                    <span class="badge muted">{{ (log.data.messages || []).length }}{{ m.debugMsgCountSuffix }}</span>
+                    <span class="badge muted">{{ (log.data.messages || []).length }}{{ m.debugMsgCountSuffix }}<template v-if="prevMsgCount != null && prevMsgCount < (log.data.messages || []).length">(+{{ (log.data.messages || []).length - prevMsgCount }})</template></span>
                     <span v-if="log.data.tools?.length" class="badge muted">{{ log.data.tools.length }}{{ m.debugToolCountSuffix }}</span>
+                    <button v-if="prevMsgCount != null && prevMsgCount > 0" class="view-toggle only-new-btn" @click="toggleOnlyNew(idx)">
+                      {{ onlyNewSet.has(idx) ? m.debugShowAll : m.debugOnlyNew }}
+                    </button>
+                    <button class="view-toggle copy-btn" :title="m.copy" @click="copyJson(formatJson(log.data.messages), 'req' + idx)">
+                      {{ copiedKey === 'req' + idx ? '✓' : '📋' }}
+                    </button>
                     <button class="view-toggle" @click="toggleBody(idx)">
                       {{ bodyExpanded.has(idx) ? m.debugCardView : m.debugRequestBody }}
                     </button>
                   </div>
-                  <div v-if="!bodyExpanded.has(idx)" class="msg-list">
-                    <div v-for="(m, mi) in log.data.messages" :key="mi" class="msg-row">
-                      <span class="msg-role" :style="{ background: roleOf(m.role).color }">{{ roleOf(m.role).label }}</span>
-                      <div class="msg-detail">
-                        <span v-if="m.content" class="msg-text">{{ m.content }}</span>
-                        <div v-for="(tc, ti) in m.tool_calls || []" :key="ti" class="tc-inline">
-                          <span class="tc-inline-name">🔧 {{ tc.function?.name || tc.name }}</span>
-                          <code class="tc-inline-args">{{ tc.function?.arguments ?? tc.args }}</code>
+                  <template v-if="!bodyExpanded.has(idx)">
+                    <template v-for="mv in [reqMsgView(log, prevMsgCount, onlyNewSet.has(idx))]" :key="mv.base">
+                      <div class="msg-list">
+                        <div
+                          v-for="(msg, mi) in mv.list"
+                          :key="mi"
+                          class="msg-row"
+                          :class="{ clamped: !msgExpanded.has(idx + ':' + (mv.base + mi)) && (String(msg.content ?? '').length > MSG_COLLAPSE_CHARS) }"
+                          :title="(String(msg.content ?? '').length > MSG_COLLAPSE_CHARS) ? (msgExpanded.has(idx + ':' + (mv.base + mi)) ? m.collapse : m.expand) : undefined"
+                          @click="String(msg.content ?? '').length > MSG_COLLAPSE_CHARS && toggleMsg(idx + ':' + (mv.base + mi))"
+                        >
+                          <span class="msg-role" :style="{ background: roleOf(msg.role).color }">{{ roleOf(msg.role).label }}</span>
+                          <div class="msg-detail">
+                            <span v-if="msg.content" class="msg-text">{{ msg.content }}</span>
+                            <div v-for="(tc, ti) in msg.tool_calls || []" :key="ti" class="tc-inline">
+                              <span class="tc-inline-name">🔧 {{ tc.function?.name || tc.name }}</span>
+                              <code class="tc-inline-args">{{ tc.function?.arguments ?? tc.args }}</code>
+                            </div>
+                            <span v-if="msg.tool_call_id" class="tc-id">↳ tool_call_id: {{ msg.tool_call_id }}</span>
+                          </div>
                         </div>
-                        <span v-if="m.tool_call_id" class="tc-id">↳ tool_call_id: {{ m.tool_call_id }}</span>
                       </div>
-                    </div>
-                  </div>
+                    </template>
+                  </template>
                   <pre v-else class="log-raw"><code>{{ formatJson(log.data.messages) }}</code></pre>
                 </template>
 
@@ -449,11 +529,26 @@ function flowNodeDetail(lg: DebugLog): string {
                   </div>
                 </template>
 
-                <!-- 工具调用 -->
-                <template v-else-if="log.type === 'tool_call'">
-                  <div class="tc-card inline">
-                    <div class="tc-name">🔧 {{ log.data.name }}</div>
-                    <pre class="tc-args">{{ formatJson(log.data.args) }}</pre>
+                <!-- 工具调用/结果:配对卡(call+result 一屏看全一步调用;未配对 call = 在途) -->
+                <template v-else-if="log.type === 'tool_call' || log.type === 'tool_result'">
+                  <div v-if="pairCall" class="tc-card inline paired" :class="{ error: log.data.status === 'error' }">
+                    <div class="tc-name">
+                      {{ log.data.status === 'error' ? '❌' : '✅' }} {{ log.data.name }}
+                      <span v-if="log.data.durationMs != null" class="tc-dur">{{ formatDuration(log.data.durationMs) }}</span>
+                      <button class="view-toggle copy-btn" :title="m.copy" @click="copyJson(String(log.data.result ?? ''), 'res' + idx)">
+                        {{ copiedKey === 'res' + idx ? '✓' : '📋' }}
+                      </button>
+                    </div>
+                    <pre class="tc-args">{{ formatJson(pairCall.data.args) }}</pre>
+                    <div class="tc-result-sep">↓ {{ m.resultLabel }}</div>
+                    <pre class="tc-args tc-result">{{ log.data.result }}</pre>
+                  </div>
+                  <div v-else class="tc-card inline">
+                    <div class="tc-name">
+                      {{ log.type === 'tool_call' ? '🔧' : '✅' }} {{ log.data.name }}
+                      <span v-if="log.type === 'tool_call'" class="tc-dur running">{{ m.statusRunning }}…</span>
+                    </div>
+                    <pre class="tc-args">{{ log.type === 'tool_call' ? formatJson(log.data.args) : log.data.result }}</pre>
                   </div>
                 </template>
 
@@ -749,6 +844,19 @@ function flowNodeDetail(lg: DebugLog): string {
 .tc-id { font-size: 10px; color: var(--dd-faint); font-family: 'SF Mono', Monaco, Consolas, monospace; }
 .view-toggle { margin-left: auto; border: 1px solid var(--dd-accent-border); background: var(--dd-accent-bg); color: var(--dd-accent-text); font-size: 11px; padding: 2px 8px; border-radius: 10px; cursor: pointer; }
 .view-toggle:hover { background: var(--dd-accent-bg-2); }
+/* 只看新增/复制按钮不推到行尾(保留原 原始JSON 按钮的 margin-left:auto) */
+.view-toggle.only-new-btn, .view-toggle.copy-btn { margin-left: 0; padding: 2px 7px; }
+/* 长消息折叠(>MSG_COLLAPSE_CHARS 默认 3 行截断,点击展开;system prompt 数 KB 不再淹没列表) */
+.msg-row.clamped { cursor: pointer; }
+.msg-row.clamped .msg-text { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+/* 工具配对卡:call+result 一屏看全一步调用 */
+.tc-card.paired { border-color: var(--dd-accent-border); }
+.tc-card.paired.error { border-color: var(--dd-err-border); }
+.tc-name .tc-dur { font-weight: 400; font-size: 10px; color: var(--dd-muted); margin-left: 6px; font-family: 'SF Mono', Monaco, Consolas, monospace; }
+.tc-name .tc-dur.running { color: #059669; }
+.tc-name .copy-btn { float: right; margin-top: 1px; }
+.tc-result-sep { font-size: 10px; color: var(--dd-faint); padding: 3px 8px 0; }
+.tc-args.tc-result { background: #111827; color: #d1d5db; border-top: 1px dashed rgba(255,255,255,0.12); }
 .drawer-enter-active, .drawer-leave-active { transition: opacity 0.25s ease; }
 .drawer-enter-active .drawer-panel, .drawer-leave-active .drawer-panel { transition: transform 0.25s ease; }
 .drawer-enter-from, .drawer-leave-to { opacity: 0; }

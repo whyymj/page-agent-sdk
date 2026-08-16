@@ -46,6 +46,8 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
           // 直传 debugLogsRef.value 则引用恒不变,子组件不重渲染,抽屉日志冻结在打开时刻(审计 P1 残留修复)。
           // MAX_DEBUG_LOGS=300,拷贝成本可忽略。
           debugLogs: debugLogsRef.value.slice(),
+          // 调试入口门控(debug:true 才显示「更多」菜单的调试项 + 日志 badge;日志仍恒收集,供 sdk.debugLogs / headless DebugDrawer 复用)
+          debug: ctx.debug === true,
           initialMessages: core.messages,
           getInfo: () => core.getInfo(),
           onUndo: core.checkpoint ? () => core.checkpoint!.restore() : undefined,

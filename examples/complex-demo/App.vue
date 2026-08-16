@@ -78,6 +78,34 @@ const root = ref<HTMLElement>()
 const agentRef = ref<ChatSdk | null>(null)
 let agent: ChatSdk | null = null
 
+// ===== 三档判档(prompt 分级实测;按最新 user 消息自动判「快速/方向闸/详细」)=====
+// 防冲突设计:
+//  - 快速(默认):不注入段 —— 主 agent 走既有「新建直接委派」编排纪律,零冲突
+//  - 方向闸:新建+创意主题词 → 主 agent【自己】出方案征询(request_human_confirmation 是工具动作,
+//    非「过渡性文字」,与编排段禁令兼容;方案对比发生在征询文案里,不进子 agent 思考)
+//  - 详细:方向闸 + write_todos;委派 task 的深入要求**限定在结构性决策**(子 agent 优先级总纲兜底:task 上位但底线不放宽)
+const PROPOSE_GATE = [
+  '## 当前模式:方向确认(新建创意类,本段优先于「新建直接委派」常规纪律)',
+  '**硬性第一步**:任何生成/委派之前,必须调 request_human_confirmation(question=「<主题>用哪套方向?」+ 一句背景, options=[方案A 一句话要点, 方案B 一句话要点, 方案C 一句话要点], recommendation=你推荐的一套) 让用户点选;每套方案 1~2 句(风格/配色/结构,视觉锚取自 ark-ui-spec 规范的 hex)。',
+  '用户答复前**禁止**委派 use_html、禁止 write components、禁止直接生成代码;答复后按选定方向走常规执行纪律(委派/落地/核对)。',
+].join('\n')
+const DETAILED_MODE = [
+  '## 当前模式:详细设计',
+  '① 新建/创意类先按方向确认征询(2~3 套方案,request_human_confirmation)再动手;',
+  '② 动手前 write_todos 拆步骤(每组件一项),逐项执行/委派并核对;',
+  '③ 委派 use_html 的 task 中,复杂组件(轮播/粒子特效/复杂交互动画类)附一句**范围限定的深入要求**:「本组件请先对比 2 个候选实现结构的取舍(性能/降级/复杂度各一句,如 scroll-snap vs transform 切换)再选定实现」—— 只限结构性决策,装饰效果仍从简。',
+].join('\n')
+/** 三档判档:显式指令最高优先;启发式升档 = 新建∧创意主题词(方向闸)/ 新建∧数量≥3(详细);其余快速(不注入) */
+function detectMode(text: string): string | undefined {
+  if (/别问|不用问|直接做|别规划|快速/.test(text)) return undefined // 快速:不注入,沿用默认直接委派
+  if (/详细|仔细|认真做|先出方案|先规划|深思熟虑/.test(text)) return DETAILED_MODE
+  const creating = /新建|加一个|添加|做一个|生成/.test(text)
+  if (creating && /主题|风格|世界杯|国潮|节日|活动页|大促|周年/.test(text)) return PROPOSE_GATE
+  const n = Number(/(\d+)\s*(个|张|条|组)/.exec(text)?.[1] ?? 0)
+  if (creating && n >= 3) return DETAILED_MODE
+  return undefined
+}
+
 onMounted(() => {
   agent = createChatSdk({
     container: root.value!,
@@ -96,6 +124,10 @@ onMounted(() => {
       '\n\n【本平台组件路由】本平台含多种组件类型,其中 custom 为纯代码组件(根级 code = 完整自包含 HTML 页面,含 style/script)。路由:custom 的 **code 字段** → 必经 use_html 子 agent 委派(生成/修改/排查,你禁直接 write/edit code);custom 的**其他属性**(name/style/visible 等)+ 所有非 custom 组件(heading/banner/carousel/card/coupon...)→ 你直接 write 改。多组件含 custom 时,write_todos 列出 → 普通 组件直接 write、多个 custom 组件可同轮并行发多个 use_html 委派(每组件一次;同一组件同时只一个委派在途)。',
     // 默认 true:自定义 systemPrompt 末尾用 '---' 分隔线自动追加 reliableWriteRules(改前先 read、字段以 describe 为准、写错看校验错误重试、优先增量 patch);设 false 关闭;不传 systemPrompt 用默认 prompt 时已内置
     appendReliableWriteRules: true,
+    // 三档判档:每轮按最新 user 消息注入模式段(快速=不注入/方向闸=先征询/详细=征询+todos+范围限定深入要求)
+    augmentSystem: ({ state }: any) => detectMode(String(
+      [...(state?.messages ?? [])].reverse().find((m: any) => m.getType?.() === 'human')?.content ?? '',
+    )),
     // data 单主对象配置:schema + bind 直连 reactive 对象,工具直接读写 bind(集成方自己挂 window.page 供 PageRenderer 读)
     // resources:freeze 保护 navbar(components.0)的 trackId —— read 返占位符(精确值不进 AI 消息流),write 改 trackId 被拒(演示精确值保护与两步拾取协同:聚焦 navbar → read 占位 → 改不动)。
     // ⚠️ 路径按位置索引(非 id/type 锚定):若 agent 增删组件致 navbar 移出 components.0,保护会跟随索引漂移到新占据 0 号的组件。演示用;生产场景应按 id/type 动态定位路径。

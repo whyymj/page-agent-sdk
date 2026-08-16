@@ -211,6 +211,55 @@ test.describe('page-demo: read → write → read', () => {
   })
 
   /**
+   * DebugDrawer 调试布局优化(debug-layout):
+   * ① 工具配对卡:read 的 tool_call+tool_result 合并一张卡(args+result 同屏,不再两条散落)
+   * ② 提示词「只看新增」:两轮请求后第二条 llm_request 开差分 → 消息行数下降
+   * ③ 长消息折叠:超 400 字的 system 消息默认 3 行截断(clamped),点击展开
+   */
+  test('DebugDrawer:工具配对卡 + 提示词只看新增 + 长消息折叠', async ({ page }) => {
+    test.setTimeout(150_000)
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'read', arguments: { jsonPath: 'title' } }] },
+      { text: '第一次完成。' },
+      { tool_calls: [{ name: 'read', arguments: { jsonPath: 'title' } }] },
+      { text: '第二次完成。' },
+    ])
+    await fillInput(page, '读一下标题')
+    await clickSend(page)
+    await waitForAgentIdle(page, 120_000)
+    await fillInput(page, '再读一次')
+    await clickSend(page)
+    await waitForAgentIdle(page, 120_000)
+    await page.click('.more-btn')
+    await page.click('.more-item[title="日志 / 执行流程 / Agent 信息"]')
+    await expect(page.locator('.debug-drawer')).toBeVisible({ timeout: 5000 })
+
+    // ① 配对卡:read 的 call+result 合一(含 result 分隔标)
+    const paired = page.locator('.debug-drawer .tc-card.paired')
+    await expect(paired.first()).toBeVisible({ timeout: 5000 })
+    expect(await paired.count(), '工具配对卡出现(read call+result 各一张)').toBeGreaterThanOrEqual(2)
+    await expect(paired.first().locator('.tc-result-sep')).toBeVisible()
+
+    // ② 只看新增:最后一条 llm_request(带 only-new-btn 的 log-item)切差分 → 消息行数下降
+    const lastReq = page.locator('.debug-drawer .log-item', { has: page.locator('.only-new-btn') }).last()
+    const onlyNewBtn = lastReq.locator('.only-new-btn')
+    if (await onlyNewBtn.count()) {
+      const before = await lastReq.locator('.msg-row').count()
+      await onlyNewBtn.click()
+      expect(await lastReq.locator('.msg-row').count(), '只看新增:切差分后消息行数下降').toBeLessThan(before)
+    }
+
+    // ③ 长消息折叠:page-demo systemPrompt 超 400 字 → 存在 clamped 行,点击展开后移除(count 先快照,locator 是 live 的)
+    const clamped = page.locator('.debug-drawer .msg-row.clamped')
+    const clampCount = await clamped.count()
+    if (clampCount > 0) {
+      await clamped.first().click()
+      await page.waitForTimeout(200)
+      expect(await page.locator('.debug-drawer .msg-row.clamped').count(), '折叠行点击后展开').toBeLessThan(clampCount)
+    }
+  })
+
+  /**
    * 内置深色主题(dialog.theme:'dark',方舟专题设计稿色板):
    * 断言根节点挂 cs-theme-dark + 背景基色 #222 + 用户气泡/输入框经 --cs-* 变量生效。
    * 边界:不传 theme 的 demo(其余 spec)仍为默认浅色(.chat-dialog 无该类)。

@@ -691,7 +691,9 @@ export function createAgent(options: CreateAgentOptions) {
    * 兼容现有 useChat 的 fetchStream 签名。
    */
   async function stream(messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal): Promise<string> {
-    debugLogs.value = []
+    // 调试日志跨 stream 累积不清(MAX_DEBUG_LOGS=300 FIFO 上限自兜底):原每次 stream 清空 → 抽屉只剩最后一轮,
+    // 上一轮的提示词/工具调用详情无法回看(调试场景核心诉求)。会话级清理归 switchSession/resetSession;
+    // spans/trace 仍按次重置(trace 指标是「最近一次调用」语义)。
     spans.value = []
     spanSeq = 0
     state = createInitialState()

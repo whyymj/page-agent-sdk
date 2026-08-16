@@ -440,6 +440,35 @@ test.describe('complex-demo: 组件操作(调换顺序 / 改层级 / 聚焦纯�
     expect(code, '焦点 custom.code 经子 vfs_write + commit 更新').toContain('干杯青岛')
   })
 
+  // ===== DOM 检视工具族(dom-inspect skill 按需注入;3.23+)=====
+  // complex-demo capabilities.domInspect:true + skills 默认开 → dom_search/dom_info 不占常驻池,load_skill 后注入
+  test('dom-inspect skill:load 后 dom_search 文本检索 + dom_info 计算样式可调', async ({ page }) => {
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'load_skill', arguments: { name: 'dom-inspect' } }] },
+      { tool_calls: [{ name: 'dom_search', arguments: { query: '复杂页面', mode: 'text', limit: 3 } }] },
+      { tool_calls: [{ name: 'dom_info', arguments: { selector: '.header-title', styles: ['display', 'font-size'] } }] },
+      { text: '已检视标题元素。' },
+    ])
+    await fillInput(page, '看看页面标题元素')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    const results = await page.evaluate(() => {
+      const pick = (name: string) => (window as any).__sdk.debugLogs.value
+        .filter((l: any) => l.type === 'tool_result' && l.data?.name === name)
+        .map((l: any) => String(l.data?.result ?? ''))
+      return { search: pick('dom_search')[0] ?? '', info: pick('dom_info')[0] ?? '' }
+    })
+    // 检索:文本命中标题区(叶子优先;文档 <title> 也合法命中,断言存在 header-title 命中即可)
+    const search = JSON.parse(results.search)
+    expect(search.total, 'dom_search 文本模式命中标题文本').toBeGreaterThanOrEqual(1)
+    expect(search.hits.some((h: { selector: string }) => h.selector.includes('header-title')), '命中路径带 class 段(header-title)').toBeTruthy()
+    // 检视:真实 getComputedStyle 求值(display/font-size 非空)+ events 字段存在(三源结构)
+    const info = JSON.parse(results.info)
+    expect(info.styles.display, 'dom_info 计算样式 display 求值').toBeTruthy()
+    expect(info.styles['font-size'], 'dom_info 计算样式 font-size 求值').toBeTruthy()
+    expect(info.events && Array.isArray(info.events.inline) && Array.isArray(info.events.vue), 'dom_info 事件三源结构(inline/vue/captured)').toBeTruthy()
+  })
+
   // ===== 同轮并行委派 + 组件锁(parallel-subagent-delegation 3.13 第二批 Q5c)=====
   // complex-demo 配置 maxParallelTools: 3 → 同轮多个 use_html 真并发(SSE 走 Playwright route)
 

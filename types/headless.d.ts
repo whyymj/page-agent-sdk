@@ -1211,6 +1211,51 @@ export declare function actionsToTools(actions: ActionMap): any[];
 export declare function actionsToInspectInfo(actions: ActionMap): Record<string, { description: string; hasParams: boolean }>;
 export interface DomNode { tag: string; attrs: Record<string, string>; text?: string; children?: DomNode[]; childCount?: number }
 export interface DomReadOptions { depth: number; attrs?: string[]; includeText?: boolean }
+
+// ============ DOM 检视工具族(dom-inspect skill 按需注入;3.24)============
+/** 计算样式常用预设(dom_info 不传 styles 时;~30 项排障高频) */
+export declare const DEFAULT_COMPUTED_STYLES: string[];
+/** 搜索命中项 */
+export interface DomSearchHit { selector: string; tag: string; text: string }
+/** 单元素检视信息(内容/计算样式/几何/伪元素/事件三源) */
+export interface DomElementInfo {
+  selector: string;
+  tag: string;
+  attrs: Record<string, string>;
+  text?: string;
+  textAll?: string;
+  html?: string;
+  rect?: { x: number; y: number; width: number; height: number };
+  styles?: Record<string, string>;
+  pseudoStyles?: { before?: Record<string, string>; after?: Record<string, string> };
+  events?: { inline: { type: string; snippet: string }[]; vue: string[]; captured: string[] };
+}
+export interface ElementInfoOptions {
+  styles?: string[];
+  includeHtml?: boolean;
+  htmlLimit?: number;
+  includeEvents?: boolean;
+  includeRect?: boolean;
+  pseudo?: boolean;
+  getComputedStyle?: (el: Element, pseudoElt?: string | null) => Record<string, string> | CSSStyleDeclaration;
+}
+/** 搜索元素:selector 模式(querySelectorAll)或 text 模式(textContent 包含,叶子优先剔除祖先容器) */
+export declare function searchDom(root: ParentNode | null, query: string, opts?: { mode?: 'selector' | 'text'; limit?: number }): { hits: DomSearchHit[]; total: number; truncated: boolean };
+/** Element → 结构化检视信息(纯函数;gcs 可注入供 node 测试) */
+export declare function getElementInfo(el: Element | null, opts?: ElementInfoOptions): DomElementInfo | null;
+/** 元素 CSS 路径(tag#id.tag:nth-of-type 逐级向上;有 id 短路) */
+export declare function buildCssPath(el: Element, maxDepth?: number): string;
+/** 安装 addEventListener 记录器(幂等;仅记录安装后注册的监听) */
+export declare function ensureDomListenerRecorder(): void;
+/** 读记录器中该 target 的监听类型 */
+export declare function getRecordedListeners(el: EventTarget): string[];
+/** DOM 检视工具(dom_search):选择器/文本双模检索 */
+export declare const domSearchTool: any;
+/** DOM 检视工具(dom_info):单元素内容/计算样式/事件绑定三源/几何 */
+export declare const domInfoTool: any;
+/** DOM 检视 skill(capabilities.domInspect 时并入 skills;load_skill 后注入 dom_search/dom_info,不占常驻 schema) */
+export declare const domInspectSkill: SkillSpec;
+
 export declare const fetchTools: any[];
 export declare function defineDataToolset(config: DataConfig, opts?: DataOpsOptions): any[];
 export declare function defineSkill(spec: SkillSpec): SkillSpec;

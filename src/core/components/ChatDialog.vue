@@ -35,6 +35,8 @@ const props = withDefaults(defineProps<{
   placeholder?: string
   /** 调试日志(响应式数组),传入则显示调试按钮 */
   debugLogs?: DebugLog[]
+  /** 展示调试入口(「更多」菜单的调试项 + 日志数 badge;默认 false 隐藏 —— 与 createChatSdk({debug:true}) 对齐,生产集成不暴露调试面) */
+  debug?: boolean
   /** 初始消息(持久化恢复,与父级共享响应式引用) */
   initialMessages?: AgentMessage[]
   /** 一轮完成后持久化回调 */
@@ -171,6 +173,7 @@ const drawerWidthStyle = computed(() => {
           :title="title || ctx.messages.defaultTitle"
           :drawer="drawer"
           :debug-logs="debugLogs"
+          :debug="debug"
           :skill-available="skillAvailable"
           :sessions="sessions"
           :current-session-id="currentSessionId"

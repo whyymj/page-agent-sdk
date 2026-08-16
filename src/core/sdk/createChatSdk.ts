@@ -64,7 +64,7 @@ import { createVfs, createVfsMiddleware, VFS_TOOL_NAMES, normalize as normalizeV
 import type { VfsFile, HarnessState, Mission, Focus } from '../harness/state'
 import { createDataOps, filterByToolMode, type DataConfig, type DataOpsController, type ConflictResolution } from '../tools/dataOps'
 import { fetchDocTools } from '../tools/fetchDoc'
-import { domTools } from '../tools/domTool'
+import { domTools, domInspectSkill, domSearchTool, domInfoTool } from '../tools/domTool'
 import { inspectTools } from '../tools/envTool'
 import { getTraceMetrics } from '../utils/traceMetrics'
 import { createBudgetMiddleware } from '../harness/budget'
@@ -640,6 +640,8 @@ export interface AgentCore {
   mcpClosers: Array<() => Promise<void>>
   /** 已连 MCP server 元信息(getInfo 展示;失败的 server 不进) */
   mcpServers: { name: string; url: string; toolCount: number }[]
+  /** 连接失败的 MCP server(握手超时/网络拒连降级;getInfo 反射 + MCP_CONNECT_FAILED 事件,集成方可提示用户) */
+  mcpFailed: { name: string; url: string; error: string }[]
   /** 会话级 checkpoint 管理器(未开启 checkpoint → null) */
   checkpoint: CheckpointManager | null
   /** dataOps 控制器(运行时替换配置;dataOps 关闭 → null) */
@@ -749,6 +751,8 @@ export interface DialogMountContext {
   /** 直接传 core,mounter 内部从 core.* 读全部 props(InfoTick/pendingConflict/sessions/skillsController...) */
   core: AgentCore
   dialogCfg: DialogConfig
+  /** 调试入口门控(「更多」菜单调试项 + 日志 badge;true = options.debug) */
+  debug: boolean
   /** 国际化配置(顶层 i18n 透传 → ChatDialog props;文案包 + formatTime/autoTitle 语言) */
   i18n?: I18nOptions
   streaming: boolean
@@ -1066,7 +1070,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const liveData = (): DataConfig | undefined => dataOpsController?.get() ?? finalDataConfig
   // 工具来源标注(builtin / mcp:<name> / user),供 getInfo 展示(DebugDrawer 区分内置/MCP/用户工具)
   const toolSources = new Map<string, string>()
-  const builtinTools = selectBuiltinTools(caps, dataOpsFiltered, fetchDocTools, domTools, inspectTools)
+  // skills 关 + domInspect 开 → dom_search/dom_info 无法经 skill 注入,降级直接进工具池(功能可达优先,牺牲常驻 schema)
+  const domToolsForPool = caps.domInspect && !caps.skills ? [...domTools, domSearchTool, domInfoTool] : domTools
+  const builtinTools = selectBuiltinTools(caps, dataOpsFiltered, fetchDocTools, domToolsForPool, inspectTools)
   builtinTools.forEach((t) => toolSources.set(t.name, 'builtin'))
   // userTools 可变:支持运行时 setTools/addTool/removeTool 动态增删用户工具
   const userTools: StructuredToolInterface[] = [
@@ -1484,7 +1490,12 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(usePlanning ? [todosMw] : []),
     ...(useSkills
       ? [
-          skillsMw = createSkillsMiddleware(options.skills || [], {
+          // domInspect 开 → 并入 DOM 检视 skill(dom_search/dom_info 按需 load_skill 注入,不占常驻 tool schema;
+          // 集成方同名 skill 显式声明优先,不重复)
+          skillsMw = createSkillsMiddleware([
+            ...(caps.domInspect && !(options.skills || []).some((s) => s.name === domInspectSkill.name) ? [domInspectSkill] : []),
+            ...(options.skills || []),
+          ], {
             // vfs 启用时注入 readVfs,让 skill 文档源(vfs://path)能读取 vfs 文件
             readVfs: useVfs ? (p: string) => vfsStore.files[p]?.content : undefined,
             // skill exec context:'host' 开关(caps.skillHostScript,opt-in 默认关;关时 host 脚本跳过 + warn)
@@ -1571,7 +1582,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     const approvalWatch = makeApprovalWatch(signal)
     return (e) => {
       approvalWatch?.(e)
-      if ((e as any).type === 'error') emit(e as any)
+      // F1(send/batch 全量事件外发):原只 emit error → headless 用 send() 的集成方经 sdk.hook 听不到
+      // tool_call/reasoning/text 等过程(「聋子」路径);现全量转发(approval_request 仍不外发 ——
+      // send/batch 无 UI 响应方,由 approvalWatch 30s 自动拒收口,与 core.stream 的 UI 路径语义一致)。
+      if ((e as any).type !== 'approval_request') emit(e as any)
     }
   }
 
@@ -1636,6 +1650,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     refCount: 0,
     mcpClosers: [],
     mcpServers: [],
+    mcpFailed: [],
     checkpoint: checkpointMgr,
     dataOpsController,
     skillsController: skillsMw ? (skillsMw as any).controller as import('../harness/skills').SkillsController : null,
@@ -2158,7 +2173,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           }
           return snap
         })(),
-        mcp: { servers: core.mcpServers },
+        mcp: { servers: core.mcpServers, ...(core.mcpFailed.length ? { failed: core.mcpFailed } : {}) },
         lastCompression: core.agent?.getState?.()?.lastCompression as AgentInfo['lastCompression'],
         checkpoints: checkpointMgr
           ? { enabled: true, auto: checkpointAuto, list: checkpointMgr.list() }
@@ -2477,6 +2492,11 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
             })
           } else {
             console.warn(`[page-agent-sdk][mcp] server ${label} 连接失败:`, r.reason)
+            // 降级可观测(MCP_CONNECT_FAILED):只 console.warn 时 headless/无 console 集成无从得知,
+            // 模型仍会按 systemPrompt 引用调工具 →「工具不存在」误导为代码问题。emit observable + inspect 反射。
+            const errText = String((r.reason as Error | undefined)?.message ?? r.reason ?? '').slice(0, 200)
+            core.mcpFailed.push({ name: label, url: cfg.url, error: errText })
+            emit({ type: 'error', message: `MCP server「${label}」连接失败,其工具不可用:${errText}`, severity: 'observable', code: 'MCP_CONNECT_FAILED', context: { server: label, url: cfg.url } } as any)
           }
         })
         // 重建 allTools(纳入 mcpTools)+ 已建 agent 则 rebind 迟到注入(infoTick 刷新 inspect)
@@ -2606,6 +2626,7 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
       core,
       dialogCfg,
       i18n: options.i18n,
+      debug: options.debug === true,
       streaming,
       runSerial: core.runSerial,  // P1-11:core 级串行闸(UI 会话按钮与 API 层同链)
       hide,

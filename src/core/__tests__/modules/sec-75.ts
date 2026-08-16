@@ -397,5 +397,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(!!cfg.systemPrompt?.includes('收口格式(必守') && /收口格式/.test(cfg.systemPrompt!.split('\n').slice(-6).join('\n')), '✓ htmlSystemPrompt 收口格式硬约束(prompt 末尾 recency 位,漏写率治理)')
     const { htmlOrchestratorPrompt } = await import('../../presets')
     assert(!!htmlOrchestratorPrompt('html').includes('历史偏好'), '✓ htmlOrchestratorPrompt 规格化含 ⑤ 历史偏好(聊天上下文偏好提炼附 task,新子 agent 无记忆全靠 task)')
+    // 优先级总纲(三档判档配套):task 可在限定决策点放宽方案上限,底线不放宽 —— 防 deep 注入与硬约束正面对撞
+    assert(!!cfg.systemPrompt?.includes('优先级总纲') && !!cfg.systemPrompt?.includes('底线不放宽'), '✓ htmlSystemPrompt 优先级总纲(task 深入设计要求为上位指令,装饰不穷举/不手算/终稿一次写成底线恒守)')
   }
 }

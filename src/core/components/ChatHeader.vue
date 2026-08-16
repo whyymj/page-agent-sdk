@@ -19,6 +19,8 @@ const props = defineProps<{
   drawer: boolean
   /** 调试日志(有则显示徽标 + 菜单项) */
   debugLogs?: DebugLog[]
+  /** 展示调试入口(默认 false 隐藏;createChatSdk({debug:true}) 对齐 —— 生产集成不暴露调试面,日志仍收集供 sdk.debugLogs/DebugDrawer headless 复用) */
+  debug?: boolean
   /** 是否支持 Skill 管理(容器按 onAddSkill 是否存在传入) */
   skillAvailable: boolean
   /** 历史会话列表(storage 开启注入;不传则隐藏新建/历史按钮) */
@@ -98,10 +100,10 @@ function handleOpenSession(id: string): void {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
           <circle cx="12" cy="5" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="12" cy="19" r="1.6"></circle>
         </svg>
-        <span v-if="hasDebugLogs" class="debug-badge">{{ debugLogs?.length }}</span>
+        <span v-if="debug && hasDebugLogs" class="debug-badge">{{ debugLogs?.length }}</span>
       </button>
       <div v-if="moreOpen" class="more-menu" @click.stop>
-        <button class="more-item" :title="m.debugMenuTitle" @click="ctx.openDebug(); moreOpen = false">
+        <button v-if="debug" class="more-item" :title="m.debugMenuTitle" @click="ctx.openDebug(); moreOpen = false">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M9 2v8l-3 3v2h12v-2l-3-3V2"></path><path d="M9 2h6"></path><path d="M9 18h6"></path>
           </svg>

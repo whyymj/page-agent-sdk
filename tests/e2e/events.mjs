@@ -98,5 +98,27 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:events] F1 → send() 路径全量事件外发(headless 自建 UI 经 sdk.hook 听全字段,原只 emit error)')
+  {
+    const types = []
+    const llm = stubModel(
+      { toolCalls: [{ name: 'read', args: { jsonPath: 'title' } }] },
+      { text: '已读取' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-send-events', storage: false, llm, capabilities: MIN_CAPS, autoTitle: false,
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' } },
+    })
+    await sdk.mount()
+    const off = sdk.hook((e) => { types.push(e.type) })
+    await sdk.send('读一下标题')
+    off()
+    // 过程事件:send 路径原只 emit error,现全量(headless send 用户可见工具调用/轮次/收口)
+    assert(types.includes('tool_call') && types.includes('tool_result'), 'F1 → send() 经 hook 收到 tool_call/tool_result 事件')
+    assert(types.includes('round_start') && types.includes('done'), 'F1 → send() 经 hook 收到 round_start/done 事件')
+    assert(!types.includes('approval_request'), 'F1 → send() 路径 approval_request 仍不外发(无 UI 响应方,由 30s 自动拒收口)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }
