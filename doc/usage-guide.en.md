@@ -1370,11 +1370,43 @@ createChatSdk({
 
 **Key points**:
 - **Priority chain**: `messages overrides > locale pack > zh-CN fallback` — no key is ever missing; miss-configured keys fall back, no mixed languages
-- **Key space** ~219 keys (title/placeholder/status labels/buttons/confirm/conflict/focus/Debug tabs/Agent-info kvs/Skill form/code preview); full list in the `DialogMessages` interface in `types/index.d.ts`
+- **Key space** ~226 keys (title/placeholder/status labels/buttons/confirm/conflict/focus/Debug tabs/Agent-info kvs/Skill form/code preview); full list in the `DialogMessages` interface in `types/index.d.ts`
 - **HTML rich-text spots**: message values starting with `<` on status labels/title/thinking/empty greeting/confirm & conflict/retry-undo buttons render as inline HTML, sanitized via a text allowlist (b/em/u/s/span/mark/code + class/style); title/placeholder attribute spots and concatenation keys (prefix/suffix) stay plain text (HTML shows literally); `sanitizeMessageHtml` is exported to inspect the sanitized result
 - **Custom-UI reuse** (headless): `MESSAGES_ZH_CN` / `MESSAGES_EN_US` / `resolveDialogMessages(locale, partial)` are all exported from the entry — drive your own UI with the same packs
 - The **English default systemPrompt** is exported separately: `DEFAULT_SYSTEM_PROMPT_EN` + `systemPromptHelpers.reliableWriteRulesEn` (handy when writing your own English prompt)
 - Full example: `examples/i18n-demo` (en locale + statusDone/emptyGreeting HTML overrides)
+
+### 6.16 Cross-session user preference memory (3.23+)
+
+The agent automatically captures **durable user preferences** from conversation (color taste / copy style / layout density), persists them independently, and injects them into every future session — users never have to repeat "no purple" again:
+
+```ts
+createChatSdk({
+  container: '#root', llm: {...},
+  capabilities: { preferences: true },          // opt-in (auto-writing the user's browser is behavior-sensitive, default off)
+  preferenceStorage: { backend: 'indexed' },    // optional: same shape as skillStorage; maxEntries FIFO cap (default 20)
+})
+
+// Runtime management (delete wrongly-learned entries)
+sdk.getPreferences()            // snapshot [{id, content, topic, ...}] (newest first)
+await sdk.removePreference(id)  // remove one
+await sdk.clearPreferences()    // clear all
+```
+
+**Capture strategy (better to miss than to learn wrong)**:
+
+| Signal | Example | Handling |
+|---|---|---|
+| Strong: explicit command | "Remember: keep copy short from now on" | regex extraction, **zero LLM** |
+| Medium: pattern-word hit | "Don't use purple, too loud" | one small-LLM extraction (summaryLlm channel); the core test = **durable taste vs this-round task instruction** ("make this one red" is not a preference); falls back to strong-signal-only when unavailable |
+| Weak: behavioral inference | user keeps removing gradients | **not captured** (long inference chain, cost of learning wrong > benefit) |
+
+**Notes**:
+- **Entry merging**: topic is a fixed 6-value enum (color/copy/layout/interaction/tech/other); same topic **later statement overrides earlier** (changing one's mind doesn't leave contradictory entries), FIFO ≤20 (bounded prompt cost, ~200 tokens)
+- **Injection**: an augmentPrompt pin segment rebuilt into the system prompt every round (naturally compression-proof, same as mission); the segment header says "unless the user indicates otherwise this round"
+- **Division of labor with existing memory**: `memory` = integrator-authored global instructions / `craftNotes` = per-component handoff / `mission` = in-session goal / **preference memory = user-level, cross-session**
+- **Observable**: read-only "User preferences" section in the DebugDrawer Agent-info tab; captures and failures are logged to debugLogs (middleware type)
+- **Privacy boundary**: preferences stay on the device (same local IndexedDB as skillStore, never uploaded with session snapshots); pass a fixed `preferenceStorage.id` to share across pages/agents, omit to isolate per agentId
 
 ## 9. Environment variables
 

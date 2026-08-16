@@ -168,6 +168,8 @@ export interface AgentInfo {
   planPhase?: { inPlanning: boolean; rounds: number; limit: number }
   /** 当前任务目标锚点(mission 中间件;未开启/未 capture → undefined) */
   mission?: import('../harness/state').Mission
+  /** 跨会话用户偏好(preferences 中间件;updatedAt 新在前;capabilities.preferences:false → undefined) */
+  preferences?: import('../backends/preferenceStore').PersistedPreference[]
   /** 跨压缩工作记忆(workingMemory 中间件;pin 最近 read/query/search 定位 path + read hash,≤10 LRU) */
   workingMemory?: { locatedPaths: string[]; lastHashes: Record<string, string> }
   /** 当前上下文聚焦焦点(focus 中间件;兼容:首个;未聚焦/未开启 → undefined) */

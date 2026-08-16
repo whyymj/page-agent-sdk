@@ -30,8 +30,8 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2319 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,718 项;tests/e2e/<module>.mjs 按模块拆分)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2377 项断言)
+npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,737 项;tests/e2e/<module>.mjs 按模块拆分)
 npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,80 项;tests/browser/<demo>.spec.ts)
 ```
 
@@ -154,6 +154,9 @@ npm run test:browser  # 80 项;也可 /browser-test 斜杠命令
 #### 4. 运行时手动验证(依赖 LLM/server)
 子 agent 委派 / MCP / verify 自纠 / 真实 LLM 流式 / draft 真 LLM(`npm run test:draft-real`,无 key 自动 skip)。
 
+#### 4.5 发布后临时安装深化验证(3.22.1 教训)
+临时目录 `npm i page-agent-sdk@<ver>` 后**用 node 实际调用本次新增的关键导出**(不只 `require` 成功):3.22.0 的 `sanitizeMessageHtml` 就是在这步暴露「node 无 DOM 调用抛 TypeError」的(browser 测试全绿也挡不住 —— dompurify 无 window 非完整实例)。
+
 #### 5. CDN 可达性验证(发布后)
 ```bash
 curl -sL "https://esm.sh/page-agent-sdk@<version>" | head -20
@@ -171,7 +174,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2319/718/80)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2377/737/80)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判)→ `npm run test:size` → `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证
@@ -192,7 +195,7 @@ createChatSdk({
 }).mount()
 // 运行时动态重配置:setTools/addTool/removeTool · setLlm · setMemory · setSubagents
 ```
-- **capabilities**:默认开 `dataOps`/`fetch`/`planning`/`skills`/`vfs`/`summarization`/`memory`/`subagent`/`focus`/`workingMemory`/`missionAnchor`/`contextInspector`/`inspectEnv`;opt-in `verify`/`domInspect`/`automation`/`agentCompression`/`skillHostScript`/`draftWrite`
+- **capabilities**:默认开 `dataOps`/`fetch`/`planning`/`skills`/`vfs`/`summarization`/`memory`/`subagent`/`focus`/`workingMemory`/`missionAnchor`/`contextInspector`/`inspectEnv`;opt-in `verify`/`domInspect`/`automation`/`agentCompression`/`skillHostScript`/`draftWrite`/`preferences`(跨会话用户偏好记忆,preferenceStore + 三层信号捕获 + pin 段注入,usage-guide §6.16)
 - **预设**(`presets`):`pageBuilder`(3.9+ 仅场景化身份 prompt;HTML 子 agent 由装配期自动装配,preset 不再自带)/ `researcher` / `minimal`,spread 进 `createChatSdk`
 - **headless**(`ui: false`):不渲染内置对话框,用 `sdk.messages` + `send`/`stream` 自建 UI。**精简子路径** `page-agent-sdk/headless`(纯核心,ESM ~325KB vs 主包 ~789KB)。headless 持久化:`sdk.stream` 不自动落盘,每轮后手动 `sdk.afterRound()`(`send` 自动)。headless 调试复用内置 `DebugDrawer`(纯 props:`logs=sdk.debugLogs`/`getInfo`/`infoTick`/`getSkillContent`)
 - **UI 模块可复用**:`ChatDialog` / `MessageContent` / `CodePreview` / `DebugDrawer` / `SkillPanel` + `useChat` 均从入口导出。`inspect()` 的 `AgentInfo` 含每工具 `source`/mcp/上下文构成等。框架无关集成见 `demo/plain.html`

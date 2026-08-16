@@ -385,6 +385,13 @@ export interface DialogMessages {
   debugSameAsMain: string            // (同主) / (same as main)
   debugTodosTitle: string
   debugMemoryTitle: string
+  debugPrefsTitle: string             // 用户偏好 / User preferences(preferences opt-in 小节标题)
+  debugPrefTopicColor: string         // 偏好 topic 标签:颜色 / color
+  debugPrefTopicCopy: string          // 文案 / copy
+  debugPrefTopicLayout: string        // 排版 / layout
+  debugPrefTopicInteraction: string   // 交互 / interaction
+  debugPrefTopicTech: string          // 技术 / tech
+  debugPrefTopicOther: string         // 其他 / other
   debugLastCompTitle: string
   debugTriggered: string
   debugNotTriggered: string          // ✗(未达阈值) / ✗ (below threshold)
@@ -581,6 +588,8 @@ export interface AgentInfo {
   planPhase?: { inPlanning: boolean; rounds: number; limit: number };
   /** 当前任务目标锚点(mission 中间件;未开启/未 capture → undefined) */
   mission?: Mission;
+  /** 跨会话用户偏好(preferences 中间件;updatedAt 新在前;capabilities.preferences:false → undefined) */
+  preferences?: PersistedPreference[];
   /** 宿主动作元信息(actions 注册;集成方 save_draft/publish 等) */
   actions?: Record<string, { description: string; hasParams: boolean }>;
   /** 跨压缩工作记忆(workingMemory 中间件;pin 最近 read/query/search 定位 path + read hash,≤10 LRU) */
@@ -945,6 +954,29 @@ export interface SkillStoreConfig {
   /** DB 命名空间,默认 'chat-sdk'(与 SessionStore 同库,不同 key 前缀) */
   dbName?: string;
 }
+/** 偏好主题枚举(合并键):同 topic 后说覆盖前说 */
+export type PreferenceTopic = 'color' | 'copy' | 'layout' | 'interaction' | 'tech' | 'other';
+/** 持久化的单条用户偏好(captured/提炼后的一句话中性陈述) */
+export interface PersistedPreference {
+  id: string;
+  content: string;
+  topic: PreferenceTopic;
+  sourceSessionId: string;
+  sourceRound: number;
+  createdAt: number;
+  updatedAt: number;
+}
+/** 用户偏好跨会话记忆的独立持久化存储配置(preference-persistence;需 capabilities.preferences:true) */
+export interface PreferenceStoreConfig {
+  /** 存储 id(命名空间);同 id 跨页面/跨 agent 共享,不传按 agentId 隔离 */
+  id?: string;
+  /** 后端类型,默认 'indexed';'local' / 'session' / 'memory' */
+  backend?: StorageBackendType;
+  /** DB 命名空间,默认 'chat-sdk' */
+  dbName?: string;
+  /** FIFO 条目上限(默认 20;超限按 updatedAt 删最旧) */
+  maxEntries?: number;
+}
 export interface SessionMeta {
   agentId: string;
   sessionId: string;
@@ -1051,6 +1083,8 @@ export interface ChatSdkOptions {
   skills?: SkillSpec[];
   /** 用户创建 skill 的独立持久化存储(与 storage 选项分离)。默认 `{ backend: 'indexed' }`(即使 storage:false 也持久化);`false` 关闭;`id` 手动指定同一 id 可跨页面/跨 agent 复用 */
   skillStorage?: SkillStoreConfig | false;
+  /** 用户偏好跨会话记忆的独立持久化存储(需 `capabilities.preferences:true`);默认 indexedDB;maxEntries FIFO 上限(默认 20);false 不持久化(仅页面生命周期内有效) */
+  preferenceStorage?: PreferenceStoreConfig | false;
   /** AGENTS.md 风格持久指令。支持 string 与同步/异步函数(异步函数适合加载 RAG 文档) */
   memory?: string | (() => string | Promise<string>);
   data?: DataConfig;
@@ -1103,7 +1137,7 @@ export interface ChatSdkOptions {
   /** 模型最大输出(token);顶层声明对 llm 实例场景也生效,缺省按 model 名查表 */
   maxOutputTokens?: number;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
-  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; tracing?: boolean; todoDeps?: boolean; automation?: boolean; workingMemory?: boolean; focus?: boolean; skillHostScript?: boolean; contextInspector?: boolean; agentCompression?: boolean };
+  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; tracing?: boolean; todoDeps?: boolean; automation?: boolean; workingMemory?: boolean; focus?: boolean; skillHostScript?: boolean; contextInspector?: boolean; agentCompression?: boolean; preferences?: boolean };
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number; timeoutMs?: number };
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[];
@@ -1251,6 +1285,12 @@ export interface ChatSdk {
   getMission(): Mission | undefined;
   /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
   setMission(mission: Partial<Mission>): void;
+  /** 读取跨会话用户偏好快照(updatedAt 新在前;capabilities.preferences:false → 恒 []) */
+  getPreferences(): PersistedPreference[];
+  /** 删除单条跨会话偏好(by id;学错可删);capabilities 关 → false */
+  removePreference(id: string): Promise<boolean>;
+  /** 清空全部跨会话偏好(存储 + 注入段同清);capabilities 关 → no-op */
+  clearPreferences(): Promise<void>;
   /** 读取当前聚焦焦点(兼容:返回首个;未聚焦 / capabilities.focus:false → undefined) */
   getFocus(): Focus | undefined;
   /** 读取全部聚焦焦点(multi-focus;空数组=未聚焦;capabilities.focus:false → []) */
@@ -1587,6 +1627,41 @@ export declare function createWebStorageBackend(storage: Storage): StorageBacken
 export declare function isQuotaError(err: unknown): boolean;
 /** 创建 Skill 独立持久化存储(与 storage 选项分离;默认 indexedDB,可手动指定 id 跨页复用) */
 export declare function createSkillStore(config?: SkillStoreConfig): SkillStore;
+// ============ 用户偏好跨会话记忆(preference-persistence;capabilities.preferences opt-in)============
+/** FIFO 条目上限默认值(20) */
+export declare const DEFAULT_MAX_PREFERENCES: number;
+/** 创建偏好独立存储(与 storage/skillStorage 同构;同 topic 后说覆盖,FIFO 超限删最旧) */
+export declare function createPreferenceStore(config?: PreferenceStoreConfig): PreferenceStore;
+export interface PreferenceStore {
+  ready: Promise<boolean>;
+  list(): Promise<PersistedPreference[]>;
+  put(pref: Omit<PersistedPreference, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Promise<PersistedPreference>;
+  remove(id: string): Promise<boolean>;
+  clear(): Promise<void>;
+  dispose(): void;
+}
+/** 偏好捕获中间件选项 */
+export interface PreferencesMiddlewareOptions {
+  store: PreferenceStore;
+  /** 小 LLM 通道(如 summaryLlmInvoke);缺省 → 只强信号生效(降级) */
+  llmInvoke?: (prompt: string) => Promise<string>;
+  /** 当前会话 id getter(记入条目溯源) */
+  getSessionId: () => string;
+  /** debug 留痕回调 */
+  onDebug?: (data: Record<string, unknown>) => void;
+}
+/** 偏好捕获中间件(afterAgent 收口捕获 + augmentPrompt pin 段注入) */
+export declare function createPreferencesMiddleware(opts: PreferencesMiddlewareOptions): any;
+/** 强信号提取:显式命令句式(「记住:」等)命中 → {content, topic};未命中 → undefined(零 LLM) */
+export declare function extractExplicitPreference(text: string): { content: string; topic: PreferenceTopic } | undefined;
+/** 中信号初筛:模式词命中(松筛,真伪由 LLM 提炼判定) */
+export declare function looksLikePreferenceSignal(text: string): boolean;
+/** 解析提炼 LLM 输出(容错剥围栏;captured 非 true / 非法 → undefined,宁漏勿误) */
+export declare function parsePreferenceJson(raw: string): { content: string; topic: PreferenceTopic } | undefined;
+/** 提炼 prompt(中信号;输出 JSON) */
+export declare function buildExtractPrompt(text: string): string;
+/** 注入 pin 段(cache 快照 → markdown;空 → undefined) */
+export declare function buildPreferencePrompt(prefs: PersistedPreference[]): string | undefined;
 export interface SkillStore {
   ready: Promise<boolean>;
   list(): Promise<PersistedSkill[]>;

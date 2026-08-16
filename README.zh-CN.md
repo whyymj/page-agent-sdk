@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-2319%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-2377%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -140,7 +140,8 @@ CDN 零配置：`<script src="https://unpkg.com/page-agent-sdk"></script>` → `
 | 📐 上下文健壮性 (2.30+) | 硬地板 `contextWindow ≥200K`(启动拒绝 <200K 模型如老款 `deepseek`/`gpt-4o`/`glm-4.5`);三道闸(压缩/trim/offload)阈值在 `setLlm` 后跟随实时窗口;遇 `context_length_exceeded` 反应性重试(激进 trim → 重试一次,不裸失败);vfs 大结果引用受保护免 LRU 淘汰 + OOM 1.5× 兜底;系统段预算(25% 窗口,丢弃非 pin 段保 base/mission/workingMemory) | 内置 |
 | 🎯 focus 自动切换 (2.31+) | AI 自动判断任务范围 → `set_focus`(局部任务)/ `clear_focus`(全局/完成);focus 跨刷新/切会话持久化(restore 经 `getSchemaAtPath` 校验 path,失效丢弃);子 agent 继承主焦点(三层收敛;主未聚焦 → 子无 focus 中间件,零回归) | `capabilities.focus` + `toolMode:'advanced'` |
 | 🔒 精确值保护 (2.32+) | `data.resources: [{path, mode}]` 保护需精确保存字段:`freeze`(只读,精确值经 `⟦frozen:path⟧` 占位符不入消息流,写撞 FROZEN_FIELD)/ `verbatim`(原样保留,`⟦res:handle⟧`,改值经 `resource_update` 否则 VERBATIM_MISMATCH);写侧强制覆盖 commitSetToBind/applyPatches/eval + 资源工具(`resource_get/update/list/delete`,advanced)+ 跨压缩 pin | `data.resources` + `capabilities.vfs` |
-| 🌍 UI 定制与国际化 (3.17+~3.22+) | 对话框 UI 免 fork 全定制:`dialog.icons` 逐图标覆盖(纯文本或净化后 HTML 片段)+ 内置深色主题 `dialog.theme:'dark'` + **顶层 `i18n` 配置组(3.22+)**:`locale:'en-US'` 切内置文案包(聊天面 + Debug 抽屉 + Skill 面板 + 代码预览;`formatTime`/autoTitle 跟随,**默认 systemPrompt 切英文** → agent 回复语言与 UI 一致)、`messages` 键级覆盖(如 `statusDone: '<b style="color:#10b981">Done ✓</b>'` —— 富文本渲染位支持行内 HTML 片段,文案白名单净化)——换语言与改个别文案一个配置组;`DialogMessages`(~219 键)+ `MESSAGES_ZH_CN`/`MESSAGES_EN_US`/`resolveDialogMessages` 导出供自建 UI 复用 | `dialog.{icons,theme}` + `i18n.{locale,messages}` |
+| 🌍 UI 定制与国际化 (3.17+~3.22+) | 对话框 UI 免 fork 全定制:`dialog.icons` 逐图标覆盖(纯文本或净化后 HTML 片段)+ 内置深色主题 `dialog.theme:'dark'` + **顶层 `i18n` 配置组(3.22+)**:`locale:'en-US'` 切内置文案包(聊天面 + Debug 抽屉 + Skill 面板 + 代码预览;`formatTime`/autoTitle 跟随,**默认 systemPrompt 切英文** → agent 回复语言与 UI 一致)、`messages` 键级覆盖(如 `statusDone: '<b style="color:#10b981">Done ✓</b>'` —— 富文本渲染位支持行内 HTML 片段,文案白名单净化)——换语言与改个别文案一个配置组;`DialogMessages`(~226 键)+ `MESSAGES_ZH_CN`/`MESSAGES_EN_US`/`resolveDialogMessages` 导出供自建 UI 复用 | `dialog.{icons,theme}` + `i18n.{locale,messages}` |
+| 🎯 跨会话用户偏好记忆 | `capabilities.preferences`(**opt-in 默认关**,自动写用户浏览器属行为敏感项):agent 从对话中捕获用户持久偏好 —— 强信号(「记住:…」显式命令,零 LLM)/ 中信号(模式词初筛 + 小 LLM 提炼,核心判定「持久口味 vs 本轮任务指令」)/ 行为推断**不捕获**(宁漏勿误:学错一条假偏好,之后每个会话都带着跑);偏好独立持久化(preferenceStore,IndexedDB,与 storage/skillStorage 同构;同 topic **后说覆盖前说**,FIFO ≤20);每轮经 pin 段注入 system prompt(跨会话/跨压缩生效);`sdk.getPreferences()/removePreference(id)/clearPreferences()` 管理学错条目,DebugDrawer「用户偏好」只读小节可查 | `capabilities: { preferences: true }` + 可选 `preferenceStorage` |
 
 能力默认开（`verify`/`approval`/`checkpoint` 默认关；**主动征询 `humanConfirm` 默认开**——AI 遇不确定/多方案主动问你、不猜测），可经 `capabilities` 关掉无用的省 token。
 
@@ -207,7 +208,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `augmentSystem` | `(ctx:{state,data?}) => string \| undefined` | 动态 system prompt 注入钩子:每轮调,按运行时 state/data 返回字符串作为一段注入;返回 undefined 跳过;回调抛错降级跳过(不崩)。`ctx.data` 每轮从 liveData() 取最新(setData 后自动同步),可据此动态算当前组件说明 / 部分 schema 描述。不配 = 现状行为 |
 | **页面数据** | `data` | `{schema,bind,description?}` | 单主对象:声明 zod schema(校验 + 字段描述自动注入提示词)+ bind(reactive/普通对象,工具直接读写,不挂 window)+ description |
 | | `tools` / `skills` / `memory` | `Tool[]` / `SkillSpec[]` / `string` | 自定义工具 / 技能 / AGENTS.md 风格持久指令 |
-| **能力开关** | `capabilities` | `{planning?,missionAnchor?,dataOps?,fetch?,skills?,vfs?,summarization?,memory?,workingMemory?,subagent?,verify?,domInspect?,focus?}` | 核心默认开（`verify`/`domInspect` 默认关,opt-in;`focus` 上下文聚焦·指定组件精修,默认开)；`false` 关掉省 token |
+| **能力开关** | `capabilities` | `{planning?,missionAnchor?,dataOps?,fetch?,skills?,vfs?,summarization?,memory?,workingMemory?,subagent?,verify?,domInspect?,focus?,preferences?}` | 核心默认开（`verify`/`domInspect`/`preferences` 默认关,opt-in;`focus` 上下文聚焦·指定组件精修,默认开;`preferences` 跨会话偏好记忆)；`false` 关掉省 token |
 | | `actions` | `Record<string,{description,run,params?}>` | **(2.18+) 宿主动作**：注册 save_draft/publish 等页面操作 → SDK 自动生成命名 tool 供 agent 触发 |
 | | `schemaHint` | `{maxKeys?,maxChars?}` · 默认 `{15,4000}` | **(2.18+) 大 schema 分层披露阈值**：超则 systemPrompt 只注入顶层概览（不带约束/不递归）,深层约束按需 `schema_data` 查;小 schema 无感（全量） |
 | | `permissions` | `PermissionRule[]` | scope 白名单（first-match-wins，默认不启用） |
@@ -245,7 +246,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | `inputRows` | `number` · 默认 `2` | 输入框行数(可见高度);`1` = 单行;`2` = 2 行初始高度,自动扩展至 max-height:100px;`>2` = 更高初始高度 |
 | `onClose` | `() => void` | 抽屉模式关闭回调(默认 `hide`;传此选项覆盖默认,便于同步外部挂载状态) |
 | `theme` | `'light' \| 'dark'` · 默认 `'dark'` | 内置主题(dark = 方舟设计稿深色紫调);亦可祖先覆盖 `--cs-*` 完全自定义 |
-| `i18n` | `I18nOptions` | **顶层国际化配置组(3.22+;原 `dialog.locale`/`dialog.messages` 两键合并至此)**:`locale` 切换内置文案包 —— 聊天面 + Debug 抽屉 + Skill 面板 + 代码预览;`formatTime`(12h/24h)、autoTitle 与**默认 systemPrompt** 跟随(`en-US` → 英文版 `DEFAULT_SYSTEM_PROMPT_EN` 含 "Respond in English" 语言锚,agent 回复语言与 UI 一致;自定义 `systemPrompt` 不受影响,但其自动追加的 `reliableWriteRules` 段切英文)。`messages` = 键级覆盖(优先于 locale 包,如 `statusDone: '<b style="color:#10b981">完成</b>'` —— 富文本渲染位的值支持行内 HTML 片段,文案白名单净化);完整键清单(~219 键)见 `DialogMessages` |
+| `i18n` | `I18nOptions` | **顶层国际化配置组(3.22+;原 `dialog.locale`/`dialog.messages` 两键合并至此)**:`locale` 切换内置文案包 —— 聊天面 + Debug 抽屉 + Skill 面板 + 代码预览;`formatTime`(12h/24h)、autoTitle 与**默认 systemPrompt** 跟随(`en-US` → 英文版 `DEFAULT_SYSTEM_PROMPT_EN` 含 "Respond in English" 语言锚,agent 回复语言与 UI 一致;自定义 `systemPrompt` 不受影响,但其自动追加的 `reliableWriteRules` 段切英文)。`messages` = 键级覆盖(优先于 locale 包,如 `statusDone: '<b style="color:#10b981">完成</b>'` —— 富文本渲染位的值支持行内 HTML 片段,文案白名单净化);完整键清单(~226 键)见 `DialogMessages` |
 | `icons` | `Partial<DialogIcons>` | **图标自定义**:局部覆盖默认 emoji(`header` 🤖 / `subagent` 🤖 / `subagentProgress` 🧬 / `empty` 💬 / `focus` 🎯 / `queued` 📋 / `queuedEdit` ✏️ / `recommend` 💡 / `conflict` ⚠️;`assistantAvatar`/`userAvatar` 缺省 = 内置 SVG,传文本字形替换)。值为纯文本(emoji/字符)或 **HTML 片段**(以 `<` 开头,如内联 `<svg>`/`<img>`,经 DOMPurify 图标白名单净化,事件属性/危险协议剥除);空串 = 隐藏该图标;未传键用默认 |
 
 ### 扩展点
@@ -477,8 +478,8 @@ function switchTo(i: number) {
 ## 自测
 
 ```bash
-npm test            # 2319 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 718 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm test            # 2377 项断言（tsx 源码级，不依赖 LLM）
+npm run test:e2e    # 737 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试

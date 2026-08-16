@@ -15,7 +15,7 @@
  *   (messages/agent/vfsStore/store/todos/memory 全共享 = 「同一 agent 的多个对话框视图」)。
  *   模块级 sharedCores 注册表 + 引用计数;mount/unmount 各自渲染到不同 container。
  */
-import { reactive, ref, type Ref } from 'vue'
+import { reactive, ref, triggerRef, type Ref } from 'vue'
 import { tool, type StructuredToolInterface } from '@langchain/core/tools'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { DialogIcons } from '../components/icons'
@@ -75,6 +75,8 @@ import { createUsageHintsMiddleware } from '../harness/usageHints'
 import { createResourcesPinMiddleware } from '../harness/resourcesPin'
 import { type SessionStore, type StorageConfig, type StorageBackendType, type SessionSnapshot, type SessionMeta } from '../backends/storage'
 import { createSkillStore, type SkillStore, type SkillStoreConfig, type PersistedSkill } from '../backends/skillStore'
+import { createPreferenceStore, type PreferenceStoreConfig, type PersistedPreference } from '../backends/preferenceStore'
+import { createPreferencesMiddleware } from '../harness/preferences'
 import { makeId } from '../utils/id'
 import { resolveModelCaps, MIN_CONTEXT_WINDOW } from '../utils/modelCaps'
 import { trimMemoryMessagesImpl, composeTrimSummary } from '../utils/rounds'
@@ -185,6 +187,13 @@ export interface ChatSdkOptions {
    */
   skillStorage?: SkillStoreConfig | false
   /**
+   * 用户偏好跨会话记忆的独立持久化存储(preference-persistence;需 `capabilities.preferences:true` 开启)。
+   * - 与 storage/skillStorage 同构:默认 `{ backend: 'indexed' }`(storage:false 也持久化);id 不传按 agentId 隔离,同 id 跨 agent 共享
+   * - `maxEntries`:FIFO 上限(默认 20;超限删最旧)
+   * - `false`:不持久化(仍工作,但仅当前页面生命周期内有效,刷新丢失)
+   */
+  preferenceStorage?: PreferenceStoreConfig | false
+  /**
    * AGENTS.md 风格持久指令(加载时优先于持久化的 memory)。
    * 支持三种形态:
    *   - string:静态文本
@@ -271,6 +280,7 @@ export interface ChatSdkOptions {
     skillHostScript?: boolean  // skill exec 宿主脚本执行(默认 false;opt-in,允许 skill exec.context:'host' 全权执行;仅集成方内联 code,远程 url+host 禁止)
     contextInspector?: boolean // 上下文检查 inspectContext(默认 true;读每轮消息分类 token 占比,纯计算零 LLM 成本)
     agentCompression?: boolean // 压缩 agent 自主决策(默认 false;opt-in,开 + summaryLlm 可用 → decide 驱动压缩,失败降级静态;requires summarization)
+    preferences?: boolean      // 跨会话用户偏好记忆(默认 false;opt-in,自动写用户浏览器,行为敏感默认关;捕获→持久化→pin 段注入)
   }
   /** 子 agent 委派(spawn_agent/spawn_agents);默认开启,{ enabled: false } 关闭 */
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | BaseChatModel; maxDepth?: number; maxParallel?: number; timeoutMs?: number }
@@ -440,6 +450,12 @@ export interface ChatSdk {
   getMission(): Mission | undefined
   /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
   setMission(mission: Partial<Mission>): void
+  /** 读取跨会话用户偏好快照(updatedAt 新在前;capabilities.preferences:false → 恒 []) */
+  getPreferences(): PersistedPreference[]
+  /** 删除单条跨会话偏好(by id;学错可删);capabilities 关 → false */
+  removePreference(id: string): Promise<boolean>
+  /** 清空全部跨会话偏好(存储 + 注入段同清);capabilities 关 → no-op */
+  clearPreferences(): Promise<void>
   /** 读取当前聚焦焦点(兼容:返回首个;未聚焦 / capabilities.focus:false → undefined) */
   getFocus(): Focus | undefined
   /** 读取全部聚焦焦点(multi-focus;空数组=未聚焦;capabilities.focus:false → []) */
@@ -677,6 +693,12 @@ export interface AgentCore {
   getMission(): Mission | undefined
   /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
   setMission(mission: Partial<Mission>): void
+  /** 读取跨会话用户偏好快照(updatedAt 新在前;capabilities.preferences:false → 恒 []) */
+  getPreferences(): PersistedPreference[]
+  /** 删除单条跨会话偏好(by id);capabilities 关 → false */
+  removePreference(id: string): Promise<boolean>
+  /** 清空全部跨会话偏好;capabilities 关 → no-op */
+  clearPreferences(): Promise<void>
   /** 读取当前聚焦焦点(兼容:返回首个;未聚焦 / capabilities.focus:false → undefined) */
   getFocus(): Focus | undefined
   /** 读取全部聚焦焦点(multi-focus;空数组=未聚焦;capabilities.focus:false → []) */
@@ -1382,6 +1404,34 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         : `agent::${agentId}`,
     })
 
+  // ===== 用户偏好跨会话记忆(preference-persistence;capabilities.preferences opt-in 默认关)=====
+  // 捕获:强信号(「记住:」正则,零 LLM)+ 中信号(模式词初筛 → summaryLlmInvoke 提炼,宁漏勿误);行为推断不捕获
+  // 注入:augmentPrompt「## 用户偏好」pin 段(每轮重建进 system,天然跨压缩,同 mission)
+  const usePreferences = caps.preferences
+  type PreferencesMw = ReturnType<typeof createPreferencesMiddleware>
+  const preferenceStore = usePreferences && options.preferenceStorage !== false
+    ? createPreferenceStore({
+        ...(typeof options.preferenceStorage === 'object' ? options.preferenceStorage : {}),
+        id: options.preferenceStorage && typeof options.preferenceStorage === 'object' && options.preferenceStorage.id
+          ? options.preferenceStorage.id
+          : `agent::${agentId}`,
+      })
+    : null
+  const preferencesMw: PreferencesMw | null = preferenceStore
+    ? createPreferencesMiddleware({
+        store: preferenceStore,
+        // 小 LLM 通道(中信号提炼);summaryLlmInvoke 缺省(apiKey 缺失等)→ 只强信号生效(降级)
+        llmInvoke: summaryLlmInvoke,
+        getSessionId: () => core.sessionId,
+        onDebug: (data) => {
+          const logs = core.agent?.debugLogs
+          if (!logs) return
+          logs.value.push({ timestamp: Date.now(), type: 'middleware', data })
+          triggerRef(logs)
+        },
+      })
+    : null
+
   /** 合并 initialSkills + userSkills(同名 userSkills 覆盖)→ controller.set;持久化 userSkills 到 SkillStore */
   const syncUserSkills = () => {
     const ctrl = skillsMw ? (skillsMw as any).controller as import('../harness/skills').SkillsController : null
@@ -1430,6 +1480,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     usageHintsMw,
     // 按 capabilities 条件装载内置中间件(默认全开;verify 默认关)
     ...(useMission ? [missionMw] : []), // mission 在 todos 前(pin 段在 todos 段前;revive-mission-anchor)
+    ...(preferencesMw ? [preferencesMw] : []), // mission 后:用户偏好 pin 段(跨会话;afterAgent 收口捕获;opt-in 默认关)
     ...(usePlanning ? [todosMw] : []),
     ...(useSkills
       ? [
@@ -1838,6 +1889,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       missionMw.reset()
       workingMemoryMw.reset()
       focusMw.reset()
+      // 偏好本身跨会话保留(不 reset);仅重置消息扫描水位(新会话 messages 从 0 起,须重扫)
+      preferencesMw?.resetScanCursor()
       // session-history S1:切会话清 checkpoint 栈,防旧会话快照污染新会话(开 checkpoint 时,否则 restore 会回退到旧会话态)
       if (checkpointMgr) checkpointMgr.importStack([])
       // 释放上一会话的调试日志(切会话后旧日志不再相关,立即释放内存)
@@ -1870,6 +1923,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       missionMw.reset()
       workingMemoryMw.reset()
       focusMw.reset()
+      preferencesMw?.resetScanCursor() // 偏好跨会话保留;只重置扫描水位(同 switchSession)
       if (checkpointMgr) checkpointMgr.importStack([])
       if (core.agent) core.agent.debugLogs.value = []
       if (store) {
@@ -2070,6 +2124,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         })),
         planPhase: todosMw.getPlanPhase(),
         mission: useMission ? missionMw.getMission() : undefined,
+        // 跨会话用户偏好(DebugDrawer 只读视图;capabilities.preferences:false → undefined)
+        preferences: usePreferences && preferencesMw ? preferencesMw.getPreferences() : undefined,
         workingMemory: useWorkingMemory ? workingMemoryMw.getWorkingMemory() : undefined,
         focus: useFocus ? focusMw.getFocus() : undefined,
         focuses: useFocus ? focusMw.getFocuses() : [],
@@ -2121,6 +2177,23 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       }
       missionMw.setMission(m)
       core.infoTick.value++ // 触发 DebugDrawer 刷新
+    },
+    /** 读取跨会话用户偏好快照(updatedAt 新在前;capabilities.preferences:false → 恒 []) */
+    getPreferences(): PersistedPreference[] {
+      return preferencesMw ? preferencesMw.getPreferences() : []
+    },
+    /** 删除单条跨会话偏好(by id;学错可删);capabilities 关 → false */
+    async removePreference(id: string): Promise<boolean> {
+      if (!preferencesMw) return false
+      const ok = await preferencesMw.removePreference(id)
+      if (ok) core.infoTick.value++
+      return ok
+    },
+    /** 清空全部跨会话偏好(存储 + 注入段同清);capabilities 关 → no-op */
+    async clearPreferences(): Promise<void> {
+      if (!preferencesMw) return
+      await preferencesMw.clearPreferences()
+      core.infoTick.value++
     },
     /** 读取当前聚焦焦点(兼容:返回首个 focus;未聚焦 / capabilities.focus:false → undefined) */
     getFocus(): Focus | undefined {
@@ -2362,6 +2435,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     await resolveAndLoad()
     // Skill 独立加载(与 storage 选项分离;即使 storage:false 也从 SkillStore 恢复)
     await loadUserSkills()
+    // 用户偏好预载:await store.ready 后拉 list 填中间件内存 cache(此后 augmentPrompt 读 cache 零 await)
+    if (preferencesMw) await preferencesMw.preload()
     // MCP:连所有 server(故障隔离),工具注入 allTools。
     // mcp-e2e 真测优化:握手(默认 15s 超时)曾 await 在 initDone → mount 被阻塞,server 不可达时
     // 对话框 15s 不渲染(切模式白屏感)。改为后台连接:agent 先建/对话框先渲染,握手完成后 push 工具 +
@@ -2634,6 +2709,12 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
     getMission: core.getMission,
     /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
     setMission: core.setMission,
+    /** 读取跨会话用户偏好快照(updatedAt 新在前;capabilities.preferences:false → 恒 []) */
+    getPreferences: core.getPreferences,
+    /** 删除单条跨会话偏好(by id;学错可删);capabilities 关 → false */
+    removePreference: core.removePreference,
+    /** 清空全部跨会话偏好(存储 + 注入段同清);capabilities 关 → no-op */
+    clearPreferences: core.clearPreferences,
     /** 读取当前聚焦焦点(未聚焦 / capabilities.focus:false → undefined) */
     getFocus: core.getFocus,
     getFocuses: core.getFocuses,

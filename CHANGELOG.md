@@ -2,6 +2,11 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.23.0] - 2026-08-16
+
+### Added(openspec `2026-08-16-preference-persistence`)
+- **跨会话用户偏好记忆(`capabilities.preferences`,opt-in 默认关)**:agent 从对话中捕获用户持久偏好(配色/文案/排版口味),独立持久化,新会话自动经 pin 段注入 system prompt —— 用户不必每个会话重申「别用紫色」。三层信号捕获(宁漏勿误):强信号(「记住:…」显式命令正则提取,零 LLM)/ 中信号(模式词初筛 + summaryLlm 小模型提炼一次,核心判定「持久口味 vs 本轮任务指令」;不可用降级只强信号)/ 行为推断不捕获(学错成本 > 收益)。`preferenceStore`(与 skillStorage 同构的独立 IndexedDB 存储;同 topic **后说覆盖前说**防自相矛盾,topic 固定 6 枚举,FIFO ≤20 偏好段 token 有界;`preferenceStorage` 配置组可调 backend/id/maxEntries);捕获在 afterAgent 收口后 fire-and-forget(不阻塞返回,失败 debugLogs 留痕);注入段每轮重建跨压缩天然生效(同 mission);API `getPreferences()`/`removePreference(id)`/`clearPreferences()`(学错可删)+ `inspect().preferences` 反射 + DebugDrawer「用户偏好」只读小节;`switchSession`/`resetSession` 偏好保留(只重置消息扫描水位)。selftest sec-84(+55)/ e2e preferences.mjs(+19:强信号捕获落库/pin 段注入/同 topic 覆盖/三件套 API/默认关降级/inspect 反射)
+
 ## [3.22.1] - 2026-08-16
 
 ### Fixed(3.22.0 发布后临时安装验证发现)

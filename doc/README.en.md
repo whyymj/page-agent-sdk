@@ -6,7 +6,7 @@
 
 | Doc | Contents |
 |---|---|
-| [**Usage Guide**](./usage-guide.en.md) | **Start here** · Install / quick start / options / capability deep-dive / **UI customization & i18n (6.15: icons / theme + top-level `i18n` group — locale switch / per-key message overrides)** / custom middleware / FAQ |
+| [**Usage Guide**](./usage-guide.en.md) | **Start here** · Install / quick start / options / capability deep-dive / **UI customization & i18n (6.15: icons / theme + top-level `i18n` group — locale switch / per-key message overrides)** / **cross-session preference memory (6.16)** / custom middleware / FAQ |
 | [Architecture](./architecture.md) *(Chinese)* | ①-⑮ full view: layering / assembly & mount / ReAct loop (format + verify self-correction) / window-op & optimistic lock / conflict human-in-the-loop / context compression & persistence / event flow / session restore / subagent orchestration / MCP / Approval / module extraction / UX plane / **data-slot deep dive (whitelist/RW chain/toolMode/protected resources/vfs)** / **capability panorama & robustness contracts** (mermaid diagrams) |
 | [Context & Compression](./context-management.md) / [EN](./context-management.en.md) | Context 3-part composition / offload + 3-layer compression (per-layer principle/flow/params/boundaries) / post-compression structure / 3 flow diagrams / presets / differences from Deep Agents |
 | [System Prompt Composition](./system-prompt.md) *(Chinese)* | Two-layer assembly (base identity+rules / dynamic augmentPrompt segments) / data-hint injection / middleware segment order / `augmentSystem` hook |

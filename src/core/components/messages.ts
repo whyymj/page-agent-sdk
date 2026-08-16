@@ -196,6 +196,13 @@ export interface DialogMessages {
   debugSameAsMain: string            // (同主) / (same as main)
   debugTodosTitle: string
   debugMemoryTitle: string
+  debugPrefsTitle: string             // 用户偏好 / User preferences(preferences opt-in 小节标题)
+  debugPrefTopicColor: string         // 偏好 topic 标签:颜色 / color
+  debugPrefTopicCopy: string          // 文案 / copy
+  debugPrefTopicLayout: string        // 排版 / layout
+  debugPrefTopicInteraction: string   // 交互 / interaction
+  debugPrefTopicTech: string          // 技术 / tech
+  debugPrefTopicOther: string         // 其他 / other
   debugLastCompTitle: string
   debugTriggered: string
   debugNotTriggered: string          // ✗(未达阈值) / ✗ (below threshold)
@@ -421,6 +428,13 @@ export const MESSAGES_ZH_CN: DialogMessages = {
   debugSameAsMain: '(同主)',
   debugTodosTitle: '任务清单',
   debugMemoryTitle: '持久指令 (memory)',
+  debugPrefsTitle: '用户偏好(跨会话)',
+  debugPrefTopicColor: '颜色',
+  debugPrefTopicCopy: '文案',
+  debugPrefTopicLayout: '排版',
+  debugPrefTopicInteraction: '交互',
+  debugPrefTopicTech: '技术',
+  debugPrefTopicOther: '其他',
   debugLastCompTitle: '上轮压缩',
   debugTriggered: '触发',
   debugNotTriggered: '✗(未达阈值)',
@@ -646,6 +660,13 @@ export const MESSAGES_EN_US: DialogMessages = {
   debugSameAsMain: ' (same as main)',
   debugTodosTitle: 'Todos',
   debugMemoryTitle: 'Persistent instructions (memory)',
+  debugPrefsTitle: 'User preferences (cross-session)',
+  debugPrefTopicColor: 'color',
+  debugPrefTopicCopy: 'copy',
+  debugPrefTopicLayout: 'layout',
+  debugPrefTopicInteraction: 'interaction',
+  debugPrefTopicTech: 'tech',
+  debugPrefTopicOther: 'other',
   debugLastCompTitle: 'Last compression',
   debugTriggered: 'Triggered',
   debugNotTriggered: '✗ (below threshold)',

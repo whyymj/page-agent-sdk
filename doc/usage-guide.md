@@ -2018,11 +2018,43 @@ createChatSdk({
 
 **要点**:
 - **优先级链**:`messages 覆盖 > locale 内置包 > zh-CN 缺省` —— 任意键不缺,漏配键回退,不会混语言
-- **键空间** ~219 键(标题/占位/状态标签/按钮/确认/冲突/聚焦/Debug 各 tab/Agent 信息 kv/Skill 表单/代码预览),完整清单看 `types/index.d.ts` 的 `DialogMessages` 接口
+- **键空间** ~226 键(标题/占位/状态标签/按钮/确认/冲突/聚焦/Debug 各 tab/Agent 信息 kv/Skill 表单/代码预览),完整清单看 `types/index.d.ts` 的 `DialogMessages` 接口
 - **HTML 富文本位**:状态标签/标题/思考中/空态问候/确认与冲突/重试回退按钮的文案值以 `<` 开头 = 行内 HTML 片段,经文案白名单(b/em/u/s/span/mark/code + class/style)净化后渲染;title/placeholder 属性位与拼接键(prefix/suffix)按纯文本(传 HTML 字面显示);`sanitizeMessageHtml` 导出可自查净化结果
 - **自建 UI 复用**(headless):`MESSAGES_ZH_CN` / `MESSAGES_EN_US` / `resolveDialogMessages(locale, partial)` 均从入口导出,同一套词条驱动你自己的 UI
 - **默认 systemPrompt 英文版**单独导出:`DEFAULT_SYSTEM_PROMPT_EN` + `systemPromptHelpers.reliableWriteRulesEn`(英文场景想自定义 prompt 时可拼用)
 - 完整示例:`examples/i18n-demo`(en locale + statusDone/emptyGreeting HTML 覆盖)
+
+### 6.16 跨会话用户偏好记忆(3.23+)
+
+agent 从对话中自动捕获用户的**持久偏好**(配色口味/文案风格/排版密度),独立持久化,下个会话自动注入 —— 用户不必每个会话重申「别用紫色」:
+
+```ts
+createChatSdk({
+  container: '#root', llm: {...},
+  capabilities: { preferences: true },          // opt-in(自动写用户浏览器属行为敏感,默认关)
+  preferenceStorage: { backend: 'indexed' },    // 可选:与 skillStorage 同构;maxEntries FIFO 上限(默认 20)
+})
+
+// 运行时管理(学错了可删)
+sdk.getPreferences()          // 条目快照 [{id, content, topic, ...}](updatedAt 新在前)
+await sdk.removePreference(id) // 删单条
+await sdk.clearPreferences()   // 清空
+```
+
+**捕获策略(宁漏勿误)**:
+
+| 信号 | 例 | 处理 |
+|---|---|---|
+| 强:显式命令 | 「记住:以后文案都要短」 | 正则直接提取,**零 LLM** |
+| 中:模式词命中 | 「别用紫色」「太艳了」 | 小 LLM(summaryLlm 通道)提炼一次;核心判定 = **持久口味 vs 本轮任务指令**(「把这个改成红色」不是偏好);不可用时只走强信号 |
+| 弱:行为推断 | 连续 3 次改掉渐变 | **不捕获**(推断链长,学错成本 > 收益) |
+
+**要点**:
+- **条目合并**:topic 固定 6 枚举(color/copy/layout/interaction/tech/other);同 topic **后说覆盖前说**(用户改主意不并存,防注入段自相矛盾),FIFO ≤20(偏好段 token 有界,~200 token)
+- **注入**:augmentPrompt pin 段(每轮重建进 system prompt,跨压缩天然生效,同 mission);段头声明「除非用户本轮另有指示」
+- **与既有记忆的分工**:`memory` 集成方写死全局指令 / `craftNotes` 组件级交接 / `mission` 会话内目标 / **偏好记忆 = 用户级跨会话**
+- **可观察**:DebugDrawer「Agent 信息」tab「用户偏好」只读小节;捕获/失败留 debugLogs(middleware 类型)
+- **隐私边界**:偏好只存本机(同 skillStore 的 IndexedDB,不随会话快照上传);`preferenceStorage.id` 传同一固定串可跨页面/跨 agent 共享,不传按 agentId 隔离
 
 ## 9. 框架无关 / CDN 集成
 

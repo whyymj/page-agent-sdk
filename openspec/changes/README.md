@@ -48,6 +48,7 @@
 
 | change | 状态 | 一句话 |
 |---|---|---|
+| [`2026-08-16-preference-persistence/`](./2026-08-16-preference-persistence/) | **实施中** | 跨会话用户偏好记忆:三层信号捕获(显式命令零 LLM/模式词+小 LLM 提炼/行为推断不做,宁漏勿误)→ preferenceStore(IndexedDB,同 topic 后说覆盖,FIFO 20)→ augmentPrompt pin 段注入;`capabilities.preferences` opt-in + getPreferences/removePreference/clearPreferences + DebugDrawer 只读视图 |
 | [`2026-08-16-dialog-i18n-phase2/`](./2026-08-16-dialog-i18n-phase2/) | **实施中** | dialog-i18n Phase 2:DebugDrawer/SkillPanel/CodePreview 文案接入 messages(~120 键)+ Phase 1 漏网(ChatInput chip title)+ 默认 systemPrompt 按 `dialog.locale` 切语言(en-US 英文身份 + reliableWriteRules EN + 追加规则段同语);工具 schema 描述语言登记 deferred |
 | [`2026-08-15-parallel-subagent-delegation/`](./2026-08-15-parallel-subagent-delegation/) | 实施完成 30/31(剩 Q5e 真 LLM 手动复验:并行委派 + 人工并发冲突) | 多子 agent 同轮并行委派:失败隔离 + 同组件写互斥(组件锁 `COMPONENT_BUSY`/`COMPONENT_LOCKED`)+ 人工并发 commit 冲突检测(hash 比对,人工优先 keep_external) |
 

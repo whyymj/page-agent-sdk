@@ -115,6 +115,10 @@ export { createSessionStore, createMemoryBackend, createWebStorageBackend, isQuo
 export type { StorageConfig, StorageBackendType, SessionStore, SessionMeta, SessionSnapshot, StorageEvent, StorageBackend } from './backends/storage'
 export { createSkillStore } from './backends/skillStore'
 export type { SkillStore, SkillStoreConfig, PersistedSkill } from './backends/skillStore'
+export { createPreferenceStore, DEFAULT_MAX_PREFERENCES } from './backends/preferenceStore'
+export type { PreferenceStore, PreferenceStoreConfig, PersistedPreference, PreferenceTopic } from './backends/preferenceStore'
+export { createPreferencesMiddleware, extractExplicitPreference, looksLikePreferenceSignal, parsePreferenceJson, buildExtractPrompt, buildPreferencePrompt } from './harness/preferences'
+export type { PreferencesMiddlewareOptions } from './harness/preferences'
 // 通用消息 / 上下文类型
 export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, SdkEvent, SdkEventHandler, TokenUsage, ToolStep, BatchResult, BatchProgress } from './types'
 export type { Focus } from './harness/state'

@@ -55,6 +55,7 @@ export const CAPABILITIES: readonly Capability[] = [
   { name: 'skillHostScript', defaultOn: false, requires: ['skills'] },
   { name: 'automation', defaultOn: false },
   { name: 'agentCompression', defaultOn: false, requires: ['summarization'] }, // 压缩 agent 自主决策(opt-in;开 + summaryLlm 可用 → decide 驱动压缩;失败降级静态)
+  { name: 'preferences', defaultOn: false }, // 跨会话用户偏好记忆(opt-in;自动写用户浏览器是行为敏感项,默认关;捕获→preferenceStore 持久化→pin 段注入)
 ]
 
 /**

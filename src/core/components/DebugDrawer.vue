@@ -140,6 +140,11 @@ const statusMeta = computed<Record<string, { label: string; color: string }>>(()
   completed: { label: m.value.debugTodoCompleted, color: '#059669' },
 }))
 function statusLabel(s: string) { return statusMeta.value[s]?.label ?? s }
+/** 偏好 topic 中文标签(DebugDrawer 展示用;与 harness/preferences.ts 注入段标签同源语义) */
+function topicLabel(t: string) {
+  const labels: Record<string, string> = { color: m.value.debugPrefTopicColor, copy: m.value.debugPrefTopicCopy, layout: m.value.debugPrefTopicLayout, interaction: m.value.debugPrefTopicInteraction, tech: m.value.debugPrefTopicTech, other: m.value.debugPrefTopicOther }
+  return labels[t] ?? t
+}
 /** 工具来源标签样式类(builtin/mcp/user) */
 function srcClass(s?: string) {
   if (!s) return ''
@@ -587,6 +592,15 @@ function flowNodeDetail(lg: DebugLog): string {
                 <div v-if="agentInfo.memory" class="info-section">
                   <div class="info-title">📝 {{ m.debugMemoryTitle }}</div>
                   <pre class="info-pre">{{ agentInfo.memory }}</pre>
+                </div>
+
+                <!-- 跨会话用户偏好(preferences opt-in;只读视图,删除走 sdk.removePreference/clearPreferences) -->
+                <div v-if="agentInfo.preferences?.length" class="info-section">
+                  <div class="info-title">🎯 {{ m.debugPrefsTitle }} ({{ agentInfo.preferences.length }})</div>
+                  <div v-for="p in agentInfo.preferences" :key="p.id" class="info-todo">
+                    <span class="todo-tag" style="background: #6366f1">{{ topicLabel(p.topic) }}</span>
+                    <span>{{ p.content }}</span>
+                  </div>
                 </div>
 
                 <div v-if="agentInfo.lastCompression" class="info-section">
