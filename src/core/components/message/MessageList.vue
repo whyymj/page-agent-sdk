@@ -11,6 +11,7 @@ import IconGlyph from '../IconGlyph.vue'
 import MessageRow from './MessageRow.vue'
 import MessageBubble from './MessageBubble.vue'
 import AvatarIcon from './AvatarIcon.vue'
+import MsgText from '../MsgText.vue'
 
 defineProps<{ showAvatar: boolean; showTyping: boolean }>()
 
@@ -30,7 +31,7 @@ const lastIsAssistant = computed(() => state.messages[state.messages.length - 1]
   <div class="chat-body">
     <div v-if="!hasMessages" class="empty-state">
       <div class="empty-icon"><IconGlyph :icon="icons.empty" /></div>
-      <p>{{ m.emptyGreeting }}</p>
+      <p><MsgText :text="m.emptyGreeting" /></p>
     </div>
 
     <MessageRow
@@ -62,8 +63,8 @@ const lastIsAssistant = computed(() => state.messages[state.messages.length - 1]
     <!-- 错误提示 + 重试 / 回退 -->
     <div v-if="state.error" class="error-bar">
       <span class="error-text">{{ state.error }}</span>
-      <button v-if="hasUserMessage" class="retry-btn" @click="retry">{{ m.retry }}</button>
-      <button v-if="canUndo" class="undo-btn" :title="m.undoTitle" @click="undo">{{ m.undo }}</button>
+      <button v-if="hasUserMessage" class="retry-btn" @click="retry"><MsgText :text="m.retry" /></button>
+      <button v-if="canUndo" class="undo-btn" :title="m.undoTitle" @click="undo"><MsgText :text="m.undo" /></button>
     </div>
   </div>
 </template>

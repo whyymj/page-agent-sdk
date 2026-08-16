@@ -104,10 +104,8 @@ const props = withDefaults(defineProps<{
   csTheme?: 'light' | 'dark'
   /** 图标局部覆盖(→ ctx.icons;未传键用默认 emoji 🤖/🎯/…) */
   icons?: Partial<DialogIcons>
-  /** 语言(→ ctx.messages/locale;缺省 zh-CN;title/placeholder 缺省值随语言包) */
-  locale?: DialogLocale
-  /** 文案键级覆盖(→ ctx.messages;优先于 locale 包) */
-  messages?: Partial<DialogMessages>
+  /** 国际化(顶层 i18n 配置透传;locale 切语言 + messages 键级覆盖 → ctx.messages/locale;缺省 zh-CN) */
+  i18n?: { locale?: DialogLocale; messages?: Partial<DialogMessages> }
 }>(), {
   showAvatar: true,
   showTyping: true,
@@ -134,8 +132,8 @@ const ctx = createChatContext({
   onFocusChipClick: props.onFocusChipClick,
   infoTick: props.infoTick,
   icons: props.icons,
-  locale: props.locale,
-  dialogMessages: props.messages,
+  locale: props.i18n?.locale,
+  dialogMessages: props.i18n?.messages,
 })
 provide(chatContextKey, ctx)
 

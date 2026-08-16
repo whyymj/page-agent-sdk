@@ -83,6 +83,28 @@ Event types: `data_change` / `message_update` / `tool_call` / `tool_result` / `t
 - `capabilities: { dataOps:false, fetch:false, planning:false, skills:false, vfs:false, summarization:false, memory:false, subagent:false }` — turn off unused built-ins to save tokens/size. `verify` is the reverse (off by default; `capabilities.verify:true` enables write-back self-check).
 - `presets.pageBuilder` / `researcher` / `minimal` — spread into `createChatSdk` for common scenarios.
 
+### 6b. Dialog UI customization & i18n (icons / theme / language / message overrides)
+
+Look & wording customization needs no forking — `dialog` group for theme/icons, top-level `i18n` group (3.22+) for language & message overrides:
+
+```ts
+dialog: {
+  theme: 'dark',                       // built-in dark/light theme
+  icons: { header: '🦈', send: '🚀' },  // per-icon override: plain text, or HTML fragment (starting with '<',
+                                       // sanitized via DOMPurify allowlist); '' hides the icon
+},
+i18n: {                                // top-level i18n group (3.22+): language + message overrides
+  locale: 'en-US',                     // switch the whole built-in message pack (default 'zh-CN'): chat surface +
+                                       // Debug drawer + Skill panel; the DEFAULT systemPrompt also switches to
+                                       // English (agent replies match the UI language; custom systemPrompt untouched)
+  messages: { statusDone: '<b style="color:#10b981">Done ✓</b>' },  // per-key override (priority over the locale
+                                       // pack) — e.g. when the user only wants "成功 → Done ✓" without switching
+                                       // language; rich-text render spots accept inline HTML (text allowlist)
+}
+```
+
+Priority chain: `messages` override > locale pack > zh-CN fallback (no key can go missing). Full key list (~219 keys) in the `DialogMessages` type; `MESSAGES_ZH_CN` / `MESSAGES_EN_US` / `resolveDialogMessages` are exported for custom (headless) UIs. Example: `examples/i18n-demo`.
+
 ### 7. Swap data at runtime (lazy-loaded / dynamic schema)
 
 `sdk.setData({ schema, bind, description? })` replaces the whole main data config at runtime — tools pick up the new bind/schema immediately (no rebuild). `sdk.getData()` reads the current config. Useful for lazy-loaded components or when the page schema changes dynamically.

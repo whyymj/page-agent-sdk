@@ -7,6 +7,7 @@
 import { ref, computed, watch } from 'vue'
 import IconGlyph from './IconGlyph.vue'
 import { useChatContext } from '../composables/chatContext'
+import MsgText from './MsgText.vue'
 
 const ctx = useChatContext()
 const { pendingApproval, resolveApproval } = ctx.chat
@@ -52,8 +53,8 @@ const approvalArgsPreview = computed(() => {
         <button v-for="opt in approvalOptions" :key="opt" class="approval-opt" @click="resolveApproval(opt)">{{ opt }}</button>
       </div>
       <div class="approval-actions">
-        <button class="approval-deny" @click="resolveApproval(false)">{{ m.deny }}</button>
-        <button v-if="!approvalOptions.length" class="approval-allow" @click="resolveApproval(true)">{{ m.approve }}</button>
+        <button class="approval-deny" @click="resolveApproval(false)"><MsgText :text="m.deny" /></button>
+        <button v-if="!approvalOptions.length" class="approval-allow" @click="resolveApproval(true)"><MsgText :text="m.approve" /></button>
       </div>
     </template>
     <!-- 工具调用确认:展示工具名 + 参数 -->
@@ -67,8 +68,8 @@ const approvalArgsPreview = computed(() => {
       </div>
       <pre v-if="approvalArgsPreview && approvalArgsExpanded" class="approval-args">{{ approvalArgsPreview }}</pre>
       <div class="approval-actions">
-        <button class="approval-deny" @click="resolveApproval(false)">{{ m.deny }}</button>
-        <button class="approval-allow" @click="resolveApproval(true)">{{ m.approve }}</button>
+        <button class="approval-deny" @click="resolveApproval(false)"><MsgText :text="m.deny" /></button>
+        <button class="approval-allow" @click="resolveApproval(true)"><MsgText :text="m.approve" /></button>
       </div>
     </template>
   </div>

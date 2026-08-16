@@ -446,6 +446,8 @@ export declare function resolveDialogIcons(partial?: Partial<DialogIcons>): Dial
 export declare function isIconHtml(value: string): boolean;
 /** HTML 图标净化(DOMPurify 图标白名单:svg 形状族/img/i 等 + 几何/描边属性;事件属性与危险协议剥除) */
 export declare function sanitizeIconHtml(html: string): string;
+/** HTML 文案净化(DOMPurify 文案白名单:b/em/u/s/span/mark/code 等行内标签 + class/style;script/事件属性/危险协议剥;i18n.messages 富文本渲染位用) */
+export declare function sanitizeMessageHtml(html: string): string;
 /** 图标渲染出口:纯文本文本插值;HTML 片段(以 '<' 开头)净化后 v-html 渲染。props:{ icon: string } */
 export declare const IconGlyph: DefineComponent<{ icon: string }>;
 
@@ -1145,6 +1147,8 @@ export interface ChatSdkOptions {
   streaming?: boolean;
   /** Dialog UI config (title/placeholder/drawer/drawerWidth/drawerHidden/inputRows/onClose grouped) */
   dialog?: DialogConfig;
+  /** 国际化:locale 切语言 + messages 键级覆盖文案(3.22+;UI 文案包 + 默认 systemPrompt/autoTitle 语言;原 dialog.locale/dialog.messages 两键合并至此) */
+  i18n?: I18nOptions;
 }
 
 /** Dialog UI config (grouped form, recommended) */
@@ -1161,6 +1165,21 @@ export interface DialogConfig {
   theme?: 'light' | 'dark';
   /** Icon overrides (partial; unset keys keep default emojis 🤖/🧬/🎯/📋/✏️/💡/⚠️/💬; empty string hides the icon; avatar keys undefined = built-in SVG). Values: plain text, or an HTML fragment starting with '<' (inline svg/img, sanitized via a DOMPurify icon allowlist) */
   icons?: Partial<DialogIcons>;
+}
+/**
+ * 国际化配置(顶层 i18n;3.22 起,原 dialog.locale/dialog.messages 两键移入此处合并)。
+ * 不放 dialog 组:locale 除 UI 文案包外还驱动默认 systemPrompt 语言与 autoTitle 标题语言(agent 层)。
+ */
+export interface I18nOptions {
+  /** 语言:'zh-CN'(默认)/'en-US';切换内置文案包(聊天面 + Debug 抽屉 + Skill 面板 + 代码预览);
+   *  formatTime(12h/24h)/autoTitle/默认 systemPrompt 跟随(en → 英文版身份 + "Respond in English" 锚,
+   *  agent 回复与 UI 同语言;自定义 systemPrompt 不受影响,但自动追加的 reliableWriteRules 段切英文) */
+  locale?: DialogLocale;
+  /** 文案键级覆盖(Partial<DialogMessages>;优先于 locale 包 —— 换语言与改个别文案一套机制,如 statusDone:'完成')。
+   *  漏配键回退包值;完整键清单(~219 键)见 DialogMessages。
+   *  部分渲染位支持行内 HTML 片段(值以 '<' 开头,文案白名单净化渲染,如 '<b style="color:#10b981">完成</b>'):
+   *  标题/状态标签/思考中/空态问候/确认与冲突按钮;title/placeholder 属性位与拼接键(prefix/suffix)按纯文本 */
+  messages?: Partial<DialogMessages>;
 }
 
 /** 会话级任务目标锚点(mission 中间件;capture 或 setMission;revive-mission-anchor Phase 1) */

@@ -77,8 +77,7 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
           inputRows: dialogCfg.inputRows,
           sections: dialogCfg.sections,
           icons: dialogCfg.icons,
-          locale: dialogCfg.locale,
-          messages: dialogCfg.messages,
+          i18n: ctx.i18n,
           // 上下文聚焦(指定组件精修;core.getFocus 返 undefined 时 chip 不显示;capabilities.focus:false → no-op chip 隐藏)
           getFocus: () => core.getFocus(),
           getFocuses: () => core.getFocuses(),

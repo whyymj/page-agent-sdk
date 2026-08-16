@@ -350,9 +350,27 @@ export interface ChatSdkOptions {
   streaming?: boolean
   /** 对话框 UI 配置(title/placeholder/drawer/drawerWidth/drawerHidden/inputRows/onClose 归组) */
   dialog?: DialogConfig
+  /** 国际化:locale 切语言 + messages 键级覆盖文案(3.22+;UI 文案包 + 默认 systemPrompt/autoTitle 语言) */
+  i18n?: I18nOptions
 }
 
 /** 对话框 UI 配置(归组写法,推荐) */
+/**
+ * 国际化配置(顶层 `i18n`;3.22 起,原 `dialog.locale`/`dialog.messages` 两键移入此处合并)。
+ * 不放 dialog 组:locale 除 UI 文案包外还驱动默认 systemPrompt 语言与 autoTitle 标题语言(agent 层)。
+ */
+export interface I18nOptions {
+  /** 语言:'zh-CN'(默认)/'en-US';切换内置文案包(聊天面 + Debug 抽屉 + Skill 面板 + 代码预览);
+   *  formatTime(12h/24h)/autoTitle/默认 systemPrompt 跟随(en → 英文版身份 + "Respond in English" 锚,
+   *  agent 回复与 UI 同语言;自定义 systemPrompt 不受影响,但自动追加的 reliableWriteRules 段切英文) */
+  locale?: DialogLocale
+  /** 文案键级覆盖(Partial<DialogMessages>;优先于 locale 包 —— 换语言与改个别文案一套机制,如 statusDone:'完成')。
+   *  漏配键回退包值;完整键清单(~219 键)见 types 的 DialogMessages。
+   *  部分渲染位支持行内 HTML 片段(值以 '<' 开头,文案白名单净化渲染,如 '<b style="color:#10b981">完成</b>'):
+   *  标题/状态标签/思考中/空态问候/确认与冲突按钮;title/placeholder 属性位与拼接键(prefix/suffix)按纯文本 */
+  messages?: Partial<DialogMessages>
+}
+
 export interface DialogConfig {
   /** 对话框标题 */
   title?: string
@@ -372,10 +390,6 @@ export interface DialogConfig {
   theme?: 'light' | 'dark'
   /** 图标局部覆盖:替换默认 emoji(🤖/🧬/🎯/📋/✏️/💡/⚠️/💬;头像两键 undefined=内置 SVG)。未传键用默认;空串=隐藏;值可为纯文本或 HTML 片段(以 '<' 开头,如内联 svg,DOMPurify 图标白名单净化) */
   icons?: Partial<DialogIcons>
-  /** 语言:'zh-CN'(默认)/'en-US';影响 UI 文案包、formatTime(12h/24h)与 autoTitle 标题语言 */
-  locale?: DialogLocale
-  /** 文案键级覆盖(Partial<DialogMessages>;优先于 locale 包 —— 换语言与改个别文案一套机制,如 statusDone:'完成') */
-  messages?: Partial<DialogMessages>
   /** ChatDialog 区块显隐(chatdialog-component-split):键=false 关闭整块(含 slot);默认全开。键:header/focus/body/queued/approval/conflict/footer/debug/skill */
   sections?: Record<string, boolean>
 }
@@ -713,6 +727,8 @@ export interface DialogMountContext {
   /** 直接传 core,mounter 内部从 core.* 读全部 props(InfoTick/pendingConflict/sessions/skillsController...) */
   core: AgentCore
   dialogCfg: DialogConfig
+  /** 国际化配置(顶层 i18n 透传 → ChatDialog props;文案包 + formatTime/autoTitle 语言) */
+  i18n?: I18nOptions
   streaming: boolean
   /** 实例级操作串行化器(会话切换等经此防并发 state 竞态);传给 ChatDialog 会话管理回调 */
   runSerial: <T>(fn: () => Promise<T>) => Promise<T>
@@ -982,7 +998,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 最终 systemPrompt 的 base 段(不含数据段):用户 systemPrompt(或默认)+ 可选 reliableWriteRules 追加,统一由 buildSystemPrompt 处理
   // 数据段移交 dataHint 中间件每轮从 liveData() 动态重算(修 setData 不同步 Bug);inspect 与 createAgent 共用 baseSystemPrompt 保持一致
   // dialog-i18n Phase 2:locale='en-US' 时默认 prompt/追加规则段用英文版(与 UI 同语言;自定义 systemPrompt 不受影响)
-  const baseSystemPromptRaw = buildSystemPrompt({ ...options, locale: options.dialog?.locale })
+  const baseSystemPromptRaw = buildSystemPrompt({ ...options, locale: options.i18n?.locale })
   // 主 agent 编排自适应注入(集成方零配置):有 html 子 agent→委派编排 / 无 agent+schema 有 code 字段→自己写编排+warn / 无 code 字段→不注入
   let baseSystemPrompt = baseSystemPromptRaw
   if (hasCodeAsset) {
@@ -2514,6 +2530,7 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
       el: el as HTMLElement,
       core,
       dialogCfg,
+      i18n: options.i18n,
       streaming,
       runSerial: core.runSerial,  // P1-11:core 级串行闸(UI 会话按钮与 API 层同链)
       hide,

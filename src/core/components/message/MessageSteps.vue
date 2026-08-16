@@ -6,6 +6,7 @@ import { DEFAULT_DIALOG_ICONS, type DialogIcons } from '../icons'
 import { MESSAGES_ZH_CN, type DialogMessages } from '../messages'
 import SubReasonDetails from './SubReasonDetails.vue'
 import IconGlyph from '../IconGlyph.vue'
+import MsgText from '../MsgText.vue'
 
 // icons 由 MessageRow 从 ctx 下传(纯 props 叶子零依赖);独立复用时缺省用默认图标集
 const props = withDefaults(defineProps<{ steps: ToolStep[]; icons?: DialogIcons; messages?: DialogMessages }>(), {
@@ -149,7 +150,7 @@ function copyDetail(text: string, truncated: boolean, full?: unknown): void {
         <span class="step-name">{{ step.name }}</span>
         <span v-if="isSubagentTool(step.name)" class="subagent-badge" :title="messages.subagentBadgeTitle"><IconGlyph :icon="icons.subagent" /> {{ messages.subagentBadge }}</span>
         <span v-if="step.count > 1" class="step-count">×{{ step.count }}</span>
-        <span class="step-status" :class="step.status">{{ statusLabel(step.status) }}</span>
+        <span class="step-status" :class="step.status"><MsgText :text="statusLabel(step.status)" /></span>
         <span v-if="step.durationMs != null && step.status !== 'running'" class="step-duration">{{ formatDuration(step.durationMs) }}</span>
         <!-- 行右端展开/收起(Figma 471:6389「05-思考完成」:Skill 行右「展开」置灰 / 思考过程展开中右「收起」紫色) -->
         <button v-if="hasDetail(step.calls)" type="button" class="step-detail-toggle" :class="{ open: expanded.has(sIdx) }" @click="toggleExpand(sIdx)">

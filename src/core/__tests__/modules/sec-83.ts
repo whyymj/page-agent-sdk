@@ -3,7 +3,7 @@ import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT_EN } fr
 import { systemPromptHelpers } from '../../presets'
 import type { TestCtx } from './_ctx'
 
-// 对话框文案集(dialog.locale / dialog.messages;openspec 2026-08-16-dialog-i18n Phase 1 + Phase 2)
+// 对话框文案集(顶层 i18n:{ locale, messages };openspec 2026-08-16-dialog-i18n Phase 1 + Phase 2;3.22 两键合并为 i18n 配置组)
 export async function run(ctx: TestCtx): Promise<void> {
   const { assert } = ctx
   console.log('\n[对话框文案 · resolveDialogMessages]')

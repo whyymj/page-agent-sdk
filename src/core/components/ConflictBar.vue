@@ -10,6 +10,7 @@ import { DEFAULT_DIALOG_ICONS, type DialogIcons } from './icons'
 import { MESSAGES_ZH_CN, type DialogMessages } from './messages'
 import type { PendingConflict } from '../sdk/createChatSdk'
 import type { ConflictResolution } from '../tools/dataOps'
+import MsgText from './MsgText.vue'
 
 const props = withDefaults(defineProps<{
   pendingConflict?: PendingConflict | null
@@ -73,9 +74,9 @@ const conflictCurrentPreview = computed(() => {
       </div>
     </div>
     <div class="conflict-actions">
-      <button class="conflict-keep" @click="onResolve?.('keep_external')" :title="messages.keepExternalTitle">{{ messages.keepExternal }}</button>
-      <button class="conflict-overwrite" @click="onResolve?.('overwrite')" :title="messages.overwriteTitle">{{ messages.overwrite }}</button>
-      <button class="conflict-restore" @click="onResolve?.('restore')" :title="messages.restoreTitle">{{ messages.restore }}</button>
+      <button class="conflict-keep" @click="onResolve?.('keep_external')" :title="messages.keepExternalTitle"><MsgText :text="messages.keepExternal" /></button>
+      <button class="conflict-overwrite" @click="onResolve?.('overwrite')" :title="messages.overwriteTitle"><MsgText :text="messages.overwrite" /></button>
+      <button class="conflict-restore" @click="onResolve?.('restore')" :title="messages.restoreTitle"><MsgText :text="messages.restore" /></button>
     </div>
   </div>
 </template>

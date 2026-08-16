@@ -24,6 +24,11 @@
   - [6.8 上下文与内存上限](#68-上下文与内存上限)
   - [6.9 onEvent 事件回调(订阅常用时机)](#69-onevent-事件回调订阅常用时机)
   - [6.12 LLM 连接:直连 / 代理 / OpenAI 兼容端点](#612-llm-连接直连--代理--openai-兼容端点)
+  - [6.13 结构化追踪 TraceSpan(性能归因 / 调试)](#613-结构化追踪-tracespan性能归因--调试220)
+  - [6.13b 上下文归档 context_trimmed](#613b-上下文归档-context_trimmed对话超长时抢救即将删除的内容context-persist-resilience)
+  - [6.14 无人值守自动化](#614-无人值守自动化资源预算--错误恢复--批处理--断点续跑220)
+  - [6.14 上下文聚焦 Focus(指定组件精修)](#614-上下文聚焦-focus指定组件精修focus-context)
+  - [6.15 UI 定制与国际化(图标 / 主题 / 语言 / 文案覆盖)](#615-ui-定制与国际化图标--主题--语言--文案覆盖317321)
 - [7. 高级:自定义中间件](#7-高级自定义中间件)
 - [8. 命令式 API](#8-命令式-api)
 - [9. 框架无关 / CDN 集成](#9-框架无关--cdn-集成)
@@ -222,12 +227,10 @@ createChatSdk({
       // queued: '<svg width="12" height="12" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="currentColor"/></svg>',
       // 其余:subagentProgress 🧬 / queued 📋 / queuedEdit ✏️ / recommend 💡 / conflict ⚠️
     },
-    locale: 'en-US',             // 国际化(3.20+):切内置文案包('zh-CN' 缺省)—— 聊天面 + Debug 抽屉 +
-                                  // Skill 面板 + 代码预览全量;formatTime/autoTitle 跟随;**默认 systemPrompt
-                                  // 用英文版**(含 "Respond in English" 锚,agent 回复与 UI 同语言;自定义
-                                  // systemPrompt 不受影响,但自动追加的 reliableWriteRules 段切英文)
-    messages: { statusDone: 'Done ✓' },  // 文案键级覆盖(优先于 locale 包):只改想改的键(如「成功」),
-                                  // 其余保持;漏配回退;完整键清单(~220 键)见 types 的 DialogMessages
+  },
+  i18n: {                        // 国际化配置组(顶层,3.22+;详见 6.15):locale 切语言 + messages 键级覆盖
+    locale: 'en-US',
+    messages: { statusDone: '<b style="color:#10b981">Done ✓</b>' },  // 富文本渲染位支持行内 HTML 片段(净化)
   },
   debug: false,                 // 调试日志
 }).mount()
@@ -1988,6 +1991,38 @@ npm run dev
 - 浏览器只持 `userToken`(`demo-token-xxx`),DevTools 看不到真实 apiKey
 - 切换为 `demo-token-expired` → 发消息触发 401 → SDK 自动调 `refreshToken` 刷新重试(界面显示刷新次数)
 - 附加 `X-Tenant` header 演示自定义 header 透传
+
+### 6.15 UI 定制与国际化(图标 / 主题 / 语言 / 文案覆盖,3.17+~3.21+)
+
+内置对话框免 fork 全定制,四件套都在 `dialog` 配置组:
+
+```ts
+createChatSdk({
+  dialog: {
+    theme: 'dark',                        // ① 内置主题:'dark'(默认)/'light';亦可祖先覆盖 --cs-* 变量完全自定义
+    icons: { header: '🦈', send: '🚀' },   // ② 逐图标覆盖(纯文本 emoji/字符,或 '<' 开头的 HTML 片段——
+                                          //    经 DOMPurify 图标白名单净化;空串=隐藏;未传键用默认)
+  },
+  i18n: {                                 // ③④ 国际化配置组(顶层,3.22+;原 dialog.locale/messages 合并至此)
+    locale: 'en-US',                      // ③ 整语言切换('zh-CN' 缺省):聊天面 + Debug 抽屉 + Skill 面板 +
+                                          //    代码预览全量;formatTime(12h/24h)与 autoTitle 跟随;
+                                          //    **默认 systemPrompt 切英文版**(含 "Respond in English" 锚,
+                                          //    agent 回复语言与 UI 一致;自定义 systemPrompt 不受影响,
+                                          //    但自动追加的 reliableWriteRules 段跟随切英文)
+    messages: { statusDone: '<b style="color:#10b981">完成</b>' },  // ④ 键级覆盖(优先于 locale 包):
+                                          //    只改想改的键;富文本渲染位支持行内 HTML 片段(文案白名单净化,
+                                          //    如「成功」标绿);与 locale 可叠加(en UI + 个别微调)
+  },
+})
+```
+
+**要点**:
+- **优先级链**:`messages 覆盖 > locale 内置包 > zh-CN 缺省` —— 任意键不缺,漏配键回退,不会混语言
+- **键空间** ~219 键(标题/占位/状态标签/按钮/确认/冲突/聚焦/Debug 各 tab/Agent 信息 kv/Skill 表单/代码预览),完整清单看 `types/index.d.ts` 的 `DialogMessages` 接口
+- **HTML 富文本位**:状态标签/标题/思考中/空态问候/确认与冲突/重试回退按钮的文案值以 `<` 开头 = 行内 HTML 片段,经文案白名单(b/em/u/s/span/mark/code + class/style)净化后渲染;title/placeholder 属性位与拼接键(prefix/suffix)按纯文本(传 HTML 字面显示);`sanitizeMessageHtml` 导出可自查净化结果
+- **自建 UI 复用**(headless):`MESSAGES_ZH_CN` / `MESSAGES_EN_US` / `resolveDialogMessages(locale, partial)` 均从入口导出,同一套词条驱动你自己的 UI
+- **默认 systemPrompt 英文版**单独导出:`DEFAULT_SYSTEM_PROMPT_EN` + `systemPromptHelpers.reliableWriteRulesEn`(英文场景想自定义 prompt 时可拼用)
+- 完整示例:`examples/i18n-demo`(en locale + statusDone/emptyGreeting HTML 覆盖)
 
 ## 9. 框架无关 / CDN 集成
 

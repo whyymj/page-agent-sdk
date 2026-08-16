@@ -217,14 +217,10 @@ createChatSdk({
       // queued: '<svg width="12" height="12" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="currentColor"/></svg>',
       // others: subagentProgress 🧬 / queued 📋 / queuedEdit ✏️ / recommend 💡 / conflict ⚠️
     },
-    locale: 'en-US',            // i18n (3.20+): switch the built-in message pack ('zh-CN' default) — chat surface +
-                                // Debug drawer + Skill panel + code preview; formatTime/autoTitle follow; the
-                                // **default systemPrompt switches to English** (with a "Respond in English"
-                                // anchor so agent replies match the UI language; a custom systemPrompt is
-                                // untouched, but the auto-appended reliableWriteRules segment goes English)
-    messages: { statusDone: 'Done ✓' },  // per-key message overrides (priority over the locale pack): tweak only
-                                // the keys you want, the rest keep pack values; missing keys fall back;
-                                // full key list (~220 keys) in the DialogMessages type
+  },
+  i18n: {                        // top-level i18n group (3.22+; see 6.15): locale switch + per-key overrides
+    locale: 'en-US',
+    messages: { statusDone: '<b style="color:#10b981">Done ✓</b>' },  // rich-text render spots accept inline HTML (sanitized)
   }, debug: false,
 }).mount()
 ```
@@ -1344,6 +1340,41 @@ createChatSdk({
 > - `setLlm` to Anthropic requires a `BaseChatModel` instance (dynamic import can't be synchronous): `const { ChatAnthropic } = await import('@langchain/anthropic'); sdk.setLlm(new ChatAnthropic({ apiKey, model }))`; passing `LLMConfig + provider:'anthropic'` throws a clear hint
 > - **IIFE (CDN `<script>`) does not support Anthropic** (browser has no importmap to resolve the bare specifier); use npm (ESM/UMD) for Anthropic. The CDN bundle does not bundle `@langchain/anthropic` (defaults to OpenAI/DeepSeek)
 > - Proxy mode `createProxyLlm` stays OpenAI-only (Bearer is an OpenAI-protocol header); for Anthropic use the main `llm` direct connection or a pre-built `ChatAnthropic` instance
+
+### 6.15 UI customization & i18n (icons / theme / language / message overrides, 3.17+–3.21+)
+
+The built-in dialog is fully customizable without forking — four knobs, all in the `dialog` group:
+
+```ts
+createChatSdk({
+  dialog: {
+    theme: 'dark',                        // ① built-in theme: 'dark' (default) / 'light'; or override --cs-* vars for full control
+    icons: { header: '🦈', send: '🚀' },   // ② per-icon override (plain emoji/char, or an HTML fragment starting
+                                          //    with '<' — sanitized via the DOMPurify icon allowlist; empty string
+                                          //    hides; unset keys keep defaults)
+  },
+  i18n: {                                 // ③④ top-level i18n group (3.22+; former dialog.locale/messages merged here)
+    locale: 'en-US',                      // ③ switch the whole message pack ('zh-CN' default): chat surface +
+                                          //    Debug drawer + Skill panel + code preview; formatTime (12h/24h)
+                                          //    and autoTitle follow; the **default systemPrompt switches to
+                                          //    English** (with a "Respond in English" anchor, so agent replies
+                                          //    match the UI language; a custom systemPrompt is untouched, but the
+                                          //    auto-appended reliableWriteRules segment goes English)
+    messages: { statusDone: '<b style="color:#10b981">Done ✓</b>' },  // ④ per-key overrides (priority over the
+                                          //    locale pack): tweak only the keys you want; rich-text render spots
+                                          //    accept inline HTML fragments (text allowlist sanitized); stacks
+                                          //    with locale (en UI + local tweaks)
+  },
+})
+```
+
+**Key points**:
+- **Priority chain**: `messages overrides > locale pack > zh-CN fallback` — no key is ever missing; miss-configured keys fall back, no mixed languages
+- **Key space** ~219 keys (title/placeholder/status labels/buttons/confirm/conflict/focus/Debug tabs/Agent-info kvs/Skill form/code preview); full list in the `DialogMessages` interface in `types/index.d.ts`
+- **HTML rich-text spots**: message values starting with `<` on status labels/title/thinking/empty greeting/confirm & conflict/retry-undo buttons render as inline HTML, sanitized via a text allowlist (b/em/u/s/span/mark/code + class/style); title/placeholder attribute spots and concatenation keys (prefix/suffix) stay plain text (HTML shows literally); `sanitizeMessageHtml` is exported to inspect the sanitized result
+- **Custom-UI reuse** (headless): `MESSAGES_ZH_CN` / `MESSAGES_EN_US` / `resolveDialogMessages(locale, partial)` are all exported from the entry — drive your own UI with the same packs
+- The **English default systemPrompt** is exported separately: `DEFAULT_SYSTEM_PROMPT_EN` + `systemPromptHelpers.reliableWriteRulesEn` (handy when writing your own English prompt)
+- Full example: `examples/i18n-demo` (en locale + statusDone/emptyGreeting HTML overrides)
 
 ## 9. Environment variables
 

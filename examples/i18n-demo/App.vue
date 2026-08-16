@@ -1,6 +1,8 @@
 <script setup lang="ts">
 /**
- * i18n 演示:dialog.locale='en-US' 切英文包 + dialog.messages 键级覆盖(状态标签「成功」→「Done ✓」)。
+ * i18n 演示:顶层 i18n: { locale:'en-US', messages:{...} } 单配置组 —— 切语言 + 键级覆盖一套机制
+ * (3.22+;原 dialog.locale/dialog.messages 两键合并至此)。messages 值支持行内 HTML 片段
+ * (文案白名单净化):statusDone 绿色加粗 / emptyGreeting 加粗开头。
  * zh-CN 缺省行为见其余 demo(零变化)。
  */
 import { onMounted, onUnmounted } from 'vue'
@@ -24,9 +26,14 @@ onMounted(() => {
       bind: { title: 'i18n Demo', theme: 'dark' },
       description: 'demo page data',
     },
-    dialog: {
+    i18n: {
       locale: 'en-US',
-      messages: { statusDone: 'Done ✓' },   // 键级覆盖优先于 locale 包(「成功」→ Done ✓)
+      messages: {
+        statusDone: '<b style="color:#10b981">Done ✓</b>',     // HTML 片段:文案白名单净化后富文本渲染
+        emptyGreeting: '<b>Hello!</b> How can I help you?',
+      },
+    },
+    dialog: {
       title: 'Page Agent',                   // 显式 title 优先于语言包缺省
     },
   })
@@ -39,7 +46,7 @@ onUnmounted(() => agent?.unmount())
   <DevNav />
   <div class="page">
     <h1>i18n demo</h1>
-    <p><code>dialog.locale: 'en-US'</code> switches the built-in dialog to the English pack (title/placeholder/status/confirm bars/focus bar…), and <code>dialog.messages</code> overrides individual strings key-by-key.</p>
+    <p><code>i18n: { locale: 'en-US', messages: {...} }</code> switches the built-in dialog to the English pack and overrides individual strings key-by-key; message values may be inline HTML fragments (sanitized via a text allowlist, e.g. the green bold <code>Done ✓</code> status).</p>
     <section id="chat-root" class="chat-mount"></section>
   </div>
 </template>

@@ -11,6 +11,7 @@ import IconGlyph from './IconGlyph.vue'
 import { useChatContext } from '../composables/chatContext'
 import type { DebugLog } from '../harness/createAgent'
 import type { SessionMeta } from '../backends/storage'
+import MsgText from './MsgText.vue'
 
 const props = defineProps<{
   title: string
@@ -64,7 +65,7 @@ function handleOpenSession(id: string): void {
   <div class="chat-header">
     <div class="header-left">
       <span class="header-icon"><IconGlyph :icon="icons.header" /></span>
-      <span class="header-title">{{ title }}</span>
+      <span class="header-title"><MsgText :text="title" /></span>
       <span v-if="state.loading" class="status-dot pulse"></span>
     </div>
     <div class="header-actions" @click.stop>

@@ -2,6 +2,15 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.22.0] - 2026-08-16
+
+### Changed(breaking,用户拍板「不用兼容,直接修改」)
+- **`dialog.locale` / `dialog.messages` 合并为顶层 `i18n` 配置组**:`createChatSdk({ i18n: { locale: 'en-US', messages: {...} } })` —— 与 vue-i18n/i18next 术语一致;不放 dialog 组的原因:locale 除 UI 文案外还驱动默认 systemPrompt 语言与 autoTitle(agent 层)。两键 3.20.0 引入未及广泛使用,故不保留兼容层(用户拍板)。`I18nOptions` 类型导出;`ChatDialog` 组件 props 同步合并为单 `i18n` prop
+
+### Added
+- **`i18n.messages` 值支持行内 HTML 片段(富文本渲染位)**:值以 `<` 开头 → 经 DOMPurify **文案白名单**(b/em/u/s/span/mark/code/sub/sup/kbd/br + class/style;script/事件属性/危险协议/块级标签剥除)净化后渲染,如 `statusDone: '<b style="color:#10b981">完成</b>'`。支持位:标题/状态标签/思考中/空态问候/确认与冲突/重试回退按钮(`MsgText` 组件统一出口,与 IconGlyph 同构);title/placeholder 属性位与拼接键(prefix/suffix)按纯文本。`sanitizeMessageHtml` 导出可自查净化结果
+- browser i18n.spec 6 项(富文本渲染 ×2 + 净化安全面:script/onclick 剥除 + 白名单标签/style 保留 + 默认 systemPrompt 英文)
+
 ## [3.21.0] - 2026-08-16
 
 ### Added(dialog-i18n Phase 2;openspec `2026-08-16-dialog-i18n-phase2`)

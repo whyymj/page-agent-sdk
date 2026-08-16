@@ -116,7 +116,7 @@ export function buildTitleLlmInvoke(options: ChatSdkOptions): ((messages: AgentM
       const res = await cachedLlm!.invoke(
         [
           new SystemMessage(
-            (options as { dialog?: { locale?: string } }).dialog?.locale === 'en-US'
+            (options as { i18n?: { locale?: string } }).i18n?.locale === 'en-US'
               ? 'Generate a short English title (max 10 words) summarizing the conversation below. Output the title text only, no quotes or punctuation.'
               : '根据以下对话的主旨,生成一个简短的中文标题(不超过15个字,不要标点和引号,直接输出标题文字)。',
           ),
@@ -124,7 +124,7 @@ export function buildTitleLlmInvoke(options: ChatSdkOptions): ((messages: AgentM
         ],
         { signal: ac.signal } as any,
       )
-      const titleMax = (options as { dialog?: { locale?: string } }).dialog?.locale === 'en-US' ? 60 : 20
+      const titleMax = (options as { i18n?: { locale?: string } }).i18n?.locale === 'en-US' ? 60 : 20
       return extractText(res).trim().replace(/^["'""「『]|["'""」』]$/g, '').split('\n')[0].slice(0, titleMax)
     } catch {
       return ''

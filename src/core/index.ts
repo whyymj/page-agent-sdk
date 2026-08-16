@@ -19,7 +19,7 @@ import type { ChatSdkOptions, ChatSdk } from './sdk/createChatSdk'
 export function createChatSdk(options: ChatSdkOptions): ChatSdk {
   return _createChatSdk(options, mountChatDialog)
 }
-export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict, DialogConfig, SystemAugmentContext } from './sdk/createChatSdk'
+export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict, DialogConfig, I18nOptions, SystemAugmentContext } from './sdk/createChatSdk'
 // system prompt 构建(refactor-module-extraction 从 createChatSdk 抽离;buildSystemPrompt 为纯函数,供 fix-introspection-consistency 的 getEffectiveSystemPrompt 复用)
 export { buildSystemPrompt, buildDataPrompt, DEFAULT_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT_EN } from './sdk/promptBuilder'
 export { resolveContextOptions, type ContextPreset, CONTEXT_PRESETS } from './sdk/contextPreset'
@@ -152,6 +152,6 @@ export type { DialogMessages, DialogLocale } from './components/messages'
 export { DEFAULT_DIALOG_ICONS, resolveDialogIcons } from './components/icons'
 export type { DialogIcons } from './components/icons'
 // 图标渲染出口(纯文本文本插值;以 '<' 开头的 HTML 片段经 DOMPurify 图标白名单净化后渲染)
-export { isIconHtml, sanitizeIconHtml } from './components/iconHtml'
+export { isIconHtml, sanitizeIconHtml, sanitizeMessageHtml } from './components/iconHtml'
 export { default as IconGlyph } from './components/IconGlyph.vue'
 export { useChat } from './composables/useChat'

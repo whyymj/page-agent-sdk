@@ -35,3 +35,26 @@ export function sanitizeIconHtml(html: string): string {
     ALLOW_DATA_ATTR: false,
   })
 }
+
+/**
+ * 文案值的 HTML 形态支持(dialog.messages 部分渲染位值以 '<' 开头 → 识别为行内富文本片段)。
+ * 与图标白名单并列的**文案专用白名单**:行内语义标签(粗斜/下划删除/上下标/高亮/代码)为主,
+ * 放行 class/style(集成方内联着色,如「成功」标绿 —— DOMPurify 内建 CSS 清理剥 expression()/危险 url);
+ * 块级标签/script/a/form 等不放行。仅文本节点渲染位生效(MsgText 组件);title/placeholder
+ * 等属性位与拼接键(prefix/suffix)按纯文本渲染,传 HTML 会字面显示。
+ */
+export const MESSAGE_HTML_ALLOWED_TAGS = [
+  'b', 'strong', 'i', 'em', 'u', 's', 'span', 'sub', 'sup', 'mark', 'code', 'kbd', 'br',
+] as const
+
+/** 文案白名单属性:class(挂 --cs-* 定制)+ style(内联着色;DOMPurify 剥危险 CSS 值)+ title */
+export const MESSAGE_HTML_ALLOWED_ATTR = ['class', 'style', 'title'] as const
+
+/** HTML 文案净化(DOMPurify 文案白名单;data-* 关闭,事件属性/危险协议默认剥) */
+export function sanitizeMessageHtml(html: string): string {
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: [...MESSAGE_HTML_ALLOWED_TAGS],
+    ALLOWED_ATTR: [...MESSAGE_HTML_ALLOWED_ATTR],
+    ALLOW_DATA_ATTR: false,
+  })
+}

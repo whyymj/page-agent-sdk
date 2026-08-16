@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import MessageContent from '../MessageContent.vue'
 import { MESSAGES_ZH_CN, type DialogMessages } from '../messages'
+import MsgText from '../MsgText.vue'
 
 withDefaults(defineProps<{
   content: string
@@ -21,7 +22,7 @@ withDefaults(defineProps<{
     <template v-if="isPendingAssistant">
       <!-- 设计稿「思考中」态:8px 主色圆角方点 + 文案;showTyping 时方点呼吸脉冲 -->
       <span class="typing-dot" :class="{ pulse: showTyping }"></span>
-      <span class="typing-text">{{ messages.thinking }}</span>
+      <span class="typing-text"><MsgText :text="messages.thinking" /></span>
     </template>
     <template v-else>
       <MessageContent v-if="role === 'assistant'" :content="content" :messages="messages" />
