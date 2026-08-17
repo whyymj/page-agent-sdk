@@ -531,7 +531,7 @@ flowchart LR
 - **三档错误模型**:`AgentError.severity`(recoverable 回灌 LLM 自纠 / fatal emit+中断 / observable 记录);`routeError`/`asAgentError`/`agentError` 导出(框架内置 catch 用简化路由,供集成方自定义);`onEvent('error')` payload 带 `{severity?,code?,context?}`
 - **模型调用重试**(`harness/retry.ts`):网络/429/5xx 指数退避(默认 `maxRetries`=2);4xx 与 abort 不重试;⚠️ 错误判定**先排除 abort 再判 status**
 - **停止生成(abort)**:signal 穿透 `llm.stream`;abort 保留已生成 partial
-- **挂起有界收口三契约**:① 超时默认值表(approval/humanConfirm 无响应方 30s 自动拒 / MCP 握手 15s / skills fetch 30s / LLM 流停滞看门狗 `streamStallMs` 90s,`StreamStalledError` 408 不重试);② 兜底收口必留痕(结构化 error/warn/debugLogs);③ abort 收口:`activeControllers` 注册表 **core 级**,send/batch 接 `signal` 可中断;unmount/switchSession/resetSession 先 abort 全部在途流再收口
+- **挂起有界收口三契约**:① 超时默认值表(approval/humanConfirm 无响应方 30s 自动拒 / MCP 握手 15s / skills fetch 30s / LLM 流停滞看门狗 `streamStallMs` 90s,`StreamStalledError` 408 不重试 / **流总时长 `streamMaxDurationMs` 600s** —— 空转帧黑洞兜底(keepalive 空转不断重置间隔计时,实测冻结 7min+ 无报错;绝对截止抛 `StreamMaxDurationError` 继承 408 不重试,重委派/重发自愈));② 兜底收口必留痕(结构化 error/warn/debugLogs);③ abort 收口:`activeControllers` 注册表 **core 级**,send/batch 接 `signal` 可中断;unmount/switchSession/resetSession 先 abort 全部在途流再收口
 - **resetSession**(同步公开 API):abort 在途流 + 收口挂起冲突(keep_external)+ 重置全部内存态(messages/vfs/todos/memory/mission/workingMemory/focus/checkpoint/debugLogs)+ 新 sessionId;**storage 关也完整执行**(store 相关才门控)
 - **shareContext**:同 `id` 多实例复用同一 `AgentCore`;**串行闸与在途流注册表 core 级**(send/batch/switchSession/stream 全经 `core.runSerial`);生命周期收口中止共享 core 的**全部**在途流(含其他实例发起的)
 - **onEvent / hook**:构造时 `onEvent` 订阅常用时机(`data_change`/`message_update`/`tool_call`/`tool_result`/`text`/`round_start`/`done`/`usage`/`session_restored`/`error` 等,§⑦);`approval_request` 不外发;流式事件仅 stream 模式;`sdk.hook(handler)` 运行时动态订阅(返回取消函数)

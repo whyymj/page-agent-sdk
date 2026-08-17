@@ -29,7 +29,7 @@ import { getTraceMetrics } from '../utils/traceMetrics'
 import { extractTextDelta, extractReasoningDelta, extractUsage, normalizeUsage } from '../utils/contentParts'
 import { createInitialState, type HarnessState, type LoopProgress } from './state'
 import { withRetry, isAbort, type RetryOptions } from './retry'
-import { withStallTimeout, StreamStalledError, DEFAULT_STREAM_STALL_MS } from '../utils/stallTimeout'
+import { withStallTimeout, StreamStalledError, StreamMaxDurationError, DEFAULT_STREAM_STALL_MS, DEFAULT_STREAM_MAX_DURATION_MS } from '../utils/stallTimeout'
 import { isContextLengthError } from './errors'
 import {
   type Middleware,
@@ -221,6 +221,8 @@ export interface CreateAgentOptions {
   retryDelayMs?: number
   /** LLM 流停滞看门狗(fix-hang-and-feedback P1-7):chunk 间隔(含等首个)超此 ms → 中断抛错。默认 90s;0 = 关闭 */
   stallMs?: number
+  /** 单次模型调用流总时长上限(stream-max-duration):防空转帧黑洞(keepalive 不断喂饱间隔看门狗,实测冻结 7min+ 无报错)。默认 600s;0 = 关闭 */
+  streamMaxMs?: number
   /** 同轮多个工具调用的并发上限(默认 1 = 串行,保持现有工具语义);>1 时并发执行 */
   maxParallelTools?: number
   /** beforeReturn 自纠上限(默认 0 = 关闭,纯放行);>0 时 agent 返回前跑 beforeReturn 钩子,有 feedback 则回灌 user 消息继续循环,达上限强制 return 防死循环 */
@@ -327,6 +329,7 @@ export function createAgent(options: CreateAgentOptions) {
     maxRetries = 2,
     retryDelayMs = 500,
     stallMs = DEFAULT_STREAM_STALL_MS,
+    streamMaxMs = DEFAULT_STREAM_MAX_DURATION_MS,
     maxParallelTools = 1,
     maxVerifyAttempts = 0,
     roundTokenBudget = 0, // C4 单 invoke token 预算(opt-in;0=关)
@@ -569,7 +572,8 @@ export function createAgent(options: CreateAgentOptions) {
     let content = ''
     try {
       // P1-7:停滞看门狗 —— chunk 间隔(含等首个)超 stallMs 抛 StreamStalledError(stallMs<=0 透传关闭)
-      for await (const chunk of withStallTimeout(stream, stallMs)) {
+      // + 总时长上限 streamMaxMs:空转帧黑洞实测 chunk 不断但无实质内容,间隔计时被无限重置 → 绝对截止兜底
+      for await (const chunk of withStallTimeout(stream, stallMs, streamMaxMs)) {
         aggregated = aggregated ? aggregated.concat(chunk) : chunk
         const textDelta = extractTextDelta(chunk)
         if (textDelta && onEvent) {
@@ -581,10 +585,10 @@ export function createAgent(options: CreateAgentOptions) {
         if (rDelta && onEvent) onEvent({ type: 'reasoning', delta: rDelta })
       }
     } catch (err) {
-      // P1-7:流停滞 → abort 清理底层流 + 上抛(status=408 不被当网络错重试;UI 显错误,send 路径 throw)
+      // P1-7:流停滞/总时长超限 → abort 清理底层流 + 上抛(status=408 不被当网络错重试;UI 显错误,send 路径 throw)
       if (err instanceof StreamStalledError) {
         inner.abort()
-        log('error', { stage: 'stream_stalled', waitedMs: err.waitedMs, stallMs })
+        log('error', { stage: err instanceof StreamMaxDurationError ? 'stream_max_duration' : 'stream_stalled', waitedMs: err.waitedMs, stallMs, streamMaxMs })
         throw err
       }
       // abort:不抛,带出已累积 partial;迭代中其他失败不重试(已 emit,重发会重复)→ 直接抛

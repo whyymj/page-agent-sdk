@@ -30,9 +30,9 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2408 项断言)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2418 项断言)
 npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,753 项;tests/e2e/<module>.mjs 按模块拆分)
-npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,83 项;tests/browser/<demo>.spec.ts)
+npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,84 项;tests/browser/<demo>.spec.ts)
 ```
 
 ## 环境配置
@@ -103,7 +103,7 @@ skills/                         # 分发给使用者的 Agent Skill(入 npm 包 
 ### 对话鲁棒性(详见 architecture.md §⑮)
 - **三档错误模型**:recoverable 回灌自纠 / fatal emit+中断 / observable 记录;导出 `routeError`/`asAgentError`/`agentError`
 - 重试:网络/429/5xx 指数退避(maxRetries=2);4xx 与 abort 不重试;⚠️ **先排除 abort 再判 status**;abort 保留 partial
-- **挂起有界收口三契约**:① 超时默认值表(approval 30s / MCP 15s / skills fetch 30s / 流停滞 `streamStallMs` 90s 抛 `StreamStalledError` 不重试;**stream 启动闸同阈值** —— `streamer.stream()` 等响应头阶段假死(fetch 默认无超时)时 stall 看门狗不覆盖,P1-7b 补);② 兜底收口必留痕;③ `activeControllers` core 级,unmount/switchSession/resetSession 先 abort 全部在途流
+- **挂起有界收口三契约**:① 超时默认值表(approval 30s / MCP 15s / skills fetch 30s / 流停滞 `streamStallMs` 90s 抛 `StreamStalledError` 不重试;**stream 启动闸同阈值** —— `streamer.stream()` 等响应头阶段假死(fetch 默认无超时)时 stall 看门狗不覆盖,P1-7b 补;**流总时长 `streamMaxDurationMs` 600s** —— 空转帧黑洞兜底:keepalive 空转不断重置间隔计时(实测冻结 7min+ 无报错),绝对截止抛 `StreamMaxDurationError`(继承 408 不重试,重委派/重发自愈));② 兜底收口必留痕;③ `activeControllers` core 级,unmount/switchSession/resetSession 先 abort 全部在途流
 - **resetSession**(同步):abort + 收口冲突(keep_external)+ 重置全部内存态 + 新 sessionId;storage 关也完整执行
 - **shareContext**:同 id 复用 AgentCore;串行闸与在途流注册表 **core 级**;收口中止共享 core 全部在途流
 - `onEvent`(构造时)/`sdk.hook`(运行时,返回取消函数);流式事件仅 stream 模式;`approval_request` 不外发;运行时重配置 `setTools`/`setLlm`/`setMemory`/`setSubagents`(infoTick 刷新);`dedupeTools` 后注册覆盖先者
@@ -141,7 +141,7 @@ npm run build && npm run test:e2e    # node 跑 dist 产物,655 项
 
 #### 2.5 浏览器 E2E(改 UI/ChatDialog/dataOps 后必跑)
 ```bash
-npm run test:browser  # 83 项;也可 /browser-test 斜杠命令
+npm run test:browser  # 84 项;也可 /browser-test 斜杠命令
 ```
 **原理**:`tests/browser/_helpers.ts` 的 `mockLlm()` 用 `page.route()` 拦截 LLM API 端点,按脚本返回 SSE 流,使 agent ReAct 循环确定性走完,不依赖真 LLM。**双协议**:同时拦截 OpenAI 兼容(`**/chat/completions`)与 Anthropic Messages API(`**/v1/messages`),各返对应格式 SSE,共享 script 计数。spec 按 demo 拆分(page-demo 15 / complex-demo 20 / html-page 8 / customize 7 / rag 4 / nested 3 / queue 3 / icons 5 / i18n 6 / lifecycle 3 / error-recovery 2 / human-confirm 2 / xss 2)。写新测试模板见 `.claude/skills/browser-e2e-testing/SKILL.md`。
 
@@ -174,7 +174,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2408/753/83)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2418/753/84)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判)→ `npm run test:size` → `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证

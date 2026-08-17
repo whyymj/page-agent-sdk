@@ -106,6 +106,48 @@ function detectMode(text: string): string | undefined {
   return undefined
 }
 
+// ===== 方向闸机制锁(M1 真 LLM 实测驱动:flash 无视提示词「硬性第一步」,0 次征询直接委派)=====
+// 提示词门禁(PROPOSE_GATE 段)对弱指令模型不构成约束 → 机制化:闸门关闭期间拦 use_html 委派与 components 写入,
+// 回灌引导先 request_human_confirmation;确认与 user 消息按「human 消息序号」对齐(确认发生在第 k 条 human 后 →
+// 该消息周期内放行;下一条 user 消息自动重新武装)。快速档零拦截(现状零变化)。
+function createProposeGateMiddleware() {
+  let confirmedAtHuman = -1
+  return {
+    name: 'propose-gate',
+    // 确认信号从模型响应观察:request_human_confirmation 被批准中间件在外层短路,内层 wrapToolCall 看不到
+    // 该调用(实测);wrapModelCall 是全路径覆盖点 —— 模型发起征询即记「本轮 human 序号已确认」
+    wrapModelCall: async (ctx: any, next: () => Promise<any>) => {
+      const res = await next(ctx)
+      try {
+        const calls = res?.toolCalls ?? []
+        if (calls.some((c: any) => c.name === 'request_human_confirmation')) {
+          const humans = (ctx?.state?.messages ?? []).filter((m: any) => m.role === 'user' || m.getType?.() === 'human')
+          confirmedAtHuman = humans.length
+        }
+      } catch { /* 观察层不崩 */ }
+      return res
+    },
+    wrapToolCall: async (ctx: any, next: () => Promise<any>) => {
+      const args = ctx?.args ?? {}
+      if (args.dryRun === true) return next(ctx)
+      const msgs: any[] = ctx?.state?.messages ?? []
+      // state.messages 是 SDK 层 AgentMessage[](role 字段),非 langchain 消息(getType)—— 用 role 判
+      const humans = msgs.filter((m: any) => m.role === 'user' || m.getType?.() === 'human')
+      const humanIdx = humans.length
+      if (ctx.name === 'request_human_confirmation') { confirmedAtHuman = humanIdx; return next(ctx) }
+      if (ctx.name !== 'use_html' && ctx.name !== 'write') return next(ctx)
+      const mode = detectMode(String([...humans].reverse()[0]?.content ?? ''))
+      if (mode && confirmedAtHuman < humanIdx) {
+        return {
+          content: 'PROPOSE_GATE · 当前任务命中「方向确认/详细设计」档:先调 request_human_confirmation(question=「用哪套方向?」+ 一句背景, options=[2~3 套方案各一句风格/配色/结构要点], recommendation=你推荐的一套) 让用户点选;用户答复前不做任何委派/写入。这不是错误,是流程门禁 —— 请立即征询,答复后继续原任务。',
+          status: 'error' as const,
+        }
+      }
+      return next(ctx)
+    },
+  }
+}
+
 onMounted(() => {
   agent = createChatSdk({
     container: root.value!,
@@ -125,9 +167,13 @@ onMounted(() => {
     // 默认 true:自定义 systemPrompt 末尾用 '---' 分隔线自动追加 reliableWriteRules(改前先 read、字段以 describe 为准、写错看校验错误重试、优先增量 patch);设 false 关闭;不传 systemPrompt 用默认 prompt 时已内置
     appendReliableWriteRules: true,
     // 三档判档:每轮按最新 user 消息注入模式段(快速=不注入/方向闸=先征询/详细=征询+todos+范围限定深入要求)
+    // ⚠️ state.messages 是 SDK 层 AgentMessage[](role 字段),非 langchain 消息(getType)—— 曾用 getType
+    // 永远匹配不到 → 模式段从未注入(M1 真 LLM 0 次征询的真根因,机制锁测试暴露)
     augmentSystem: ({ state }: any) => detectMode(String(
-      [...(state?.messages ?? [])].reverse().find((m: any) => m.getType?.() === 'human')?.content ?? '',
+      [...(state?.messages ?? [])].reverse().find((m: any) => m.role === 'user' || m.getType?.() === 'human')?.content ?? '',
     )),
+    // 方向闸机制锁:提示词版门禁对弱指令模型无效(M1 真 LLM 实测 0 次征询)→ 回灌式门禁兜底
+    middleware: [createProposeGateMiddleware()],
     // data 单主对象配置:schema + bind 直连 reactive 对象,工具直接读写 bind(集成方自己挂 window.page 供 PageRenderer 读)
     // resources:freeze 保护 navbar(components.0)的 trackId —— read 返占位符(精确值不进 AI 消息流),write 改 trackId 被拒(演示精确值保护与两步拾取协同:聚焦 navbar → read 占位 → 改不动)。
     // ⚠️ 路径按位置索引(非 id/type 锚定):若 agent 增删组件致 navbar 移出 components.0,保护会跟随索引漂移到新占据 0 号的组件。演示用;生产场景应按 id/type 动态定位路径。

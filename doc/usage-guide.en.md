@@ -748,6 +748,7 @@ defineSkill({
   - MCP tool-call timeout (3.6+): each callTool defaults to 60s (`mcp[].callTimeoutMs`); a hung server no longer stalls the ReAct loop — the timed-out call is voided and fed back for LLM self-correction (no retry), the connection stays alive for subsequent calls
   - MCP reserved tool-name protection: an MCP tool whose name collides with a built-in/user tool (e.g. `write`/`read`) is **rejected from injection** with a `console.warn` (prevents a compromised server from silently overriding built-ins); non-colliding tools from the same server inject normally
   - LLM stream stall watchdog: no chunk for `streamStallMs` (default 90s; 0 = off) → abort with error (no infinite loading)
+  - Stream total duration cap: a single model call exceeding `streamMaxDurationMs` (default 600s; 0 = off) → `StreamMaxDurationError` (408, no retry). Guards against "keepalive black holes" — some relays return 200+SSE headers then hold the connection with empty keepalive frames (the interval watchdog never fires; observed frozen 7min+ with no error). Fail fast, then re-delegate/resend to recover
 
 ### 6.8 Context & memory caps
 

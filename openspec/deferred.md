@@ -406,9 +406,11 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 **来源**:`2026-08-16-dialog-i18n-phase2` proposal 非目标段。`dialog.locale:'en-US'` 已覆盖 UI 文案 + 默认 systemPrompt(英文版身份 + reliableWriteRulesEn);但 usageHints 中间件注入的工具用法提示与 ~14 个内置工具的 schema description 仍是中文。LLM 对中文工具描述理解无碍(实测多模型正常 tool-calling),全量双化是 ~14 工具 × (description + 参数 describe + usageHints 教学段) 的大工程且增加维护双份漂移风险。**重启触发**:海外集成方实际反馈 agent 输出/理解语言异常,或英文场景真 LLM 回归出现工具误用实例。修法候选:工具描述集中注册表 + locale 键化(同 messages 模式)。
 
 
-### [2026-08-17] 流停滞看门狗「代理黑洞」盲区 — ⏸ 暂缓(modes 真 LLM 套件环境观察)
+### [2026-08-17] 流停滞看门狗「代理黑洞」盲区 — ✅ 已修([Unreleased] stream-max-duration:总时长上限兜底)
 
-**来源**:3.24.0 后 modes 套件补跑(M1 重试/M3 第三子 agent/M4-r5 第二子 agent),一日 4 次「llm_request 发出后 900~1000s 完全无响应、无 StreamStalledError、logN 冻结」(经 vite 代理 → modelverse)。启动闸(createAgent.ts:529-543)与 chunk 间隔看门狗均未触发 —— 假设:代理返回 200+SSE 头后以 keepalive/空帧无限空转,每帧重置 chunk 间隔计时但无实质内容(看门狗量的是 chunk 间隔,非单次调用总时长)。**重启触发**:代理黑洞复现时抓 vite proxy 层响应流(区分「头都没到」vs「空转帧」)或离线 mock 复现;修法候选:单次模型调用总时长上限(需与合法长生成权衡,如 10× stallMs)或空内容 chunk 不重置计时器。关联:`memory/real-llm-suite-env-instability.md`。
+**来源**:3.24.0 后 modes 套件补跑,一日 6 次「llm_request 发出后无响应、无 StreamStalledError、logN 冻结」(经 vite 代理 → modelverse)。**模式:黑洞恒落在同轮第 3 条并发 SSE 流**(M3 多次运行:3 并行委派 → 前两个完成 → 第三个流永久挂死;单流场景 M1/M4 稳定)。启动闸(createAgent.ts:529-543)与 chunk 间隔看门狗均未触发 —— 假设:上游返回 200+SSE 头后以 keepalive/空帧无限空转,每帧重置 chunk 间隔计时但无实质内容(看门狗量的是 chunk 间隔,非单次调用总时长)。
+
+**[2026-08-17 直连鉴别实验:根因定性完成,vite 代理假说证伪]** `.env` 直配绝对 URL(`https://api.modelverse.cn/v1`,SDK 默认 stripStainlessFetch 剥遥测头,直连 CORS 通)绕开 vite 代理跑 M3:**黑洞依旧、同位**(3 并发流,前两条正常完成,最后一条 logN 冻结 417s+ 至超时,无 StreamStalledError)。黑洞活动期三个鉴别实验:① 同 key 全新非流式请求 **1.5s 正常返回** → per-key 并发饱和排除;② 同 key 全新 SSE 流**秒级正常出 chunk** → 客户端/网络/key 流式能力排除;③ 前两条并发流正常完成 → 非「第 3 条被排队」(槽位释放后也不恢复)。**定性:modelverse 中转站在并发流场景下的单请求级死亡** —— 200+SSE 头已发、该请求正文永不送达、连接被维持(keepalive 空转持续重置 SDK 间隔看门狗)。上游不可修;SDK 侧唯一可动作 = 快速失败 + 上层自愈(重委派实测可恢复,M4 同款)。**✅ 已修([Unreleased] stream-max-duration)**:`withStallTimeout` 增 `maxMs` 绝对截止(不随 chunk 重置),新配置 `streamMaxDurationMs`(默认 600s,0 关)→ `StreamMaxDurationError`(继承 StreamStalledError 408 不重试,stage `stream_max_duration` 归因);selftest sec-69 +10(黑洞复现形状/继承语义/辨析/边界)。备选修法「空内容 chunk 不重置计时器」未采用:合法空 delta(长 prefill 期 ping)会误伤,总时长上限更鲁棒。M3 墙钟量化断言继续 blocked(上游环境),但「同轮 3 并行 + 时间窗重叠」已在本 run 采样实证(active:3 持续 ~2min)。关联:`memory/real-llm-suite-env-instability.md`。
 
 ## 维护约定
 

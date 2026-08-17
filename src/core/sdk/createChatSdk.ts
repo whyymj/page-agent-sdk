@@ -82,7 +82,7 @@ import { resolveModelCaps, MIN_CONTEXT_WINDOW } from '../utils/modelCaps'
 import { trimMemoryMessagesImpl, composeTrimSummary } from '../utils/rounds'
 import { indexSummarize, resolvePromptSoftCap } from '../composables/contextIndex'
 import { extractVfsRefs, gcVfsLargeResults } from '../utils/vfsGc'
-import { DEFAULT_STREAM_STALL_MS } from '../utils/stallTimeout'
+import { DEFAULT_STREAM_STALL_MS, DEFAULT_STREAM_MAX_DURATION_MS } from '../utils/stallTimeout'
 import { createSerialRunner } from '../utils/serialRunner'
 import { normalizeUsage } from '../utils/contentParts'
 import type { AgentMessage, StreamHandler, AgentInfo, SdkEvent, SdkEventHandler, TokenUsage, BatchResult, BatchProgress } from '../types'
@@ -239,6 +239,8 @@ export interface ChatSdkOptions {
   maxRetries?: number
   /** LLM 流停滞看门狗(fix-hang-and-feedback P1-7):chunk 间隔(含等首个)超此 ms → 中断抛错防 loading 永转。默认 90s;0 = 关闭 */
   streamStallMs?: number
+  /** 单次模型调用流总时长上限:防空转帧黑洞(keepalive 空转不断喂饱间隔看门狗,实测冻结 7min+ 无报错;超限 → StreamMaxDurationError,重委派/重发即自愈)。默认 600s;0 = 关闭 */
+  streamMaxDurationMs?: number
   /** token 预算上限(累计 total_tokens 超过 → 停止 agent + emit BUDGET_EXCEEDED;需 capabilities.automation:true) */
   tokenBudget?: number
   /**
@@ -2522,6 +2524,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       maxRetries: options.maxRetries,
       // P1-7(fix-hang-and-feedback):流停滞看门狗(默认 90s;0 关;chunk 间隔超时中断防 loading 永转)
       stallMs: options.streamStallMs ?? DEFAULT_STREAM_STALL_MS,
+      // 流总时长上限(默认 600s;0 关):间隔看门狗盲区兜底 —— 空转帧黑洞 chunk 不断但无实质内容
+      streamMaxMs: options.streamMaxDurationMs ?? DEFAULT_STREAM_MAX_DURATION_MS,
       maxParallelTools: options.maxParallelTools,
       // 模型能力透传(已在 buildCore 解析,声明优先 > 表 > 缺省):驱动 maxTokens 缺省与 offload 阈值
       contextWindow: modelCaps.contextWindow,

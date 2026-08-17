@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { mockLlm, fillInput, clickSend, waitForAgentIdle, clearChat } from './_helpers'
+import { mockLlm, fillInput, clickSend, clickByText, waitForAgentIdle, clearChat } from './_helpers'
 
 /**
  * complex-demo 浏览器 E2E(真实复杂度基准:30 类型 + ~70 实例专题页)
@@ -438,6 +438,49 @@ test.describe('complex-demo: 组件操作(调换顺序 / 改层级 / 聚焦纯�
     // custom.code 含新标题(子 vfs_write 焦点文件 → commit 回写 data.code)
     const code = await page.evaluate(() => window.page.components.find((c) => c.name === 'beer')?.code ?? '')
     expect(code, '焦点 custom.code 经子 vfs_write + commit 更新').toContain('干杯青岛')
+  })
+
+  // ===== 方向闸机制锁(M1 真 LLM 实测驱动:flash 无视提示词「硬性第一步」0 次征询 → 回灌式门禁)=====
+  test('方向闸:创意任务先委派被门禁回灌 → 征询 → 点选 → 委派放行落地', async ({ page }) => {
+    await mockLlm(page, [
+      // ① 主 agent 试图直接委派 → 闸门回灌 PROPOSE_GATE(error result,子 agent 零消耗)
+      { tool_calls: [{ name: 'use_html', arguments: { task: '新建世界杯主题轮播图' } }] },
+      // ② 回灌后合规路径:主动征询
+      { tool_calls: [{ name: 'request_human_confirmation', arguments: {
+        question: '世界杯轮播用哪套方向?',
+        options: ['绿茵场滚动横幅 + 金杯高亮', '深蓝夜景 + 队徽网格切换'],
+        recommendation: '推荐方案A:绿茵场滚动横幅',
+      } }] },
+      // ③ 用户点选后闸门放行 → 二次委派(子 agent 执行:write 落组件 + text 收口)
+      { tool_calls: [{ name: 'use_html', arguments: { task: '新建世界杯主题轮播图(方案A:绿茵场滚动横幅)' } }] },
+      { tool_calls: [{ name: 'write', arguments: { patch: { op: 'append', jsonPath: 'components', value: {
+        type: 'custom', name: 'worldcup-carousel', code: '<section class="wc-carousel"><h1>世界杯轮播·绿茵场</h1></section>',
+      } } } }] },
+      { text: '已按方案A创建世界杯轮播组件' },
+      { text: '完成:世界杯轮播已落地' },
+    ])
+    const before = await page.evaluate(() => window.page.components.length)
+    await fillInput(page, '加一个世界杯主题的轮播图')
+    await clickSend(page)
+    // 征询选项出现 → 点选方案A(闸门放行前提)
+    await page.waitForSelector('button:has-text("绿茵场")', { timeout: 15_000 })
+    await clickByText(page, '绿茵场滚动横幅 + 金杯高亮')
+    await waitForAgentIdle(page)
+    const results = await page.evaluate(() => {
+      const rs = (window as any).__sdk.debugLogs.value
+        .filter((l: any) => l.type === 'tool_result' && l.data?.name === 'use_html')
+        .map((l: any) => String(l.data?.result ?? ''))
+      return {
+        gateResult: rs[0] ?? '',
+        secondResult: rs[1] ?? '',
+        landed: window.page.components.filter((c: any) => (c.code ?? '').includes('世界杯轮播·绿茵场')).length,
+        count: window.page.components.length,
+      }
+    })
+    expect(results.gateResult, '闸门关闭期首次 use_html 被 PROPOSE_GATE 回灌').toContain('PROPOSE_GATE')
+    expect(results.secondResult, '确认后二次 use_html 放行(结果为子 agent 收口文本,非门禁错误)').not.toContain('PROPOSE_GATE')
+    expect(results.landed, '组件经子 agent write 落地').toBeGreaterThanOrEqual(1)
+    expect(results.count, 'components 数 +1').toBe(before + 1)
   })
 
   // ===== DOM 检视工具族(dom-inspect skill 按需注入;3.23+)=====

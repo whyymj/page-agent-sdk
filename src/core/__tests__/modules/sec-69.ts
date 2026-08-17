@@ -1,10 +1,11 @@
 /**
  * sec-69:fix-hang-and-feedback(挂起与反馈)单元层
  * - 流停滞看门狗 withStallTimeout(透传/停滞抛错/间隔重置/关闭)
+ * - 流总时长上限 maxMs(空转帧黑洞:chunk 不断但无实质内容,间隔看门狗被无限重置 → 绝对截止兜底)
  * - StreamStalledError 不被 isRetryable 当网络错
  * - skills 远程 fetch abort → 超时错误分类(readSkillDoc)
  */
-import { withStallTimeout, StreamStalledError } from '../../utils/stallTimeout'
+import { withStallTimeout, StreamStalledError, StreamMaxDurationError, DEFAULT_STREAM_MAX_DURATION_MS } from '../../utils/stallTimeout'
 import { isRetryable } from '../../harness/retry'
 import { readSkillDoc } from '../../harness/skills'
 import type { TestCtx } from './_ctx'
@@ -27,6 +28,14 @@ async function* seq(items: number[], delayMs = 0): AsyncGenerator<number> {
 async function* stallAfter(first: number): AsyncGenerator<number> {
   yield first
   await new Promise(() => {})
+}
+
+/** 空转帧黑洞流:chunk 按间隔不断到达但永不完(2026-08-17 直连鉴别实测:keepalive 空转喂饱间隔看门狗) */
+async function* dripForever(intervalMs: number): AsyncGenerator<number> {
+  for (let i = 0; ; i++) {
+    await new Promise((r) => setTimeout(r, intervalMs))
+    yield i
+  }
 }
 
 export async function run(ctx: TestCtx): Promise<void> {
@@ -80,6 +89,64 @@ export async function run(ctx: TestCtx): Promise<void> {
   // isRetryable 不当网络错重试(4xx 语义)
   {
     assert(isRetryable(new StreamStalledError(1000)) === false, '✓ StreamStalledError 不进重试(停滞重试大概率复现)')
+  }
+
+  console.log('\n[fix-hang-and-feedback · 流总时长上限(maxMs,空转帧黑洞兜底)]')
+
+  // 黑洞复现形状(核心场景):chunk 不断(间隔看门狗永不触发)但总时长超限 → StreamMaxDurationError
+  {
+    let err: unknown
+    let received = 0
+    try {
+      for await (const _v of withStallTimeout(dripForever(20), 5000, 120)) received++
+    } catch (e) {
+      err = e
+    }
+    assert(received >= 3, '✓ 黑洞形状:空转 chunk 持续被消费(间隔看门狗被喂饱,间隔阈值 5000ms 永不触发)')
+    assert(err instanceof StreamMaxDurationError, '✓ 总时长超限 → StreamMaxDurationError(原:间隔看门狗盲区,冻结 7min+ 无报错)')
+    assert(err instanceof StreamMaxDurationError && err.waitedMs === 120, '✓ StreamMaxDurationError.waitedMs 反映上限值')
+  }
+
+  // 继承语义:沿用 StreamStalledError 的 408 不重试与既有 catch 分支(instanceof 双命中)
+  {
+    const e = new StreamMaxDurationError(600_000)
+    assert(e instanceof StreamStalledError, '✓ StreamMaxDurationError extends StreamStalledError(408 不重试语义继承)')
+    assert((e as { status?: number }).status === 408 && isRetryable(e) === false, '✓ 总时长超限同样不进重试(上层重委派/重发自愈)')
+    assert(DEFAULT_STREAM_MAX_DURATION_MS === 600_000, '✓ 默认总时长上限 600s(flash 大组件实测 3-7min 留裕量)')
+  }
+
+  // 正常放行:总时长低于上限的连续流完整透传(maxMs 设置不误报)
+  {
+    const out = await collect(withStallTimeout(seq([1, 2, 3, 4], 10), 5000, 5000))
+    assert(out.length === 4, '✓ 上限内连续流完整透传(maxMs 不误报合法生成)')
+  }
+
+  // 辨析:真停滞(间隔超限)优先于总时长 → 仍抛 StreamStalledError 非 Max
+  {
+    let err: unknown
+    try {
+      await collect(withStallTimeout(stallAfter(1), 60, 5000))
+    } catch (e) {
+      err = e
+    }
+    assert(err instanceof StreamStalledError && !(err instanceof StreamMaxDurationError), '✓ 真停滞仍抛 StreamStalledError(与总时长超限区分归因)')
+  }
+
+  // 边界:maxMs=0 且 ms<=0 → 全关闭透传
+  {
+    const out = await collect(withStallTimeout(seq([1, 2], 5), 0, 0))
+    assert(out.length === 2, '✓ ms<=0 且 maxMs<=0 全关闭,原样透传')
+  }
+
+  // 边界:仅总时长(ms<=0 间隔关闭,maxMs>0 仍生效)
+  {
+    let err: unknown
+    try {
+      await collect(withStallTimeout(dripForever(10), 0, 100))
+    } catch (e) {
+      err = e
+    }
+    assert(err instanceof StreamMaxDurationError, '✓ 间隔看门狗关闭时总时长上限独立生效(ms<=0, maxMs>0)')
   }
 
   console.log('\n[fix-hang-and-feedback · skills fetch 超时分类]')

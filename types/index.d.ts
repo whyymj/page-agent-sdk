@@ -1126,6 +1126,8 @@ export interface ChatSdkOptions {
   maxRetries?: number;
   /** LLM 流停滞看门狗(fix-hang-and-feedback P1-7):chunk 间隔(含等首个)超此 ms → 中断抛错防 loading 永转。默认 90s;0 = 关闭 */
   streamStallMs?: number;
+  /** 单次模型调用流总时长上限:防空转帧黑洞(keepalive 空转不断喂饱间隔看门狗,超限 → StreamMaxDurationError,重委派/重发即自愈)。默认 600s;0 = 关闭 */
+  streamMaxDurationMs?: number;
   /** token 预算上限(累计 total_tokens 超过 → 停止 agent + emit BUDGET_EXCEEDED;需 capabilities.automation:true) */
   tokenBudget?: number;
   /** 单次 invoke 的 token 预算上限(opt-in,默认关):本次 agent 调用累计 total_tokens 超限 → 中断收口(observable emit + 友好文本,已完成部分保留);与 automation 全局 tokenBudget 正交 */

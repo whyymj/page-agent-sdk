@@ -913,6 +913,7 @@ createChatSdk({ maxRetries: 0 })   // 关闭自动重试
 - **MCP 握手超时**:默认 15s(`mcp[].timeoutMs` 可调),黑洞端点降级跳过,不阻塞 SDK 启动
 - **MCP 工具调用超时**(3.6+):单次 callTool 默认 60s(`mcp[].callTimeoutMs` 可调),server 挂起不再拖死 ReAct 轮 —— 超时该次调用作废回灌 LLM 自纠(不重试),连接不断后续调用复用
 - **LLM 流停滞看门狗**:chunk 间隔(含等首个)超 `streamStallMs`(默认 90s,0 关)→ 自动中断报错,防 loading 永转
+- **流总时长上限**:单次模型调用总时长超 `streamMaxDurationMs`(默认 600s,0 关)→ 抛 `StreamMaxDurationError`(408 不重试)。兜「空转帧黑洞」:部分中转站返回 200+SSE 头后以 keepalive 空转帧维持连接(间隔看门狗被喂饱永不触发),实测冻结 7min+ 无报错;超限快速失败后重委派/重发即自愈
 
 ### 6.8 上下文与内存上限
 

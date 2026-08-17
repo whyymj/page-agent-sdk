@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+## [3.25.0] - 2026-08-17
+
+### Added(stream-max-duration:空转帧黑洞兜底,2026-08-17 直连鉴别实验驱动)
+- **单次模型调用流总时长上限(`streamMaxDurationMs`,默认 600s,0 关闭)**:间隔看门狗(`streamStallMs`)存在实测盲区 —— 中转站黑洞返回 200+SSE 头后以 keepalive/空转帧无限重置 chunk 间隔计时(冻结 417s+ 无 StreamStalledError)。`withStallTimeout` 增 `maxMs` 绝对截止参数(不随 chunk 重置),超限抛 `StreamMaxDurationError`(继承 `StreamStalledError` 的 408 不重试语义,日志 stage `stream_max_duration` 归因);上层重委派/用户重发即自愈(同 key 新流实测秒级正常)。直连鉴别实验同步定性根因:**中转站(modelverse)并发流场景下单请求级死亡** —— vite 代理与 per-key 配额均排除(黑洞中同 key 新请求 1.5s 正常、新 SSE 流秒级出 chunk、槽位释放后死流不恢复)
+
 ## [3.24.1] - 2026-08-17
 
 ### Fixed(M4 真 LLM 实测驱动:人工并发 keep_external 的「保护成立但终态被覆盖」)
