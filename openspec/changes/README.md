@@ -1,5 +1,7 @@
 # 活跃 Changes 优先级索引
 
+> **2026-08-17 发布 3.25.0 / 3.25.1**(minor + patch):① **3.25.0**(未立 change 直发,deferred「流停滞看门狗黑洞盲区」触发):`streamMaxDurationMs` 流总时长上限(默认 600s,0 关)—— 直连鉴别实验定性中转站并发流单请求级死亡(200+SSE 头已发、正文永不送达、keepalive 空转绕过间隔看门狗;vite 代理与 per-key 配额均排除),绝对截止抛 `StreamMaxDurationError`(继承 408 不重试,重委派/重发自愈);② **3.25.1**(`write-path-cost-reduction`,audit A3):写路径 O(N) 成本收敛 —— 同调用 hash 单算(`commitBaseline`)+ codeAsset 改前态单拷贝(`beforeBind` 复用为快照条目)+ **冲突检查 hash 实时性不变量固化**(跨调用缓存因人工直改盲区显式否决,M4 实证);bench 留证 1MB 单写 median **-12%/-19%**,零行为变化。selftest 2428 / e2e 753 / browser 84。见 [`archive/2026-08-17-write-path-cost-reduction/`](./archive/2026-08-17-write-path-cost-reduction/)。
+
 > **2026-08-16/17 发布 3.22.0 / 3.22.1 / 3.23.0 / 3.23.1**(minor + patch + minor + patch):两 change 实施完成并归档 —— ① **3.22.0**(`dialog-i18n-phase2`):i18n 顶层配置组(**breaking**:`dialog.locale`/`dialog.messages` 两键合并至顶层 `i18n`;locale 除 UI 文案外驱动默认 systemPrompt/autoTitle 语言,en → 英文身份 + reliableWriteRulesEn)+ messages 富文本渲染位行内 HTML 支持(文案白名单净化 `sanitizeMessageHtml`;~219 键全量接入 DebugDrawer/SkillPanel/CodePreview);3.22.1:净化函数无 DOM 环境(Node)剥标签纯文本兜底;② **3.23.0**(`preference-persistence`):跨会话用户偏好记忆 —— 三层信号捕获(显式命令句式零 LLM 强信号 / 模式词+小 LLM 提炼中信号 / 行为推断不做宁漏勿误)→ preferenceStore(IndexedDB 独立存储,同 topic 后说覆盖,FIFO 20)→ augmentPrompt pin 段注入;`capabilities.preferences` opt-in + `getPreferences`/`removePreference`/`clearPreferences` + DebugDrawer 视图;3.23.1:并行同轮双委派 UI 归属修复(tool_call/result 事件带 `id` + subagent 事件带 `toolCallId`,useChat 按 id 精确归属)。同窗口 3.24.0(debug:true 调试入口门控 + DebugDrawer 布局优化 + 调试日志跨轮累积 + MCP 降级可观测 + DOM 检视工具族)未立 change 直发。selftest 2396 / e2e 753 / browser 83。见 [`archive/2026-08-16-dialog-i18n-phase2/`](./archive/2026-08-16-dialog-i18n-phase2/) + [`archive/2026-08-16-preference-persistence/`](./archive/2026-08-16-preference-persistence/)。
 
 > **2026-08-16 发布 3.19.0 / 3.19.1 / 3.20.0**(minor + patch + minor):三批实施完成并归档 —— ① **3.19.0**:真 LLM 回归评估框架化(`npm run test:real` 统一入口三套件 + `--baseline-diff`/`--baseline-update` 基线对比入库 `tests/runtime/real-llm-baseline.json`)+ `llm.cacheControl` Anthropic prompt caching(invocationKwargs 路径;非流式实证 input ~1/10);② **3.19.1**(`round2-review-hardening`):第二轮三路审查 22 条 → 裁决 9 修复 + 4 测试补强 + 3 deferred + 9 误报(autoTitle 时序 / 主栈 scope token / query+get 大文本摘要 / 失败读不刷基线 / 孤儿轮收口 / release 后 send 守卫等);③ **3.20.0**:用户实测反馈三连 —— focus-scoped-read(聚焦下 read 空参默认焦点子树 + 教学行)+ `dialog.icons.send` + `dialog.locale`/`dialog.messages` 国际化与文案自定义 Phase 1(聊天面 13 组件 ~91 键 + en-US 包 + 键级覆盖)+ 思考中 padding。selftest 2241 / e2e 718 / browser 76。见 [`archive/2026-08-16-round2-review-hardening/`](./archive/2026-08-16-round2-review-hardening/) + [`archive/2026-08-16-dialog-i18n/`](./archive/2026-08-16-dialog-i18n/) + [`archive/2026-08-16-focus-scoped-read/`](./archive/2026-08-16-focus-scoped-read/)。
@@ -48,9 +50,9 @@
 
 ## 进行中
 
-| change | 立项 | 定位 | 状态 |
-|---|---|---|---|
-| [`2026-08-17-write-path-cost-reduction/`](./2026-08-17-write-path-cost-reduction/) | 2026-08-17 | 写路径 O(N) 成本收敛(audit A3 立项):同调用 hash 双算消除 + codeAsset 改前态单拷贝 + **冲突检查 hash 实时性不变量固化**(跨调用缓存因人工直改盲区显式否决,M4 实证)+ bench 留证;零行为变化 patch 级 | proposal/design/specs/tasks 齐备,待实施(`先 bench 基线,1MB 单写 <5ms 则留痕退出`) |
+- **`legacy-bundle-channel`**(2026-08-17 立项):老构建链宿主(webpack≤4)官方接入通道 —— `page-agent-sdk/legacy` 子路径(es2017 + 全量打包,动态 import 懒加载)+ IIFE 集成文档官方化。editor_fangzhou 接入实测驱动(npm 主产物对 webpack4 的 acorn 6 parse 失败,现状手工拷 IIFE 与 npm 版本管理脱钩)。见 [2026-08-17-legacy-bundle-channel/](./2026-08-17-legacy-bundle-channel/)。
+
+_(write-path-cost-reduction 已于 2026-08-17 实施完成随 3.25.1 发布归档:bench 1MB 单写 median -12%/-19%,A+B 两段全保留,冲突检查 hash 实时性不变量固化)_
 
 _(parallel-subagent-delegation 已于 2026-08-17 Q5e 收口归档:人工并发 M4 4/4 全过并驱动 keep_external 提示回流 + codeField 恒守卫两修复;墙钟量化断言因 LLM 代理黑洞两杀未跑通,后经直连鉴别定性为中转站并发流单请求死亡,已随 stream-max-duration 3.25.0 兜底,详见该 change tasks.md Q5e 注记 + deferred.md 对应条目)_
 

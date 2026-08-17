@@ -109,6 +109,17 @@ import { createChatSdk } from 'page-agent-sdk/headless'
 
 > headless 入口创建的 sdk 若不传 `ui:false`(默认 `'default'`)→ `mount()` 会 `console.warn` 提示降级 headless(不渲染 DOM)。显式 `ui:false` 即正常 headless 态,无 warn。如需内置 ChatDialog,用主包 `page-agent-sdk`。详见下文 [headless 自建 UI](#headless-自建-uiuifalse)。
 
+**🧓 legacy 老构建链子路径(webpack ≤4 宿主)**:`page-agent-sdk/legacy` 是 **es2017 + 全量打包**产物(`dist/page-agent-sdk.legacy.js`,~2.9MB,`await import()` 懒加载不进首屏),给 webpack 4 / vue-cli 2-3 等老构建链宿主 —— 老解析器(acorn 6)对主产物的 `?.`/`??` 语法 parse 失败,且 peerDeps(zod/@langchain)全为新 ESM,直接 `import 'page-agent-sdk'` 不可用。legacy 通道:
+
+```js
+// webpack4 宿主:动态 import(自动切独立懒加载 chunk;vue/zod/@langchain 全打包,零 transpileDependencies、零 peer 安装)
+const { createChatSdk, z, defineTool } = await import('page-agent-sdk/legacy')
+// CSS 走包根物理路径(webpack4 增强解析器不认 exports map)
+import 'page-agent-sdk/style.css'
+```
+
+三通道决策:**现代构建(Vite/webpack5+)→ 主 ESM 产物** / **webpack≤4 → legacy 动态 import** / **无构建纯 html → IIFE `<script>`**(产物对照见 README 表)。SDK 内置 Vue3 为独立 app 实例(全打包),与宿主 Vue2 互不进模块图,可共存。
+
 ## 3. 快速开始(3 分钟)
 
 最小可用例子 —— 让 Agent 能读写你的页面主数据:

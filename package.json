@@ -1,6 +1,6 @@
 {
   "name": "page-agent-sdk",
-  "version": "3.25.1",
+  "version": "3.26.0",
   "type": "module",
   "description": "AI agent SDK for web pages — embed a chat assistant that edits page data via schema-validated tools. A lighter, framework-agnostic alternative to CopilotKit/LangChain for in-page JSON-editing agents. Vue-bundled; works with DeepSeek, OpenAI, MCP.",
   "main": "./dist/page-agent-sdk.umd.cjs",
@@ -33,12 +33,18 @@
       "types": "./types/headless.d.ts",
       "import": "./dist/page-agent-sdk.headless.js"
     },
+    "./legacy": {
+      "types": "./types/index.d.ts",
+      "import": "./dist/page-agent-sdk.legacy.js"
+    },
     "./style.css": "./dist/style.css"
   },
   "files": [
     "dist",
     "types",
-    "skills"
+    "skills",
+    "legacy.js",
+    "style.css"
   ],
   "scripts": {
     "dev": "vite",
@@ -46,10 +52,11 @@
     "mcp:probe": "tsx scripts/mcp-probe.ts",
     "proxy:mock": "tsx scripts/proxy-mock-server.ts",
     "verify:probe": "tsx scripts/verify-probe.ts",
-    "build": "npm run build:lib && npm run build:headless && npm run build:iife",
+    "build": "npm run build:lib && npm run build:headless && npm run build:iife && npm run build:legacy && node -e \"require('fs').copyFileSync('dist/style.css','style.css')\"",
     "build:lib": "vite build",
     "build:headless": "vite build --config vite.headless.config.ts",
     "build:iife": "vite build --config vite.iife.config.ts",
+    "build:legacy": "vite build --config vite.legacy.config.ts",
     "preview": "vite preview",
     "test": "tsx src/core/__tests__/selftest.ts",
     "test:e2e": "node tests/e2e-integration.mjs",

@@ -480,7 +480,7 @@ function switchTo(i: number) {
 
 ```bash
 npm test            # 2428 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 753 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm run test:e2e    # 764 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试
@@ -536,6 +536,7 @@ createChatSdk({
 | UMD | `dist/page-agent-sdk.umd.cjs` | Node/老 bundler `require` | ~560 KB |
 | IIFE(全量单文件) | `dist/page-agent-sdk.iife.js` | CDN `<script>` 直引,零配置 | ~1.4 MB |
 | **headless ESM**(无 UI 层) | `dist/page-agent-sdk.headless.js` | `page-agent-sdk/headless` —— `ui:false` 自建 UI 纯核心 | **~325 KB** |
+| **legacy ESM**(es2017 全量打包) | `dist/page-agent-sdk.legacy.js` | `page-agent-sdk/legacy` —— **webpack ≤4 / vue-cli 2-3 老构建链宿主**:`await import('page-agent-sdk/legacy')` 懒加载 chunk,零 transpile/零 peer | **~2.9 MB** |
 
 ### 按需引入(subpath exports)
 

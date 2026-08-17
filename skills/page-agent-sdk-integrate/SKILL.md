@@ -17,11 +17,18 @@ The SDK is a **standardized JSON-operation agent**: the integrator declares ONE 
 
 | Method | When | How |
 |---|---|---|
-| **npm** | module project, tree-shake ok | `npm i page-agent-sdk zod @langchain/openai @langchain/core` → `import { createChatSdk, z } from 'page-agent-sdk'` |
+| **npm** | modern module bundler (Vite / webpack 5+) | `npm i page-agent-sdk zod @langchain/openai @langchain/core` → `import { createChatSdk, z } from 'page-agent-sdk'` |
+| **npm · legacy subpath** | **webpack ≤4 / vue-cli 2-3** (old acorn 6 parser fails on `?.`; peers are modern ESM) | `npm i page-agent-sdk` → `const { createChatSdk, z, defineTool } = await import('page-agent-sdk/legacy')` + `import 'page-agent-sdk/style.css'` |
 | **CDN · ESM** (esm.sh) | modular, small, peer auto-resolved | `import { createChatSdk, z } from 'https://esm.sh/page-agent-sdk'` |
 | **CDN · IIFE** (unpkg) | one-line, no build, ~1.4MB all-in | `<script src="https://unpkg.com/page-agent-sdk"></script>` → `ChatSdk.createChatSdk`, `ChatSdk.z` |
 
 See `demo/plain.html` for a framework-agnostic importmap + esm.sh example.
+
+**Legacy toolchain notes (webpack ≤4 hosts)**:
+- `page-agent-sdk/legacy` is an es2017 fully-bundled single file (~2.9MB): vue / zod / @langchain all inlined — zero `transpileDependencies`, zero peer installs (`z` is exported from the bundle).
+- Use `await import('page-agent-sdk/legacy')` so webpack4 splits it into a standalone lazy chunk (never enters the first-screen bundle). CSS resolves via the package-root physical `page-agent-sdk/style.css` file (webpack4's enhanced-resolve predates the `exports` map — the package ships root forwarder files `legacy.js` + `style.css` for exactly this).
+- The SDK's built-in Vue 3 runs as an isolated app instance (fully bundled) — it never enters the host's module graph, so it coexists fine with a Vue 2 host.
+- LLM gateway CORS: the SDK strips `x-stainless-*` telemetry headers (since 3.5), so direct browser calls pass strict-CORS gateways; if a gateway still rejects, proxy via the host's devServer/nginx like any other API.
 
 ### 2. Declare `data` (the key step)
 

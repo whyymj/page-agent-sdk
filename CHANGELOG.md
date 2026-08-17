@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+## [3.26.0] - 2026-08-17
+
+### Added(legacy-bundle-channel:老构建链宿主官方接入通道)
+- **`page-agent-sdk/legacy` 子路径(es2017 全量打包单文件,~2.9MB)**:webpack ≤4 / vue-cli 2-3 宿主的官方通道 —— 老解析器(acorn 6)对主产物 es2022 的 `?.`/`??` parse 失败且 peerDeps 全为新 ESM,此前只能手工拷 IIFE 产物(与 npm 版本管理脱钩)。legacy 产物 vue/zod/@langchain(含 anthropic)/MCP 全 inline,宿主 `await import('page-agent-sdk/legacy')` 零 transpileDependencies、零 peer 安装(`z` 从 bundle 导出),webpack4 原生动态 import 自动切独立懒加载 chunk 不进首屏
+- **包根物理转发文件 `legacy.js` + `style.css`**:webpack4 enhanced-resolve 不认 package.json `exports` map,子路径按包根目录文件解析 —— 转发文件即解析目标(构建脚本自动复制 style.css 至根)
+- 语法纯净性硬校验:产物经 editor_fangzhou 真实 webpack4 解析栈(acorn 6.1.1 + acorn-dynamic-import + ecmaVersion 2019)parse 通过(主产物同栈失败作灵敏度对照);e2e 增 legacy-subpath 模块(导出面与主产物 191 符号等价 / ui:false 装配 / 语法纯净 / 体积,+11 项);size-check 增 3.3MB 阈值
+- 文档:README×2 产物表 + usage-guide 中英「legacy 老构建链子路径」段(三通道决策树)+ 集成 skill 安装表增 legacy 行(Vue2 共存/CORS 注意);editor_fangzhou 真实靶场端到端验证(webpack4 编译 + 面板挂载 + 真实 LLM 工具轮改页面树落地)
+
 ## [3.25.1] - 2026-08-17
 
 ### Changed(write-path-cost-reduction:写路径 O(N) 成本收敛,audit A3)

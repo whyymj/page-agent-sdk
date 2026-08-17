@@ -11,6 +11,7 @@ const limits = [
   { file: 'dist/page-agent-sdk.js', max: 1.1 * MB, label: 'ESM(npm import)' },
   { file: 'dist/page-agent-sdk.umd.cjs', max: 1.1 * MB, label: 'UMD(require)' },
   { file: 'dist/page-agent-sdk.headless.js', max: 600 * KB, label: 'headless ESM(/headless 子路径;纯核心不含 UI,实测 ~333KB)' },
+  { file: 'dist/page-agent-sdk.legacy.js', max: 3.3 * MB, label: 'legacy ESM(/legacy 子路径;es2017 全量打包含 anthropic,webpack≤4 宿主;实测 ~2978KB)' },
   { file: 'dist/style.css', max: 60 * KB, label: 'CSS' },
 ]
 

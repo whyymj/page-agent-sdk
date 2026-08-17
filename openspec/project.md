@@ -24,7 +24,7 @@
 
 ## 进行中的 change
 
-**`write-path-cost-reduction`(2026-08-17 立项,待实施)**:写路径 O(N) 成本收敛(audit A3/数据写链#6)—— 同调用 hash 双算消除(`commitBaseline` 辅助)+ codeAsset 改前态单拷贝(beforeBind 复用为快照条目,3→2 clone)+ **冲突检查 hash 实时性不变量固化**(跨调用缓存/脏标记因人工直改 reactive bind 盲区显式否决,缓存 = keep_external 失明,M4 实证)+ bench 留证(先基线,收益 <10% 留痕退出)。零行为变化 patch 级。见 [`changes/2026-08-17-write-path-cost-reduction/`](./changes/2026-08-17-write-path-cost-reduction/)。
+- **`legacy-bundle-channel`**(2026-08-17 立项,proposal 已定):老构建链宿主(webpack≤4 / vue-cli 2-3,editor_fangzhou 实测驱动)官方接入通道 —— 新增 `page-agent-sdk/legacy` 子路径产物(ESM + target es2017 + 全量打包零 peer,宿主 `await import()` 懒加载 chunk 替代手工拷 IIFE);IIFE 集成文档官方化 + 三通道决策树进集成 skill。验证靶场 = editor_fangzhou 真实宿主。
 
 > 2026-08-08 状态(评审核实后更新):此前 12 个活跃 change 中 **7 个已陆续归档/发布** —— `fix-write-safety-bypass`(2.23)/ `tool-name-collision`(2.23)/ `context-inspector`(2.25)/ `simplify-toolset`(2.25)/ `skill-external-scripts`(2.26)/ `session-history-management`(2.26)/ `arch-review-p1-fixes`(2.24.1 部分)。剩 6 个活跃 + 本次新增 1 个。
 
@@ -49,6 +49,8 @@
 > 5 个旧 proposal 已移入 `archive/2026-07-31-*/`(proposal 顶部加「📦 已归档(被取代)」标注),作溯源底稿。`complex-agent-roadmap` umbrella 本身也于 2026-08-02 归档(Phase 1-4 全完成)。
 
 ## 最近完成的 change(已归档)
+
+> **2026-08-17 `write-path-cost-reduction` 归档(随 3.25.1 发布)**:写路径 O(N) 成本收敛(audit A3 立项当天完成)—— A 段同调用 hash 单算(`commitBaseline`:写成功后新基线与消息「新 hash」复用一次计算)+ B 段 codeAsset 改前态单拷贝(`beforeBind` 复用为快照栈条目,3→2 deepClone;restore 防御性深拷贝兜底,`before` 只读契约固化)+ C 段**冲突检查 hash 实时性不变量**(注释 + spec 双固化:禁跨调用缓存 —— 人工直改 reactive bind 不经 SDK 写路径,脏标记失明 → keep_external 失效,M4 实证;审计提的「脏标记惰性 hash」方向显式否决)。bench 留证(`tests/perf/write-path-bench.mjs`,不进 CI):1MB 单 patch 写 median 30.1→26.5ms(**-12%**)/ 34.4→27.7ms(**-19%**),290KB 档 -11%/-22%,全档 >10% 止损阈。零行为变化:乐观锁 N1 契约/快照 restore/__pgId 回填/消息语义全锁定(selftest +10 → 2428 / e2e 753 / browser 84)。活跃 1→0。
 
 > **2026-08-03 component-library-expansion 归档(范围调整)**:用户决策「不需要 80,加几个意思意思就可以」。实际完成批 A **3 个简单展示类**(badge / progress / skeleton):`defs/*.ts` + `components/*Comp.vue` + `pageSchema.ts`(schema + union 33→36 + PageComponent 类型)+ `defs/index.ts`(import + push 基础内容)+ `CompRenderer.vue`(import + COMP_MAP)+ initialPage 实例(footer 前 3 个)。`tsc` 类型检查通过 + complex-demo browser spec **9 passed** 回归(新组件不破渲染/交互/huge 800 计数)。批 B-E(到 ~80)取消。**意外发现(澄清核心担忧)**:`extractSchemaHint(pageSchema)` 对 `components[discriminatedUnion]` 数组字段不展开每个 type(只简短描述 +「用 read 查看实际形状」)→ 原担忧「80 type 撑爆 systemPrompt」**不成立**(union 在数组字段内不全量注入,深入靠 `schema_data` 工具)。活跃 1→0。
 

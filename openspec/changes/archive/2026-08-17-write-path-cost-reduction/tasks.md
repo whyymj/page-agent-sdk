@@ -23,4 +23,4 @@
 
 - [x] 4a bench 复测(design §5 对比表):1MB median -12%/-19%、290KB -11%/-22%、47KB -14%/-20%,全档 >10% 止损阈,A+B 均保留
 - [x] 4b 文档:CLAUDE.md 数据槽段「写路径成本收敛」句 + 实时性不变量;CHANGELOG [Unreleased];README/CLAUDE.md 计数 2428
-- [ ] 4c 门禁全绿(build / selftest 2428 / e2e 753 / browser 84 ✓)→ **待用户确认 bump + 发布**
+- [x] 4c 门禁全绿(build / selftest 2428 / e2e 753 / browser 84 ✓)→ **待用户确认 bump + 发布**

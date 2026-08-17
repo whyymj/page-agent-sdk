@@ -19,6 +19,7 @@ import { run as runFocus } from './e2e/focus.mjs'
 import { run as runResources } from './e2e/resources.mjs'
 import { run as runAgentCompression } from './e2e/agent-compression.mjs'
 import { run as runHeadlessSubpath } from './e2e/headless-subpath.mjs'
+import { run as runLegacySubpath } from './e2e/legacy-subpath.mjs'
 import { run as runCapabilityPacks } from './e2e/capability-packs.mjs'
 import { run as runAuthorizationSurface } from './e2e/authorization-surface.mjs'
 import { run as runHangFeedback } from './e2e/hang-feedback.mjs'
@@ -47,6 +48,7 @@ const modules = [
   ['resources', runResources],
   ['agent-compression', runAgentCompression],
   ['headless-subpath', runHeadlessSubpath],
+  ['legacy-subpath', runLegacySubpath],
   ['capability-packs', runCapabilityPacks],
   ['authorization-surface', runAuthorizationSurface],
   ['hang-feedback', runHangFeedback],

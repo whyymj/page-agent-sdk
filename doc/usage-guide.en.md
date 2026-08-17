@@ -94,6 +94,17 @@ import { createChatSdk } from 'page-agent-sdk/headless'
 
 > An sdk created via the headless entry, when `ui:false` is not set (default `'default'`), will `console.warn` on `mount()` about degrading to headless (no DOM rendered). Explicit `ui:false` is the normal headless mode (no warn). If you need the built-in ChatDialog, use the main `page-agent-sdk`.
 
+**🧓 legacy subpath (webpack ≤4 hosts)**: `page-agent-sdk/legacy` is an **es2017 + fully-bundled** artifact (`dist/page-agent-sdk.legacy.js`, ~2.9MB, lazy-loaded via `await import()` so it never enters your first-screen bundle) for hosts on webpack 4 / vue-cli 2-3 era toolchains — old parsers (acorn 6) fail on the main bundle's `?.`/`??` syntax, and the peerDeps (zod/@langchain) are all modern ESM, so a plain `import 'page-agent-sdk'` doesn't work there. The legacy channel:
+
+```js
+// webpack4 host: dynamic import (auto-split into a standalone lazy chunk; vue/zod/@langchain all inlined — zero transpileDependencies, zero peer installs)
+const { createChatSdk, z, defineTool } = await import('page-agent-sdk/legacy')
+// CSS resolves via the package-root physical path (webpack4's enhanced-resolve predates the exports map)
+import 'page-agent-sdk/style.css'
+```
+
+Three-channel decision: **modern bundler (Vite/webpack5+) → main ESM** / **webpack≤4 → legacy dynamic import** / **no build step (plain html) → IIFE `<script>`** (artifact table in the README). The SDK's built-in Vue 3 runs as an isolated app instance (fully bundled) — it never enters the host's module graph, so it coexists fine with a Vue 2 host.
+
 ## 3. Quick start (3 min)
 
 Minimal example — let the Agent read/write `window.app`:

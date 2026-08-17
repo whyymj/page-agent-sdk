@@ -534,7 +534,7 @@ function switchTo(i: number) {
 
 ```bash
 npm test            # 2428 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 753 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm run test:e2e    # 764 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test
@@ -590,6 +590,7 @@ The package ships three builds — pick by integration scenario:
 | UMD | `dist/page-agent-sdk.umd.cjs` | `require()` in Node/legacy bundlers | ~560 KB |
 | IIFE (all-inlined, single file) | `dist/page-agent-sdk.iife.js` | `<script src>` CDN direct include, zero config | ~1.4 MB |
 | **headless ESM** (no UI layer) | `dist/page-agent-sdk.headless.js` | `page-agent-sdk/headless` — pure core for `ui:false` custom UI | **~325 KB** |
+| **legacy ESM** (es2017, all-inlined) | `dist/page-agent-sdk.legacy.js` | `page-agent-sdk/legacy` — **webpack ≤4 / vue-cli 2-3 hosts**: `await import('page-agent-sdk/legacy')` lazy chunk, zero transpile/peers | **~2.9 MB** |
 
 ### Import only what you need (subpath exports)
 
