@@ -229,7 +229,8 @@ export function applyPatchesToBind(args: {
   snapshotLabel?: string
   /** dryRun:预检走完整校验链但不落盘/不入快照/不 applyLive,返回 clone 供预览 */
   dryRun?: boolean
-  /** B __pgId 补齐回调(code-as-data-asset):成功写入后调,before = 写前深快照(按位置回填原 __pgId 用);与 commitSetToBind 同模式 */
+  /** B __pgId 补齐回调(code-as-data-asset):成功写入后调,before = 写前深快照(按位置回填原 __pgId 用);与 commitSetToBind 同模式。
+   *  ⚠️ before 为只读契约:codeAsset 模式下 applyPatchesToBind 将同一对象复用为快照栈条目(别名共享),mutate before 会污染快照 */
   internalAfterWrite?: (bind: any, before: any) => void
   /** 受保护资源强制层;undefined 或空 → no-op。在 patch 应用后、schema 校验前调用 */
   protectedCtx?: ProtectedCtx
@@ -278,8 +279,10 @@ export function applyPatchesToBind(args: {
   }
   if (dryRun) return { ok: true, applied, clone }
   // pushSnapshot(内联,与 commitSetToBind 一致:记录改前 bindRef)+ 写回 bind + markDataDirty
+  // write-path-cost-reduction B 段:codeAsset 模式(beforeBind 已深拷贝改前态)直接复用为快照值,省一次全量深拷贝;
+  // 此刻 bindRef 仍是改前态(写回在 push 之后),两者等价。快照条目按不可变值对待(restore 消费方防御性深拷贝)。
   const id = snapshots.length ? snapshots[snapshots.length - 1].id + 1 : 1
-  snapshots.push({ id, ts: Date.now(), op: 'edit', value: deepClone(bindRef), ...(snapshotLabel ? { label: snapshotLabel } : {}) })
+  snapshots.push({ id, ts: Date.now(), op: 'edit', value: beforeBind ?? deepClone(bindRef), ...(snapshotLabel ? { label: snapshotLabel } : {}) })
   while (snapshots.length > maxSnapshots) snapshots.shift()
   // fix-write-safety-bypass(P0-1):写 live 从 res.data(schema 解析值,已 strip 未声明键 / 值内嵌 __proto__ own 键)整体写回,
   // 与 commitSetToBind 单一真相源。旧实现 `for (a) applyPatchToLive(bindRef, a.op, a.jp, a.value)` 用原始 a.value,
@@ -472,6 +475,9 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     ((config as { configurable?: Record<string, unknown> } | undefined)?.configurable?.__pgDataScope as string | undefined) ?? activeScope
   const getBaseline = (scope?: string): string | undefined => baselines.get(scope ?? activeScope)
   const setBaseline = (h: string | undefined, scope?: string): void => { const s = scope ?? activeScope; if (h === undefined) baselines.delete(s); else baselines.set(s, h) }
+  // write-path-cost-reduction A 段:写成功后单次计算新基线并返回 —— 结果消息的「新 hash」复用返回值,
+  // 勿在同调用内二次 hashValue(1MB bind 全量 hash 实测 ~10ms,同值双算纯浪费;bench 见 change design §5)
+  const commitBaseline = (scope?: string): string => { const h = hashValue(bindRef); setBaseline(h, scope); return h }
   const autoLock = opts.autoLock !== false
   // 大文本字段摘要(code-as-data-asset):主 scope read 返回时,数组元素里的标记字段(如 code)摘要为 <field Nkb>,
   // 防代码正文灌主 agent 上下文。specs 由 createChatSdk 装配期从 htmlSubagent writablePaths 推断填充。
@@ -539,6 +545,10 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     return id
   }
 
+  // ⚠️ 不变量(write-path-cost-reduction C 段固化):下方 curHash = hashValue(bindRef) 必须每次实时计算,
+  // 禁止任何跨调用缓存(脏标记/版本号/memo 均否)—— 人工/宿主直改 reactive bind 不经任何 SDK 写路径,
+  // SDK 侧脏标记感知不到(M4 真实场景:委派在途人工直改 code);缓存 hash 陈旧 → 比对陈旧对陈旧 →
+  // 人工修改被静默覆盖(keep_external 保护全线失效)。性能收敛只做同调用消重(commitBaseline),不做跨调用缓存。
   async function handleConflict(
     op: 'set' | 'edit' | 'delete',
     expectedHash: string | undefined,
@@ -668,8 +678,8 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (!r.ok) return r.error
       const a = r.applied[0]
       audit({ op: 'edit', detail: `${a.op}${jp ? '@' + jp : ''}`, value: a.value, timestamp: Date.now() })
-      setBaseline(hashValue(bindRef), scope)
-      return `已 edit 主数据(${a.op}${jp ? ' @ ' + jp : ''})。当前值:${safeStringify(bindRef, 600)} (新 hash=${hashValue(bindRef)})`
+      const h = commitBaseline(scope)
+      return `已 edit 主数据(${a.op}${jp ? ' @ ' + jp : ''})。当前值:${safeStringify(bindRef, 600)} (新 hash=${h})`
     },
     {
       name: 'edit_data',
@@ -1116,9 +1126,9 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         if (dryRun) return `dryRun(edit): ${r.applied.length} 个 patch 预检通过(schema 校验 OK)。预览结果:${safeStringify(r.clone, 600)}。未实际写入、未入快照。`
         audit({ op: 'edit', detail: `${r.applied.length} 个 patch${r.applied.length > 1 ? '(批量)' : ''}`, value: r.applied.map((a) => `${a.op}@${a.jp}`), timestamp: Date.now() })
         // B __pgId 补齐已由 internalAfterWrite 在 applyPatchesToBind 成功路径处理
-        setBaseline(hashValue(bindRef), scope)
+        const h = commitBaseline(scope)
         redactPgInPlace(r.clone)
-        return `已 write(edit) 主数据(${r.applied.length} 个 patch)。当前值:${safeStringify(r.clone, 600)} (新 hash=${hashValue(bindRef)})`
+        return `已 write(edit) 主数据(${r.applied.length} 个 patch)。当前值:${safeStringify(r.clone, 600)} (新 hash=${h})`
       }
 
       // set 整体(commitSetToBind 纯函数:校验+快照+merge+audit,与 set_data/draft_commit 共用)

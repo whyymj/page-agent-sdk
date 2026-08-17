@@ -116,4 +116,32 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(typeof byName2['c'] === 'string' && byName2['c'].startsWith('c_'),
       '✓ B2 内容改动的元素:位置兜底或新生成(有合法 __pgId 即可,旧 id c_c 允许漂移)')
   }
+
+  // ===== write-path-cost-reduction B 段:beforeBind 复用为快照条目(3→2 深拷贝)后行为零变化 =====
+  {
+    const bind: any = { title: 's', components: [
+      { name: 'beer', code: '<p>v1</p>', __pgId: 'c_beer' },
+      { name: 'mug', code: '<p>keep</p>', __pgId: 'c_mug' },
+    ] }
+    const tools = makeOps(bind)
+    const t = byName(tools)
+    const before = bind.components[0].code
+    const r = await invoke(t['write'], { patch: { op: 'set', jsonPath: 'components.0.code', value: '<p>v2</p>' } })
+    assert(/已 write/.test(r) && bind.components[0].code === '<p>v2</p>', '✓ codeAsset 写生效(B 段前置)')
+    assert(bind.components[0].__pgId === 'c_beer', '✓ __pgId 经 beforeBind 回填保留(快照共享不破坏回填链)')
+    // 快照条目 === 改前完整态:restore_data 回退后 v1 复现 + __pgId 不丢(restore 防御性深拷贝消费共享快照)
+    const rr = await invoke(t['restore_data'], { id: 1 })
+    assert(/已回退/.test(rr) && bind.components[0].code === before, '✓ restore_data 回退到改前完整态(beforeBind 复用为快照值正确)')
+    assert(bind.components[0].__pgId === 'c_beer' && bind.components[1].code === '<p>keep</p>', '✓ 回退后 __pgId 与未改组件不受快照共享影响')
+    // 非 codeAsset 模式对照:beforeBind=null → 快照自拷贝,行为同上
+    const plainBind: any = { title: 's', components: [{ name: 'a', code: 'x' }] }
+    const plain = createDataOps({
+      schema: z.object({ title: z.string(), components: z.array(z.object({ name: z.string(), code: z.string() })) }),
+      bind: plainBind, description: '测试',
+    })
+    const pt = byName(plain)
+    await invoke(pt['write'], { patch: { op: 'set', jsonPath: 'components.0.code', value: 'y' } })
+    await invoke(pt['restore_data'], { id: 1 })
+    assert(plainBind.components[0].code === 'x', '✓ 非 codeAsset 模式快照行为零变化(自拷贝兜底)')
+  }
 }

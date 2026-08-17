@@ -169,4 +169,30 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(t['set_data'], { value: { obj: { name: 'X', age: 9 }, arr: ['m'] } })
     assert(/已设置/.test(r) && appObj.obj.name === 'X' && appObj.arr.length === 1, 'set_data 整体直传 object 写入成功')
   }
+
+  // write-path-cost-reduction A 段:commitBaseline 单算复用 —— 消息「新 hash」与真实当前态一致(防基线/消息漂移)
+  {
+    const pageObj: any = { title: 'h0', count: 1 }
+    const tools = createDataOps({
+      schema: z.object({ title: z.string(), count: z.number().int().min(0) }),
+      bind: pageObj, description: 'p',
+    })
+    const t = byName(tools)
+    const r1 = await invoke(t['write'], { value: { title: 'h1', count: 2 }, autoLock: true })
+    const m1 = /新 hash=(\w+)/.exec(r1)
+    assert(!!m1, '✓ write(set) 返回含「新 hash」')
+    // 消息 hash 直接作 expectedHash 手动写 → 必须成功(消息 hash === 当前真实态 hash,单算无漂移)
+    const r2 = await invoke(t['write'], { patch: { op: 'set', jsonPath: 'count', value: '3' }, expectedHash: m1![1] })
+    assert(/已 write/.test(r2) && pageObj.count === 3, '✓ write 消息新 hash 可直接作 expectedHash 通过(commitBaseline 单算无漂移)')
+    // edit_data 同口径
+    const r3 = await invoke(t['edit_data'], { op: 'set', jsonPath: 'count', value: '4' })
+    const m2 = /新 hash=(\w+)/.exec(r3)
+    assert(!!m2, '✓ edit_data 返回含「新 hash」')
+    const r4 = await invoke(t['write'], { patch: { op: 'set', jsonPath: 'count', value: '5' }, expectedHash: m2![1] })
+    assert(/已 write/.test(r4) && pageObj.count === 5, '✓ edit_data 消息新 hash 同样无漂移(同辅助路径)')
+    // 反向锁:外部改后用旧消息 hash → 必冲突(实时性不变量:冲突检测 hash 恒新鲜)
+    pageObj.count = 99
+    const r5 = await invoke(t['write'], { patch: { op: 'set', jsonPath: 'count', value: '6' }, expectedHash: m2![1] })
+    assert(/VERSION_CONFLICT/.test(r5), '✓ 外部改后旧 hash 必冲突(hash 实时性不变量,禁跨调用缓存)')
+  }
 }

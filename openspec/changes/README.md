@@ -48,7 +48,11 @@
 
 ## 进行中
 
-_(无 —— parallel-subagent-delegation 已于 2026-08-17 Q5e 收口归档:人工并发 M4 4/4 全过并驱动 keep_external 提示回流 + codeField 恒守卫两修复;墙钟量化断言因 LLM 代理黑洞两杀未跑通,并发存在性经采样证实,详见该 change tasks.md Q5e 注记)_
+| change | 立项 | 定位 | 状态 |
+|---|---|---|---|
+| [`2026-08-17-write-path-cost-reduction/`](./2026-08-17-write-path-cost-reduction/) | 2026-08-17 | 写路径 O(N) 成本收敛(audit A3 立项):同调用 hash 双算消除 + codeAsset 改前态单拷贝 + **冲突检查 hash 实时性不变量固化**(跨调用缓存因人工直改盲区显式否决,M4 实证)+ bench 留证;零行为变化 patch 级 | proposal/design/specs/tasks 齐备,待实施(`先 bench 基线,1MB 单写 <5ms 则留痕退出`) |
+
+_(parallel-subagent-delegation 已于 2026-08-17 Q5e 收口归档:人工并发 M4 4/4 全过并驱动 keep_external 提示回流 + codeField 恒守卫两修复;墙钟量化断言因 LLM 代理黑洞两杀未跑通,后经直连鉴别定性为中转站并发流单请求死亡,已随 stream-max-duration 3.25.0 兜底,详见该 change tasks.md Q5e 注记 + deferred.md 对应条目)_
 
 ---
 

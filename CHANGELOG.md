@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+## [3.25.1] - 2026-08-17
+
+### Changed(write-path-cost-reduction:写路径 O(N) 成本收敛,audit A3)
+- **同调用 hash 双算消除**:写成功后的新基线与结果消息「新 hash」复用同一次 `hashValue` 计算(`commitBaseline` 辅助;write edit 意图 + edit_data 两改点,write(set) 原已是范本)—— 1MB bind 全量 hash 实测 ~10ms,同值双算纯浪费
+- **codeAsset 改前态单拷贝**:`applyPatchesToBind` 的 `beforeBind`(__pgId 回填用改前深快照)复用为快照栈条目,省一次全量 deepClone;快照条目按不可变值对待(restore 消费方防御性深拷贝既有),`internalAfterWrite` 的 `before` 参数固化只读契约
+- **冲突检查 hash 实时性不变量固化**(P0):`handleConflict` 当前态 hash 禁止任何跨调用缓存(脏标记/版本号/memo 均否)—— 人工直改 reactive bind 不经 SDK 写路径,SDK 侧脏标记感知不到;缓存 = keep_external 保护失明 → 人工修改被静默覆盖(M4 实证场景)。注释 + change spec 双固化
+- **bench 留证**:`tests/perf/write-path-bench.mjs`(50KB/300KB/1MB × codeAsset/非 codeAsset,不进 CI);实测 1MB 单 patch 写 median 30.1→26.5ms(非 codeAsset,**-12%**)/ 34.4→27.7ms(codeAsset,**-19%**),290KB 档 -11%/-22%
+- 零行为变化:乐观锁 N1 契约/快照 restore/__pgId 回填/消息语义全部锁定(selftest +10:消息 hash 无漂移 ×2 路径 + 外部改旧 hash 必冲突 + codeAsset 快照共享 restore 正确性 + 非 codeAsset 零变化)
+
 ## [3.25.0] - 2026-08-17
 
 ### Added(stream-max-duration:空转帧黑洞兜底,2026-08-17 直连鉴别实验驱动)

@@ -208,7 +208,7 @@ SDK 定位是**框架无关的轻量页面 JSON 操作 Agent**(自研 Deep Agent
 3. ⏸ eval 子树(jsonPath 模式)缺 isUnsafePath ——【低】eval_script({jsonPath:'__proto__…'});加固项(与 P3「read jsonPaths 缺 isUnsafePath」同型)。
 4. ⏸ interceptors 仅守高层 read/write,advanced 底层全绕过 ——【中】需集成方依赖 interceptors 做脱敏/审计 + toolMode:'advanced' → set_data/edit_data/delete_data 直调不过拦截器。方向:底层也接入,或文档明示「advanced 底层工具绕过 interceptors」让集成方知情。
 5. ⏸ eval transform fork 写链未共用 commitSetToBind ——【低】读码级:eval transform 整体替换回写链与 write(set) 在个别校验项口径分叉(commitSetToBind 抽离时的遗漏分支)。
-6. ⏸ **hashValue 双算冗余 + A3 惰性 hash 未做**(H3 证实;审计 A 专项评「推后清单里最值得做的一项」)——【必然】每次 autoLock 写 3-4 次全量 hash + deepClone×2,几百 KB bind 单次小 patch ≈ 6-7 次 O(N)。方向:脏标记惰性 hash 或轮内基线缓存。
+6. ✅ **hashValue 双算冗余 + A3 惰性 hash 未做**(H3 证实;审计 A 专项评「推后清单里最值得做的一项」)——【必然】每次 autoLock 写 3-4 次全量 hash + deepClone×2,几百 KB bind 单次小 patch ≈ 6-7 次 O(N)。**已修(`write-path-cost-reduction`,2026-08-17 实施待发布)**:同调用 hash 单算(commitBaseline)+ codeAsset 改前态单拷贝(beforeBind 复用为快照条目);bench 实测 1MB 单写 median -12%/-19%、290KB -11%/-22%;「脏标记惰性 hash/轮内缓存」方向**显式否决并固化为不变量**(人工直改 reactive bind 不经 SDK 写路径,脏标记失明 → keep_external 保护失效,M4 实证)—— 注释 + change spec 双固化。
 7. ⏸ checkpoint restore 不重置 dataOps 乐观锁基线 → 误 VERSION_CONFLICT ——【中-低】checkpoint:true + restore_last_checkpoint + 随后 autoLock 写:基线仍是 restore 前 read 的 hash,与 restore 后 bind 不匹配 → 误冲突(2.40 per-scope 基线不清此路径;仅 setData/替换 bind 清)。复现:read → write → restore → write(autoLock)。
 
 ### 上下文(7 项)

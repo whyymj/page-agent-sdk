@@ -24,6 +24,8 @@
 
 ## 进行中的 change
 
+**`write-path-cost-reduction`(2026-08-17 立项,待实施)**:写路径 O(N) 成本收敛(audit A3/数据写链#6)—— 同调用 hash 双算消除(`commitBaseline` 辅助)+ codeAsset 改前态单拷贝(beforeBind 复用为快照条目,3→2 clone)+ **冲突检查 hash 实时性不变量固化**(跨调用缓存/脏标记因人工直改 reactive bind 盲区显式否决,缓存 = keep_external 失明,M4 实证)+ bench 留证(先基线,收益 <10% 留痕退出)。零行为变化 patch 级。见 [`changes/2026-08-17-write-path-cost-reduction/`](./changes/2026-08-17-write-path-cost-reduction/)。
+
 > 2026-08-08 状态(评审核实后更新):此前 12 个活跃 change 中 **7 个已陆续归档/发布** —— `fix-write-safety-bypass`(2.23)/ `tool-name-collision`(2.23)/ `context-inspector`(2.25)/ `simplify-toolset`(2.25)/ `skill-external-scripts`(2.26)/ `session-history-management`(2.26)/ `arch-review-p1-fixes`(2.24.1 部分)。剩 6 个活跃 + 本次新增 1 个。
 
 **2026-08-08 发布 2.27.0**:`recall-and-trim-llm`(P1 召回纳入 steps + trim LLM 增强)+ `context-persist-resilience`(mission/workingMemory 跨刷新持久化 + trim 收口:`context_trimmed` 归档事件带 vfs 大结果 + vfs 孤儿可达性 GC)实施完成并发布;`context-history-resilience` umbrella 归档(P1+A 收口;B 类决策 #2 维持「对话文本」模型;P2 其余 deferred)。**活跃 5 个均 deferred/暂缓**(等痛点驱动,见 [`changes/README.md`](./changes/README.md) + [`deferred.md`](./deferred.md))。
