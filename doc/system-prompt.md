@@ -27,7 +27,7 @@ SystemMessage = buildSystemPrompt()   ← createAgent.ts:196,每轮 toLC/replace
    ├─ B0 dataHint    ## 可操作数据(字段以 read 返回值为准)← buildDataPrompt(liveData())
    │                 data.description + schema 字段 .describe() 经 extractSchemaHint 自动提取
    │                 每轮从 liveData() 取最新(setData 后自动同步);配了 data 才注入
-   ├─ B1 usageHints   工具用法提示(按 toolMode:simple 主推 read/write / advanced 底层 get·set·edit + 查询·eval)
+   ├─ B1 usageHints   工具用法提示(按能力开关自适应;数据工具恒全暴露 14 工具,无档位)
    ├─ B2 todos        当前任务清单(有 todos 才注入)
    ├─ B3 skills       可 load_skill 加载的 skill 索引
    ├─ B4 memory       持久指令 Memory(配了 memory 才注入)
@@ -79,7 +79,7 @@ flowchart TD
 
   N --> O["遍历中间件栈,按装载序取 augmentPrompt(state)"]
   O --> P0["B0 dataHint<br/>## 可操作数据<br/>buildDataPrompt(liveData())<br/>(每轮从最新 data 取,setData 同步)"]
-  O --> P1["B1 usageHints<br/>工具用法(按 toolMode)"]
+  O --> P1["B1 usageHints<br/>工具用法(按能力开关)"]
   O --> P2["B2 todos<br/>当前清单(有则注入)"]
   O --> P3["B3 skills<br/>可加载 skill 索引"]
   O --> P4["B4 memory<br/>持久指令(有则注入)"]

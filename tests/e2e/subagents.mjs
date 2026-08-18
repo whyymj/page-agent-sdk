@@ -55,7 +55,6 @@ export async function run() {
         bind: { components: [{ type: 'nav', props: { title: '导航' } }] },
         description: '页面',
       },
-      toolMode: 'advanced',
       subagents: [{ id: 'worker', description: '工作者' }],
     })
     await sdk.mount()

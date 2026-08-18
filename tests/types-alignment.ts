@@ -33,7 +33,7 @@ export const _optsSrcSubsetDts: Subset<Keys<SrcOptions>, Keys<DtsOptions>> = tru
 export const _sdkDtsSubsetSrc: Subset<Keys<DtsChatSdk>, Keys<SrcChatSdk>> = true
 export const _sdkSrcSubsetDts: Subset<Keys<SrcChatSdk>, Keys<DtsChatSdk>> = true
 
-// 4. send options key 集合对齐(P1-24:d.ts 曾漏 interceptors/maxAutoRetries)
+// 4. send options key 集合对齐(P1-24:d.ts 曾漏 maxAutoRetries)
 type DtsSendOpts = Parameters<DtsChatSdk['send']>[1]
 type SrcSendOpts = Parameters<SrcChatSdk['send']>[1]
 export const _sendDtsSubsetSrc: Subset<Keys<DtsSendOpts>, Keys<SrcSendOpts>> = true

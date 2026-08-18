@@ -33,15 +33,8 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert(bigHint.includes('schema_data'), '✓ 分层含尾部提示(默认 advanced → 深层约束查 schema_data)')
   assert(bigHint.includes('field_0'), '✓ 分层概览含顶层 key(field_0)')
 
-  // 分层深层指引按 toolMode 分支(提示词与工具面一致性,editor_fangzhou schema_data 误调驱动):
-  // simple/minimal 未装载 schema_data → 改教 read 子路径,勿教工具池不存在的工具
-  const bigSimple = extractSchemaHint(big, { toolMode: 'simple' })
-  assert(bigSimple.includes('顶层概览') && !bigSimple.includes('schema_data'), '✓ 分层(toolMode simple)→ 不教 schema_data(工具池未装载)')
-  assert(bigSimple.includes('read({jsonPath})'), '✓ 分层(toolMode simple)→ 深层指引改教 read 子路径')
-  assert(!extractSchemaHint(big, { toolMode: 'minimal' }).includes('schema_data'), '✓ 分层(toolMode minimal)→ 不教 schema_data')
-  assert(extractSchemaHint(big, { toolMode: 'advanced' }).includes('schema_data'), '✓ 分层(toolMode advanced 显式)→ 保留 schema_data 指引')
-  // 缓存 optsKey 含 toolMode:同 schema 不同 toolMode 不串缓存(simple 后再取默认仍各自正确)
-  assert(extractSchemaHint(big, { toolMode: 'simple' }).includes('read({jsonPath}') && extractSchemaHint(big).includes('schema_data'), '✓ 分层缓存按 toolMode 隔离(切换模式不串条目)')
+  // 缓存 optsKey 按 maxKeys/maxChars 隔离:同 schema 不同阈值不串缓存(分层后再取大阈值全量仍各自正确)
+  assert(extractSchemaHint(big, { maxKeys: 9999, maxChars: 999999 }).includes('minLen=') && extractSchemaHint(big).includes('顶层概览'), '✓ 分层缓存按阈值配置隔离(切换 opts 不串条目)')
 
   // record 键集开放显式标注(机制化防拒写:裸 record 无字段清单,LLM 闭世界假设易误判
   // 「键不在 schema 里 → 不能写」而拒绝合法写入,如 editor_fangzhou style.padding 事故)

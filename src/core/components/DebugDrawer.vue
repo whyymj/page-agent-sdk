@@ -122,8 +122,17 @@ const counts = computed(() => {
  * 展示条目(logs tab):tool_call ↔ tool_result 配对(同名 FIFO)+ llm_request 相对上一次请求的消息基线。
  * - 配对:result 到达时与最近的未配对同名 call 合并为一张卡(args+result+耗时一屏看完一步调用);未配对 call = 在途
  * - prevMsgCount:按全量 logs 序(不受 filter 影响)记录上一个 llm_request 的消息数 →「只看新增」差分视图
+ * - uid:按日志对象身份分配的展示 id(WeakMap 稳定)—— 展开/差分等 UI 状态的 key;不用数组下标,
+ *   filter 切换/分组重排不串状态;配对卡沿用 call 的 uid(卡片视觉位置不变,已展开状态不丢)
  */
-interface DisplayEntry { log: DebugLog; pairCall?: DebugLog; prevMsgCount?: number }
+interface DisplayEntry { log: DebugLog; pairCall?: DebugLog; prevMsgCount?: number; uid: number }
+let uidSeq = 0
+const uidMap = new WeakMap<DebugLog, number>()
+function uidOf(log: DebugLog): number {
+  let id = uidMap.get(log)
+  if (id == null) { id = ++uidSeq; uidMap.set(log, id) }
+  return id
+}
 const displayLogs = computed<DisplayEntry[]>(() => {
   const src = filteredLogs.value
   const doPair = filter.value === 'all' || filter.value === 'tool_call' || filter.value === 'tool_result'
@@ -138,25 +147,103 @@ const displayLogs = computed<DisplayEntry[]>(() => {
   const out: DisplayEntry[] = []
   const pending = new Map<string, DebugLog[]>()
   for (const log of src) {
-    if (log.type === 'llm_request') { out.push({ log, prevMsgCount: prevMap.get(log) }); continue }
-    if (!doPair || (log.type !== 'tool_call' && log.type !== 'tool_result')) { out.push({ log }); continue }
+    if (log.type === 'llm_request') { out.push({ log, prevMsgCount: prevMap.get(log), uid: uidOf(log) }); continue }
+    if (!doPair || (log.type !== 'tool_call' && log.type !== 'tool_result')) { out.push({ log, uid: uidOf(log) }); continue }
     if (log.type === 'tool_call') {
       const name = String(log.data?.name ?? '')
       const q = pending.get(name) ?? []
       q.push(log); pending.set(name, q)
-      out.push({ log })
+      out.push({ log, uid: uidOf(log) })
     } else {
       const call = pending.get(String(log.data?.name ?? ''))?.shift()
       if (call) {
         const i = out.findIndex((e) => e.log === call)
-        const entry: DisplayEntry = { log, pairCall: call }
+        const entry: DisplayEntry = { log, pairCall: call, uid: uidOf(call) }
         if (i >= 0) out[i] = entry
         else out.push(entry)
-      } else out.push({ log })
+      } else out.push({ log, uid: uidOf(log) })
     }
   }
   return out
 })
+
+/**
+ * 轮次分组(logs tab 每轮一个可折叠 node):
+ * - 运行边界 = 主 agent 的 context 日志(每次 run 开头一条)→ epoch 递增,防跨 send 的同轮号合并
+ * - 主 agent 日志按自身 round 归组;wrap_up(兜底收口)单独成组;无 round 的日志归「当前轮」
+ *   (首轮前 → 本 epoch 的准备组;轮内 middleware/error 等 → 所在轮,「每一轮全部信息集中一个 node」)
+ * - 子 agent 转发日志(带 source)归属主 agent 当时所在轮(子运行发生在主某轮的工具调用内)
+ */
+interface LogGroupKey { epoch: number; kind: 'pre' | 'round' | 'wrap_up'; round?: number }
+const logGroupKeys = computed(() => {
+  const map = new WeakMap<DebugLog, LogGroupKey>()
+  let epoch = 0
+  let curRound = 0
+  for (const lg of logs.value) {
+    if (!lg.source && lg.type === 'context') { epoch++; curRound = 0; map.set(lg, { epoch, kind: 'pre' }); continue }
+    const r = (lg.data as any)?.round
+    if (!lg.source && typeof r === 'number' && r > 0) { curRound = r; map.set(lg, { epoch, kind: 'round', round: r }); continue }
+    if (!lg.source && r === 'wrap_up') { map.set(lg, { epoch, kind: 'wrap_up' }); continue }
+    map.set(lg, curRound > 0 ? { epoch, kind: 'round', round: curRound } : { epoch, kind: 'pre' })
+  }
+  return map
+})
+
+interface LogGroup {
+  key: string
+  kind: 'pre' | 'round' | 'wrap_up'
+  round?: number
+  entries: DisplayEntry[]
+  firstTs: number
+  lastTs: number
+  toolCount: number
+  tokens: number | null
+  errorCount: number
+}
+const logGroups = computed<LogGroup[]>(() => {
+  const keys = logGroupKeys.value
+  const byKey = new Map<string, LogGroup>()
+  const order: LogGroup[] = []
+  for (const entry of displayLogs.value) {
+    const k = keys.get(entry.log) ?? { epoch: 0, kind: 'pre' as const }
+    const gk = `${k.epoch}:${k.kind}:${k.round ?? ''}`
+    let g = byKey.get(gk)
+    if (!g) {
+      g = { key: gk, kind: k.kind, round: k.round, entries: [], firstTs: entry.log.timestamp, lastTs: entry.log.timestamp, toolCount: 0, tokens: null, errorCount: 0 }
+      byKey.set(gk, g); order.push(g)
+    }
+    g.entries.push(entry)
+    if (entry.log.timestamp < g.firstTs) g.firstTs = entry.log.timestamp
+    if (entry.log.timestamp > g.lastTs) g.lastTs = entry.log.timestamp
+    if (entry.log.type === 'tool_call') g.toolCount++
+    if (entry.log.type === 'error' || (entry.log.type === 'tool_result' && entry.log.data?.status === 'error')) g.errorCount++
+    const usage = entry.log.type === 'llm_response' ? entry.log.data?.usage : undefined
+    if (usage?.total_tokens != null) g.tokens = (g.tokens ?? 0) + usage.total_tokens
+  }
+  return order
+})
+
+/** 分组展开态:默认只展开最新一组(在途轮天然展开;新轮到来旧轮自动收起);用户显式切换记入 forceOpen/forceClosed 覆盖默认 */
+const forceOpen = ref<Set<string>>(new Set())
+const forceClosed = ref<Set<string>>(new Set())
+const lastGroupKey = computed(() => logGroups.value.length ? logGroups.value[logGroups.value.length - 1].key : '')
+function isGroupExpanded(key: string): boolean {
+  if (forceOpen.value.has(key)) return true
+  if (forceClosed.value.has(key)) return false
+  return key === lastGroupKey.value
+}
+function toggleGroup(key: string) {
+  const o = new Set(forceOpen.value)
+  const c = new Set(forceClosed.value)
+  if (isGroupExpanded(key)) { o.delete(key); c.add(key) } else { c.delete(key); o.add(key) }
+  forceOpen.value = o
+  forceClosed.value = c
+}
+function groupLabel(g: LogGroup): string {
+  if (g.kind === 'pre') return m.value.debugFlowPrep
+  if (g.kind === 'wrap_up') return m.value.debugLogsWrapUp
+  return `${m.value.debugRoundPrefix}${g.round}${m.value.debugRoundSuffix}`
+}
 
 /** llm_request 消息视图(只看新增=切掉与上一次请求重复的前缀;base=切掉数,供消息 key/折叠 key 锚定原始下标) */
 function reqMsgView(log: DebugLog, prev: number | undefined, only: boolean): { list: any[]; base: number } {
@@ -200,7 +287,12 @@ function roleOf(t: string) {
 }
 
 function close() { emit('update:visible', false) }
-function clearLogs() { rawExpanded.value = new Set(); emit('clear') }
+function clearLogs() {
+  rawExpanded.value = new Set()
+  forceOpen.value = new Set()
+  forceClosed.value = new Set()
+  emit('clear')
+}
 
 const tab = ref<'logs' | 'flow' | 'trace' | 'context' | 'subagent' | 'info'>('logs')
 const agentInfo = ref<AgentInfo | null>(null)
@@ -484,7 +576,19 @@ function flowNodeDetail(lg: DebugLog): string {
               {{ m.debugLogsEmpty }}
             </div>
 
-            <div v-for="({ log, pairCall, prevMsgCount }, idx) in displayLogs" :key="idx" class="log-item">
+            <!-- 轮次分组:每一轮全部信息集中成一个可折叠 node;头部只展示轮次+摘要,点击展开细节。
+                 v-show 保留折叠轮 DOM(生成期实时刷新/外部按 DOM 计数的断言不受影响) -->
+            <div v-for="g in logGroups" :key="g.key" class="log-group">
+              <div class="log-group-head" :class="{ expanded: isGroupExpanded(g.key) }" @click="toggleGroup(g.key)">
+                <span class="log-group-arrow" :class="{ open: isGroupExpanded(g.key) }">▶</span>
+                <span class="log-group-title">{{ groupLabel(g) }}</span>
+                <span class="log-group-meta">{{ formatTime(g.firstTs) }}<template v-if="g.lastTs > g.firstTs"> ~ {{ formatTime(g.lastTs) }}</template> · {{ formatDuration(g.lastTs - g.firstTs) }}</span>
+                <span v-if="g.toolCount" class="lg-badge">🔧 {{ g.toolCount }}</span>
+                <span v-if="g.tokens != null" class="lg-badge">Σ {{ g.tokens }} tok</span>
+                <span v-if="g.errorCount" class="lg-badge err">❌ {{ g.errorCount }}</span>
+              </div>
+              <div v-show="isGroupExpanded(g.key)" class="log-group-body">
+            <div v-for="{ log, pairCall, prevMsgCount, uid } in g.entries" :key="uid" class="log-item">
               <div class="log-head">
                 <span class="log-type" :style="{ background: typeMeta[log.type].color }">
                   {{ typeMeta[log.type].icon }} {{ typeMeta[log.type].label }}
@@ -522,26 +626,26 @@ function flowNodeDetail(lg: DebugLog): string {
                     <span v-if="log.data.model" class="badge muted">{{ log.data.model }}</span>
                     <span class="badge muted">{{ (log.data.messages || []).length }}{{ m.debugMsgCountSuffix }}<template v-if="prevMsgCount != null && prevMsgCount < (log.data.messages || []).length">(+{{ (log.data.messages || []).length - prevMsgCount }})</template></span>
                     <span v-if="log.data.tools?.length" class="badge muted">{{ log.data.tools.length }}{{ m.debugToolCountSuffix }}</span>
-                    <button v-if="prevMsgCount != null && prevMsgCount > 0" class="view-toggle only-new-btn" @click="toggleOnlyNew(idx)">
-                      {{ onlyNewSet.has(idx) ? m.debugShowAll : m.debugOnlyNew }}
+                    <button v-if="prevMsgCount != null && prevMsgCount > 0" class="view-toggle only-new-btn" @click="toggleOnlyNew(uid)">
+                      {{ onlyNewSet.has(uid) ? m.debugShowAll : m.debugOnlyNew }}
                     </button>
-                    <button class="view-toggle copy-btn" :title="m.copy" @click="copyJson(formatJson(log.data.messages), 'req' + idx)">
-                      {{ copiedKey === 'req' + idx ? '✓' : '📋' }}
+                    <button class="view-toggle copy-btn" :title="m.copy" @click="copyJson(formatJson(log.data.messages), 'req' + uid)">
+                      {{ copiedKey === 'req' + uid ? '✓' : '📋' }}
                     </button>
-                    <button class="view-toggle" @click="toggleBody(idx)">
-                      {{ bodyExpanded.has(idx) ? m.debugCardView : m.debugRequestBody }}
+                    <button class="view-toggle" @click="toggleBody(uid)">
+                      {{ bodyExpanded.has(uid) ? m.debugCardView : m.debugRequestBody }}
                     </button>
                   </div>
-                  <template v-if="!bodyExpanded.has(idx)">
-                    <template v-for="mv in [reqMsgView(log, prevMsgCount, onlyNewSet.has(idx))]" :key="mv.base">
+                  <template v-if="!bodyExpanded.has(uid)">
+                    <template v-for="mv in [reqMsgView(log, prevMsgCount, onlyNewSet.has(uid))]" :key="mv.base">
                       <div class="msg-list">
                         <div
                           v-for="(msg, mi) in mv.list"
                           :key="mi"
                           class="msg-row"
-                          :class="{ clamped: !msgExpanded.has(idx + ':' + (mv.base + mi)) && (String(msg.content ?? '').length > MSG_COLLAPSE_CHARS) }"
-                          :title="(String(msg.content ?? '').length > MSG_COLLAPSE_CHARS) ? (msgExpanded.has(idx + ':' + (mv.base + mi)) ? m.collapse : m.expand) : undefined"
-                          @click="String(msg.content ?? '').length > MSG_COLLAPSE_CHARS && toggleMsg(idx + ':' + (mv.base + mi))"
+                          :class="{ clamped: !msgExpanded.has(uid + ':' + (mv.base + mi)) && (String(msg.content ?? '').length > MSG_COLLAPSE_CHARS) }"
+                          :title="(String(msg.content ?? '').length > MSG_COLLAPSE_CHARS) ? (msgExpanded.has(uid + ':' + (mv.base + mi)) ? m.collapse : m.expand) : undefined"
+                          @click="String(msg.content ?? '').length > MSG_COLLAPSE_CHARS && toggleMsg(uid + ':' + (mv.base + mi))"
                         >
                           <span class="msg-role" :style="{ background: roleOf(msg.role).color }">{{ roleOf(msg.role).label }}</span>
                           <div class="msg-detail">
@@ -585,8 +689,8 @@ function flowNodeDetail(lg: DebugLog): string {
                     <div class="tc-name">
                       {{ log.data.status === 'error' ? '❌' : '✅' }} {{ log.data.name }}
                       <span v-if="log.data.durationMs != null" class="tc-dur">{{ formatDuration(log.data.durationMs) }}</span>
-                      <button class="view-toggle copy-btn" :title="m.copy" @click="copyJson(String(log.data.result ?? ''), 'res' + idx)">
-                        {{ copiedKey === 'res' + idx ? '✓' : '📋' }}
+                      <button class="view-toggle copy-btn" :title="m.copy" @click="copyJson(String(log.data.result ?? ''), 'res' + uid)">
+                        {{ copiedKey === 'res' + uid ? '✓' : '📋' }}
                       </button>
                     </div>
                     <pre class="tc-args">{{ formatJson(pairCall.data.args) }}</pre>
@@ -602,14 +706,6 @@ function flowNodeDetail(lg: DebugLog): string {
                   </div>
                 </template>
 
-                <!-- 工具结果 -->
-                <template v-else-if="log.type === 'tool_result'">
-                  <div class="tc-card inline">
-                    <div class="tc-name">✅ {{ log.data.name }}{{ m.debugResultSuffix }}</div>
-                    <pre class="tc-args">{{ log.data.result }}</pre>
-                  </div>
-                </template>
-
                 <!-- 错误 -->
                 <template v-else-if="log.type === 'error'">
                   <div class="err-box">{{ log.data.tool ? `[${log.data.tool}] ` : '' }}{{ log.data.error }}</div>
@@ -617,12 +713,14 @@ function flowNodeDetail(lg: DebugLog): string {
               </div>
 
               <div class="log-footer">
-                <button class="raw-toggle" @click="toggleRaw(idx)">
-                  {{ rawExpanded.has(idx) ? m.debugCollapseRawJson : m.debugViewRawJson }}
+                <button class="raw-toggle" @click="toggleRaw(uid)">
+                  {{ rawExpanded.has(uid) ? m.debugCollapseRawJson : m.debugViewRawJson }}
                 </button>
                 <button class="raw-toggle" @click="copyText(formatJson(log.data))">{{ m.copy }}</button>
               </div>
-              <pre v-if="rawExpanded.has(idx)" class="log-raw"><code>{{ formatJson(log.data) }}</code></pre>
+              <pre v-if="rawExpanded.has(uid)" class="log-raw"><code>{{ formatJson(log.data) }}</code></pre>
+            </div>
+              </div>
             </div>
             </template>
 
@@ -875,6 +973,19 @@ function flowNodeDetail(lg: DebugLog): string {
   --os-handle-bg-active: var(--dd-scrollbar-thumb-hover, rgba(0, 0, 0, 0.38));
 }
 .empty { text-align: center; color: var(--dd-faint); font-size: 13px; padding: 40px 20px; }
+/* 轮次分组(logs tab):每一轮一个可折叠 node;默认仅最新组展开(在途轮天然展开,新轮到来旧轮自动收起) */
+.log-group { margin-bottom: 8px; border: 1px solid var(--dd-border); border-radius: 8px; overflow: hidden; background: var(--dd-bg); }
+.log-group-head { display: flex; align-items: center; gap: 6px; padding: 7px 10px; background: var(--dd-surface); cursor: pointer; user-select: none; }
+.log-group-head:hover { background: var(--dd-accent-soft); }
+.log-group-head.expanded { border-bottom: 1px solid var(--dd-border-soft); }
+.log-group-arrow { font-size: 9px; color: var(--dd-faint); transition: transform 0.15s ease; flex-shrink: 0; }
+.log-group-arrow.open { transform: rotate(90deg); }
+.log-group-title { font-size: 12px; font-weight: 600; color: var(--dd-text); white-space: nowrap; flex-shrink: 0; }
+.log-group-meta { font-size: 10px; color: var(--dd-faint); font-family: 'SF Mono', Monaco, Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lg-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; background: var(--dd-border-soft); color: var(--dd-muted); white-space: nowrap; flex-shrink: 0; }
+.lg-badge.err { background: var(--dd-err-bg); color: var(--dd-err-text); font-weight: 600; }
+.log-group-body { padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.log-group-body .log-item { margin-bottom: 0; }
 .log-item { margin-bottom: 10px; border: 1px solid var(--dd-border); border-radius: 8px; overflow: hidden; background: var(--dd-bg); }
 .log-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--dd-surface); }
 .log-type { font-size: 11px; font-weight: 600; color: #fff; padding: 2px 8px; border-radius: 4px; white-space: nowrap; }

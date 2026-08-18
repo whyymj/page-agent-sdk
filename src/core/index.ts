@@ -66,11 +66,11 @@ export type { CheckpointManager, CheckpointMeta, CheckpointDeps } from './harnes
 export { defineSkill } from './harness/skills'
 export type { SkillSpec } from './harness/skills'
 // 数据操作类型(单主对象 + 增量编辑 + 快照)
-export type { DataConfig, DataOpsOptions, DataOpsController, DataAuditEntry, DataSnapshotEntry, ConflictInfo, ConflictResolution, DataInterceptors, ToolMode } from './tools/dataOps'
+export type { DataConfig, DataOpsOptions, DataOpsController, DataAuditEntry, DataSnapshotEntry, ConflictInfo, ConflictResolution } from './tools/dataOps'
 export type { ResourceProtectSpec } from './tools/resources'
 export type { SkillsController } from './harness/skills'
 // 内置工具集(可独立导出 + 手动注入,配合 capabilities.dataOps/fetch 关闭默认自动装配)
-export { createDataOps, filterByToolMode, commitSetToBind } from './tools/dataOps'
+export { createDataOps, commitSetToBind } from './tools/dataOps'
 export { getTraceMetrics } from './utils/traceMetrics'
 export { jpEval, searchJson, runSandboxedScript } from './tools/dataSlotQuery'
 export type { JpNode, SearchHit, SearchMode, EvalResult } from './tools/dataSlotQuery'

@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-2531%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-2502%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -48,7 +48,7 @@
 
 | 约束 | 机制 | 作用 |
 |---|---|---|
-| **范围控制** | schema 校验(`data`)—— 只能改 schema 允许的值;schema 形状自动白名单(顶层 + 子路径按子 schema 递归投影,未声明字段隐藏/拒改/整体 set 转 merge 防误删;`interceptors.write` 补充的不可见字段落地保留) | AI 传非法值 → 拒绝;非声明字段 → `PATH_DENIED` |
+| **范围控制** | schema 校验(`data`)—— 只能改 schema 允许的值;schema 形状自动白名单(顶层 + 子路径按子 schema 递归投影,未声明字段隐藏/拒改/整体 set 转 merge 防误删) | AI 传非法值 → 拒绝;非声明字段 → `PATH_DENIED` |
 | **合法性校验** | zod schema —— `write`/`set`/`edit` 按 schema 校验 | 类型/枚举/结构不合法 → 结构化错误,不写入 |
 | **增量操作** | `write` 的 `patch`/`patches`(批量,原子回滚)或 advanced `edit_data` 按 `jsonPath` 发 patch(set/remove/merge/append) | 避免重传整个大 JSON,精确改局部;一次改多处用 `patches` |
 | **大对象检索** | `read` 支持 `fields`(字段裁剪)+ `depth`(深度截断)减体积;`query_data`(JSONPath)/`search_data`(文本)/`eval_script`(沙箱 JS) | 大 JSON 高效检索 + 局部定位 |
@@ -160,7 +160,7 @@ CDN 零配置：`<script src="https://unpkg.com/page-agent-sdk"></script>` → `
 | 💾 持久化 | IndexedDB 多会话 + 配额淘汰 + 切换 | `storage` |
 | 🤖 无人值守自动化 (2.20+) | 资源预算闸（`tokenBudget`/`timeBudgetMs`）+ 致命错误自动恢复（`maxAutoRetries`：回退 checkpoint + 重试）+ 刷新续跑 + `sdk.batch(tasks)` 批处理 | `capabilities.automation` |
 | 📐 上下文健壮性 (2.30+) | 硬地板 `contextWindow ≥200K`(启动拒绝 <200K 模型如老款 `deepseek`/`gpt-4o`/`glm-4.5`);三道闸(压缩/trim/offload)阈值在 `setLlm` 后跟随实时窗口;遇 `context_length_exceeded` 反应性重试(激进 trim → 重试一次,不裸失败);vfs 大结果引用受保护免 LRU 淘汰 + OOM 1.5× 兜底;系统段预算(25% 窗口,丢弃非 pin 段保 base/mission/workingMemory) | 内置 |
-| 🎯 focus 自动切换 (2.31+) | AI 自动判断任务范围 → `set_focus`(局部任务)/ `clear_focus`(全局/完成);focus 跨刷新/切会话持久化(restore 经 `getSchemaAtPath` 校验 path,失效丢弃);子 agent 继承主焦点(三层收敛;主未聚焦 → 子无 focus 中间件,零回归) | `capabilities.focus` + `toolMode:'advanced'` |
+| 🎯 focus 自动切换 (2.31+) | AI 自动判断任务范围 → `set_focus`(局部任务)/ `clear_focus`(全局/完成);focus 跨刷新/切会话持久化(restore 经 `getSchemaAtPath` 校验 path,失效丢弃);子 agent 继承主焦点(三层收敛;主未聚焦 → 子无 focus 中间件,零回归) | `capabilities.focus` |
 | 🔒 精确值保护 (2.32+) | `data.resources: [{path, mode}]` 保护需精确保存字段:`freeze`(只读,精确值经 `⟦frozen:path⟧` 占位符不入消息流,写撞 FROZEN_FIELD)/ `verbatim`(原样保留,`⟦res:handle⟧`,改值经 `resource_update` 否则 VERBATIM_MISMATCH);写侧强制覆盖 commitSetToBind/applyPatches/eval + 资源工具(`resource_get/update/list/delete`,advanced)+ 跨压缩 pin | `data.resources` + `capabilities.vfs` |
 | 🌍 UI 定制与国际化 (3.17+~3.22+) | 对话框 UI 免 fork 全定制:`dialog.icons` 逐图标覆盖(纯文本或净化后 HTML 片段)+ 内置深色主题 `dialog.theme:'dark'` + **顶层 `i18n` 配置组(3.22+)**:`locale:'en-US'` 切内置文案包(聊天面 + Debug 抽屉 + Skill 面板 + 代码预览;`formatTime`/autoTitle 跟随,**默认 systemPrompt 切英文** → agent 回复语言与 UI 一致)、`messages` 键级覆盖(如 `statusDone: '<b style="color:#10b981">Done ✓</b>'` —— 富文本渲染位支持行内 HTML 片段,文案白名单净化)——换语言与改个别文案一个配置组;`DialogMessages`(~226 键)+ `MESSAGES_ZH_CN`/`MESSAGES_EN_US`/`resolveDialogMessages` 导出供自建 UI 复用 | `dialog.{icons,theme}` + `i18n.{locale,messages}` |
 | 🎯 跨会话用户偏好记忆 | `capabilities.preferences`(**opt-in 默认关**,自动写用户浏览器属行为敏感项):agent 从对话中捕获用户持久偏好 —— 强信号(「记住:…」显式命令,零 LLM)/ 中信号(模式词初筛 + 小 LLM 提炼,核心判定「持久口味 vs 本轮任务指令」)/ 行为推断**不捕获**(宁漏勿误:学错一条假偏好,之后每个会话都带着跑);偏好独立持久化(preferenceStore,IndexedDB,与 storage/skillStorage 同构;同 topic **后说覆盖前说**,FIFO ≤20);每轮经 pin 段注入 system prompt(跨会话/跨压缩生效);`sdk.getPreferences()/removePreference(id)/clearPreferences()` 管理学错条目,DebugDrawer「用户偏好」只读小节可查 | `capabilities: { preferences: true }` + 可选 `preferenceStorage` |
@@ -300,7 +300,7 @@ createChatSdk({ subagents: [
 
 ### 内置工具（Agent 可调用）
 
-- **数据操作**（默认 `toolMode:'advanced'` 全暴露；opt-down `simple` 主推 read/write、`minimal` 只 read/write）：`read`（合并 describe/get）/ `write`（合并 set/edit/delete + 自动乐观锁 + 自动快照）—— 推荐；`restore_data` / `history_data`（快照回退/查历史）；`advanced` 另暴露底层 `describe_data` / `get_data`（@deprecated，改用 read）/ `set_data` / `edit_data`（jsonPath 增量 patch）/ `delete_data` / `schema_data` / `diff_data` / focus 工具族
+- **数据操作**（14 工具恒全暴露）：`read`（合并 describe/get）/ `write`（合并 set/edit/delete + 自动乐观锁 + 自动快照）—— 推荐；`restore_data` / `history_data`（快照回退/查历史）；底层 `describe_data` / `get_data`（@deprecated，改用 read）/ `set_data` / `edit_data`（jsonPath 增量 patch）/ `delete_data` / `schema_data` / `diff_data` / focus 工具族
 - **window 查询**：`query_data`（JSONPath）/ `search_data`（模糊搜索）/ `eval_script`（沙箱脚本）
 - **抓取**：`fetch_document`
 - **DOM 检视**（`capabilities.domInspect`，opt-in）：`get_dom`（常驻）+ `dom_search` / `dom_info`（经内置 `dom-inspect` skill 按需注入 —— `load_skill("dom-inspect")` 激活；skills 关时降级直插）
@@ -400,13 +400,6 @@ createChatSdk({
   id: 'my-agent',              // 稳定 id（多 agent 隔离 + 持久化恢复）
   systemPrompt: '...',
   data: { schema, bind, description? },  // 单主对象:bind 直连 reactive/普通对象(工具直接读写 bind,不自动挂 window);schema 字段 .describe() 自动注入 systemPrompt「可操作数据」段
-  // toolMode: 'simple',        // 可选:默认 'advanced'(全暴露);simple 主推 read/write;minimal 只 read/write
-  interceptors: {              // 读写拦截器(脱敏/转换/审计/拒绝 LLM 读写;input/output 在 agent IO 入口/出口)
-    read: (value) => value,
-    write: (payload) => payload,
-    input: (msg) => msg,       // send 入口预处理
-    output: (reply) => reply,  // 返回前 postprocess
-  },
   storage: 'indexed',          // 持久化（默认关）
   streaming: true, ui: 'default',
   capabilities: { verify: true },        // 能力开关
@@ -502,8 +495,8 @@ function switchTo(i: number) {
 ## 自测
 
 ```bash
-npm test            # 2531 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 832 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm test            # 2502 项断言（tsx 源码级，不依赖 LLM）
+npm run test:e2e    # 814 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试

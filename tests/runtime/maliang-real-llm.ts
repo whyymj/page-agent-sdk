@@ -43,7 +43,6 @@ async function main() {
     },
     data: { schema: pageSchema, bind, description: '电商专题页 {title, components[]}(34 种组件 union,含 icon/tag/price/coupon/productGrid/countdown 等基础+营销组件)' },
     capabilities: { planning: true, missionAnchor: true, workingMemory: true, draftWrite: true, vfs: true, tracing: true, fetch: false },
-    toolMode: 'advanced',
     maxToolRounds: 25,
     contextPreset: 'complex',
     systemPrompt: [

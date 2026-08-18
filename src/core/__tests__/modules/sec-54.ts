@@ -263,19 +263,19 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(noBind.status === 'error', '✓ focus 无 getBind → 尾部追加不识别(向后兼容,旧集成行为不变)')
   }
 
-  // ===== unfocusGuidance 解焦指引(simple toolMode 无 focus 工具,文案不得引导调用不存在的工具;用户实测 page-demo)=====
+  // ===== unfocusGuidance 解焦指引(关 focus 能力场景无 focus 工具,文案不得引导调用不存在的工具;用户实测 page-demo)=====
   {
     const schema = z.object({ components: z.array(z.object({ type: z.string() })) })
     const callNext = async () => ({ content: 'ok', status: 'done' as const })
 
-    // ① 默认 'tool'(advanced):现行为零回归 —— 引导 remove_focus/clear_focus + 默认目标引导
+    // ① 默认 'tool':现行为零回归 —— 引导 remove_focus/clear_focus + 默认目标引导
     const mwTool = createFocusMiddleware({ getSchema: () => schema })
     mwTool.setFocus({ path: 'components.1' })
     const pTool = mwTool.augmentPrompt!({} as any)!
     assert(pTool.includes('clear_focus'), '✓ unfocusGuidance 默认 tool → 注入仍引导 clear_focus(现行为零回归)')
     assert(pTool.includes('默认作用于聚焦组件'), '✓ 默认目标引导:用户未指明目标的指令默认作用于聚焦组件(治实测「拾取按钮后说文字红色 → agent 误解为全页改」)')
 
-    // ② 'ask-user'(simple/minimal 主 agent):不提工具,引导提示用户移除输入框 chip
+    // ② 'ask-user'(无 focus 工具场景,如 capabilities.focus:false 的集成):不提工具,引导提示用户移除输入框 chip
     const mwAsk = createFocusMiddleware({ getSchema: () => schema, unfocusGuidance: 'ask-user' })
     mwAsk.setFocus({ path: 'components.1' })
     const pAsk = mwAsk.augmentPrompt!({} as any)!

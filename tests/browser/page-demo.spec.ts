@@ -233,6 +233,10 @@ test.describe('page-demo: read → write → read', () => {
     await page.click('.more-btn')
     await page.click('.more-item[title="日志 / 执行流程 / Agent 信息"]')
     await expect(page.locator('.debug-drawer')).toBeVisible({ timeout: 5000 })
+    // 轮次分组(3.31+):默认仅最新轮展开,细节卡藏在折叠组内;先展开全部折叠组再断言卡片细节(等效旧版平铺全展开)
+    while (await page.locator('.debug-drawer .log-group-head:not(.expanded)').count()) {
+      await page.locator('.debug-drawer .log-group-head:not(.expanded)').first().click()
+    }
 
     // ① 配对卡:read 的 call+result 合一(含 result 分隔标)
     const paired = page.locator('.debug-drawer .tc-card.paired')
@@ -257,6 +261,73 @@ test.describe('page-demo: read → write → read', () => {
       await page.waitForTimeout(200)
       expect(await page.locator('.debug-drawer .msg-row.clamped').count(), '折叠行点击后展开').toBeLessThan(clampCount)
     }
+  })
+
+  /**
+   * 日志 tab 轮次分组(debug-round-grouping):每一轮全部信息集中成一个可折叠 node,只展示轮次;细节点击展开。
+   * 运行边界 = 主 agent context 日志(每 send 一条)→ 跨 send 同轮号不合并(「第 1 轮」独立出现两次)。
+   * 默认仅最新组展开(在途轮天然展开,新轮到来旧轮自动收起);点击折叠组头展开细节。
+   */
+  test('DebugDrawer:轮次分组 node(跨 send 不合并 + 默认仅最新轮展开 + 点击展开细节)', async ({ page }) => {
+    test.setTimeout(150_000)
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'read', arguments: { jsonPath: 'title' } }] },
+      { text: '完成。' },
+      { text: '收到。' },
+    ])
+    await fillInput(page, '读一下标题')
+    await clickSend(page)
+    await waitForAgentIdle(page, 120_000)
+    await fillInput(page, '打个招呼')
+    await clickSend(page)
+    await waitForAgentIdle(page, 120_000)
+    await page.click('.more-btn')
+    await page.click('.more-item[title="日志 / 执行流程 / Agent 信息"]')
+    await expect(page.locator('.debug-drawer')).toBeVisible({ timeout: 5000 })
+
+    // 分组 node 出现:2 次 send → 2 个 epoch;「第 1 轮」独立出现两次(跨 send 轮号不合并)
+    expect(await page.locator('.debug-drawer .log-group-head').count(), '分组 node ≥4(2 准备 + ≥3 轮)').toBeGreaterThanOrEqual(4)
+    expect(await page.locator('.debug-drawer .log-group-title', { hasText: '第 1 轮' }).count(), '跨 send 不合并 → 两个独立「第 1 轮」').toBe(2)
+
+    // 默认仅最新组展开:首组细节隐藏、末组细节可见
+    const firstGroup = page.locator('.debug-drawer .log-group').first()
+    const lastGroup = page.locator('.debug-drawer .log-group').last()
+    await expect(firstGroup.locator('.log-item').first()).not.toBeVisible()
+    await expect(lastGroup.locator('.log-item').first()).toBeVisible()
+
+    // 点击折叠组头 → 细节展开
+    await firstGroup.locator('.log-group-head').click()
+    await expect(firstGroup.locator('.log-item').first()).toBeVisible()
+  })
+
+  /**
+   * 🗑️ 清空日志(修:ChatDialog 未接 @clear → 按钮不好使):
+   * 点击 → 源 debugLogs 清空 → 分组/条目归零显示空态;不影响后续消息出日志(清的是源非副本)。
+   */
+  test('DebugDrawer:🗑️ 清空日志生效 + 清空后新一轮日志正常进入', async ({ page }) => {
+    test.setTimeout(150_000)
+    await mockLlm(page, [
+      { text: '完成。' },
+      { text: '收到。' },
+    ])
+    await fillInput(page, '你好')
+    await clickSend(page)
+    await waitForAgentIdle(page, 120_000)
+    await page.click('.more-btn')
+    await page.click('.more-item[title="日志 / 执行流程 / Agent 信息"]')
+    await expect(page.locator('.debug-drawer')).toBeVisible({ timeout: 5000 })
+    expect(await page.locator('.debug-drawer .log-item').count(), '清空前有日志').toBeGreaterThan(0)
+
+    // 🗑️ 清空 → 条目归零 + 空态提示出现
+    await page.click('.debug-drawer .hd-btn[title="清空日志"]')
+    await expect(page.locator('.debug-drawer .log-item')).toHaveCount(0)
+    await expect(page.locator('.debug-drawer .empty')).toBeVisible()
+
+    // 边界:清空不影响新一轮日志(清源 debugLogs,后续 push 正常)
+    await fillInput(page, '再打个招呼')
+    await clickSend(page)
+    await waitForAgentIdle(page, 120_000)
+    expect(await page.locator('.debug-drawer .log-item').count(), '清空后新一轮日志正常进入').toBeGreaterThan(0)
   })
 
   /**
@@ -319,14 +390,13 @@ test.describe('page-demo: read → write → read', () => {
   })
 
   /**
-   * Bug 复现锁定(用户实测,page-demo 默认 advanced toolMode 自 3.28):focus 工具族在 advanced 下装载,
+   * Bug 复现锁定(用户实测;toolMode 移除后 focus 工具族恒装载):
    * agent 可直接调 clear_focus/remove_focus 自行解焦(unfocusGuidance='tool');越界写仍 PATH_DENIED。
-   * 历史:3.28 前 page-demo 默认 simple,focus 工具未装载,文案引导「输入框」移除 chip(ask-user);
-   * 3.28 默认改 advanced 后,focus 工具装载,agent 自行解焦。simple 模式 ask-user 行为由 sec-54 单测锁定。
+   * 无 focus 工具场景的 ask-user 行为由 sec-54 单测锁定。
    * 验证(ground truth = LLM 请求体):① system 含「当前精修目标」;② 越界写回灌 PATH_DENIED;
-   * ③ 请求 tools 含 focus 工具(advanced 装载);④ read 正常装载(工具面健全)。
+   * ③ 请求 tools 含 focus 工具;④ read 正常装载(工具面健全)。
    */
-  test('focus(advanced): 聚焦注入 + focus 工具族装载 + PATH_DENIED 越界拦截', async ({ page }) => {
+  test('focus: 聚焦注入 + focus 工具族装载 + PATH_DENIED 越界拦截', async ({ page }) => {
     // 聚焦 components.2(button「主要按钮」,有 label 字段可写;初始序:0 heading / 1 paragraph / 2 button)
     await page.click('[data-path="components.2"]')
     await page.click('.pick-overlay__btn')

@@ -2,7 +2,29 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
-## [Unreleased]
+## [3.31.0] - 2026-08-18
+
+### Removed(配置面激进收敛:整体移除 `interceptors` 与 `toolMode` —— editor_fangzhou 实测「用户一般不知道有啥作用」驱动)
+- **移除 `interceptors` 全功能**(`data.interceptors` read/write/input/output 四钩子 + `send()` per-call interceptors):实际集成无人使用、与乐观锁/schema 校验职责重叠且语义易误用;TS 上传入该字段编译报错(字段已从 `ChatSdkOptions`/`DataOpsOptions`/send options 与两份 d.ts 删除),运行时多余键被忽略不崩
+- **移除 `toolMode` 选项**(恒 advanced 不声明):三态系统(advanced/simple/minimal)删除 —— `createDataOps` 直出 14 工具无呈现模式筛选;usageHints 提示词档位系统删除(无 simple/minimal 分支),提示词只随能力开关变化;3.30 的「systemPrompt 含 simple 模式/未暴露措辞自动降级」内部机制随档位系统一并删除(死代码)
+- **移除的导出**:`filterByToolMode` 函数、`DataInterceptors` 接口、`ToolMode` 类型(主入口 + headless 子路径 + 两份 d.ts 同步)
+- 迁移:曾显式传 `toolMode: 'advanced'` 的集成方(如 editor_fangzhou)删掉该键即可 —— 行为完全不变;传 `'simple'`/`'minimal'` 或 `interceptors` 的集成方 TS 编译报错,运行时忽略(工具面恒全暴露,无降级形态)
+- 测试:selftest 2531 → 2502(−29:filterByToolMode/simple·minimal 档位/拦截器断言移除;createDataOps 直出 14 工具新断言)/ e2e 832 → 814(−18:inspect 工具面 simple·minimal 块、systemprompt 自动降级块、custom-injection 拦截器透传块、focus/resources 的 toolMode 行移除)
+
+### Changed(usageHints/promptBuilder 签名收口)
+- `createUsageHintsMiddleware(caps, hasDataOps, budget?)`:废弃的第 4 参 `_hasResources`(占位无用)删除,原第 5 参 budget 升为第 3 参;`buildDataPrompt(data, schemaHint?)` 收为 2 参;`SchemaHintOptions` 删 `toolMode` 字段(缓存键随之简化为 `maxKeys|maxChars`)
+- `unfocusGuidance`(focus 失焦引导)选项保留:createChatSdk 不再传(默认 `'tool'`),选项留给子 agent(`'report-parent'`)与 `capabilities.focus:false` 场景(`'ask-user'`)
+
+### Added(DebugDrawer 日志轮次分组:每一轮集中一个可折叠 node)
+- **logs tab 重构**:扁平日志流改为按轮次分组的可折叠 node —— 头部只展示轮次 + 摘要(时间区间/耗时、🔧 工具数、Σ token、❌ 错误数),点击展开该轮全部细节卡;默认仅最新组展开(在途轮天然展开,新轮到来旧轮自动收起;用户显式切换覆盖默认)
+- **运行边界 = 主 agent context 日志**(每 send 一条)→ epoch 隔离,跨 send 的同轮号不合并;子 agent 转发日志归属主 agent 当时所在轮;无 round 的轮内日志(middleware/error)归当前轮(「每一轮全部信息集中一个 node」),wrap_up 兜底收口单独成组
+- 条目 UI 状态(展开/差分/原文)改按日志对象身份 uid 锚定(WeakMap),filter 切换/分组重排不串状态;顺带清理恒不可达的 tool_result 重复渲染分支(tsc 收窄报警的死代码)
+- 测试:browser +2(轮次分组 node:跨 send 不合并 + 默认仅最新轮展开 + 点击展开细节)/ 存量 DebugDrawer 断言同步适配(细节卡断言前先展开全部折叠组)
+
+### Fixed(DebugDrawer 🗑️ 清空日志按钮不好使)
+- **问题**:DebugDrawer `clear` 事件发出后无人接线 —— ChatDialog 未透传、mountChatDialog 未实现,点击无反应
+- **修复**:ChatDialog 增 `clearDebugLogs` prop + `@clear` 透传;mountChatDialog 实现清「源」`sdk.debugLogs`(shallowRef 置空,computed slice 传播);customize-demo 自接示例同步
+- 测试:browser +1(清空生效 + 清空后新一轮日志正常进入)
 
 ## [3.30.0] - 2026-08-18
 

@@ -162,7 +162,7 @@ createChatSdk({
   id: 'my-agent',                  // stable id (multi-agent isolation + persistence resume)
   llm: { apiKey, baseUrl, model, temperature?, maxTokens? },  // or a LangChain BaseChatModel instance
   systemPrompt: '...',             // Agent identity + business flow (optional: built-in default — JSON operation assistant + reliableWriteRules — used if omitted; passing your own fully overrides it. appendReliableWriteRules defaults to true: auto-appends reliableWriteRules with a '---' separator; set false to disable)
-  // ⚠️ Tool usage (read/write/get/set/patch/autoLock/snapshot etc.) is auto-injected by the usageHints middleware per toolMode — do NOT declare it here; systemPrompt should only carry "business knowledge": identity, field meanings, business flow, skill refs
+  // ⚠️ Tool usage (read/write/get/set/patch/autoLock/snapshot etc.) is auto-injected by the usageHints middleware per capability flags — do NOT declare it here; systemPrompt should only carry "business knowledge": identity, field meanings, business flow, skill refs
 
   // page data
   data: { schema, bind, description? },  // single main object: bind directly connects reactive/plain object (tools read/write bind, not auto-mounted to window); schema field .describe() auto-injected into systemPrompt「operable data」section
@@ -275,95 +275,20 @@ write({ path: 'page.oldField', del: true })
 
 `write` auto: ① schema validation (no write on failure) ② snapshot (rollback via `restore_data`) ③ optimistic lock (autoLock, compares hash from `read`; conflict → `VERSION_CONFLICT` or human escalation).
 
-#### `toolMode` — tool presentation
+#### Tool surface: always fully exposed (14 tools; `toolMode` removed in 3.31)
 
-Controls "how many data tools the LLM sees + which workflow usageHints teaches". **This is the only knob you need** (the hints tier follows toolMode internally, with auto-downgrade compat for legacy "simple mode / not exposed" systemPrompts — no extra config):
+Data tools are always fully exposed: high-level `read`/`write` (recommended entry, auto optimistic lock + auto snapshot), query/search/sandbox (`query_data`/`search_data`/`eval_script`), snapshot rollback (`restore_data`/`history_data`), low-level CRUD (`get/set/edit/delete/describe_data`, manual hash lock), `schema_data`/`diff_data`, focus tools (`set/add/remove/clear_focus`), plus `draft_*`/`resource_*` when their opt-in capabilities are on. usageHints runtime prompts adapt by **capability flags** (no tier concept).
 
-```ts
-createChatSdk({
-  // ...,
-  // leave unset → 'advanced' (default): expose all; built-in prompts always match the tool surface
-  toolMode: 'simple',   // opt-down: hide low-level/diagnostic tools, promote read/write
-  // toolMode: 'minimal',  // read/write only (most constrained, most token-efficient)
-})
-```
+To constrain LLM behavior, steer via `systemPrompt` (e.g. "prefer read/write"), or use `capabilities` toggles to control what loads at all.
 
-| Tool family | advanced (default) | simple | minimal |
-|---|:-:|:-:|:-:|
-| `read`/`write` (high-level, auto optimistic lock + auto snapshot) | ✅ | ✅ | ✅ |
-| `query_data`/`search_data`/`eval_script` (query/search/sandbox) | ✅ | ✅ | — |
-| `restore_data`/`history_data` (snapshot rollback / history) | ✅ | ✅ | — |
-| `get/set/edit/delete/describe_data` (low-level CRUD, manual hash lock) | ✅ | — | — |
-| `schema_data`/`diff_data` (constraints / diff) | ✅ | — | — |
-| `set/add/remove/clear_focus` (focus tools) | ✅ | — | — |
-| `draft_*`/`resource_*` (when the opt-in capability is on) | ✅ | — | — |
-| Data tools loaded | 14 | 7 | 2 |
+> ⚠️ Migration: remove the `toolMode: ...` option key from existing integrations (TS type error; ignored at runtime). Legacy systemPrompts phrased for "simple mode / not exposed / do not call" are detected and warn — clean up that wording too.
 
-**Behavioral differences**:
-- **Lock semantics**: advanced teaches "read via `get_data` → pass `expectedHash` on write" (explicit lock); simple/minimal use read/write's auto optimistic lock (implicit; LLM is unaware of hash)
-- **Focus ownership**: under advanced the agent can call `set_focus` itself; under simple/minimal the focus tools are not loaded — the host drives focus via `sdk.setFocus()/addFocus()` (the Focus capability itself remains available)
-- **Prompt ↔ tool-surface consistency**: usageHints only teaches tools that exist in the pool (under simple it does NOT teach schema_data, steering to read sub-paths instead); built-in prompts (read header / large-schema tiered disclosure / focus subtree) branch the same way
-
-**Choosing**:
-- Leave unset (advanced): full built-in capability (constraints/diff/self-focus), prompts always match the tool surface
-- Want to constrain the tool surface / save tokens / keep the LLM off low-level tools → `simple`
-- Host fully in control, only need the AI to change values → `minimal`
-- Legacy systemPrompts phrased for "simple mode / not exposed / do not call" are auto-detected (hints downgraded + warn), but prefer passing `toolMode:'simple'` explicitly so the tool pool matches too
-
-#### `interceptors` — read/write interceptors
-
-Integrators can desensitize/transform/audit/reject the LLM's reads/writes:
-
-```ts
-createChatSdk({
-  // ...,
-  interceptors: {
-    // intercept on read: desensitize (only changes what LLM sees, not actual storage)
-    read: (path, value) => path.endsWith('secret') ? '***' : value,
-    // intercept on write: transform/audit/reject
-    write: (path, payload, current) => {
-      if (path === 'app.locked') return { error: 'this field is locked' }
-      return payload  // allow (can rewrite before returning)
-    },
-  },
-})
-```
-
-- `read(path, value)`: return value is rewritten for LLM (desensitize/derive); throw → `READ_INTERCEPT`
-- `write(path, payload, current)`: return rewritten value to allow, or `{error}` to reject (`WRITE_INTERCEPT`)
-- `input(input)`/`output(json)`: agent-level IO pre/post-processing
-  - `input`: preprocess user message at send entry (rewrite/audit)
-  - `output`: postprocess before agent returns (rewrite final reply)
-
-#### Schema as whitelist (only declared fields exposed) + interceptor-supplied invisible fields
+#### Schema as whitelist (only declared fields exposed)
 
 When `data.schema` is a `z.object(...)` (or its optional/default/lazy wrapper), the SDK auto-enables **whitelist mode**: only schema-declared fields are exposed to the LLM; undeclared fields are invisible and non-readable/writable. This fits the "bind is a large JSON but only some fields should be agent-operable" scenario — declare operable fields in schema, the rest (internal state, sensitive data, redundant caches) are auto-hidden, no extra config needed.
 
 - **Read**: `read` whole-object is projected by top-level schema; **sub-path reads are also recursively projected by the sub-schema at that location** (e.g. `read components.0` is projected by the element schema of `components`, hiding undeclared sub-fields). Reading an undeclared (sub)path returns `PATH_DENIED`.
 - **Write**: `set`/`write(set)` whole-object uses **merge semantics** — only schema-declared fields are updated, un-passed fields are preserved (anti-accidental-delete); `edit`/`write(patch)` sub-path increments are path-segment-checked against schema declarations.
-- **Interceptor-supplied invisible fields**: fields in the `interceptors.write` return payload that are **not in schema** (e.g. auto-generated `id`/`_createdAt`/internal state) are **written back to bind** after schema validation + merge (trusting integrator interceptor / explicit user value), not stripped by schema. Typical use: agent `append`s a new item, interceptor auto-supplies `id`/`createdAt` fields you don't want to expose to the LLM:
-
-```ts
-createChatSdk({
-  data: {
-    // schema declares only agent-operable fields (no _createdAt → invisible to agent)
-    schema: z.object({ title: z.string(), items: z.array(z.object({ name: z.string() })) }),
-    bind: app,
-  },
-  interceptors: {
-    write: (payload, current) => {
-      // when agent pushes a new item, auto-supply _createdAt (not in schema, invisible to agent, but persisted)
-      if (payload && Array.isArray((payload as any).items)) {
-        const now = Date.now()
-        ;(payload as any).items = (payload as any).items.map((it: any) =>
-          it._createdAt ? it : { ...it, _createdAt: now }
-        )
-      }
-      return payload
-    },
-  },
-})
-```
 
 > Note: whitelist mode only enables for `z.object`; `z.any()`/`z.record()`/`z.discriminatedUnion()` etc. non-object schemas don't enable it (fully open, backward-compatible). A `passthrough()` object still enables whitelist (only declared fields are visible to LLM; extra fields are persisted on write but hidden on read) — if you want extra fields visible to LLM, declare them in schema explicitly.
 
@@ -549,12 +474,11 @@ The agent calls `inspect_env({ key? })`:
 
 #### Chunked write `draft_write` / `draft_commit` (huge JSON, default off)
 
-Huge JSON (e.g. 50+ component pages) approaching LLM `max_tokens` won't fit in a single `write({value})`. Build it in chunks via draft: `capabilities.draftWrite` defaults to **off** (opt-in; needs dataOps + vfs; toolMode advanced exposes it, simple/minimal hide it).
+Huge JSON (e.g. 50+ component pages) approaching LLM `max_tokens` won't fit in a single `write({value})`. Build it in chunks via draft: `capabilities.draftWrite` defaults to **off** (opt-in; needs dataOps + vfs).
 
 ```ts
 createChatSdk({
   capabilities: { draftWrite: true, vfs: true },  // opt-in, default off
-  toolMode: 'advanced',  // draft exposed in advanced (hidden in simple/minimal)
   // ...
 }).mount()
 ```
@@ -1113,7 +1037,7 @@ After focusing, three layers converge:
 
 > **× code-as-data-asset hardening (sub-agent code refinement)**: with `createHtmlSubagent`, the sub-agent edits code via `vfs_edit` (not a data write), which `focus.ts`'s data-write guard doesn't cover. So `codeAssetMiddleware` adds a **vfs whitelist** before execution: a sub-agent (inheriting the main focus) may only `vfs_edit` the focused component's code file (judged by `__pgId` ownership) — out-of-scope → `PATH_DENIED`, so even a confused sub-agent can't touch another component's code. This is the hard-contract basis for "click a component → refine it by chat". Focusing an entire array / a non-code field is a passthrough (can't pin a specific component). **You can't create new components while focused** (the data write is blocked by focus.ts) — `clearFocus` first. Full example: `examples/html-page-demo` (click a component in the preview → 🎯 focus → refine by chat).
 
-**Three trigger methods**: ① `sdk.setFocus(path,{label?})` API (host click-pick or programmatic); ② agent tools `set_focus`/`clear_focus` (`toolMode:'advanced'` exposes them; simple/minimal use UI/host API); ③ built-in ChatDialog focus chip (✕ exit · ▾ edit path); hidden when `capabilities.focus:false`.
+**Three trigger methods**: ① `sdk.setFocus(path,{label?})` API (host click-pick or programmatic); ② agent tools `set_focus`/`clear_focus` (data tools are always fully exposed, so the agent can self-focus); ③ built-in ChatDialog focus chip (✕ exit · ▾ edit path); hidden when `capabilities.focus:false`.
 
 **Host click-pick** (bind `data-path` on component roots, delegate clicks to `setFocus`):
 

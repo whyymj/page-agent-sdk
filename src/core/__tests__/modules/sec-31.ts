@@ -271,14 +271,4 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert(!readOverview.includes('(string)['), 'read 概览 → 不含约束标注(约束在 systemPrompt/schema_data)')
   const readSub = await invoke(dt.read, { jsonPath: 'name' })
   assert(!readSub.includes('主数据说明'), 'read 子路径读 → 不带概览段(保值返回干净)')
-
-  // read 概览指引按 toolMode 分支(提示词与工具面一致性):simple/minimal 未装载 schema_data → 改教 read 子路径
-  const dataOpsSimple = createDataOps({
-    schema: z.object({ name: z.string() }),
-    bind: { name: 'x' },
-    description: '测试数据',
-  }, { toolMode: 'simple' })
-  const readSimple = await invoke(byName(dataOpsSimple).read, {})
-  assert(readSimple.includes('主数据说明') && !readSimple.includes('schema_data'), 'read 概览(toolMode simple)→ 不教 schema_data(工具池未装载,防误调报「工具不存在」)')
-  assert(readSimple.includes('read 子路径'), 'read 概览(toolMode simple)→ 改教 read 子路径见实际值')
 }

@@ -187,7 +187,7 @@ createChatSdk({
   /* ===== 身份与隔离 ===== */
   id: 'my-app',                 // agent 实例 id(强烈建议传稳定值;多 agent 共存隔离 + 刷新恢复)
   systemPrompt: '...',          // Agent 身份与业务流程指令(可选:不传用内置默认——JSON 操作助手 + reliableWriteRules;传了则完全覆盖。默认 appendReliableWriteRules:true 自动用 '---' 分隔线追加 reliableWriteRules,设 false 关闭)
-  // ⚠️ 工具用法(read/write/get/set/patch/autoLock/snapshot 等)由 usageHints 中间件按 toolMode 自动注入,无需在此声明;systemPrompt 只写「业务知识」:身份、可改字段含义、业务流程、技能引用
+  // ⚠️ 工具用法(read/write/get/set/patch/autoLock/snapshot 等)由 usageHints 中间件按能力开关自动注入,无需在此声明;systemPrompt 只写「业务知识」:身份、可改字段含义、业务流程、技能引用
   shareContext: false,          // true:同 id 的多个实例共享同一 Agent(同页多对话框 = 同一 agent);串行闸 core 级 —— 跨实例 send/switchSession 串行,生命周期收口(unmount/switch/reset)中止共享 core 全部在途流(2.41.0+)
 
   /* ===== 能力注入 ===== */
@@ -311,95 +311,20 @@ write({ patch: { jsonPath: 'oldField' }, del: true })
 
 `write` 自动:① schema 校验(失败不写)② 存快照(可 `restore_data` 回退)③ 乐观锁(autoLock,用 `read` 返回的 hash 比对整体,冲突触发 `VERSION_CONFLICT` 或人工介入)。
 
-### `toolMode` 工具呈现模式
+### 工具面恒全暴露（14 工具，3.31 起移除 `toolMode`）
 
-控制「暴露多少数据工具给 LLM + usageHints 教哪套工作流」。**只需配这一个旋钮**(提示词档位内部自动跟随 toolMode,并对存量「simple 模式/未暴露」systemPrompt 自动降级兼容,无需额外配置):
+数据工具恒全暴露：高层 `read`/`write`（推荐入口，自动乐观锁 + 自动快照）、查询/搜索/沙箱（`query_data`/`search_data`/`eval_script`）、快照回退（`restore_data`/`history_data`）、底层 CRUD（`get/set/edit/delete/describe_data`，手动传 hash）、`schema_data`/`diff_data`、聚焦工具族（`set/add/remove/clear_focus`），以及 opt-in 能力开启时的 `draft_*`/`resource_*`。usageHints 运行时提示词按**能力开关**自适应（无档位概念）。
 
-```ts
-createChatSdk({
-  // ...,
-  // 不配即 'advanced'(默认):全暴露,内置提示词与工具面恒一致
-  toolMode: 'simple',   // opt-down:隐藏底层/诊断工具,主推 read/write
-  // toolMode: 'minimal',  // 只 read/write(最收敛,最省 token)
-})
-```
+想约束 LLM 行为时用 `systemPrompt` 引导（如「优先用 read/write」），或用 `capabilities` 开关控制能力装载。
 
-| 工具族 | advanced(默认) | simple | minimal |
-|---|:-:|:-:|:-:|
-| `read`/`write`(高层入口,自动乐观锁 + 自动快照) | ✅ | ✅ | ✅ |
-| `query_data`/`search_data`/`eval_script`(查询/搜索/沙箱) | ✅ | ✅ | — |
-| `restore_data`/`history_data`(快照回退/查历史) | ✅ | ✅ | — |
-| `get/set/edit/delete/describe_data`(底层 CRUD,手动传 hash 乐观锁) | ✅ | — | — |
-| `schema_data`/`diff_data`(查约束/对比差异) | ✅ | — | — |
-| `set/add/remove/clear_focus`(聚焦工具族) | ✅ | — | — |
-| `draft_*`/`resource_*`(opt-in 能力时) | ✅ | — | — |
-| 数据工具装载数 | 14 | 7 | 2 |
+> ⚠️ 迁移：存量集成删掉 `toolMode: ...` 配置键（TS 类型报错；运行时忽略）。存量 systemPrompt 含「simple 模式/未暴露/勿调用」措辞会被检测并 warn，建议同步清理文案。
 
-**行为差异**:
-- **锁语义**:advanced 教「先 `get_data` 拿 hash → 写时回传 `expectedHash`」(显式锁);simple/minimal 用 read/write 自动乐观锁(隐式锁,LLM 无感)
-- **聚焦归属**:advanced 下 agent 可自主 `set_focus` 收敛;simple/minimal 下 focus 工具不装载,改由宿主调 `sdk.setFocus()/addFocus()` API 触发(Focus 能力仍在)
-- **提示词与工具面一致性**:usageHints 只教池内存在的工具(simple 档不教 schema_data,改教 read 子路径);内置提示词(read 说明/大 schema 分层/focus 子树)同样按档分支
-
-**选型指引**:
-- 默认不配(advanced):内置能力全套可用(查约束/差异/自主聚焦),提示词与工具面天然一致
-- 想收敛工具面 / 省 token / 不想 LLM 碰底层工具 → `simple`
-- 宿主全控、只要 AI 改值 → `minimal`
-- 存量集成 systemPrompt 含「simple 模式/未暴露/勿调用」措辞会被自动检测(提示词降级 + warn),但建议显式传 `toolMode:'simple'` 让工具池一并对齐
-
-### `interceptors` 读写拦截器
-
-集成方可脱敏/转换/审计/拒绝 LLM 的读写:
-
-```ts
-createChatSdk({
-  // ...,
-  interceptors: {
-    // LLM 读时拦截:脱敏(只改 LLM 看到的值,不改实际存储)
-    read: (value) => value?.secret ? { ...value, secret: '***' } : value,
-    // LLM 写时拦截:转换/审计/拒绝
-    write: (payload, current) => {
-      if (payload?.locked) return { error: '该字段禁止修改' }
-      return payload  // 放行(可改写后返回)
-    },
-  },
-})
-```
-
-- `read(value)`:返回值改写后给 LLM(脱敏/派生);抛错返回 `READ_INTERCEPT`
-- `write(payload, current)`:返回改写后的值放行,或 `{error}` 拒绝(返回 `WRITE_INTERCEPT`)
-- `input(input)`/`output(json)`:agent 级 IO 预处理/后处理
-  - `input`:send 入口预处理 user message(可改写/审计)
-  - `output`:agent 返回前 postprocess(可改写最终回复)
-
-#### schema 即白名单(只暴露声明字段)+ 拦截器补充不可见字段
+### schema 即白名单（只暴露声明字段）
 
 当 `data.schema` 是 `z.object(...)`(或其可选/默认/懒加载包装)时,SDK 自动启用**白名单模式**:只暴露 schema 声明的字段给 LLM,未声明字段对 LLM 不可见、不可读写。这适合「bind 是大 JSON,但只希望 agent 操作其中部分字段」的场景——集成方把可操作字段写进 schema,其余字段(内部状态、敏感数据、冗余缓存)自动隐藏,无需额外配置。
 
 - **读**:`read` 整体读按顶层 schema 投影;**子路径读也按该位置的子 schema 递归投影**(如 `read components.0` 会按 `components` 的元素 schema 投影,隐藏子对象未声明字段)。读未声明的(子)路径返回 `PATH_DENIED`。
 - **写**:`set`/`write(set)` 整对象用 **merge 语义**——只更新 schema 声明字段,未传的字段保留不动(防误删);`edit`/`write(patch)` 增量改子路径同理,逐段校验路径必须在 schema 声明内。
-- **拦截器补充不可见字段**:`interceptors.write` 返回的 payload 中,若含**不在 schema 声明内**的字段(如自动生成的 `id`/`_createdAt`/内部状态),SDK 会在 schema 校验 + merge 之后**写回 bind**(信任集成方拦截器/用户显式传值),不会因 schema strip 丢失。典型用法:agent `append` 一个新组件,拦截器自动补 `id`/`createdAt` 等不想暴露给 LLM 的内部字段:
-
-```ts
-createChatSdk({
-  data: {
-    // schema 只声明 agent 可操作字段(不声明 _createdAt → 对 agent 不可见)
-    schema: z.object({ title: z.string(), items: z.array(z.object({ name: z.string() })) }),
-    bind: app,
-  },
-  interceptors: {
-    write: (payload, current) => {
-      // agent push 新 item 时,自动补 _createdAt(不在 schema,对 agent 不可见,但落地保留)
-      if (payload && Array.isArray((payload as any).items)) {
-        const now = Date.now()
-        ;(payload as any).items = (payload as any).items.map((it: any) =>
-          it._createdAt ? it : { ...it, _createdAt: now }
-        )
-      }
-      return payload
-    },
-  },
-})
-```
 
 > 注:白名单模式仅对 `z.object` 启用;`z.any()`/`z.record()`/`z.discriminatedUnion()` 等非 object schema 不启用(全开放,向后兼容)。`passthrough()` 的 object 仍启用白名单(声明字段才对 LLM 可见,额外字段写入保留但读时隐藏)——若希望额外字段也对 LLM 可见,需在 schema 显式声明。
 
@@ -604,12 +529,11 @@ agent 调用 `inspect_env({ key? })`:
 
 #### 分块写 `draft_write` / `draft_commit`(超大 JSON,默认关)
 
-几百 K JSON(如 50+ 组件页面)逼近 LLM `max_tokens`,单次 `write({value})` 装不下。用 draft 分块构建:`capabilities.draftWrite` 默认**关**(opt-in;需 dataOps + vfs;toolMode advanced 暴露,simple/minimal 隐藏)。
+几百 K JSON(如 50+ 组件页面)逼近 LLM `max_tokens`,单次 `write({value})` 装不下。用 draft 分块构建:`capabilities.draftWrite` 默认**关**(opt-in;需 dataOps + vfs)。
 
 ```ts
 createChatSdk({
   capabilities: { draftWrite: true, vfs: true },  // opt-in,默认关
-  toolMode: 'advanced',  // draft 在 advanced 暴露(simple/minimal 隐藏)
   // ...
 }).mount()
 ```
@@ -1704,7 +1628,7 @@ sdk.clearFocus() // 退出精修,恢复全量可操作范围
 | 方式 | 机制 |
 |---|---|
 | **API / 宿主点击拾取** | `sdk.setFocus(path,{label?})` —— 宿主组件点击时调用 |
-| **对话驱动** | agent 工具 `set_focus({path,label?})` / `clear_focus`(`toolMode:'advanced'` 暴露;simple/minimal 经 UI/宿主 API) |
+| **对话驱动** | agent 工具 `set_focus({path,label?})` / `clear_focus`（数据工具恒全暴露,agent 可自主聚焦） |
 | **ChatDialog 焦点条** | 内置对话框头部「🎯 正在精修」chip(✕ 退出 · ▾ 编辑路径切换),`capabilities.focus:false` 时不显示 |
 
 **宿主点击拾取接入**(组件渲染绑 `data-path`,点击委托调 setFocus):

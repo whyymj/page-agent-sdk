@@ -51,6 +51,9 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
           initialMessages: core.messages,
           getInfo: () => core.getInfo(),
           exportDiagnostics: () => core.exportDiagnostics(),  // DebugDrawer「复制诊断报告」按钮(完整日志文件排查通道)
+          // DebugDrawer 🗑️ 清空日志:清「源」debugLogs(shallowRef 换新数组 + triggerRef → Wrapper 重渲染 slice 空数组 → 抽屉清空)
+          // 注:debugLogs prop 是 slice 拷贝,只清 prop 数组下一帧即被源复活,必须清源
+          clearDebugLogs: () => { debugLogsRef.value = []; triggerRef(debugLogsRef) },
           onUndo: core.checkpoint ? () => core.checkpoint!.restore() : undefined,
           canUndo: core.checkpoint ? () => core.checkpoint!.canRestore() : undefined,
           onPersist: async () => {

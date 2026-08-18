@@ -64,18 +64,11 @@ export type ConflictResolution =
   | { action: 'overwrite' }
   | { action: 'restore' }
 
-/** 读写拦截器(集成方可脱敏/转换/审计/拒绝 LLM 的读写) */
-export interface DataInterceptors {
-  read?: (value: unknown) => unknown
-  write?: (payload: unknown, current: unknown) => unknown | { error: string }
-}
-
 export interface DataOpsOptions {
   onAudit?: (entry: DataAuditEntry) => void
   maxSnapshots?: number
   onConflict?: (conflict: ConflictInfo) => Promise<ConflictResolution>
   autoLock?: boolean
-  interceptors?: DataInterceptors
   /** vfs store(提供则装配 draft_write/draft_commit 分块写工具;由 createChatSdk 经 capabilities.draftWrite 控制)。draft 写 drafts/{draftId}.json(drafts 池) */
   vfsStore?: VfsStore
   /**
@@ -94,12 +87,6 @@ export interface DataOpsOptions {
    * agent 写 __pgId 被 isPathAllowed 自然拒(__pg* 前缀段)。集成商原 schema 不动(框架内部用 extendedSchema)。
    */
   pgIdPaths?: string[]
-  /**
-   * 工具呈现模式(提示词与工具面一致性):read 根结果的「字段约束」指引按此分支 ——
-   * simple/minimal 未装载 schema_data,改教 read 子路径(勿教工具池不存在的工具,防误调报「工具不存在」)。
-   * 默认 'advanced'(与 createChatSdk 默认一致)。createChatSdk 装配期透传解析后的 toolMode。
-   */
-  toolMode?: 'simple' | 'advanced' | 'minimal'
 }
 
 export interface DataSnapshotEntry {
@@ -145,17 +132,6 @@ export interface DataOpsController {
   updateResource?(path: string, value: unknown): void
   deleteResource?(pathOrHandle: string): boolean
   listResources?(): { path: string; mode: string; handle: string; bytes: number }[]
-}
-
-export type ToolMode = 'simple' | 'advanced' | 'minimal'
-
-const SIMPLE_HIDDEN = new Set(['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data', 'schema_data', 'diff_data', 'draft_write', 'draft_commit', 'resource_get', 'resource_update', 'resource_list', 'resource_delete'])
-const MINIMAL_ALLOWED = new Set(['read', 'write'])
-
-export function filterByToolMode(tools: StructuredToolInterface[], mode: ToolMode = 'advanced'): StructuredToolInterface[] {
-  if (mode === 'advanced') return tools
-  if (mode === 'minimal') return tools.filter((t) => MINIMAL_ALLOWED.has(t.name))
-  return tools.filter((t) => !SIMPLE_HIDDEN.has(t.name))
 }
 
 /**
@@ -225,7 +201,7 @@ export function commitSetToBind(args: {
  * 增量 patch 写入纯函数(p2-refactor 子项 3 装饰器):clone + 逐 patch 校验(isUnsafePath/isPathAllowed/maybeParseValue)
  * + applyPatchToClone + 整体 schema 校验 + (dryRun 预检) + snapshot + 从 res.data 整体写回 + markDataDirty。
  * edit_data / write(edit) / eval-patches / eval-subtree 共用 —— 消除四处 clone+循环+校验+snapshot+applyLive 重复
- * (乐观锁×拦截器×dryRun 三轴组合的 bug 高发区,单一真相源防不一致)。
+ * (乐观锁×dryRun 组合的 bug 高发区,单一真相源防不一致)。
  * 调用方负责:bindRef 类型守卫(NOT_OBJECT/LEAF_BIND,错误码各异)+ audit(detail/value 差异)+ setBaseline + 成功 message。
  * 返回 {ok,applied,clone}(dryRun 返回 clone 供预览,不落盘/不入快照) 或 {ok:false,error}。
  */
@@ -982,7 +958,6 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           else if (allowKeys) { const ss = getSchemaAtPath(schema, jp); if (ss) target = projectBySchemaDeep(target, ss) }
           let resolved = target
           if (protectedCtx) resolved = renderReadPlaceholders({ jp, resolved, resourcesByPath: protectedCtx.resourcesByPath, resourceStore: protectedCtx.resourceStore })
-          if (opts.interceptors?.read) { try { resolved = opts.interceptors.read(resolved) } catch (e) { return `- ${jp}: [READ_INTERCEPT: ${(e as Error).message}]` } }
           if (fields && fields.length) resolved = projectFields(resolved, fields)
           if (depth !== undefined && depth !== null) resolved = limitDepth(resolved, depth)
           resolved = summarizeLargeText(resolved, scope === MAIN_SCOPE, largeTextSpecs, largeTextThreshold)
@@ -1006,19 +981,11 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       }
       let resolved = target
       if (protectedCtx) resolved = renderReadPlaceholders({ jp, resolved, resourcesByPath: protectedCtx.resourcesByPath, resourceStore: protectedCtx.resourceStore })
-      if (opts.interceptors?.read) {
-        try { resolved = opts.interceptors.read(resolved) } catch (e) {
-          return toolError({ code: 'READ_INTERCEPT', message: `read 拦截器抛错: ${(e as Error).message}` })
-        }
-      }
-      setBaseline(h, scope)  // 校验 + 拦截器都通过才刷基线(rv-verify A4 残留:拦截器拒合法路径不披露 hash,刷基线可构造静默覆盖)
+      setBaseline(h, scope)  // 校验通过才刷基线(失败读不吸收宿主改动,防构造静默覆盖)
       if (fields && fields.length) resolved = projectFields(resolved, fields)
       if (depth !== undefined && depth !== null) resolved = limitDepth(resolved, depth)
       resolved = summarizeLargeText(resolved, scope === MAIN_SCOPE, largeTextSpecs, largeTextThreshold)
-      // 字段约束指引按 toolMode 分支:simple/minimal 未装载 schema_data → 教 read 子路径(提示词与工具面一致性)
-      const constraintGuide = opts.toolMode === 'simple' || opts.toolMode === 'minimal'
-        ? '字段约束与形状见 systemPrompt「可操作数据」段,或 read 子路径见实际值,照现有字段写。'
-        : '字段约束(类型/min/max/enum/必填/默认)见 systemPrompt「可操作数据」段,或用 schema_data({ jsonPath }) 按需查。'
+      const constraintGuide = '字段约束(类型/min/max/enum/必填/默认)见 systemPrompt「可操作数据」段,或用 schema_data({ jsonPath }) 按需查。'
       const desc = !jsonPath ? `主数据说明: ${description}\n格式: 写入值需为 JSON,且通过声明的 schema 校验(校验失败时 write 会返回结构化错误)。${constraintGuide}\n\n` : ''
       const proj = fields && fields.length ? `(字段裁剪:${fields.join(',')})` : ''
       const dlim = depth !== undefined && depth !== null ? `(深度≤${depth})` : ''
@@ -1038,7 +1005,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'read',
       description:
-        '读取主数据(高层入口,合并 describe/get)。不传 jsonPath → 返回主数据说明 + 格式提示(含字段约束);传 jsonPath → 返回该子路径当前值 + hash;传 jsonPaths → 一次读多个不相关子路径(省多轮往返)。hash 用于乐观锁(默认 autoLock,write 时自动比对,无需手动传)。fields(字段裁剪)/depth(深度截断)减体积;offset+limit 对数组目标分页(返回切片 + total/hasMore)。集成方可能经 read 拦截器对返回值脱敏/派生。',
+        '读取主数据(高层入口,合并 describe/get)。不传 jsonPath → 返回主数据说明 + 格式提示(含字段约束);传 jsonPath → 返回该子路径当前值 + hash;传 jsonPaths → 一次读多个不相关子路径(省多轮往返)。hash 用于乐观锁(默认 autoLock,write 时自动比对,无需手动传)。fields(字段裁剪)/depth(深度截断)减体积;offset+limit 对数组目标分页(返回切片 + total/hasMore)。',
       schema: z.object({
         jsonPath: z.string().optional().describe('要读的子路径(相对主数据根,如 components.0.text);不传则读整个主数据并返回说明'),
         jsonPaths: z.array(z.string()).optional().describe('多路径读取:一次读多个不相关子路径(与 jsonPath 互斥,优先于 jsonPath);返回各路径值,非法路径单项标错不整批失败'),
@@ -1058,44 +1025,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       else if (patches && patches.length) intent = 'edit'
       else if (patch) intent = 'edit'
       let payload: unknown = patch?.value !== undefined ? patch.value : value  // patch 自带 value 优先(与 patches 一致,消除双语义歧义);未填回退顶层 value(向后兼容)
-      let patchList: { op: EditOp; jsonPath: string; value?: unknown }[] | undefined
-      if (opts.interceptors?.write) {
-        try {
-          const interceptInput =
-            intent === 'delete' ? { del: true, jsonPath: patch?.jsonPath }
-            : intent === 'edit' && patches && patches.length ? { patches }
-            : intent === 'edit' ? { op: patch!.op ?? 'set', jsonPath: patch!.jsonPath || '', value: payload }
-            : value
-          const intercepted = opts.interceptors.write(interceptInput, bindRef)
-          if (intercepted && typeof intercepted === 'object' && 'error' in (intercepted as any)) {
-            return toolError({ code: 'WRITE_INTERCEPT', message: `write 拦截器拒绝: ${(intercepted as any).error}` })
-          }
-          if (intent === 'delete') {
-            // delete 仅校验/拒绝,不写值
-          } else if (intent === 'edit' && patches && patches.length) {
-            // 批量:拦截器返回新 patches 数组(或原样)
-            patchList = (intercepted && Array.isArray(intercepted)) ? (intercepted as any) : patches
-          } else if (intent === 'edit') {
-            // 单 patch edit:拦截器收到 { op, jsonPath, value },可能返回:
-            // ① 原样/修改后的 { op, jsonPath, value } → 取 .value,同步 patch.op/jsonPath
-            // ② 修改后的 value(非 { op, ... } 对象)→ 直接用
-            if (intercepted && typeof intercepted === 'object' && 'op' in (intercepted as any) && 'jsonPath' in (intercepted as any)) {
-              const ir = intercepted as any
-              if (ir.op) patch!.op = ir.op
-              if (ir.jsonPath !== undefined) patch!.jsonPath = ir.jsonPath
-              payload = ir.value
-            } else {
-              payload = intercepted
-            }
-          } else {
-            // set 整体替换:拦截器收到完整 value,返回修改后的 value
-            payload = intercepted
-          }
-        } catch (e) {
-          return toolError({ code: 'WRITE_INTERCEPT', message: `write 拦截器抛错: ${(e as Error).message}` })
-        }
-      }
-      // N1 契约(fix-main-sub-isolation):autoLock 基线在拦截器(同步)之后、冲突检查之前一刻解析 ——
+      // N1 契约(fix-main-sub-isolation):autoLock 基线在冲突检查之前一刻解析 ——
       // 解析→handleConflict→commitSetToBind 为同步路径(无 await),单线程下同 scope 连续写必然后写看到前写刷新的基线,
       // 「agent 自己连续写自己」永不互相冲突。勿在解析与检查之间插入 await(会回归连环误冲突)
       const effHash = autoLock ? getBaseline(scope) : undefined
@@ -1137,10 +1067,8 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         if (bindRef == null || typeof bindRef !== 'object') return toolError({ code: 'NOT_OBJECT', message: `edit 仅适用于对象/数组主数据,当前是 ${bindRef === undefined ? 'undefined' : typeof bindRef}`, hint: '叶子用 write(value) 整体设置' })
         const conflict = await handleConflict('edit', effHash)
         if (conflict !== null) return conflict
-        // 统一为 patch 列表:批量用 patches(或拦截器转换后的 patchList);单个用 [patch + 顶层 value]
-        const list: { op?: EditOp; jsonPath?: string; value?: unknown }[] = patchList
-          ? patchList
-          : (patches && patches.length) ? patches
+        // 统一为 patch 列表:批量用 patches;单个用 [patch + 顶层 value]
+        const list: { op?: EditOp; jsonPath?: string; value?: unknown }[] = (patches && patches.length) ? patches
           : [{ op: patch!.op ?? 'set', jsonPath: patch!.jsonPath || '', value: payload }]
         const r = applyPatchesToBind({ bindRef, patches: list, schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'zod', dryRun, internalAfterWrite, protectedCtx })
         if (!r.ok) return r.error

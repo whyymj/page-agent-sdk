@@ -39,12 +39,10 @@ export const DEFAULT_SYSTEM_PROMPT_EN = [
 
 /**
  * 拼接「可操作数据」段到 systemPrompt:从 data 的 schema 字段 .describe() 自动提取注入。
- * toolMode 传入后透传给 extractSchemaHint(提示词与工具面一致性:simple/minimal 未装载
- * schema_data 时,分层披露深层指引改教 read 子路径,勿教不存在的工具)。
  */
-export function buildDataPrompt(data: DataConfig | undefined, schemaHint?: SchemaHintOptions, toolMode?: 'simple' | 'advanced' | 'minimal'): string {
+export function buildDataPrompt(data: DataConfig | undefined, schemaHint?: SchemaHintOptions): string {
   if (!data) return ''
-  const hint = extractSchemaHint(data.schema, toolMode ? { ...schemaHint, toolMode } : schemaHint)
+  const hint = extractSchemaHint(data.schema, schemaHint)
   return `\n\n## 可操作数据(字段以 read 工具返回的实际值为准)\n${data.description ? data.description + '\n' : ''}${hint}`
 }
 

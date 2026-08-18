@@ -28,7 +28,7 @@ export async function run(ctx: TestCtx) {
 
   // ===== C1:轮次达 70% 触发预算提示 =====
   {
-    const mw = createUsageHintsMiddleware(undefined, false, 'simple', false, { promptSoftCap: Number.POSITIVE_INFINITY })
+    const mw = createUsageHintsMiddleware(undefined, false, { promptSoftCap: Number.POSITIVE_INFINITY })
     const s = stateWith({ rounds: 7, maxToolRounds: 10 })
     const out = (mw.augmentPrompt as (st: HarnessState) => string | undefined)(s) ?? ''
     assert(out.includes('预算提示') && out.includes('7/10'), '✓ C1 预算提示 → 轮次 ≥70%(7/10)注入提示行')
@@ -39,25 +39,25 @@ export async function run(ctx: TestCtx) {
 
   // ===== C1:未达 70% 不注入 =====
   {
-    const mw = createUsageHintsMiddleware(undefined, false, 'simple', false, { promptSoftCap: Number.POSITIVE_INFINITY })
+    const mw = createUsageHintsMiddleware(undefined, false, { promptSoftCap: Number.POSITIVE_INFINITY })
     const out = (mw.augmentPrompt as (st: HarnessState) => string | undefined)(stateWith({ rounds: 3, maxToolRounds: 10 })) ?? ''
     assert(!out || !out.includes('预算提示'), '✓ C1 预算提示 → 轮次 30% 未达阈值不注入')
   }
 
   // ===== C1:token 维度(累计 ≥ softCap/2)触发;无 softCap 配置不触发 =====
   {
-    const mwCap = createUsageHintsMiddleware(undefined, false, 'simple', false, { promptSoftCap: 160_000 })
+    const mwCap = createUsageHintsMiddleware(undefined, false, { promptSoftCap: 160_000 })
     const s = stateWith({ rounds: 1, maxToolRounds: 10, invokeUsage: { prompt_tokens: 90_000, completion_tokens: 0, total_tokens: 90_000 } })
     const out = (mwCap.augmentPrompt as (st: HarnessState) => string | undefined)(s) ?? ''
     assert(out.includes('预算提示') && out.includes('90K'), '✓ C1 预算提示 → 累计 ≥ softCap/2(90K/160K)注入(轮次未达也触发)')
-    const mwNoCap = createUsageHintsMiddleware(undefined, false, 'simple')
+    const mwNoCap = createUsageHintsMiddleware(undefined, false)
     const out2 = (mwNoCap.augmentPrompt as (st: HarnessState) => string | undefined)(stateWith({ rounds: 1, maxToolRounds: 10, invokeUsage: { prompt_tokens: 90_000, completion_tokens: 0, total_tokens: 90_000 } })) ?? ''
     assert(!out2 || !out2.includes('预算提示'), '✓ C1 预算提示 → 未配 softCap 时 token 维度不触发(1/10 轮 + 90K 不注入)')
   }
 
   // ===== C2:写失败计数 ≥2 注入提醒;清零后不注入 =====
   {
-    const mw = createUsageHintsMiddleware(undefined, false, 'simple')
+    const mw = createUsageHintsMiddleware(undefined, false)
     const out = (mw.augmentPrompt as (st: HarnessState) => string | undefined)(stateWith({ rounds: 1, writeFailures: { 'components.0': 2, '': 3 } })) ?? ''
     assert(out.includes('连续写失败') && out.includes('components.0×2') && out.includes('(整体)×3'), '✓ C2 写失败提醒 → ≥2 次路径注入(含整体根路径)')
     const out2 = (mw.augmentPrompt as (st: HarnessState) => string | undefined)(stateWith({ rounds: 1, writeFailures: { 'components.0': 1 } })) ?? ''

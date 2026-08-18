@@ -11,36 +11,26 @@ export async function run() {
   // resources 需 vfsStore(capabilities.vfs 默认开;MIN_CAPS 关 vfs → 显式开)
   const caps = { ...MIN_CAPS, vfs: true }
 
-  // advanced + data.resources → 资源工具暴露 + resourcesPin 中间件
+  // data.resources → 资源工具暴露 + resourcesPin 中间件
   const sdk = createChatSdk({
     ui: false, id: 'e2e-res', storage: 'memory', llm: FAKE_LLM, capabilities: caps,
-    data: { schema, bind, resources: [{ path: 'id', mode: 'freeze' }, { path: 'token', mode: 'verbatim' }] }, toolMode: 'advanced',
+    data: { schema, bind, resources: [{ path: 'id', mode: 'freeze' }, { path: 'token', mode: 'verbatim' }] },
   })
   await sdk.mount()
   const tools = sdk.inspect().tools.map((t) => t.name)
-  assert(tools.includes('resource_get'), 'advanced + data.resources → tools 含 resource_get')
-  assert(tools.includes('resource_update'), 'advanced + data.resources → tools 含 resource_update')
-  assert(tools.includes('resource_list'), 'advanced + data.resources → tools 含 resource_list')
-  assert(tools.includes('resource_delete'), 'advanced + data.resources → tools 含 resource_delete')
+  assert(tools.includes('resource_get'), 'data.resources → tools 含 resource_get')
+  assert(tools.includes('resource_update'), 'data.resources → tools 含 resource_update')
+  assert(tools.includes('resource_list'), 'data.resources → tools 含 resource_list')
+  assert(tools.includes('resource_delete'), 'data.resources → tools 含 resource_delete')
   const rget = sdk.inspect().tools.find((t) => t.name === 'resource_get')
   assert(rget?.source === 'builtin', 'resource_get → source=builtin')
   assert(sdk.inspect().middleware.includes('resourcesPin'), '配 data.resources → middleware 含 resourcesPin(跨压缩 pin)')
   sdk.unmount()
 
-  // simple → 不含 resource_*(SIMPLE_HIDDEN)
-  const sdkS = createChatSdk({
-    ui: false, id: 'e2e-res-s', storage: 'memory', llm: FAKE_LLM, capabilities: caps,
-    data: { schema, bind, resources: [{ path: 'id', mode: 'freeze' }] }, toolMode: 'simple',
-  })
-  await sdkS.mount()
-  const sTools = sdkS.inspect().tools.map((t) => t.name)
-  assert(!sTools.includes('resource_get'), 'simple → tools 不含 resource_*(SIMPLE_HIDDEN)')
-  sdkS.unmount()
-
   // 未配 resources → 不含 resource_* + middleware 不含 resourcesPin
   const sdkN = createChatSdk({
     ui: false, id: 'e2e-res-n', storage: 'memory', llm: FAKE_LLM, capabilities: caps,
-    data: { schema, bind }, toolMode: 'advanced',
+    data: { schema, bind },
   })
   await sdkN.mount()
   const nTools = sdkN.inspect().tools.map((t) => t.name)
@@ -51,7 +41,7 @@ export async function run() {
   // SDK API 资源方法(createResource/getResource/updateResource/listResources/deleteResource)
   const sdkA = createChatSdk({
     ui: false, id: 'e2e-res-api', storage: 'memory', llm: FAKE_LLM, capabilities: caps,
-    data: { schema, bind, resources: [{ path: 'id', mode: 'freeze' }, { path: 'token', mode: 'verbatim' }] }, toolMode: 'advanced',
+    data: { schema, bind, resources: [{ path: 'id', mode: 'freeze' }, { path: 'token', mode: 'verbatim' }] },
   })
   await sdkA.mount()
   sdkA.createResource('token', 'manual-tok')

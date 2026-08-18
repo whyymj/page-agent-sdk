@@ -249,7 +249,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(r3.aborted === true, '✓ budget time 超限(80ms>50ms) → aborted')
   }
 
-  // ============ read/write 高层工具(单主对象 + 自动锁 + 拦截器)============
+  // ============ read/write 高层工具(单主对象 + 自动锁)============
   console.log('\n[read/write 高层工具]')
   {
     const pageObj: any = { title: '原标题', items: ['a', 'b'] }
@@ -297,36 +297,6 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(t3['write'], { value: { v: 2 } })
     assert(/VERSION_CONFLICT/.test(r), 'write autoLock:read 后外部改值 → 自动乐观锁触发冲突')
 
-    // 拦截器:read 拦截脱敏(read() 无 jsonPath 读整个 bind,经拦截器脱敏)
-    const page4: any = { secret: '密码123', title: '公开' }
-    const tools4 = createDataOps(
-      { schema: z.any(), bind: page4, description: 'p4' },
-      { interceptors: { read: (v) => ({ ...(v as any), secret: '***' }) } },
-    )
-    const t4 = byName(tools4)
-    r = await invoke(t4['read'], {})
-    assert(/\*\*\*/.test(r) && !/密码123/.test(r), 'read 拦截器 → 脱敏(原始值不泄露给 LLM)')
-
-    // 拦截器:write 拦截拒绝
-    const page5: any = {}
-    const tools5 = createDataOps(
-      { schema: z.any(), bind: page5, description: 'p5' },
-      { interceptors: { write: () => ({ error: '禁止写入' }) } },
-    )
-    const t5 = byName(tools5)
-    r = await invoke(t5['write'], { value: { x: 1 } })
-    assert(/WRITE_INTERCEPT|禁止写入/.test(r), 'write 拦截器拒绝 → 返回拦截错误')
-
-    // 拦截器:write 拦截转换
-    const page6: any = { name: 'old' }
-    const tools6 = createDataOps(
-      { schema: z.object({ name: z.string() }), bind: page6, description: 'p6' },
-      { interceptors: { write: (payload) => ({ name: (payload as any).name?.toUpperCase() }) } },
-    )
-    const t6 = byName(tools6)
-    r = await invoke(t6['write'], { value: { name: 'abc' } })
-    assert(page6.name === 'ABC', 'write 拦截器转换 → 值经拦截器改写后落地')
-
     // LEAF_BIND:叶子 bind 的 set_data/write(set) 拒绝(不静默丢失)
     const leaf = '原始字符串' as any
     const leafTools = createDataOps({ schema: z.string(), bind: leaf, description: 'leaf' })
@@ -335,26 +305,6 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(/LEAF_BIND/.test(r), 'set_data 叶子 bind → LEAF_BIND 拒绝(不静默丢失)')
     r = await invoke(lt['write'], { value: '"新值"' })
     assert(/LEAF_BIND/.test(r), 'write(set) 叶子 bind → LEAF_BIND 拒绝')
-
-    // edit 模式拦截器生效(#3 修复):拦截器收到 {op,jsonPath,value} 并能改 value
-    const page7: any = { items: ['a'] }
-    const tools7 = createDataOps(
-      { schema: z.object({ items: z.array(z.string()) }), bind: page7, description: 'p7' },
-      { interceptors: { write: (payload) => (payload as any).value?.toUpperCase() } },
-    )
-    const t7 = byName(tools7)
-    r = await invoke(t7['write'], { value: 'b', patch: { op: 'append', jsonPath: 'items' } })
-    assert(page7.items.length === 2 && page7.items[1] === 'B', 'write edit 模式拦截器 → 收到 value 并转换后落地(原 bug:edit 模式拦截器失效)')
-
-    // 修复 3:write edit 单 patch + 透传拦截器(返回 {op,jsonPath,value} 原样)→ 应取 .value 落地,不应把整个对象当 value(原 bug:payload=intercepted 导致 SCHEMA_INVALID)
-    const pagePassthrough: any = { title: 'old', components: [{ type: 'x', id: 'c1' }] }
-    const toolsPassthrough = createDataOps(
-      { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), id: z.string() })) }), bind: pagePassthrough, description: 'p-passthrough' },
-      { interceptors: { write: (payload) => payload } }, // 透传:原样返回 {op,jsonPath,value}
-    )
-    const tPassthrough = byName(toolsPassthrough)
-    r = await invoke(tPassthrough['write'], { value: '新标题', patch: { op: 'set', jsonPath: 'title' } })
-    assert(pagePassthrough.title === '新标题', '修复3: write edit 单 patch + 透传拦截器 → 取 .value 落地(原 bug:把 {op,jsonPath,value} 整个对象当 value 写入 → SCHEMA_INVALID)')
 
     // 治本(write value 双语义,#76):patch 自带 value(与 patches 元素一致),消除顶层 value 双语义歧义;双支持(向后兼容)
     const pagePV: any = { title: 'old', items: [] as string[] }
@@ -374,17 +324,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(/已删除/.test(r), 'M1: write del 不传 op → 通过(del 分支不读 op;原 bug:op 必填致 zod 校验失败)')
 
     // 白名单严格(fix-dataops-write-correctness):write(set) / set_data 的未声明字段一律丢弃,
-    // 即便 interceptors.write 补充或用户显式传入也不写回 bind(安全收紧:可写字段须在 schema 声明;
-    // 拦截器改声明字段值仍生效,只是不能借机塞非声明字段)。2.15.0 曾把"补充字段写回"当修复,实为白名单绕过口子,此处收窄。
-    const pageSupp: any = { title: 'old', _internal: 'keep' }
-    const toolsSupp = createDataOps(
-      { schema: z.object({ title: z.string() }), bind: pageSupp, description: 'p-supp' },
-      { interceptors: { write: (payload) => ({ ...(payload as any), _internal: 'auto-supplied' }) } },
-    )
-    const tSupp = byName(toolsSupp)
-    r = await invoke(tSupp['write'], { value: { title: 'new' } })
-    assert(pageSupp.title === 'new' && pageSupp._internal === 'keep', '白名单严格: write(set) + 拦截器补充非声明字段 → 补充字段被挡(_internal 保持 keep 而非 auto-supplied);声明字段 title 正常写入')
-    // set_data 同样:显式传非声明字段被挡(白名单语义一致)
+    // 即便用户显式传入也不写回 bind(安全收紧:可写字段须在 schema 声明)。
     const pageSupp2: any = { title: 'old', _internal: 'keep' }
     const toolsSupp2 = createDataOps({ schema: z.object({ title: z.string() }), bind: pageSupp2, description: 'p-supp2' })
     const tSupp2 = byName(toolsSupp2)

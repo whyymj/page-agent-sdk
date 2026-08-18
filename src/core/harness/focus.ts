@@ -117,18 +117,11 @@ export interface FocusMiddlewareOptions {
   onChange?: (focuses: Focus[]) => void
   /**
    * 解焦指引(聚焦下 agent 被拒后如何解除焦点;提示词注入与 PATH_DENIED 文案按此分支,防引导调不存在的工具)。
-   * 用户实测(simple toolMode page-demo):文案引导「先 clear_focus」但 focus 工具仅 advanced 装载 →
-   * agent 声称清除焦点却无工具可调,硬写非焦点组件反复 PATH_DENIED。
-   * - 'tool'(默认):agent 有 focus 工具(advanced toolMode)→ remove_focus / clear_focus / 换焦点
-   * - 'ask-user':无工具,焦点由用户 UI 管理(simple/minimal 主 agent)→ 提示用户在输入框移除聚焦 chip
+   * - 'tool'(默认):agent 有 focus 工具 → remove_focus / clear_focus / 换焦点
+   * - 'ask-user':无工具,焦点由用户 UI 管理(集成方经 capabilities.focus:false 等关闭 focus 工具时)→ 提示用户在输入框移除聚焦 chip
    * - 'report-parent':子 agent(继承焦点,授权面永不带 focus 工具)→ 收口回复反馈需先取消焦点
    */
   unfocusGuidance?: 'tool' | 'ask-user' | 'report-parent'
-  /**
-   * 工具呈现模式(提示词与工具面一致性):焦点子树 schema 走 extractSchemaHint 分层披露时,
-   * simple/minimal 未装载 schema_data → 深层指引改教 read 子路径。默认 'advanced'。
-   */
-  toolMode?: 'simple' | 'advanced' | 'minimal'
 }
 
 export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware & FocusController {
@@ -165,13 +158,12 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
         'read 不带路径时默认只返回聚焦子树;需要全量主数据时显式列顶层键(read({jsonPaths:[...]}) )',
       ]
       // 视野收敛:注入每个焦点子树 schema 描述(LLM 每轮看到所有焦点组件结构)
-      // toolMode 透传:分层披露的深层指引按工具面分支(simple/minimal 勿教 schema_data)
       const schema = opts.getSchema()
       if (schema) {
         const subs = focuses
           .map((f) => {
             const sub = getSchemaAtPath(schema, f.path)
-            return sub ? extractSchemaHint(sub, opts.toolMode ? { toolMode: opts.toolMode } : undefined) : null
+            return sub ? extractSchemaHint(sub) : null
           })
           .filter((h): h is string => !!h)
         if (subs.length) {

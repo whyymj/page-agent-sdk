@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-2531%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-2502%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -48,7 +48,7 @@ At its core, it gives the AI a **standardized, safe JSON-operation channel**. AI
 
 | Constraint | Mechanism | Effect |
 |---|---|---|
-| **Scope control** | Declared schema fields (`data`) — only declared keys are writable; schema shape auto-whitelist (top-level + sub-path recursively projected by sub-schema; undeclared fields hidden/denied; whole-set becomes merge to prevent accidental deletion; `interceptors.write`-supplied invisible fields persisted) | AI touching undeclared fields → `PATH_DENIED` |
+| **Scope control** | Declared schema fields (`data`) — only declared keys are writable; schema shape auto-whitelist (top-level + sub-path recursively projected by sub-schema; undeclared fields hidden/denied; whole-set becomes merge to prevent accidental deletion) | AI touching undeclared fields → `PATH_DENIED` |
 | **Validity check** | zod schema — `write`/`set`/`edit` validated against schema | Invalid type/enum/structure → structured error, no write |
 | **Incremental op** | `write` with `patch`/`patches` (batch, atomic rollback) or advanced `edit_data` patches by `jsonPath` (set/remove/merge/append) | Avoid re-sending the whole large JSON; precise local edits; use `patches` to edit many at once |
 | **Large-object retrieval** | `read` supports `fields` (projection) + `depth` (truncation) to shrink payload; `query_data` (JSONPath)/`search_data` (text)/`eval_script` (sandboxed JS) | Efficient retrieval + pinpoint location in large JSON |
@@ -167,7 +167,7 @@ CDN zero-config: `<script src="https://unpkg.com/page-agent-sdk"></script>` → 
 | 📌 cross-compress working memory (2.20+) | Pin recent read/query paths + hashes across compression; no re-fetch, correct optimistic-lock hash | `capabilities.workingMemory` |
 | 🤖 unattended automation (2.20+) | Resource budget guard (`tokenBudget`/`timeBudgetMs`) + fatal-error auto-recovery (`maxAutoRetries`: restore checkpoint + retry) + cross-refresh resume + `sdk.batch(tasks)` batch processing | `capabilities.automation` |
 | 📐 context resilience (2.30+) | Hard floor `contextWindow ≥200K` (rejects <200K models like legacy `deepseek`/`gpt-4o`/`glm-4.5` at startup); three gates (compress/trim/offload) thresholds follow the live window after `setLlm`; reactive retry on `context_length_exceeded` (aggressive trim → single retry, never fails raw); vfs large-result refs protected from LRU eviction + OOM 1.5× fallback; system-prompt budget (25% window, drops non-pinned segments, keeps base/mission/workingMemory) | built-in |
-| 🎯 focus auto-switch (2.31+) | AI auto-judges task scope → `set_focus` (local task) / `clear_focus` (global/done); focus persists across refresh/session-switch (restore validates path via `getSchemaAtPath`, drops if invalid); spawned subagents inherit parent focus (three-layer convergence; parent unfocused → child no focus middleware, zero regression) | `capabilities.focus` + `toolMode:'advanced'` |
+| 🎯 focus auto-switch (2.31+) | AI auto-judges task scope → `set_focus` (local task) / `clear_focus` (global/done); focus persists across refresh/session-switch (restore validates path via `getSchemaAtPath`, drops if invalid); spawned subagents inherit parent focus (three-layer convergence; parent unfocused → child no focus middleware, zero regression) | `capabilities.focus` |
 | 🔒 precise-value protection (2.32+) | `data.resources: [{path, mode}]` protects exact-value fields: `freeze` (read-only, value hidden via `⟦frozen:path⟧` placeholder, FROZEN_FIELD on write) / `verbatim` (preserved verbatim, `⟦res:handle⟧`, modify via `resource_update` else VERBATIM_MISMATCH); write-side enforcement across commitSetToBind/applyPatches/eval + resource tools (`resource_get/update/list/delete`, advanced) + cross-compression pin | `data.resources` + `capabilities.vfs` |
 | 🌍 UI customization & i18n (3.17+–3.22+) | Dialog UI is fully customizable without forking: `dialog.icons` (per-icon override; plain text or sanitized HTML fragment) + built-in `dialog.theme: 'dark'`, and the top-level `i18n` group (3.22+): `locale: 'en-US'` switches the built-in message pack (chat surface + Debug drawer + Skill panel + code preview; `formatTime`/autoTitle follow, **default systemPrompt switches to English** so agent replies match the UI language), `messages` per-key overrides (e.g. `statusDone: '<b style="color:#10b981">Done ✓</b>'` — rich-text render spots accept inline HTML fragments sanitized via a text allowlist) — switch language and tweak individual strings in one group; `DialogMessages` (~226 keys) + `MESSAGES_ZH_CN`/`MESSAGES_EN_US`/`resolveDialogMessages` exported for custom UIs | `dialog.{icons,theme}` + `i18n.{locale,messages}` |
 
@@ -302,7 +302,7 @@ createChatSdk({ subagents: [
 
 ### Built-in tools (Agent-callable)
 
-- **data ops** (default `toolMode:'advanced'`, expose all; opt-down `simple` promotes read/write, `minimal` read/write only): `read` (list/get/describe merged) / `write` (set/edit/delete merged + auto optimistic lock + auto snapshot) — recommended; `restore_data` / `history_data` (snapshot rollback/history); `advanced` additionally exposes low-level `describe_data` / `get_data` (@deprecated, use read) / `set_data` / `edit_data` (jsonPath patch) / `delete_data` / `schema_data` / `diff_data` / focus tools
+- **data ops** (all 14 tools always exposed): `read` (list/get/describe merged) / `write` (set/edit/delete merged + auto optimistic lock + auto snapshot) — recommended; `restore_data` / `history_data` (snapshot rollback/history); low-level `describe_data` / `get_data` (@deprecated, use read) / `set_data` / `edit_data` (jsonPath patch) / `delete_data` / `schema_data` / `diff_data` / focus tools
 - **window query**: `query_data` (JSONPath) / `search_data` (fuzzy) / `eval_script` (sandboxed)
 - **fetch**: `fetch_document`
 - **vfs**: `vfs_read` / `vfs_write` / `vfs_edit` / `vfs_ls` / `vfs_glob` / `vfs_grep`
@@ -397,13 +397,6 @@ createChatSdk({
   id: 'my-agent',              // stable id (multi-agent isolation + persistence resume)
   systemPrompt: '...',
   data: { schema, bind, description? },  // single main object: bind directly connects reactive/plain object (tools read/write bind, not auto-mounted to window); schema field .describe() auto-injected into systemPrompt「可操作数据」section
-  // toolMode: 'simple',        // optional: default 'advanced' (expose all); simple promotes read/write; minimal = read/write only
-  interceptors: {              // read/write interceptors (desensitize/transform/audit/reject; input/output at agent IO entry/exit)
-    read: (value) => value,
-    write: (payload) => payload,
-    input: (msg) => msg,       // preprocess at send entry
-    output: (reply) => reply,  // postprocess before return
-  },
   storage: 'indexed',          // persistence (default off)
   streaming: true, ui: 'default',
   capabilities: { verify: true },        // capability toggles
@@ -499,8 +492,8 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 2531 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 832 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm test            # 2502 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 814 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test

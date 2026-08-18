@@ -180,7 +180,6 @@ onMounted(() => {
     data: { schema: pageSchema, bind: pageObj, resources: [{ path: 'components.0.props.trackId', mode: 'freeze' as const }] },
     // 胜任自动化:agent 能读渲染后 DOM(get_dom,看修改是否生效)+ 触发宿主页面动作(保存/发布,与配置面板同等)
     capabilities: { domInspect: true, draftWrite: true },
-    toolMode: 'advanced', // complex 场景:暴露全工具 + draft_write/draft_commit(分块生成大页面;真 LLM 实测用)
     maxToolRounds: 25,  // custom 组件逐个委派 use_html 耗轮次(同 html-page-demo),抬到 25 防多组件生成被截断
     maxParallelTools: 3,  // 同轮工具并发 >1:多个 use_html 委派可同轮并行(3.13 并行委派;同组件单一在途靠编排禁令)
     actions: {
@@ -189,20 +188,6 @@ onMounted(() => {
       refresh_preview: {
         description: '返回当前页面概况(标题 + 组件数)。用户询问页面状态/有多少组件时调用。',
         run: () => `当前页面「${pageObj.title}」共 ${pageObj.components.length} 个组件。`,
-      },
-    },
-    // interceptors.write:agent push 新组件时自动补 id(若未设)—— agent 无需关心 id 生成,拦截器兜底
-    // (演示拦截器补充能力:即使 agent 只传 { type:'heading', props:{...} },落地时也有稳定 id 供锚点/调试)
-    interceptors: {
-      write: (payload) => {
-        if (payload && Array.isArray((payload as any).components)) {
-          let i = 0
-          ;(payload as any).components = (payload as any).components.map((c: any) => {
-            if (!c.id) c.id = `cmp-${Date.now()}-${i++}`
-            return c
-          })
-        }
-        return payload
       },
     },
     skills: [

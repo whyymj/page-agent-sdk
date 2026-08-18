@@ -338,8 +338,7 @@ flowchart TD
   CONN --> LIST["listTools() 拉取远程工具清单"]
   LIST --> SCHEMA["inputSchema 直传 LangChain tool()<br/>(zod 4 兼容)"]
   SCHEMA --> INJ["注入 allTools(source='mcp:<name>')"]
-  INJ --> FILTER["filterByToolMode 按 toolMode 筛选"]
-  FILTER --> AGENT["进 ReAct 循环供 LLM 调用"]
+  INJ --> AGENT["进 ReAct 循环供 LLM 调用"]
   AGENT --> CALL{"LLM 调远程工具?"}
   CALL -->|是| INV["client.invokeTool(name, args)"]
   INV --> RES["结果回灌为 ToolMessage"]
@@ -477,9 +476,7 @@ flowchart LR
 
 **分块写(opt-in `capabilities.draftWrite`):**`draft_write`/`draft_commit`(类 git add→commit),commit 走完整校验链 + 乐观锁;大 JSON 场景建议 `maxToolRounds` 20-30。
 
-**toolMode:**`advanced`(默认,14 工具,全暴露)/ `simple`(7,主推 read/write)/ `minimal`(2);`filterByToolMode` 纯函数;usageHints 按 mode 注入运行时工具说明(**集成方 systemPrompt 只写业务知识,不重复声明工具语法**);提示词档位内部自动跟随 toolMode(无公开开关,3.30 移除 `hintsMode`),检测到存量 systemPrompt 含「simple 模式/未暴露」措辞时自动降级 simple 提示词 + warn(3.28 一致性对齐;3.29 正则收窄,「勿调用」单独出现不再触发)。
-
-**interceptors:**`read(value)` 脱敏/派生(只改 LLM 看到的值);`write(payload, current)` 转换/审计/拒绝(返回 `{error}`)。**仅守高层 read/write;advanced 底层工具绕过**(集成方需知情);`input(input)`/`output(json)` 在 agent IO 入口/出口改写。
+**工具面恒全暴露(3.31 移除 `toolMode`/`interceptors`):**`createDataOps` 直出 14 工具,无呈现模式筛选(原 `filterByToolMode` 已删);usageHints 按**能力开关**注入运行时工具说明,无档位(**集成方 systemPrompt 只写业务知识,不重复声明工具语法**);检测到存量 systemPrompt 含「simple 模式/未暴露」措辞时 warn(原自动降级逻辑随档位一并移除)。interceptors(read/write/input/output)整功能移除——读写管控统一由 schema 白名单 + 受保护资源 + focus 承担。
 
 **受保护资源(opt-in):**`data.resources:[{path, mode}]`;`freeze` 只读(read 返 `⟦frozen:path⟧` 占位符,写撞 `FROZEN_FIELD`);`verbatim` 原样保留(read 返 `⟦res:handle⟧`,改值经 `resource_update`,直写新值 `VERBATIM_MISMATCH`)。**bind 恒持原始值,占位符只在读写边界替换**(hash/快照/乐观锁零干扰);强制层 `enforceSet`/`enforcePatches` 先于 schema 校验;需 vfsStore;配 `resourcesPin` 跨压缩注入。skill `precise-value-protection`。
 

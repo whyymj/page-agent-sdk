@@ -41,7 +41,6 @@ async function main() {
     },
     data: { schema: pageSchema, bind, description: '专题页 {title, components[]}' },
     capabilities: { draftWrite: true, vfs: true, tracing: true },
-    toolMode: 'advanced',
     maxToolRounds: 40,
     systemPrompt: '你是页面构建助手。生成大页面必须用 draft_write 分块 → draft_commit(单次 write 装不下 max_tokens)。',
     onEvent: (e: any) => {

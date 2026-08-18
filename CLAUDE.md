@@ -15,7 +15,7 @@
 
 通用「JSON 操作助手」。systemPrompt 由 `createChatSdk({ systemPrompt })` 注入,不硬编码业务身份。
 - **默认 systemPrompt**:用户不传时用内置 `DEFAULT_SYSTEM_PROMPT`(身份 + 能力概述 + `systemPromptHelpers.reliableWriteRules`,`---` 分隔);用户传了完全覆盖。`appendReliableWriteRules` 默认 `true`:自定义 systemPrompt 末尾自动追加写入规则;设 `false` 关闭(用默认 prompt 时无效,默认已含)。`createAgent` 层兜底 `'你是一个智能助手。'`
-- **职责分工(重要)**:内置工具用法(read/write/get/set/patch/autoLock/snapshot/query/search/eval 等)由 `usageHints` 中间件按 `toolMode` 自动注入运行时 prompt,**集成方 systemPrompt 只写业务知识**(身份、字段含义、业务流程、技能引用),不要重复声明工具语法。**动态组件说明/按运行时状态注入**走 `augmentSystem({ state, data })` 钩子(每轮调,setData 后 data 自动同步),见 `doc/system-prompt.md` B6 段
+- **职责分工(重要)**:内置工具用法(read/write/get/set/patch/autoLock/snapshot/query/search/eval 等)由 `usageHints` 中间件按能力开关自动注入运行时 prompt,**集成方 systemPrompt 只写业务知识**(身份、字段含义、业务流程、技能引用),不要重复声明工具语法。**动态组件说明/按运行时状态注入**走 `augmentSystem({ state, data })` 钩子(每轮调,setData 后 data 自动同步),见 `doc/system-prompt.md` B6 段
 
 ## 技术栈
 
@@ -30,9 +30,9 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2531 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,832 项;tests/e2e/<module>.mjs 按模块拆分)
-npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,99 项;tests/browser/<demo>.spec.ts)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2502 项断言)
+npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,814 项;tests/e2e/<module>.mjs 按模块拆分)
+npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,101 项;tests/browser/<demo>.spec.ts)
 ```
 
 ## 环境配置
@@ -75,7 +75,7 @@ skills/                         # 分发给使用者的 Agent Skill(入 npm 包 
 - **schema 白名单**(ZodObject):顶层 key 白名单;读统一 `projectBySchemaDeep` 深投影(未声明不泄露);写 `isPathAllowed` 逐段校验;整体 set = merge 语义(未声明保留防误删)
 - **乐观锁契约**:`get_data`/`read` 附 `hash=xxx`;写传 `expectedHash` 或 `write` `autoLock`(默认开);hash 不匹配 → 挂起 `sdk.pendingConflict` → `resolveConflict('keep_external'|'overwrite'|'restore')`;**per-scope 基线**(子不污染主);**同 scope 连续写永不互相冲突**;**conflictPolicy**(3.29,默认 `'ask'` 挂起等人工 / `'overwrite'` agent 强制覆盖不挂起 / `'keep_external'` 自动保留外部):宿主与 agent 争同一份数据、无人值守场景声明 overwrite 防流程永挂;自动裁决仍外发 conflict 事件(`autoResolved` 标记)
 - **高层 read/write**:`read` 多路径/裁剪/分页;`write` 四意图(set/patch/**patches 原子任一失败回滚**/del;patch op 枚举 set/remove/merge/append/**move**(value=目标路径字符串,数组元素同数组重排/跨数组移动一步原子))+ `dryRun`;快照 per-path 栈 + `restore_data` + `history_data`;`eval_script` Worker 沙箱;`draft_*` opt-in(大 JSON 建议 maxToolRounds 20-30)。**写路径成本收敛(3.25.1)**:同调用 hash 单算(`commitBaseline`,基线+消息复用)+ codeAsset 改前态单拷贝(beforeBind 复用为快照条目,restore 防御性深拷贝兜底),1MB 单写 median -12~-22%;**不变量:冲突检查 hash 恒实时计算,禁跨调用缓存**(人工直改 reactive bind 不经 SDK 写路径,脏标记失明 → keep_external 失效)
-- **toolMode**:`advanced`(默认 14,全暴露)/`simple`(7,主推 read/write)/`minimal`(2);usageHints 提示词档位**内部自动跟随 toolMode**(无公开开关,3.30 移除 `hintsMode`;检测存量 systemPrompt「simple 模式/未暴露」措辞自动降级提示词+warn,「勿调用」单独出现不触发);**interceptors 仅守高层 read/write**(advanced 绕过);受保护资源 freeze/verbatim(占位符只在读写边界替换,bind 恒持原值);**vfs 四池** LRU + 大结果外存
+- **工具面恒全暴露**(3.31 移除 `toolMode`/`interceptors`):`createDataOps` 直出 14 工具,无呈现模式筛选;usageHints 无档位,提示词只随能力开关变化;受保护资源 freeze/verbatim(占位符只在读写边界替换,bind 恒持原值);**vfs 四池** LRU + 大结果外存
 - **code-as-data-asset 扩展(3.0,createHtmlSubagent 单模式触发)**:`__pgId` 无感注入(schema extend → safeParse 不剥离 + read 投影隐藏 `__pg*` + 写 `isPathAllowed` 拒 `__pg*` 段,框架 afterWrite 独占补);**主 scope read 大文本摘要**(标记字段如 `code` → `<code Nkb>`,子 scope 完整);**两条 data 写路径** —— ① LLM write 工具(经完整契约:schema/乐观锁/快照栈/path guard)② 框架钩子(afterAgent commit 直改 bind,快路径,仅 code 字段豁免 write 契约,不进快照栈 + `recomputeBaseline` 防主 agent autoLock 误冲突)。详见子 agent 段「能力包」
 
 ### 记忆与上下文管理(详见 architecture.md §⑥⑮ + context-management.md)
@@ -129,21 +129,21 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test    # tsx 跑 src/core/__tests__/selftest.ts,2531 项断言
+npm test    # tsx 跑 src/core/__tests__/selftest.ts,2502 项断言
 ```
 按模块拆分:`src/core/__tests__/modules/sec-NN.ts`(54+ 个模块)各导出 `run(ctx)`,runner 汇总;共享 `TestCtx` 在 `modules/_ctx.ts`。tsx 跑源码(不经构建),触不到 createChatSdk 顶层 API 作用域。**改任何核心模块后必跑**。
 
 #### 2. 集成层 e2e(改 createChatSdk 顶层 API 后必跑)
 ```bash
-npm run build && npm run test:e2e    # node 跑 dist 产物,832 项
+npm run build && npm run test:e2e    # node 跑 dist 产物,814 项
 ```
 模块在 `tests/e2e/<module>.mjs`(systemprompt/dynamic-register/inspect/subagents/events/storage/exports/data-slots/presets/boundary/custom-injection/conflict/automation/llm-provider/focus/images/resources/agent-compression/headless-subpath/legacy-subpath/capability-packs/authorization-surface/hang-feedback/main-sub-isolation/session-integrity/context-economy/mcp/preferences/diagnostics),共享 stub 在 `tests/e2e/_helpers.mjs`(StubChatModel 在 `_stub-model.mjs`,响应队列驱动真 ReAct)。覆盖顶层 return 对象作用域。**改 createChatSdk 返回对象、AgentCore 接口、动态注册 API、默认提示词、新增导出/配置项后必跑**。
 
 #### 2.5 浏览器 E2E(改 UI/ChatDialog/dataOps 后必跑)
 ```bash
-npm run test:browser  # 99 项;也可 /browser-test 斜杠命令
+npm run test:browser  # 101 项;也可 /browser-test 斜杠命令
 ```
-**原理**:`tests/browser/_helpers.ts` 的 `mockLlm()` 用 `page.route()` 拦截 LLM API 端点,按脚本返回 SSE 流,使 agent ReAct 循环确定性走完,不依赖真 LLM。**双协议**:同时拦截 OpenAI 兼容(`**/chat/completions`)与 Anthropic Messages API(`**/v1/messages`),各返对应格式 SSE,共享 script 计数。spec 按 demo 拆分(page-demo 15 / complex-demo 20 / html-page 8 / customize 7 / rag 4 / nested 3 / queue 3 / icons 5 / i18n 6 / lifecycle 3 / error-recovery 2 / human-confirm 2 / xss 2)。写新测试模板见 `.claude/skills/browser-e2e-testing/SKILL.md`。
+**原理**:`tests/browser/_helpers.ts` 的 `mockLlm()` 用 `page.route()` 拦截 LLM API 端点,按脚本返回 SSE 流,使 agent ReAct 循环确定性走完,不依赖真 LLM。**双协议**:同时拦截 OpenAI 兼容(`**/chat/completions`)与 Anthropic Messages API(`**/v1/messages`),各返对应格式 SSE,共享 script 计数。spec 按 demo 拆分(complex-demo 23 / page-demo 18 / html-page 8 / customize 7 / i18n 6 / icons 6 / images 6 / header-labels 5 / rag 4 / nested 3 / lifecycle 3 / queue 3 / scrollbar 3 / error-recovery 2 / human-confirm 2 / xss 2)。写新测试模板见 `.claude/skills/browser-e2e-testing/SKILL.md`。
 
 #### 3. 浏览器手动验证(改 UI/示例后跑)
 `npm run dev` 逐个 demo 验证(见目录结构 examples 清单;各 demo 侧重点见 `doc/usage-guide.md`)。
@@ -174,7 +174,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2531/832/99)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2502/814/101)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判)→ `npm run test:size` → `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证

@@ -18,10 +18,10 @@ export async function run() {
     ],
   }
 
-  // 基础:advanced + focus 默认开
+  // 基础:focus 默认开
   const sdk = createChatSdk({
     ui: false, id: 'e2e-focus', storage: 'memory', llm: FAKE_LLM,
-    capabilities: MIN_CAPS, data: { schema, bind, description: '页面' }, toolMode: 'advanced',
+    capabilities: MIN_CAPS, data: { schema, bind, description: '页面' },
   })
   await sdk.mount()
 
@@ -85,23 +85,10 @@ export async function run() {
   assert(sdk.inspect().middleware.includes('focus'), 'inspect().middleware → 含 focus')
   sdk.unmount()
 
-  // simple 模式:不含 set_focus/clear_focus(经 UI/宿主 API 触发),但 setFocus API 仍可用
-  const sdkSimple = createChatSdk({
-    ui: false, id: 'e2e-focus-simple', storage: 'memory', llm: FAKE_LLM,
-    capabilities: MIN_CAPS, data: { schema, bind, description: '页面' }, toolMode: 'simple',
-  })
-  await sdkSimple.mount()
-  const simpleTools = sdkSimple.inspect().tools.map((t) => t.name)
-  assert(!simpleTools.includes('set_focus'), 'simple → tools 不含 set_focus(经 UI/宿主 API 触发)')
-  assert(!simpleTools.includes('clear_focus'), 'simple → tools 不含 clear_focus')
-  assert(sdkSimple.setFocus({ path: 'components.1' }).ok === true, 'simple setFocus API 仍可用(经 UI/宿主触发)')
-  assert(sdkSimple.getFocus()?.path === 'components.1', 'simple setFocus → getFocus 反映焦点')
-  sdkSimple.unmount()
-
   // capabilities.focus:false → setFocus no-op + 工具/中间件不装
   const sdkOff = createChatSdk({
     ui: false, id: 'e2e-focus-off', storage: 'memory', llm: FAKE_LLM,
-    capabilities: { ...MIN_CAPS, focus: false }, data: { schema, bind, description: '页面' }, toolMode: 'advanced',
+    capabilities: { ...MIN_CAPS, focus: false }, data: { schema, bind, description: '页面' },
   })
   await sdkOff.mount()
   assert(sdkOff.setFocus({ path: 'components.0' }).ok === false, 'capabilities.focus:false → setFocus {ok:false}')
@@ -133,7 +120,7 @@ export async function run() {
   console.log('[e2e:focus] 持久化 · switchSession 往返 + restore 失效丢弃 + setLlm 保留')
   const sdkP = createChatSdk({
     ui: false, id: 'e2e-focus-persist', storage: 'memory', llm: FAKE_LLM,
-    capabilities: MIN_CAPS, data: { schema, bind, description: '页面' }, toolMode: 'advanced',
+    capabilities: MIN_CAPS, data: { schema, bind, description: '页面' },
   })
   await sdkP.mount()
   const origId = sdkP.sessionId

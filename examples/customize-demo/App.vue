@@ -225,6 +225,12 @@ function formatTime(ts: number): string {
 // slice() 给出新数组引用:debugLogs 是 shallowRef(push 后 triggerRef 触发重算),直传 .value 引用恒不变,
 // DebugDrawer 的 logs prop 不更新 → 生成期间日志列表冻结。新引用才能传播(与 mountChatDialog 同款修复)。
 const debugLogs = computed(() => (sdk.value?.debugLogs.value ?? []).slice())
+/** 🗑️ 清空日志:须清「源」debugLogs(computed slice 才会重算出新空数组;只清 prop 副本会被源复活) */
+function clearDebugLogs() {
+  const logs = sdk.value?.debugLogs
+  if (!logs) return
+  logs.value = []
+}
 function getInspect() { return sdk.value!.inspect() }
 async function getSkillContent(name: string): Promise<string | null> {
   return sdk.value?.getUserSkill(name)?.content ?? null
@@ -389,6 +395,7 @@ function statusLabel(s: ToolStep['status']): string {
           :info-tick="sdk?.infoTick"
           :get-skill-content="getSkillContent"
           cs-theme="dark"
+          @clear="clearDebugLogs"
         />
       </div>
     </section>

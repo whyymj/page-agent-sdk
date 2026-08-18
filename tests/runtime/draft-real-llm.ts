@@ -46,7 +46,6 @@ async function main() {
     },
     data: { schema: pageSchema, bind, description: '专题页 {title, components[]}(30 种组件 union)' },
     capabilities: { draftWrite: true, vfs: true, domInspect: false },
-    toolMode: 'advanced',
     maxToolRounds: 40, // draft 分块多轮(每块一轮),给足轮次到 commit
     systemPrompt: [
       '你是复杂页面构建助手。',

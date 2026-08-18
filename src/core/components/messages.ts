@@ -129,6 +129,7 @@ export interface DialogMessages {
   debugFilterAll: string
   debugFlowPrep: string              // 准备 / 其他(流程视图无 round 分组标题)
   debugLogsEmpty: string
+  debugLogsWrapUp: string          // 收尾 / Wrap-up(日志分组:预算耗尽等兜底收口轮)
   debugFlowEmpty: string
   debugNoInfo: string
   debugCardView: string
@@ -370,6 +371,7 @@ export const MESSAGES_ZH_CN: DialogMessages = {
   debugFilterAll: '全部',
   debugFlowPrep: '准备 / 其他',
   debugLogsEmpty: '暂无日志，发送消息后这里会显示 Agent 的完整上下文、工具调用等信息',
+  debugLogsWrapUp: '收尾',
   debugFlowEmpty: '暂无日志，发送消息后这里按轮次展示执行流程',
   debugNoInfo: '暂无信息',
   debugCardView: '🗂 卡片视图',
@@ -611,6 +613,7 @@ export const MESSAGES_EN_US: DialogMessages = {
   debugFilterAll: 'All',
   debugFlowPrep: 'Preparation / other',
   debugLogsEmpty: 'No logs yet. After you send a message, the full agent context and tool calls appear here.',
+  debugLogsWrapUp: 'Wrap-up',
   debugFlowEmpty: 'No logs yet. After you send a message, the execution flow appears here by round.',
   debugNoInfo: 'No info',
   debugCardView: '🗂 Cards',

@@ -71,7 +71,6 @@ export async function run() {
       ui: false, id: 'e2e-source', storage: 'memory', llm: FAKE_LLM,
       capabilities: { planning: false, skills: false, vfs: false, summarization: false, memory: false, subagent: false },
       data: { schema: z.object({ x: z.number() }), bind: { x: 1 }, description: 'd' },
-      toolMode: 'advanced',  // advanced 暴露底层 set_data;simple/minimal 下 read/write 仍 builtin
     })
     await sdk.mount()
     const setTool = sdk.inspect().tools.find((t) => t.name === 'set_data')

@@ -112,23 +112,6 @@ export async function run() {
     sdk.unmount()
   }
 
-  console.log('[e2e:custom-injection] interceptors 透传 → 构造成功 + read/write 工具装配')
-  {
-    const bind = { secret: 's', title: 't' }
-    const sdk = createChatSdk({
-      ui: false, id: 'e2e-interceptors', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
-      data: { schema: z.any(), bind, description: '应用' },
-      interceptors: {
-        read: (v) => ({ ...v, secret: '***' }),
-        write: () => ({ error: '禁止' }),
-      },
-    })
-    await sdk.mount()
-    const names = sdk.inspect().tools.map((t) => t.name)
-    assert(names.includes('read') && names.includes('write'), 'interceptors 透传 → read/write 工具仍装配')
-    sdk.unmount()
-  }
-
   console.log('[e2e:custom-injection] data bind 字段 → 直连 bind(不挂 window)+ inspect().data')
   {
     const page = { title: '首页', items: [] }
@@ -155,21 +138,6 @@ export async function run() {
     const sp = sdk.inspect().systemPrompt
     assert(/可操作数据/.test(sp), 'data schema → systemPrompt 含「可操作数据」段')
     assert(/页面标题/.test(sp), 'data schema .describe() → systemPrompt 提取字段说明(页面标题)')
-    sdk.unmount()
-  }
-
-  console.log('[e2e:custom-injection] interceptors.input/output 透传 → 构造成功')
-  {
-    const sdk = createChatSdk({
-      ui: false, id: 'e2e-io-interceptors', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
-      data: { schema: z.any(), bind: { x: 1 }, description: '应用' },
-      interceptors: {
-        input: (x) => x,
-        output: (x) => x,
-      },
-    })
-    await sdk.mount()
-    assert(typeof sdk.send === 'function', 'interceptors.input/output 透传 → mount 成功')
     sdk.unmount()
   }
 

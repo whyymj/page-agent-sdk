@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { routeError, asAgentError } from '../../tools/toolError'
-import { createDataOps, filterByToolMode } from '../../tools/dataOps'
+import { createDataOps } from '../../tools/dataOps'
 import { extractSchemaHint } from '../../presets'
 import { diffObjects } from '../../tools/jsonUtils'
 import { fetchDocTools } from '../../tools/fetchDoc'
@@ -97,24 +97,20 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(noInspectArr.every((t) => t.name !== 'inspect_env'), '未传 inspect 数组 → 不含 inspect(默认开但无源)')
   }
 
-  // ============ usageHints 中间件(能力用法默认提示,克制注入)============
+  // ============ usageHints 中间件(能力用法默认提示,克制注入;toolMode 移除后恒为全工具面提示)============
   console.log('\n[usageHints middleware]')
   {
-    // 全开 → 含 planning/snapshot/spawn 三条提示(显式 simple:3.28 默认改 advanced,此处测 simple 分支提示词)
-    const mwFull = createUsageHintsMiddleware({ planning: true, subagent: true }, true, 'simple')
+    // 全开 → 含 planning/snapshot/spawn 三条提示
+    const mwFull = createUsageHintsMiddleware({ planning: true, subagent: true }, true)
     const segFull = mwFull.augmentPrompt?.(createState()) || ''
     assert(/write_todos/.test(segFull) && /restore_data/.test(segFull) && /spawn_agent/.test(segFull), '能力全开 → 注入 planning/snapshot/spawn 用法')
-    // dataOps 开 + simple → 主推 read/write(高层入口)
-    assert(/\bread\b/.test(segFull) && /\bwrite\b/.test(segFull), 'dataOps 开 + simple → 注入 read/write 高层用法')
-    assert(/offset|分页/.test(segFull), 'dataOps 开 + simple → 注入分页(offset)用法(refine-dataops 可达性)')
-    assert(/history_data/.test(segFull), 'dataOps 开 + simple → 注入 history_data 提示(followup 可达性)')
-    // advanced 模式 → 保留底层 get/describe 提示
-    const mwAdv = createUsageHintsMiddleware({ planning: true, subagent: true }, true, 'advanced')
-    const segAdv = mwAdv.augmentPrompt?.(createState()) || ''
-    assert(/describe_data/.test(segAdv), 'dataOps 开 + advanced → 注入 describe 用法')
-    assert(/get_data/.test(segAdv), 'dataOps 开 + advanced → 注入 get_data 读真实值再改用法')
-    assert(/offset|分页/.test(segAdv), 'dataOps 开 + advanced → 注入分页用法(refine-dataops 可达性)')
-    assert(/diff_data/.test(segAdv), 'dataOps 开 + advanced → 注入 diff_data 提示(followup 可达性)')
+    // dataOps 开 → 高层 read/write + 底层 get/describe 用法同面注入
+    assert(/\bread\b/.test(segFull) && /\bwrite\b/.test(segFull), 'dataOps 开 → 注入 read/write 高层用法')
+    assert(/offset|分页/.test(segFull), 'dataOps 开 → 注入分页(offset)用法(refine-dataops 可达性)')
+    assert(/history_data/.test(segFull), 'dataOps 开 → 注入 history_data 提示(followup 可达性)')
+    assert(/describe_data/.test(segFull), 'dataOps 开 → 注入 describe 用法')
+    assert(/get_data/.test(segFull), 'dataOps 开 → 注入 get_data 读真实值再改用法')
+    assert(/diff_data/.test(segFull), 'dataOps 开 → 注入 diff_data 提示(followup 可达性)')
 
     // planning 关 → 无 write_todos 提示
     const mwNoPlan = createUsageHintsMiddleware({ planning: false, subagent: true }, true)
@@ -126,19 +122,10 @@ export async function run(ctx: TestCtx): Promise<void> {
     const segNoData = mwNoData.augmentPrompt?.(createState()) || ''
     assert(!/restore_data/.test(segNoData), '无数据工具 → 不注入 snapshot 提示')
 
-    // 全关 → undefined(不增上下文);focus 默认 opt-out 开,advanced 下会注入 focus 段 → 须显式关 focus 才真"全关"(3.28 默认改 advanced 后的回归点)
+    // 全关 → undefined(不增上下文)
     const mwNone = createUsageHintsMiddleware({ planning: false, subagent: false, inspectEnv: false, focus: false }, false)
     assert(mwNone.augmentPrompt?.(createState()) === undefined, '全关 → augmentPrompt 返回 undefined(不增上下文)')
 
-    // ===== 提示词与工具面一致性(同类坑:focus 引导 simple 下不存在的 clear_tool)=====
-    // simple:仅 read/write/query/search/eval/restore/history 装载 → 不教 schema_data 调用语法(advanced 专属,措辞明示未装载)
-    assert(!/schema_data\(\{jsonPath\}\)/.test(segFull), 'simple → 不教 schema_data 调用语法(advanced 专属未装载)')
-    assert(/schema_data\/diff_data/.test(segFull) && /未装载/.test(segFull), 'simple → schema/diff 以"需切 advanced"措辞提及')
-    // minimal:只 read/write → query/search/eval/history/restore/schema 全部不注入
-    const mwMin = createUsageHintsMiddleware({ planning: true, subagent: true }, true, 'minimal')
-    const segMin = mwMin.augmentPrompt?.(createState()) || ''
-    assert(!/query_data|search_data|eval_script|history_data|schema_data|restore_data|diff_data/.test(segMin), 'minimal → 不注入 query/search/eval/history/schema/restore/diff 用法(均未装载)')
-    assert(/\bread\b/.test(segMin) && /\bwrite\b/.test(segMin), 'minimal → 仍注入 read/write 用法(仅有的两个工具)')
     // planning 开 + humanConfirm 关 → 不教 request_human_confirmation(工具未装载);开 → 教
     assert(!/request_human_confirmation/.test(segFull), 'humanConfirm 关 → 不教 request_human_confirmation(未装载)')
     const mwHC = createUsageHintsMiddleware({ planning: true, subagent: true, humanConfirm: true }, true)
@@ -147,27 +134,12 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(mwFull.name === 'usageHints', '中间件 name=usageHints')
   }
 
-  // ============ filterByToolMode(工具呈现模式筛选)============
-  console.log('\n[filterByToolMode]')
+  // ============ createDataOps 恒全暴露(toolMode/filterByToolMode 已移除)============
+  console.log('\n[createDataOps 全暴露]')
   {
     const config = { schema: z.any(), bind: { x: 1 } as any, description: 'd' }
-    const all = createDataOps(config)  // 14 个工具(移除 snapshot_data/list_data_snapshots)
-    const names = (ts: any[]) => ts.map((t) => t.name)
-    // advanced → 全暴露(14)
-    const adv = filterByToolMode(all, 'advanced')
-    assert(adv.length === 14 && adv.length === all.length, 'advanced → 全暴露(14 工具;simplify-toolset 移除 snapshot/list)')
-    // simple → 隐藏 9 个底层(describe/get/set/edit/delete/schema_data/snapshot/list/diff),保留 read/write + query/search/eval/restore/history(7)
-    const simple = filterByToolMode(all, 'simple')
-    const simpleNames = names(simple)
-    assert(simple.length === 7, 'simple → 7 工具(evolve 精简:去 snapshot/list,补 history_data;diff_data 只 advanced)')
-    assert(['read', 'write', 'query_data', 'search_data', 'eval_script', 'restore_data', 'history_data'].every((n) => simpleNames.includes(n)), 'simple → 含 read/write + query/search/eval/restore/history')
-    assert(['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data', 'schema_data', 'diff_data'].every((n) => !simpleNames.includes(n)), 'simple → 隐藏底层 5 + schema_data + diff_data(snapshot_data/list_data_snapshots 已彻底移除)')
-    // minimal → 只 read/write
-    const minimal = filterByToolMode(all, 'minimal')
-    assert(minimal.length === 2 && names(minimal).includes('read') && names(minimal).includes('write'), 'minimal → 只 read/write')
-    // 默认(不传 mode)= advanced(3.28 breaking:默认由 simple 改 advanced,防 LLM 误调 schema_data 等报「工具不存在」)
-    const def = filterByToolMode(all)
-    assert(def.length === 14 && def.length === all.length, '默认 toolMode = advanced(全暴露)')
+    const all = createDataOps(config)
+    assert(all.length === 14, 'createDataOps → 直出 14 工具(恒全暴露,无呈现模式筛选)')
   }
 
   // ============ history_data(只读查看快照,evolve-default-toolset 期一)============

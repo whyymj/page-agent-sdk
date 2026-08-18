@@ -51,6 +51,8 @@ const props = withDefaults(defineProps<{
   getInfo?: () => AgentInfo
   /** 导出诊断报告 JSON(DebugDrawer「复制诊断报告」按钮;sdk.exportDiagnostics 透传) */
   exportDiagnostics?: () => string
+  /** 清空调试日志(DebugDrawer 🗑️ 按钮;须清「源」debugLogs —— mountChatDialog 自动接线,直接复用组件自行接) */
+  clearDebugLogs?: () => void
   /** 回退到上次正常 checkpoint(checkpoint 选项开启时注入) */
   onUndo?: () => boolean
   /** 是否有可回退的 checkpoint(checkpoint 选项开启时注入) */
@@ -270,7 +272,7 @@ const drawerWidthStyle = computed(() => {
     <!-- 调试抽屉 -->
     <template v-if="renderSection('debug')">
       <slot name="debug" :chat="ctx">
-        <DebugDrawer v-model:visible="debugVisible" :logs="debugLogs" :get-info="getInfo" :export-diagnostics="exportDiagnostics" :info-tick="infoTick" :get-skill-content="getSkillContent" :cs-theme="csTheme" :messages="ctx.messages" :locale="ctx.locale" />
+        <DebugDrawer v-model:visible="debugVisible" :logs="debugLogs" :get-info="getInfo" :export-diagnostics="exportDiagnostics" :info-tick="infoTick" :get-skill-content="getSkillContent" :cs-theme="csTheme" :messages="ctx.messages" :locale="ctx.locale" @clear="() => clearDebugLogs?.()" />
       </slot>
     </template>
 

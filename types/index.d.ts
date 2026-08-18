@@ -533,6 +533,8 @@ export interface ChatDialogProps {
   initialMessages?: AgentMessage[];
   onPersist?: (messages: AgentMessage[]) => void;
   onClear?: () => void;
+  /** 清空调试日志(DebugDrawer 🗑️ 按钮回调;createChatSdk 主包自动接线清源 debugLogs,直接复用 ChatDialog 组件时自行接) */
+  clearDebugLogs?: () => void;
   getInfo?: () => AgentInfo;
   onUndo?: () => boolean;
   canUndo?: () => boolean;
@@ -859,22 +861,7 @@ export interface DataOpsOptions {
    * LLM 未读过直接写(无基准记录)时跳过锁(等同不校验)。设 false 回退「不传 expectedHash = 不校验」的旧行为。
    */
   autoLock?: boolean;
-  /** 读写拦截器:read/write 透传给数据工具(脱敏/转换/审计/拒绝 LLM 读写) */
-  interceptors?: DataInterceptors;
-  /** 工具呈现模式(提示词与工具面一致性):read 根结果约束指引按此分支(simple/minimal 未装载 schema_data 时改教 read 子路径)。默认 'advanced' */
-  toolMode?: 'simple' | 'advanced' | 'minimal';
 }
-
-/** 数据读写拦截器(集成方可脱敏/转换/审计/拒绝 LLM 的读写) */
-export interface DataInterceptors {
-  /** LLM 读时拦截:原始值 → 改写后返回给 LLM(如脱敏/派生);抛错则返回 READ_INTERCEPT 错误 */
-  read?: (value: any) => any;
-  /** LLM 写时拦截:欲写值 + 当前值 → 改写后的值,或 { error } 拒绝;抛错则拒绝 */
-  write?: (payload: any, current: any) => any | { error: string };
-}
-
-/** 工具呈现模式:advanced=全暴露(默认)| simple=主推 read/write 但保留高级能力 | minimal=只 read/write(3.28 起默认 advanced) */
-export type ToolMode = 'simple' | 'advanced' | 'minimal';
 
 /** 数据操作控制器(运行时替换配置;createDataOps 返回的工具数组上以不可枚举属性 `controller` 挂载) */
 export interface DataOpsController {
@@ -1178,17 +1165,6 @@ export interface ChatSdkOptions {
   conflictPolicy?: ConflictPolicy;
   /** 数据操作审计回调:每次 set/edit/delete/restore 经此回调外发结构化事件(独立于 debug,无需 debug:true);集成方做合规审计/操作追溯 */
   onAudit?: (entry: { op: string; value?: unknown; detail?: string; timestamp: number }) => void;
-  /** 工具呈现模式:advanced(默认,全暴露含 schema_data/diff_data/底层 get/set/edit/focus 工具族)| simple(主推 read/write 但保留 query/search/eval/snapshot,隐藏底层与诊断类)| minimal(只 read/write)。3.28 breaking:默认由 simple 改 advanced。usageHints 提示词内部自动跟随 toolMode(并对存量「simple 模式/未暴露」systemPrompt 自动降级兼容),无独立开关 */
-  toolMode?: 'simple' | 'advanced' | 'minimal';
-  /** 读写拦截器:read/write 透传给数据工具(脱敏/转换/审计/拒绝 LLM 读写);input/output 在 agent IO 入口/出口预处理 */
-  interceptors?: {
-    read?: (value: any) => any;
-    write?: (payload: any, current: any) => any | { error: string };
-    /** agent 接收输入时拦截:send/stream 的 user message 预处理(可改写/审计) */
-    input?: (input: any) => any;
-    /** agent 产出输出时拦截:返回前 postprocess(可改写最终回复) */
-    output?: (json: any) => any;
-  };
   /** 内存中保留的对话轮数上限(默认 50);超限把最旧轮次压缩为摘要 system 消息(防 OOM);0 关闭 */
   maxMemoryRounds?: number;
   debug?: boolean;
@@ -1340,7 +1316,7 @@ export interface ChatSdk {
   hide(): void;
   /** 抽屉模式显示:移除 cs-hidden class 恢复可见(配合 hide 使用;首次挂载用 mount) */
   show(): void;
-  send(message: string, options?: { mission?: Partial<Mission>; interceptors?: { input?: (input: unknown) => unknown; output?: (json: unknown) => unknown }; maxAutoRetries?: number; /** 中断信号(fix-hang-and-feedback P1-4) */ signal?: AbortSignal; /** 附带图片(image-input-vision;≤4 张,压缩后 AgentImage;需主模型多模态 vision 或配置 images.describe,否则 send 拒绝并 emit 结构化错误 —— 不静默丢图) */ images?: AgentImage[] }): Promise<string>;
+  send(message: string, options?: { mission?: Partial<Mission>; maxAutoRetries?: number; /** 中断信号(fix-hang-and-feedback P1-4) */ signal?: AbortSignal; /** 附带图片(image-input-vision;≤4 张,压缩后 AgentImage;需主模型多模态 vision 或配置 images.describe,否则 send 拒绝并 emit 结构化错误 —— 不静默丢图) */ images?: AgentImage[] }): Promise<string>;
   switchSession(sessionId?: string): Promise<string>;
   /**
    * 新建/清空会话(同步;「清空对话」编程式入口,与 UI ChatHeader 清空同语义):
@@ -1514,8 +1490,8 @@ export declare function createChatSdk(options: ChatSdkOptions): ChatSdk;
 export declare const DEFAULT_SYSTEM_PROMPT: string;
 /** 默认 systemPrompt 英文版(dialog.locale:'en-US' 且未传 systemPrompt 时用;末行语言锚确保英文输出) */
 export declare const DEFAULT_SYSTEM_PROMPT_EN: string;
-/** 拼接「可操作数据」段(从 data schema .describe() 自动提取注入);toolMode 透传分层披露(simple/minimal 勿教 schema_data) */
-export declare function buildDataPrompt(data: DataConfig | undefined, schemaHint?: SchemaHintOptions, toolMode?: 'simple' | 'advanced' | 'minimal'): string;
+/** 拼接「可操作数据」段(从 data schema .describe() 自动提取注入) */
+export declare function buildDataPrompt(data: DataConfig | undefined, schemaHint?: SchemaHintOptions): string;
 /**
  * 统一 systemPrompt base 段入口:处理 appendReliableWriteRules 分支 + '---' 分割线。
  * 传 systemPrompt 默认追加 reliableWriteRules(设 appendReliableWriteRules:false 关闭);不传用 DEFAULT_SYSTEM_PROMPT(已内置)。纯函数。
@@ -1529,7 +1505,6 @@ export declare function defineTool(opts: {
   handler: (args: any) => unknown | Promise<unknown>;
 }): any;
 export declare function createDataOps(config: DataConfig, opts?: DataOpsOptions): any[];
-export declare function filterByToolMode(tools: any[], mode?: 'simple' | 'advanced' | 'minimal'): any[];
 /** 整体 set 写入纯函数:schema 校验 + 快照 + merge/替换 + audit。set_data / write(set) / draft_commit 共用。返回 {ok,hash,data} 或 {ok:false,error} */
 export declare function commitSetToBind(args: { bindRef: unknown; value: unknown; schema: any; allowKeys: string[] | null; snapshots: any[]; maxSnapshots: number; audit: (e: any) => void; dryRun?: boolean; op?: 'set' | 'draft_commit' }): { ok: true; hash: string; data: unknown } | { ok: false; error: string };
 /** 结构化追踪 span(revive-observability-tracing Phase 3) */
@@ -1621,7 +1596,7 @@ export declare function renderSchemaOverview(schema: any): string;
 /** 渲染 schema 顶层字段浅概览(分层模式:只 key+type+desc,不带约束/不递归;大 schema 用,体积降) */
 export declare function renderSchemaShallow(schema: any): string;
 /** extractSchemaHint 分层阈值配置(默认 maxKeys=15/maxChars=4000;超则转顶层概览) */
-export interface SchemaHintOptions { maxKeys?: number; maxChars?: number; /** 工具呈现模式:非 advanced 时分层深层指引改教 read 子路径(schema_data 未装载;默认 'advanced') */ toolMode?: 'simple' | 'advanced' | 'minimal' }
+export interface SchemaHintOptions { maxKeys?: number; maxChars?: number }
 // ============ 上下文索引纯函数(contextIndex,refactor-module-extraction 期二 从 useContextManager 抽离)============
 export declare const STOP_WORDS: Set<string>;
 export declare function tokenize(text: string): string[];
@@ -1690,7 +1665,7 @@ export interface SdkEvents {
 }
 export declare function createSdkEvents(onEvent?: (e: any) => void): SdkEvents;
 export declare function selectBuiltinTools(caps: { dataOps?: boolean; fetch?: boolean; domInspect?: boolean; inspectEnv?: boolean } | undefined, dataOps: any[], fetchDocs: any[], dom?: any[], inspect?: any[]): any[];
-export declare function createUsageHintsMiddleware(caps: { planning?: boolean; dataOps?: boolean; subagent?: boolean } | undefined, hasDataOps: boolean, toolMode?: 'simple' | 'advanced' | 'minimal'): any;
+export declare function createUsageHintsMiddleware(caps: { planning?: boolean; dataOps?: boolean; subagent?: boolean; humanConfirm?: boolean; inspectEnv?: boolean; domInspect?: boolean; draftWrite?: boolean; todoDeps?: boolean; focus?: boolean; subagents?: { id: string; description: string; temperature?: number }[] } | undefined, hasDataOps: boolean, budget?: { promptSoftCap?: number }): any;
 export declare const fetchDocTools: any[];
 /** DOM 读取工具 get_dom(随 capabilities.domInspect 装配,opt-in) */
 export declare const domTools: any[];

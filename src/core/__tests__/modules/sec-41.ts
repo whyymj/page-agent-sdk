@@ -4,10 +4,10 @@
  * - draft_write:start 新建 / append 追加 / 累计 bytes
  * - draft_commit:parse 失败(JSON_INVALID,草稿保留)/ schema 失败(草稿保留)/ 成功写 bind+清草稿 / DRAFT_NOT_FOUND
  * - createDataOps({vfsStore}) 含 draft 工具;无 vfsStore 不含;闭包共享(draft_commit 写后 bind 更新)
- * - filterByToolMode:simple 隐藏 draft,advanced 暴露
+ * - draft 工具恒暴露(toolMode/filterByToolMode 已移除)
  */
 import { z } from 'zod'
-import { createDataOps, commitSetToBind, filterByToolMode } from '../../tools/dataOps'
+import { createDataOps, commitSetToBind } from '../../tools/dataOps'
 import { createVfs } from '../../backends/vfs'
 import type { TestCtx } from './_ctx'
 
@@ -143,13 +143,10 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(bindA3.title === 'ok' && bindA3.count === 3, 'A1 → 无冲突:bind 正常更新')
   }
 
-  // ===== filterByToolMode:simple 隐藏 draft,advanced 暴露 =====
-  console.log('\n[draft · filterByToolMode 筛选]')
+  // ===== draft 工具恒暴露(toolMode/filterByToolMode 已移除)=====
+  console.log('\n[draft · 恒暴露]')
   {
     const tools = createDataOps({ schema, bind: { title: 'x', count: 0 }, description: 'x' }, { vfsStore: vfs as any })
-    const simple = filterByToolMode(tools, 'simple')
-    const advanced = filterByToolMode(tools, 'advanced')
-    assert(!simple.some((t) => t.name === 'draft_write'), '✓ filterByToolMode simple → 隐藏 draft_write')
-    assert(advanced.some((t) => t.name === 'draft_commit'), '✓ filterByToolMode advanced → 暴露 draft_commit')
+    assert(tools.some((t) => t.name === 'draft_write') && tools.some((t) => t.name === 'draft_commit'), '✓ createDataOps → draft_write/draft_commit 恒暴露(无呈现模式筛选)')
   }
 }

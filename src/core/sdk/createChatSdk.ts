@@ -64,7 +64,7 @@ import { resolveContextOptions, PRESET_PRESERVE, type ContextPreset } from './co
 import { composeMiddlewareStack } from './middlewareStack'
 import { createVfs, createVfsMiddleware, VFS_TOOL_NAMES, normalize as normalizeVfsPath, type VfsStore } from '../backends/vfs'
 import type { VfsFile, HarnessState, Mission, Focus } from '../harness/state'
-import { createDataOps, filterByToolMode, type DataConfig, type DataOpsController, type ConflictResolution } from '../tools/dataOps'
+import { createDataOps, type DataConfig, type DataOpsController, type ConflictResolution } from '../tools/dataOps'
 import { fetchDocTools } from '../tools/fetchDoc'
 import { domTools, domInspectSkill, domSearchTool, domInfoTool } from '../tools/domTool'
 import { inspectTools } from '../tools/envTool'
@@ -225,17 +225,6 @@ export interface ChatSdkOptions {
   conflictPolicy?: ConflictPolicy
   /** 数据操作审计回调:每次 set/edit/delete/restore 经此回调外发结构化事件(独立于 debug,无需 debug:true);集成方做合规审计/操作追溯 */
   onAudit?: (entry: { op: string; value?: unknown; detail?: string; timestamp: number }) => void
-  /** 工具呈现模式:advanced(默认,全暴露含 schema_data/diff_data/底层 get/set/edit/focus 工具族)| simple(主推 read/write 但保留 query/search/eval/snapshot,隐藏底层与诊断类)| minimal(只 read/write)。3.28 breaking:默认由 simple 改 advanced,集成方按需 opt-down。usageHints 提示词内部自动跟随 toolMode(并对存量「simple 模式/未暴露」systemPrompt 自动降级兼容),无独立开关 */
-  toolMode?: 'simple' | 'advanced' | 'minimal'
-  /** 读写拦截器:read/write 透传给数据工具(脱敏/转换/审计/拒绝 LLM 读写);input/output 在 agent IO 入口/出口预处理 */
-  interceptors?: {
-    read?: (value: unknown) => unknown
-    write?: (payload: unknown, current: unknown) => unknown | { error: string }
-    /** agent 接收输入时拦截:send/stream 的 user message 预处理(可改写/审计) */
-    input?: (input: unknown) => unknown
-    /** agent 产出输出时拦截:返回前 postprocess(可改写最终回复) */
-    output?: (json: unknown) => unknown
-  }
   /** 内存中保留的对话轮数上限(默认 50);超限把最旧轮次压缩为摘要 system 消息(防 OOM);0 关闭 */
   maxMemoryRounds?: number
   debug?: boolean
@@ -429,7 +418,7 @@ export interface ChatSdk {
   hide(): void
   /** 抽屉模式显示:移除 cs-hidden class 恢复可见(配合 hide 使用;首次挂载用 mount) */
   show(): void
-  /** 命令式发送一条消息(共享内部 messages,自动持久化);options.interceptors per-call 覆盖顶层 input/output 拦截器,options.maxAutoRetries per-call 覆盖 automation 重试次数 */
+  /** 命令式发送一条消息(共享内部 messages,自动持久化);options.maxAutoRetries per-call 覆盖 automation 重试次数 */
   send(message: string, options?: SendOptions): Promise<string>
   /** 暴露底层流式接口(高级用法,自行管理历史时使用) */
   stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>
@@ -597,10 +586,9 @@ export interface ChatSdk {
   readonly subagentHistory: SubagentRunState[]
 }
 
-/** send/stream options:mission 显式覆盖(优先于自动 capture)+ interceptors per-call 覆盖(顶层 input/output)+ automation 重试次数覆盖 + signal 中断(fix-hang-and-feedback P1-4) */
+/** send/stream options:mission 显式覆盖(优先于自动 capture)+ automation 重试次数覆盖 + signal 中断(fix-hang-and-feedback P1-4) */
 interface SendOptions {
   mission?: Partial<Mission>
-  interceptors?: { input?: (input: unknown) => unknown; output?: (json: unknown) => unknown }
   maxAutoRetries?: number
   /** 中断信号(fix-hang-and-feedback P1-4):abort → 本次 send 中止(挂起的确认/冲突随 signal 自动收口)。headless 无停止按钮场景的退出通道 */
   signal?: AbortSignal
@@ -898,13 +886,6 @@ function validateFocusInput(
 
 /** 构建一个独立的核心上下文(含持久化恢复 + agent 构造 + 操作函数) */
 function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
-  // toolMode 默认 'advanced'(3.28 breaking:原默认 simple 隐藏 schema_data/diff_data 等致 LLM 误调报「工具不存在」;advanced 全暴露,集成方按需 opt-down simple/minimal)
-  const toolMode = options.toolMode ?? 'advanced'
-  // usageHints 提示词档位(内部一致性对齐,无公开开关,唯一旋钮是 toolMode):默认跟随 toolMode,
-  // 但检测到集成方 systemPrompt 含「simple 模式/未暴露」措辞时自动降级 simple,避免 advanced 提示词与存量 systemPrompt 打架
-  //   纯文本检测(baseSystemPrompt 装配期已可用,见下方);命中即降级 + warn 引导集成方显式对齐(传 toolMode:'simple' 或更新 systemPrompt 措辞)
-  //   注:仅降级提示词,工具池仍按 toolMode(advanced 暴露 schema_data 等);若需工具池也对齐,集成方应显式传 toolMode:'simple'
-  let hintsMode: 'simple' | 'advanced' | 'minimal' = toolMode
   // ===== 累计 token 用量(每轮 LLM 调用经 sdk-events 中间件 afterModel 提取累加;供 sdk.usage 暴露 + onEvent('usage') 单轮外发) =====
   const usage: TokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
   // ===== 乐观锁冲突人工介入(dataOps 写入时检测到主数据已被外部改过 → 挂起等用户决定保留外部/强制覆盖/回退) =====
@@ -959,8 +940,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const missionMw = createMissionMiddleware()
   // 上下文聚焦(focus-context):指定组件精修,目标/视野/范围三层收敛。getSchema 延迟引用 liveData(适配 setData 运行时替换,同 checkpointMgr.getData 模式)
   // 焦点变更统一 emit focus_change(所有入口:API/agent 工具/dialog chip/reset;闭包引用 emit,运行时已初始化)
-  // unfocusGuidance:focus 工具仅 advanced 装载(见下 focusTools),simple/minimal 下文案须引导「提示用户移除 chip」而非调用不存在的工具
-  const focusMw = createFocusMiddleware({ getSchema: () => liveData()?.schema, getBind: () => liveData()?.bind, unfocusGuidance: toolMode === 'advanced' ? 'tool' : 'ask-user', toolMode, onChange: (focuses) => emit({ type: 'focus_change', focuses }) })
+  const focusMw = createFocusMiddleware({ getSchema: () => liveData()?.schema, getBind: () => liveData()?.bind, onChange: (focuses) => emit({ type: 'focus_change', focuses }) })
   const workingMemoryMw = createWorkingMemoryMiddleware()
   const memoryMw = createMemoryMiddleware(options.memory || '')
   // memory 为函数(同步/异步)时,后台预求值,首次 beforeAgent 前尽量就绪(不阻塞 mount)
@@ -1065,14 +1045,6 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     console.warn('[page-agent-sdk] 检测到 schema 含 code 字段但未注册 html 子 agent:已自动注入「主 agent 自己写 HTML」编排(code 作普通字段直接 write,无 vfs 工作副本 / 无格式校验门禁)。如需代码资产机制(vfs + 格式校验 + 增量 commit + 主上下文 code 摘要),注册 createHtmlSubagent;若确为降级意图可忽略。')
   }
 
-  // usageHints 内部一致性对齐(无公开开关):检测到 systemPrompt 含「simple 模式/未暴露」措辞时自动降级 simple 提示词
-  // 存量集成 systemPrompt 按 simple 写(告知 LLM「schema_data 等未暴露勿调用」),3.28 默认改 advanced 后 usageHints 会注入 advanced 提示词教 get_data/edit_data/set_focus → 与 systemPrompt 打架
-  // 自动降级仅修提示词侧(工具池仍 advanced);集成方应显式传 toolMode:'simple' 让工具池也对齐,或更新 systemPrompt 措辞
-  if (toolMode === 'advanced' && /simple\s*模式|未暴露/.test(baseSystemPrompt)) {
-    hintsMode = 'simple'
-    console.warn('[page-agent-sdk][usageHints] 检测到 systemPrompt 含「simple 模式/未暴露」措辞但 toolMode 为 advanced(默认):usageHints 已自动降级为 simple 提示词,避免教 LLM 调用集成方 systemPrompt 声明「未暴露」的工具。建议显式对齐:① 集成方 systemPrompt 按 simple 工作流设计 → 传 toolMode:\'simple\' 让工具池也匹配(推荐);② systemPrompt 措辞已过时(实际想要 advanced)→ 更新 systemPrompt 去掉「simple 模式/未暴露」字样。注:仅「勿调用」字样不触发降级(3.29 收窄;集成方常用它描述自己禁用的工具,属合法 advanced 用法)。')
-  }
-
   // 工具:数据操作 + 文档抓取 + 用户自定义(子 agent 中间件据此筛选只读子集)
   // dataOps/fetch 可经 capabilities 关闭(默认开,保持零配置;关则不进工具池,省 token/上下文);筛选经纯函数 selectBuiltinTools(可单测)
   const dataOpsTools = useDataOps && finalDataConfig
@@ -1081,16 +1053,13 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         maxSnapshots: options.maxSnapshots,
         onConflict: conflictMgr.set,
         autoLock: options.autoLock,
-        interceptors: options.interceptors,
-        toolMode,  // 提示词与工具面一致性:read 根结果约束指引按工具面分支(simple/minimal 勿教 schema_data)
         vfsStore: (useDraft || !!finalDataConfig?.resources?.length) ? vfsStore : undefined,  // draft 工具 / 受保护资源(opt-in):vfsStore 提供 → createDataOps 装 draft_write/draft_commit + resource_*
         // code-as-data-asset:htmlSubagent writablePaths → pgIdPaths(schema extend 加 __pgId:safeParse 不剥离 + afterWrite 补 __pgId)+ largeTextPaths(主 scope read code 摘要)
         ...(codeAssetPgIdPaths.length ? { pgIdPaths: codeAssetPgIdPaths } : {}),
         ...(codeAssetLargeTextPaths.length ? { largeTextPaths: codeAssetLargeTextPaths } : {}),
       })
     : []
-  // toolMode 筛选:advanced(默认)全暴露;simple 主推 read/write 但保留高级能力;minimal 只 read/write
-  const dataOpsFiltered = useDataOps ? filterByToolMode(dataOpsTools, toolMode) : []
+  const dataOpsFiltered = useDataOps ? dataOpsTools : []
   // 数据操作控制器(运行时替换配置;dataOps 关闭时为 null)
   const dataOpsController = useDataOps && finalDataConfig
     ? (dataOpsTools as StructuredToolInterface[] & { controller?: DataOpsController }).controller ?? null
@@ -1099,8 +1068,6 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const resourcesPinMw = (useDataOps && finalDataConfig?.resources?.length && dataOpsController?.getResourcesSnapshot)
     ? createResourcesPinMiddleware({
         getResourcesSnapshot: () => dataOpsController?.getResourcesSnapshot?.() ?? [],
-        // resource_* 仅 advanced 暴露(SIMPLE_HIDDEN);simple/minimal 下提示词不教调用(与工具面一致)
-        toolsExposed: toolMode === 'advanced',
       })
     : undefined
   /** 当前主数据配置(反映运行时替换;供 inspect/verify 等读最新状态) */
@@ -1228,7 +1195,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       schema: z.object({ path: z.string().describe('要移除的焦点 jsonPath') }),
     },
   )
-  const focusTools: StructuredToolInterface[] = useFocus && toolMode === 'advanced' ? [setFocusTool, clearFocusTool, addFocusTool, removeFocusTool] : []
+  const focusTools: StructuredToolInterface[] = useFocus ? [setFocusTool, clearFocusTool, addFocusTool, removeFocusTool] : []
   focusTools.forEach((t) => toolSources.set(t.name, 'builtin'))
   // skill 附带工具(load_skill 后动态注入;skill-external-scripts §5)。按 skill 名记录归属,便于 invalidate/setSkills 卸载
   let loadedSkillTools: StructuredToolInterface[] = []
@@ -1412,8 +1379,6 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       subagents: effectiveSubagents?.map((s) => ({ id: s.id, description: s.description, temperature: s.temperature })),
     },
     useDataOps && !!finalDataConfig,
-    hintsMode,
-    !!finalDataConfig?.resources?.length,
     // C1 自感知预算:softCap 解析结果(token 维度触发;装配期一次,阈值近似够用)
     { promptSoftCap: resolvePromptSoftCap(modelCaps.contextWindow, resolvedCtxOpts.promptSoftCapTokens) },
   )
@@ -1421,7 +1386,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 插中间件栈最前(usageHints 之前),保证数据段紧跟 base —— LLM 看到的 system 结构与现状等价
   // 仅 finalDataConfig 存在时装载;无 data → buildDataPrompt 返 '' → augmentPrompt 返 undefined → 跳过
   const dataHintMw: Middleware | null = finalDataConfig
-    ? { name: 'dataHint', augmentPrompt: () => buildDataPrompt(liveData(), options.schemaHint, toolMode) || undefined }
+    ? { name: 'dataHint', augmentPrompt: () => buildDataPrompt(liveData(), options.schemaHint) || undefined }
     : null
 
   // augmentSystem 钩子:集成方按运行时状态(state/data)动态注入 system prompt 段
@@ -1830,15 +1795,11 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       // 存活守卫(rv-core F6):runSerial 排队的 send 在等待期间双实例 unmount(release → refCount 0)后
       // 照常执行会烧 LLM + 写已释放 core;refCount≤0 直接拒(排队等待白等比烧 token 好)
       if (core.refCount <= 0) throw new Error('page-agent-sdk: agent 已释放(unmount),拒绝排队中的 send')
-      // 容错:partial 调用(headless 实测 sdk.send(msg) 不传 options)→ 默认空对象,避免 options.interceptors 误访问 undefined
+      // 容错:partial 调用(headless 实测 sdk.send(msg) 不传 options)→ 默认空对象,避免 options.mission 误访问 undefined
       options = options ?? {}
       // mission 显式覆盖(send({mission}) 优先于自动 capture)
       if (options?.mission && useMission) missionMw.setMission(options.mission)
-      // input 拦截器:send 入口预处理 user message(可改写/审计)
       let msg = message
-      if (options.interceptors?.input) {
-        try { const r = options.interceptors.input(message); if (typeof r === 'string') msg = r } catch { /* 拦截器抛错忽略,用原 message */ }
-      }
       // image-input-vision 三分支收口(D6 诚实语义):
       // ① 多模态主模型(vision)→ content parts 直发;② 非 vision + 配 images.describe → 集成方识图转述注入(图片不直发);
       // ③ 非 vision + 未配 describe → send 拒绝 + emit(recoverable;不静默丢图 —— 丢图后 agent 凭空回答比报错恶劣)
@@ -1878,10 +1839,6 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           if (options.signal?.aborted || core.sessionId !== sidAtSend || core.refCount <= 0) {
             core.agent?.debugLogs?.value?.push({ timestamp: Date.now(), type: 'middleware', data: { stage: 'orphan_round_dropped', fromSession: sidAtSend, aborted: !!options.signal?.aborted, sessionChanged: core.sessionId !== sidAtSend } })
             return reply
-          }
-          // output 拦截器:返回前 postprocess(可改写最终回复)
-          if (options.interceptors?.output) {
-            try { const r = options.interceptors.output(reply); if (typeof r === 'string') reply = r } catch { /* 拦截器抛错忽略,用原 reply */ }
           }
           messages.push({ role: 'assistant', content: reply, timestamp: Date.now() })
           core.afterRound()
@@ -2212,7 +2169,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         sessionId: core.sessionId,
         model: isChatModel(currentLlm) ? ((currentLlm as any).model ?? (currentLlm as any).modelName) : (currentLlm as LLMConfig).model,
         // 代理到 createAgent 权威拼装(base + Σ augmentPrompt,含 usageHints/skills/memory/todos/subagents/augmentSystem 等全部段);agent 未构造时回退 base+data(fix-introspection-consistency)
-        systemPrompt: core.agent?.getEffectiveSystemPrompt?.() ?? (baseSystemPrompt + buildDataPrompt(liveData(), options.schemaHint, toolMode)),
+        systemPrompt: core.agent?.getEffectiveSystemPrompt?.() ?? (baseSystemPrompt + buildDataPrompt(liveData(), options.schemaHint)),
         tools: (core.agent?.allTools ?? allTools).map((t) => ({ name: t.name, description: t.description, schema: (t as any).schema, source: toolSources.get(t.name) || 'user' })),
         skills: (skillsMw ? (skillsMw as any).controller.get() as SkillSpec[] : (options.skills ?? [])).map((s) => ({ name: s.name, description: s.description })),
         data: liveData() ? { description: liveData()!.description, schema: liveData()!.schema } : undefined,

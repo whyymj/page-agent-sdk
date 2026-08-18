@@ -11,13 +11,8 @@ import type { Middleware } from './middleware'
 
 export function createResourcesPinMiddleware(opts: {
   getResourcesSnapshot: () => { path: string; mode: 'freeze' | 'verbatim'; handle?: string }[]
-  /** resource_* 工具是否实际装载(仅 advanced 暴露;simple/minimal 下被 SIMPLE_HIDDEN 滤除)。默认 true 兼容旧调用 */
-  toolsExposed?: boolean
 }): Middleware {
-  // 提示词与工具面一致性:resource_* 未装载时不再教 LLM 调用(同类坑:focus 引导 clear_focus)
-  const usageLine = opts.toolsExposed === false
-    ? '读到 ⟦frozen:path⟧/⟦res:handle⟧ 占位符 = 精确值在冻结区/资源池(不入消息流);resource_get/resource_update 为 advanced 工具,当前模式未装载,勿尝试调用;freeze 字段不可写(撞 FROZEN_FIELD 即放弃);verbatim 字段保持原值,勿在当前模式下尝试改写(直接写新值会 VERBATIM_MISMATCH);撞 RESOURCE_EVICTED/RESOURCE_NOT_FOUND 重新 read 懒注册。'
-    : '读到 ⟦frozen:path⟧/⟦res:handle⟧ 占位符 = 精确值在冻结区/资源池(不入消息流);需真值用 resource_get({path});freeze 字段不可写(撞 FROZEN_FIELD 即放弃);verbatim 直接写新值会 VERBATIM_MISMATCH,先 resource_update 再写回句柄;撞 RESOURCE_EVICTED/RESOURCE_NOT_FOUND 重新 read 懒注册。'
+  const usageLine = '读到 ⟦frozen:path⟧/⟦res:handle⟧ 占位符 = 精确值在冻结区/资源池(不入消息流);需真值用 resource_get({path});freeze 字段不可写(撞 FROZEN_FIELD 即放弃);verbatim 直接写新值会 VERBATIM_MISMATCH,先 resource_update 再写回句柄;撞 RESOURCE_EVICTED/RESOURCE_NOT_FOUND 重新 read 懒注册。'
   return {
     name: 'resourcesPin',
     augmentPrompt: () => {
