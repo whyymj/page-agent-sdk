@@ -1,6 +1,8 @@
 # 活跃 Changes 优先级索引
 
-> **2026-08-18 立项 `scrollbar-overlay` + `header-adaptive-labels`(两 change 实施完成,随 3.27.0 发布)**:① **`scrollbar-overlay`**:滚动条统一替换 —— `overlayscrollbars@2.16`(新 dependency,仅主包)接管主滚动面(消息区 + DebugDrawer 日志区,overlay 细滚动条 + 保留原生滚动行为 + 内容增高自动跟随)+ 对话框级横向滚动消灭 + 小滚动区 CSS 细条兜底 + `--cs-dd-scrollbar-thumb` 主题变量;附带 `dialog.icons.sessionDelete`(历史删除按钮换图,editor bin.png 驱动);② **`header-adaptive-labels`**:顶部按钮自适应文字标签(容器查询 ≥440px 文字+图标/窄回退纯图标)+ 图标四键 + i18n 键复用 + `dialog.headerLabels` 开关。selftest 2437 / e2e 769 / browser 93。见 [`2026-08-18-scrollbar-overlay/`](./2026-08-18-scrollbar-overlay/) + [`2026-08-18-header-adaptive-labels/`](./2026-08-18-header-adaptive-labels/)。
+> **2026-08-18 立项 `image-input-vision`(规划完成,未实施)**:图片上传识图 + **文本主模型的 vision 旁路** —— Phase 1 输入侧(📎/拖拽/粘贴 + 压缩闸 + `AgentMessage.images` + modelCaps.vision 直发 content parts + 原图走 vfs 防快照膨胀)/ Phase 2 旁路(`vision: { llm, mode }` 配置组:自动转述注入 `<image-description>` 块 + `describe_image` 工具 + 未配诚实报错不静默丢图 + usage.vision_tokens 分离)。主模型选型与识图能力解耦,旁路走 flash 量级视觉小模型。见 [`2026-08-18-image-input-vision/`](./2026-08-18-image-input-vision/)。
+
+> **2026-08-18 发布 3.27.0**(`scrollbar-overlay` + `header-adaptive-labels` 两 change 实施完成归档随发布):① **`scrollbar-overlay`**:滚动条统一替换 —— `overlayscrollbars@2.16`(新 dependency,仅主包)接管主滚动面(消息区 + DebugDrawer 日志区,overlay 细滚动条 + 保留原生滚动行为 + 内容增高自动跟随;**对象初始化认领模板三层,元素初始化搬节点与 Vue patch 冲突的坑已固化**)+ 对话框级横向滚动消灭 + 小滚动区 CSS 细条兜底 + `--cs-dd-scrollbar-thumb` 主题变量;附带 `dialog.icons.sessionDelete`(历史删除按钮换图);② **`header-adaptive-labels`**:顶部按钮自适应文字标签(容器查询 ≥440px 文字+图标/窄回退纯图标)+ 图标四键 + i18n 键复用 + `dialog.headerLabels` 开关;③ 同版携带 3.26.1 focus 开放 schema 修复。selftest 2437 / e2e 769 / browser 93。见 [`2026-08-18-scrollbar-overlay/`](./2026-08-18-scrollbar-overlay/) + [`2026-08-18-header-adaptive-labels/`](./2026-08-18-header-adaptive-labels/)。
 
 > **2026-08-17 发布 3.26.0 / 3.26.1**(minor + patch):① **3.26.0**(`legacy-bundle-channel`):webpack≤4 宿主官方通道(见下方详细条目);② **3.26.1**(未立 change 直发,editor_fangzhou 开放 schema 接入驱动):`getSchemaAtPath` 支持 record/any/unknown —— 修前 `z.record(...)` 恒返 null → `validateFocusInput` 第 4 道校验恒拒 → 开放 schema 集成 `setFocus/addFocus` 永远失败(Focus 整体不可用);附带 `schema_data`/read 子路径投影对开放 schema 同理解禁。selftest 2434 / e2e 769。
 
@@ -54,7 +56,7 @@
 
 ## 进行中
 
-_(活跃:`2026-08-18-scrollbar-overlay` + `2026-08-18-header-adaptive-labels`,见顶部条目 —— 实施完成随 3.27.0 发布归档。前一个 `legacy-bundle-channel` 已于 2026-08-17 随 3.26.0 发布归档:es2017 全量打包 + 包根物理转发 + editor_fangzhou 正式版靶场端到端闭环)_
+_(活跃:`2026-08-18-image-input-vision`(规划完成待实施,见顶部条目)。前一批 `scrollbar-overlay` + `header-adaptive-labels` 已于 2026-08-18 随 3.27.0 发布;`legacy-bundle-channel` 已于 2026-08-17 随 3.26.0 发布)_
 
 > **2026-08-17 发布 3.26.0**(minor):`legacy-bundle-channel` 实施完成并归档 —— webpack≤4 宿主官方通道:`page-agent-sdk/legacy` 子路径(es2017 全量打包单文件,`await import()` 懒加载 chunk,零 transpileDependencies/零 peer)+ 包根 `legacy.js`/`style.css` 物理转发(webpack4 enhanced-resolve 不认 exports map)。见 [`archive/2026-08-17-legacy-bundle-channel/`](./archive/2026-08-17-legacy-bundle-channel/)。
 

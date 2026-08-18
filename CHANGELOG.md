@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+## [3.27.1] - 2026-08-18
+
+### Fixed(dependencies 清理 —— npm≤6 + engine-strict 宿主安装 ENOTSUP,editor_fangzhou node10 日常环境驱动)
+- **`dependencies` 全量清空对齐构建架构**:`@langchain/core`/`@langchain/openai`/`zod` 构建已 external 且早就在 `peerDependencies`(npm 7+ 自动装 peer,ESM 消费方零变化);`marked`/`highlight.js`/`dompurify`/`overlayscrollbars` 已打包进主包(同打包的 vue 从未声明)→ 挪 `devDependencies`(SDK 自身开发/测试使用);`@langchain/textsplitters` 全仓零引用(vite globals 死条目一并清)。**修复**:npm≤6 宿主(legacy 通道,如 editor_fangzhou node 10 + `engine-strict=true`)`npm i` 解析 dependencies 撞 `textsplitters(node≥20)`/`marked@18(node≥20)`/`highlight.js@11(node≥12)` → ENOTSUP;这些包 legacy 通道本就永不加载(全量打包 inline),纯死重。清空后 npm 6 零依赖解析直接装,engine-strict 全过;npm 7+ 行为不变(peers 自动装)
+
 ## [3.27.0] - 2026-08-18
 
 ### Added(滚动条统一替换:OverlayScrollbars v2 —— 用户诉求「聊天框横/纵向滚动条优化 + 用现成框架替换原生」)

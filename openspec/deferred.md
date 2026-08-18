@@ -412,6 +412,14 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 
 **[2026-08-17 直连鉴别实验:根因定性完成,vite 代理假说证伪]** `.env` 直配绝对 URL(`https://api.modelverse.cn/v1`,SDK 默认 stripStainlessFetch 剥遥测头,直连 CORS 通)绕开 vite 代理跑 M3:**黑洞依旧、同位**(3 并发流,前两条正常完成,最后一条 logN 冻结 417s+ 至超时,无 StreamStalledError)。黑洞活动期三个鉴别实验:① 同 key 全新非流式请求 **1.5s 正常返回** → per-key 并发饱和排除;② 同 key 全新 SSE 流**秒级正常出 chunk** → 客户端/网络/key 流式能力排除;③ 前两条并发流正常完成 → 非「第 3 条被排队」(槽位释放后也不恢复)。**定性:modelverse 中转站在并发流场景下的单请求级死亡** —— 200+SSE 头已发、该请求正文永不送达、连接被维持(keepalive 空转持续重置 SDK 间隔看门狗)。上游不可修;SDK 侧唯一可动作 = 快速失败 + 上层自愈(重委派实测可恢复,M4 同款)。**✅ 已修([Unreleased] stream-max-duration)**:`withStallTimeout` 增 `maxMs` 绝对截止(不随 chunk 重置),新配置 `streamMaxDurationMs`(默认 600s,0 关)→ `StreamMaxDurationError`(继承 StreamStalledError 408 不重试,stage `stream_max_duration` 归因);selftest sec-69 +10(黑洞复现形状/继承语义/辨析/边界)。备选修法「空内容 chunk 不重置计时器」未采用:合法空 delta(长 prefill 期 ping)会误伤,总时长上限更鲁棒。M3 墙钟量化断言继续 blocked(上游环境),但「同轮 3 并行 + 时间窗重叠」已在本 run 采样实证(active:3 持续 ~2min)。关联:`memory/real-llm-suite-env-instability.md`。
 
+## 2026-08-18 会话收尾登记(3.27.0 发布过程暴露,暂缓 + 触发条件)
+
+| 项 | 现状 | 触发条件 |
+|---|---|---|
+| DebugDrawer 日志 tab `tool_result` 模板分支可达性存疑 | IDE ts-plugin 报 narrowed union(`"error"\|"middleware"`)与 `"tool_result"` 无重叠 → 疑似死分支或前置 v-if 顺序吞掉了类型;功能表现正常(日志渲染无异常),行号随编辑漂移(556→585) | 下次动 DebugDrawer 日志 tab 时核实:死分支删除或调整 v-if 窄化顺序;顺手补一条类型层断言 |
+| `types/index.d.ts` 手动维护漂移防再发 | 3.27 又发现 `DialogIcons.send`(3.20 引入)漏标(连同 `DialogConfig.sections`);`tests/types.test-d.ts` 字段级 Pick 断言未覆盖 DialogIcons/DialogConfig 键集 → 符号级门禁抓不到键缺失 | 下次 types 漂移再现或 4.0 大版本时:把 DialogIcons/DialogConfig 键集纳入字段级断言(与 capabilities 17 开关 Pick 断言同模式) |
+| editor_fangzhou focus 联动(画布选中 → AI 聚焦) | ✅ 已接入(2026-08-18,随 editor 升 3.27.0):`select.one`(载荷=组件 id)→ `getComponentInfo` 查相对根 jsonPath → `sdk.setFocus({path, label})`;`select.noOne` → `clearFocus`;同批修 walkComponents 路径 bug(旧 'root.' 前缀致 select_component 传 null)、补 list_components/save_page 工具注册、`nodeInfo.replace` → setData 换树重绑 | —(已收口留痕) |
+
 ## 维护约定
 
 - 暂缓项**不进** `project.md`「进行中的 change」(避免占心智);本文件是唯一索引。

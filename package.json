@@ -1,6 +1,6 @@
 {
   "name": "page-agent-sdk",
-  "version": "3.27.0",
+  "version": "3.27.1",
   "type": "module",
   "description": "AI agent SDK for web pages — embed a chat assistant that edits page data via schema-validated tools. A lighter, framework-agnostic alternative to CopilotKit/LangChain for in-page JSON-editing agents. Vue-bundled; works with DeepSeek, OpenAI, MCP.",
   "main": "./dist/page-agent-sdk.umd.cjs",
@@ -128,23 +128,20 @@
   },
   "devDependencies": {
     "@langchain/anthropic": "^1.5.4",
+    "@langchain/core": "^1.2.5",
+    "@langchain/openai": "^1.5.5",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@playwright/test": "^1.62.1",
     "@vitejs/plugin-vue": "^6.0.7",
-    "tsx": "^4.23.1",
-    "typescript": "^7.0.2",
-    "vite": "^8.1.4",
-    "vue": "^3.5.39",
-    "vue-tsc": "^3.3.7"
-  },
-  "dependencies": {
-    "@langchain/core": "^1.2.5",
-    "@langchain/openai": "^1.5.5",
-    "@langchain/textsplitters": "^1.0.1",
     "dompurify": "^3.4.13",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.6",
     "overlayscrollbars": "^2.16.0",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.4",
+    "vue": "^3.5.39",
+    "vue-tsc": "^3.3.7",
     "zod": "^4.4.3"
   },
   "peerDependencies": {
