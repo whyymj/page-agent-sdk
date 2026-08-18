@@ -24,7 +24,9 @@
 
 ## 进行中的 change
 
-- **`legacy-bundle-channel`**(2026-08-17 立项,proposal 已定):老构建链宿主(webpack≤4 / vue-cli 2-3,editor_fangzhou 实测驱动)官方接入通道 —— 新增 `page-agent-sdk/legacy` 子路径产物(ESM + target es2017 + 全量打包零 peer,宿主 `await import()` 懒加载 chunk 替代手工拷 IIFE);IIFE 集成文档官方化 + 三通道决策树进集成 skill。验证靶场 = editor_fangzhou 真实宿主。
+_(无 —— `legacy-bundle-channel` 已实施完成随 3.26.0 发布归档,见「最近完成」段)_
+
+> **2026-08-17 `legacy-bundle-channel` 归档(随 3.26.0 发布)**:老构建链宿主(webpack≤4)官方接入通道 —— `page-agent-sdk/legacy` 子路径(es2017 全量打包单文件 ~2.9MB,vue/zod/@langchain 含 anthropic/MCP 全 inline,宿主 `await import()` 懒加载零 transpile/零 peer)+ 包根物理转发文件 `legacy.js`/`style.css`(webpack4 enhanced-resolve 不认 exports map)。实施三发现:① anthropic 必须 inline(external 时 await import 语法残留 acorn6 parse 硬失败)② ESM 下 rolldown 默认切 MCP hash chunk(inlineDynamicImports 固单文件)③ webpack4 子路径按包根文件解析(exports map 无用)。三层验证:editor_fangzhou 真实 webpack4 acorn 栈 parse / e2e legacy-subpath +11(191 符号等价)/ 正式版靶场端到端(编译+挂载+真实 LLM 工具轮落地)。文档:README×2 + usage-guide 中英 + 集成 skill 三通道决策树。selftest 2428 / e2e 764 / browser 84。
 
 > 2026-08-08 状态(评审核实后更新):此前 12 个活跃 change 中 **7 个已陆续归档/发布** —— `fix-write-safety-bypass`(2.23)/ `tool-name-collision`(2.23)/ `context-inspector`(2.25)/ `simplify-toolset`(2.25)/ `skill-external-scripts`(2.26)/ `session-history-management`(2.26)/ `arch-review-p1-fixes`(2.24.1 部分)。剩 6 个活跃 + 本次新增 1 个。
 

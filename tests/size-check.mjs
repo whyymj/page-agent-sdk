@@ -7,12 +7,12 @@ const MB = 1024 * KB
 
 // 阈值(单位:字节);当前基线 + 10% 余量
 const limits = [
-  { file: 'dist/page-agent-sdk.iife.js', max: 1.9 * MB, label: 'IIFE 全量(CDN <script> 直引;含 dompurify ~+95KB,P0-2 XSS 防护)' },
+  { file: 'dist/page-agent-sdk.iife.js', max: 2.15 * MB, label: 'IIFE 全量(CDN <script> 直引;含 dompurify + overlayscrollbars,实测 ~1999KB)' },
   { file: 'dist/page-agent-sdk.js', max: 1.1 * MB, label: 'ESM(npm import)' },
-  { file: 'dist/page-agent-sdk.umd.cjs', max: 1.1 * MB, label: 'UMD(require)' },
-  { file: 'dist/page-agent-sdk.headless.js', max: 600 * KB, label: 'headless ESM(/headless 子路径;纯核心不含 UI,实测 ~333KB)' },
-  { file: 'dist/page-agent-sdk.legacy.js', max: 3.3 * MB, label: 'legacy ESM(/legacy 子路径;es2017 全量打包含 anthropic,webpack≤4 宿主;实测 ~2978KB)' },
-  { file: 'dist/style.css', max: 60 * KB, label: 'CSS' },
+  { file: 'dist/page-agent-sdk.umd.cjs', max: 1.15 * MB, label: 'UMD(require)' },
+  { file: 'dist/page-agent-sdk.headless.js', max: 600 * KB, label: 'headless ESM(/headless 子路径;纯核心不含 UI/不含 overlayscrollbars,实测 ~457KB)' },
+  { file: 'dist/page-agent-sdk.legacy.js', max: 3.3 * MB, label: 'legacy ESM(/legacy 子路径;es2017 全量打包含 anthropic,webpack≤4 宿主;实测 ~3021KB)' },
+  { file: 'dist/style.css', max: 85 * KB, label: 'CSS(含 overlayscrollbars 样式 + 3.27 顶部按钮标签,实测 ~79KB)' },
 ]
 
 let pass = 0, fail = 0

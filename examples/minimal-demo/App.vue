@@ -35,6 +35,8 @@ onMounted(() => {
         assistantAvatar: '🛰️',
         userAvatar: '🙋',
         send: '🚀',                // 发送按钮图标(缺省=内置纸飞机 SVG;loading 停止方块恒内置)
+        newSession: '➕',          // 顶部「新建会话」按钮图标(缺省=内置 + SVG;history/more/close 同名键同理;文字标签走 i18n,宽度足够时展示)
+        sessionDelete: '🗑️',       // 历史记录下拉「删除会话」按钮图标(缺省=✕ 文本)
       },
     },
   })

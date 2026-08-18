@@ -8,11 +8,33 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-2428%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-2437%20asserts-brightgreen.svg)](#自测)
 
 ---
 
-> 🚀 **快速上手?** → [30 秒上手](#30-秒上手) · [示例](#示例) · [配置项速查](#createchatsdk-配置项速查) · [LLM 连接](#llm-连接直连--代理--openai-兼容端点)
+> 🚀 **快速上手?** → [30 秒上手](#30-秒上手) · [示例](#示例) · [配置项速查](#createchatsdk-配置项速查) · [用法地图](#用法地图任务--去哪找)
+
+## 用法地图(任务 → 去哪找)
+
+人类与 AI 代理(Claude Code / Cursor)的单入口:按要做的功能找对应文档。详细说明在子文档 [`doc/`](https://github.com/whyymj/page-agent-sdk/blob/master/doc/README.md)(索引)。
+
+| 我想… | 去哪 |
+|---|---|
+| 只加个 AI 对话框(不操作数据) | [30 秒上手](#30-秒上手) · `examples/minimal-demo` |
+| AI 读写页面数据(schema + bind) | [三层配合设计](#设计思路schema--systemprompt--skill-三层配合) · [usage-guide §6.1](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.md#61-数据操作单主对象让-agent-改你的-json) |
+| 自定义工具 / skill / memory / 中间件 | [扩展点](#扩展点) · [usage-guide §6.2-6.4、§7](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.md) |
+| 接 LLM(DeepSeek/OpenAI 兼容/Claude/代理防泄 key) | [配置](#配置) · [usage-guide §8.6 代理](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.md) · `examples/proxy-demo` |
+| Headless / Node.js(自建 UI) | [体积与按需引入](#体积与按需引入)(headless 子路径)· `examples/headless-demo`、`examples/customize-demo` |
+| 老构建链(webpack ≤4 / vue-cli 2-3) | [体积与按需引入](#体积与按需引入)(legacy 子路径,es2017 全量打包) |
+| HTML/代码组件(AI 生成页面块) | [能力包](#createchatsdk-配置项速查)(`createHtmlSubagent`,3.9+ 自动装配)· `examples/html-page-demo`、`examples/complex-demo` |
+| RAG / MCP 工具 | [能力包](#createchatsdk-配置项速查)(`createRagSubagent`、`mcp`)· `examples/rag-demo` |
+| 定制 UI(主题 / 图标 / 国际化 / 按钮文字标签) | [`DialogConfig` 字段表](#dialogconfig-字段) · [usage-guide §6.15](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.md#615-ui-定制与国际化图标--主题--语言--文案覆盖317321) · `examples/i18n-demo` |
+| 会话 / 持久化(IndexedDB) | [配置项速查](#createchatsdk-配置项速查)(`storage`/`session`)· `examples/session-history-demo` |
+| 长对话 / 大 JSON(上下文与压缩) | [usage-guide §6.8](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.md) · [context-management 文档](https://github.com/whyymj/page-agent-sdk/blob/master/doc/context-management.md) |
+| 事件 / 审计 / token 用量 | [配置](#配置)(`onEvent`/`onAudit`/`sdk.usage`)· [usage-guide §6.9](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.md) |
+| 无人值守自动化 / 批处理 / 预算 | [配置项速查](#createchatsdk-配置项速查)(`capabilities.automation`、`sdk.batch`)· [usage-guide 自动化节](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.md) |
+| 调试(提示词 / 工具 IO / 上下文构成) | `debug: true` + 内置 DebugDrawer · `sdk.inspect()` / `sdk.debugLogs` / `sdk.inspectContext()` |
+| 全量 API / 逐项深挖 | [Agent 接入速查](#agent-接入速查给-ai-agent-读) · [usage-guide](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.md) · [doc 索引](https://github.com/whyymj/page-agent-sdk/blob/master/doc/README.md) |
 
 ## 适合谁
 
@@ -80,7 +102,7 @@
 | 子 agent | ✅ | ❌ | ✅(手动) | ✅ | 手动 |
 | 上下文压缩 | ✅ 4 层内置 | ❌ | ❌ | ✅ checkpointer | ❌ |
 | 浏览器内持久化 | ✅ IndexedDB | ❌ | ❌ | ❌ | ❌ |
-| 体积 | ~620KB ESM / 1.4MB IIFE | 依赖 React | 大 | 大 | 无 |
+| 体积 | ~963KB ESM / 2.0MB IIFE | 依赖 React | 大 | 大 | 无 |
 
 > 补充：CopilotKit 适合已在 React 生态、想要现成 AI 聊天 UI + 后端 action 的场景；LangChain / LangGraph 是通用 agent 编排（服务端强）。`page-agent-sdk` 专攻**页面内、schema 校验、可回退的 JSON 编辑**——这个细分定位是它的差异点。
 
@@ -247,7 +269,8 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | `onClose` | `() => void` | 抽屉模式关闭回调(默认 `hide`;传此选项覆盖默认,便于同步外部挂载状态) |
 | `theme` | `'light' \| 'dark'` · 默认 `'dark'` | 内置主题(dark = 方舟设计稿深色紫调);亦可祖先覆盖 `--cs-*` 完全自定义 |
 | `i18n` | `I18nOptions` | **顶层国际化配置组(3.22+;原 `dialog.locale`/`dialog.messages` 两键合并至此)**:`locale` 切换内置文案包 —— 聊天面 + Debug 抽屉 + Skill 面板 + 代码预览;`formatTime`(12h/24h)、autoTitle 与**默认 systemPrompt** 跟随(`en-US` → 英文版 `DEFAULT_SYSTEM_PROMPT_EN` 含 "Respond in English" 语言锚,agent 回复语言与 UI 一致;自定义 `systemPrompt` 不受影响,但其自动追加的 `reliableWriteRules` 段切英文)。`messages` = 键级覆盖(优先于 locale 包,如 `statusDone: '<b style="color:#10b981">完成</b>'` —— 富文本渲染位的值支持行内 HTML 片段,文案白名单净化);完整键清单(~226 键)见 `DialogMessages` |
-| `icons` | `Partial<DialogIcons>` | **图标自定义**:局部覆盖默认 emoji(`header` 🤖 / `subagent` 🤖 / `subagentProgress` 🧬 / `empty` 💬 / `focus` 🎯 / `queued` 📋 / `queuedEdit` ✏️ / `recommend` 💡 / `conflict` ⚠️;`assistantAvatar`/`userAvatar` 缺省 = 内置 SVG,传文本字形替换)。值为纯文本(emoji/字符)或 **HTML 片段**(以 `<` 开头,如内联 `<svg>`/`<img>`,经 DOMPurify 图标白名单净化,事件属性/危险协议剥除);空串 = 隐藏该图标;未传键用默认 |
+| `icons` | `Partial<DialogIcons>` | **图标自定义**:局部覆盖默认 emoji(`header` 🤖 / `subagent` 🤖 / `subagentProgress` 🧬 / `empty` 💬 / `focus` 🎯 / `queued` 📋 / `queuedEdit` ✏️ / `recommend` 💡 / `conflict` ⚠️;`assistantAvatar`/`userAvatar`/`send` 与顶部按钮四键 `newSession`/`history`/`more`/`close` 缺省 = 内置 SVG,传 emoji/字符/HTML 片段替换;历史删除按钮 `sessionDelete` 缺省 = ✕ 文本)。值为纯文本(emoji/字符)或 **HTML 片段**(以 `<` 开头,如内联 `<svg>`/`<img>`,经 DOMPurify 图标白名单净化,事件属性/危险协议剥除);空串 = 隐藏该图标(按钮键视为未传,防空按钮);未传键用默认 |
+| `headerLabels` | `boolean` · 默认 `true` | **顶部按钮自适应文字标签**:宽度足够(头部内容区 ≥440px,默认 padding 下 ≈ 对话框 ≥472px)时「新建会话/历史记录/更多」展示文字+图标,更窄自动回退纯图标(关闭钮恒纯图标;纯 CSS 容器查询,旧浏览器优雅降级为纯图标);`false` 恒纯图标。按钮文字走 i18n `newSession`/`history`/`more` 键(`i18n.messages` 键级覆盖生效),图标走 `dialog.icons` 同名四键 |
 
 ### 扩展点
 
@@ -479,8 +502,8 @@ function switchTo(i: number) {
 ## 自测
 
 ```bash
-npm test            # 2428 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 764 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm test            # 2437 项断言（tsx 源码级，不依赖 LLM）
+npm run test:e2e    # 769 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试
@@ -532,11 +555,11 @@ createChatSdk({
 
 | 产物 | 文件 | 适用场景 | 大小 |
 |---|---|---|---|
-| ESM(peer 外置) | `dist/page-agent-sdk.js` | npm 或 esm.sh `import`,模块化宿主推荐 | ~620 KB |
-| UMD | `dist/page-agent-sdk.umd.cjs` | Node/老 bundler `require` | ~560 KB |
-| IIFE(全量单文件) | `dist/page-agent-sdk.iife.js` | CDN `<script>` 直引,零配置 | ~1.4 MB |
-| **headless ESM**(无 UI 层) | `dist/page-agent-sdk.headless.js` | `page-agent-sdk/headless` —— `ui:false` 自建 UI 纯核心 | **~325 KB** |
-| **legacy ESM**(es2017 全量打包) | `dist/page-agent-sdk.legacy.js` | `page-agent-sdk/legacy` —— **webpack ≤4 / vue-cli 2-3 老构建链宿主**:`await import('page-agent-sdk/legacy')` 懒加载 chunk,零 transpile/零 peer | **~2.9 MB** |
+| ESM(peer 外置) | `dist/page-agent-sdk.js` | npm 或 esm.sh `import`,模块化宿主推荐 | ~963 KB |
+| UMD | `dist/page-agent-sdk.umd.cjs` | Node/老 bundler `require` | ~762 KB |
+| IIFE(全量单文件) | `dist/page-agent-sdk.iife.js` | CDN `<script>` 直引,零配置 | ~2.0 MB |
+| **headless ESM**(无 UI 层) | `dist/page-agent-sdk.headless.js` | `page-agent-sdk/headless` —— `ui:false` 自建 UI 纯核心 | **~446 KB** |
+| **legacy ESM**(es2017 全量打包) | `dist/page-agent-sdk.legacy.js` | `page-agent-sdk/legacy` —— **webpack ≤4 / vue-cli 2-3 老构建链宿主**:`await import('page-agent-sdk/legacy')` 懒加载 chunk,零 transpile/零 peer | **~3.0 MB** |
 
 ### 按需引入(subpath exports)
 
@@ -558,7 +581,7 @@ import { jpEval, searchJson } from 'page-agent-sdk/query'
 
 `sideEffects` 仅标记 `["**/*.css"]`,打包器可对 JS 做 tree-shaking。瘦身建议:
 
-- **headless(`ui:false`)**:不渲染内置对话框,自渲染 `agent.messages`。要最精简 bundle,从 **headless 子路径** 引入 —— `import { createChatSdk } from 'page-agent-sdk/headless'`(ESM ~325KB vs 主包 ~789KB;去掉运行时从不使用的 marked/highlight.js/dompurify/ChatDialog)。`createChatSdk(options): ChatSdk` 签名不变,配 `ui:false` 用。从主包引入也可不引 `ChatDialog`/`CodePreview` 并省略 CSS(`import 'page-agent-sdk'` 不引 `'page-agent-sdk/style.css'`)。**持久化坑**:`sdk.stream` 不自动落盘(内置 useChat 经 onPersist 调 afterRound);自建对话框每轮后需手动 `sdk.afterRound()`,否则 `switchSession` 切回丢消息。**复用内置 DebugDrawer**(仅主包):`import { DebugDrawer }`(纯 props:`logs=sdk.debugLogs` / `getInfo=()=>sdk.inspect()` / `infoTick=sdk.infoTick`),在自己的 UI 里挂载,无需 ChatDialog。
+- **headless(`ui:false`)**:不渲染内置对话框,自渲染 `agent.messages`。要最精简 bundle,从 **headless 子路径** 引入 —— `import { createChatSdk } from 'page-agent-sdk/headless'`(ESM ~446KB vs 主包 ~963KB;去掉运行时从不使用的 marked/highlight.js/dompurify/ChatDialog)。`createChatSdk(options): ChatSdk` 签名不变,配 `ui:false` 用。从主包引入也可不引 `ChatDialog`/`CodePreview` 并省略 CSS(`import 'page-agent-sdk'` 不引 `'page-agent-sdk/style.css'`)。**持久化坑**:`sdk.stream` 不自动落盘(内置 useChat 经 onPersist 调 afterRound);自建对话框每轮后需手动 `sdk.afterRound()`,否则 `switchSession` 切回丢消息。**复用内置 DebugDrawer**(仅主包):`import { DebugDrawer }`(纯 props:`logs=sdk.debugLogs` / `getInfo=()=>sdk.inspect()` / `infoTick=sdk.infoTick`),在自己的 UI 里挂载,无需 ChatDialog。
 - **关闭无用能力**:`capabilities:{ dataOps:false, fetch:false, planning:false, skills:false, vfs:false, summarization:false, memory:false, subagent:false }` —— 移除对应工具 schema 与中间件(省 token,非字节)。
 - **CDN 用 esm.sh**:`import { createChatSdk } from 'https://esm.sh/page-agent-sdk'` —— peer(`zod`、`@langchain/*`)由 esm.sh 自动解析去重,模块场景最小。
 - **IIFE 仅用于零配置**:全量单文件方便但最重,宿主支持模块时优先 ESM。

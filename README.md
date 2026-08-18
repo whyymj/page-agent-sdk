@@ -8,11 +8,33 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-2428%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-2437%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
-> 🚀 **Quick start?** → [30-second quickstart](#30-second-quickstart) · [Examples](#examples) · [Options cheat sheet](#createchatsdk-options-cheat-sheet) · [LLM 连接](#llm-连接直连--代理--openai-兼容端点)
+> 🚀 **Quick start?** → [30-second quickstart](#30-second-quickstart) · [Examples](#examples) · [Options cheat sheet](#createchatsdk-options-cheat-sheet) · [Usage map](#usage-map-task--where)
+
+## Usage map (task → where)
+
+Starting point for both humans and AI agents (Claude Code / Cursor): find the feature you need, follow the link. Details live in sub-docs — [doc/](https://github.com/whyymj/page-agent-sdk/blob/master/doc/README.en.md) index.
+
+| I want to… | See |
+|---|---|
+| Just add an AI chat box (no data ops) | [30-second quickstart](#30-second-quickstart) · `examples/minimal-demo` |
+| AI edits my page data (schema + bind) | [Design: three-layer split](#design-the-schema--systemprompt--skill-three-layer-split) · [usage-guide §6.1](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md#61-data-ops-single-main-object--let-the-agent-edit-your-json) |
+| Custom tools / skills / memory / middleware | [Extension points](#extension-points) · [usage-guide §6.2–6.4, §7](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md) |
+| Connect LLM (DeepSeek/OpenAI-compatible/Claude/proxy, no apiKey leak) | [Configuration](#configuration) · [usage-guide §8.6 Proxy](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md) · `examples/proxy-demo` |
+| Headless / Node.js (own UI, no dialog) | [Bundle size & tree-shaking](#bundle-size--tree-shaking) (headless subpath) · `examples/headless-demo`, `examples/customize-demo` |
+| Old bundler (webpack ≤4 / vue-cli 2-3) | [Bundle size & tree-shaking](#bundle-size--tree-shaking) (legacy subpath, es2017 all-inlined) |
+| HTML/code components (AI writes page blocks) | [Capability packs](#createchatsdk-options-cheat-sheet) (`createHtmlSubagent`, auto-registered 3.9+) · `examples/html-page-demo`, `examples/complex-demo` |
+| RAG / MCP tools | [Capability packs](#createchatsdk-options-cheat-sheet) (`createRagSubagent`, `mcp`) · `examples/rag-demo` |
+| Customize UI (theme / icons / i18n / button labels) | [`DialogConfig` fields](#dialogconfig-fields) · [usage-guide §6.15](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md#615-ui-customization--i18n-icons--theme--language--message-overrides-317321) · `examples/i18n-demo` |
+| Sessions / persistence (IndexedDB) | [options cheat sheet](#createchatsdk-options-cheat-sheet) (`storage`/`session`) · `examples/session-history-demo` |
+| Long conversations / big JSON (context & compression) | [usage-guide §6.8](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md) · [context-management doc](https://github.com/whyymj/page-agent-sdk/blob/master/doc/context-management.md) |
+| Events / audit / token usage | [Configuration](#configuration) (`onEvent`/`onAudit`/`sdk.usage`) · [usage-guide §6.9](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md) |
+| Unattended automation / batch / budget | [options cheat sheet](#createchatsdk-options-cheat-sheet) (`capabilities.automation`, `sdk.batch`) · [usage-guide automation section](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md) |
+| Debug (prompts / tool IO / context) | `debug: true` + built-in DebugDrawer · `sdk.inspect()` / `sdk.debugLogs` / `sdk.inspectContext()` |
+| Everything, full API | [Agent Integration Cheat Sheet](#agent-integration-cheat-sheet-for-ai-agents) · [usage-guide](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md) · [doc index](https://github.com/whyymj/page-agent-sdk/blob/master/doc/README.en.md) |
 
 ## Who is it for
 
@@ -80,7 +102,7 @@ At its core, it gives the AI a **standardized, safe JSON-operation channel**. AI
 | Subagents | ✅ | ❌ | ✅ (manual) | ✅ | manual |
 | Context compression | ✅ 4-layer built-in | ❌ | ❌ | ✅ checkpointer | ❌ |
 | In-browser persistence | ✅ IndexedDB | ❌ | ❌ | ❌ | ❌ |
-| Bundle | ~620 KB ESM / 1.4 MB IIFE | React dep | large | large | none |
+| Bundle | ~963 KB ESM / 2.0 MB IIFE | React dep | large | large | none |
 
 > Nuance: CopilotKit is a great choice if you're already on React and want a polished AI-chat UI with backend actions; LangChain / LangGraph are general-purpose agent orchestration (server-side strong). `page-agent-sdk` specifically targets **in-page, schema-validated, rollbackable JSON editing** — that niche is its differentiation.
 
@@ -251,64 +273,8 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | `onClose` | `() => void` | Drawer mode close callback (default `hide`; pass to override and sync external mount state) |
 | `theme` | `'light' \| 'dark'` · default `'dark'` | Built-in theme (dark = Ark design palette); fully customizable via `--cs-*` on an ancestor |
 | `i18n` | `I18nOptions` | **Top-level i18n group (3.22+; replaces `dialog.locale`/`dialog.messages`)**: `locale` switches the built-in message pack — chat surface + Debug drawer + Skill panel + CodePreview; `formatTime` (12h/24h), autoTitle, and the **default systemPrompt** follow (`en-US` → English `DEFAULT_SYSTEM_PROMPT_EN` with a "Respond in English" anchor, so agent replies match the UI language; a custom `systemPrompt` is untouched, but the auto-appended `reliableWriteRules` segment switches to English). `messages` = per-key overrides (priority over the locale pack, e.g. `statusDone: '<b style="color:#10b981">Done ✓</b>'` — values may be inline HTML fragments on rich-text render spots, sanitized via a text allowlist). Full key list (~226 keys) in `DialogMessages` |
-| `icons` | `Partial<DialogIcons>` | **Icon customization**: partial override of default emojis (`header` 🤖 / `subagent` 🤖 / `subagentProgress` 🧬 / `empty` 💬 / `focus` 🎯 / `queued` 📋 / `queuedEdit` ✏️ / `recommend` 💡 / `conflict` ⚠️; `assistantAvatar`/`userAvatar` default to built-in SVG, pass a text glyph to replace). Values: plain text (emoji/char) **or an HTML fragment** (starting with `<`, e.g. inline `<svg>`/`<img>` — sanitized via a DOMPurify icon allowlist; event attributes/dangerous protocols stripped); empty string hides the icon; unset keys keep defaults |
-
-### Extension points
-
-```ts
-// ① Custom tool
-const myTool = defineTool({ name: 'do_x', description: '...', schema: z.object({...}), handler: (args) => 'result' })
-createChatSdk({ tools: [myTool], /*...*/ })
-
-// ② Custom skill (progressive disclosure: load_skill fetches details on demand)
-const mySkill = defineSkill({ name: 'style_guide', description: 'Brand color spec', body: 'Primary #1f4d3a…' })
-//    Dynamic skill (skill-external-scripts): exec runs a script on load → inject live data; tools attaches callable tools
-//    defineSkill({ name: 'orders', getContent: () => 'spec…', exec: { code: '...', context: 'sandbox' }, tools: [() => orderQueryTool] })
-createChatSdk({ skills: [mySkill], /*...*/ })
-
-// ③ Custom middleware (8 hooks: beforeAgent/wrapModelCall/beforeModel/afterModel/wrapToolCall/afterAgent/beforeReturn + augmentPrompt/compressInput/tools)
-const mw: Middleware = { name: 'telemetry', afterModel: async (ctx, next) => { await next(ctx); console.log('round done') } }
-createChatSdk({ middleware: [mw], /*...*/ })
-
-// ④ Pre-declared subagents (planner-reflector-executor fixed roles)
-createChatSdk({ subagents: [
-  { id: 'planner', description: 'Creative planner', temperature: 0.9, systemPrompt: '…' },
-  { id: 'reflector', description: 'Reflective reviewer', temperature: 0.3, systemPrompt: '…' },
-], /*...*/ })
-```
-
-### Built-in tools (Agent-callable)
-
-- **data ops** (default `toolMode:'simple'`): `read` (list/get/describe merged) / `write` (set/edit/delete merged + auto optimistic lock + auto snapshot) — recommended; `toolMode:'advanced'` also exposes low-level `describe_data` / `get_data` (@deprecated, use read) / `set_data` / `edit_data` (jsonPath patch) / `delete_data` / `restore_data` / `history_data` (with list mode) / `diff_data`
-- **window query**: `query_data` (JSONPath) / `search_data` (fuzzy) / `eval_script` (sandboxed)
-- **fetch**: `fetch_document`
-- **vfs**: `vfs_read` / `vfs_write` / `vfs_edit` / `vfs_ls` / `vfs_glob` / `vfs_grep`
-- **planning/skills**: `write_todos` / `define_skill` / `load_skill` (skill can carry `exec` to run a script on load injecting live data + `tools` for repeatedly-callable tools; `exec.context:'host'` requires `capabilities.skillHostScript:true`)
-- **human confirm**: `request_human_confirmation` (proactive inquiry, default on)
-- **subagents**: `spawn_agent` / `spawn_agents` / `use_<id>` (pre-declared)
-- **checkpoint**: `restore_last_checkpoint` / `list_checkpoints`
-
-### File structure
-
-```
-src/core/
-├── sdk/createChatSdk.ts        # imperative entry (assembles harness + tools + middleware)
-│   sdk/defineTool.ts  presets.ts  contextPreset.ts
-├── harness/                    # in-house ReAct harness (middleware-driven)
-│   createAgent.ts  middleware.ts  state.ts
-│   todos.ts  skills.ts  memory.ts  summarization.ts  retry.ts
-│   subagent.ts  verify.ts  approval.ts  humanConfirm.ts  checkpoint.ts
-│   permissions.ts  usageHints.ts
-├── tools/                      # dataOps (schema validation + incremental edit + snapshot + whitelist) / dataSlotQuery / fetchDoc
-├── backends/                   # vfs (memory) / storage (IndexedDB + multi-backend + quota eviction)
-├── mcp/client.ts              # remote MCP tool integration
-├── composables/               # useChat / useContextManager / useMarkdown
-├── components/                 # ChatDialog / MessageContent / CodePreview / DebugDrawer
-└── types/index.ts  index.ts    # types / sole library entry
-examples/                       # page-demo / nested-demo / dynamic-demo / human-confirm-demo / planner-demo / subagent-demo / toolsets-demo / proxy-demo
-doc/                            # usage-guide / architecture / context-management / architecture-files
-CLAUDE.md                       # architecture + gotchas + coding conventions (agent must-read)
-```
+| `icons` | `Partial<DialogIcons>` | **Icon customization**: partial override of default emojis (`header` 🤖 / `subagent` 🤖 / `subagentProgress` 🧬 / `empty` 💬 / `focus` 🎯 / `queued` 📋 / `queuedEdit` ✏️ / `recommend` 💡 / `conflict` ⚠️; `assistantAvatar`/`userAvatar`/`send` and the header-button keys `newSession`/`history`/`more`/`close` default to built-in SVG — pass emoji/char/HTML fragment to replace; history delete button `sessionDelete` defaults to ✕ text). Values: plain text (emoji/char) **or an HTML fragment** (starting with `<`, e.g. inline `<svg>`/`<img>` — sanitized via a DOMPurify icon allowlist; event attributes/dangerous protocols stripped); empty string hides the icon (button keys treat it as unset, prevents an empty button); unset keys keep defaults |
+| `headerLabels` | `boolean` · default `true` | **Adaptive header-button text labels**: when wide enough (header content ≥440px ≈ dialog ≥472px with default padding), "New chat / History / More" show text+icon; narrower widths fall back to icon-only (close stays icon-only; pure CSS container queries, old browsers gracefully degrade to icon-only); `false` = always icon-only. Button text = i18n `newSession`/`history`/`more` keys (overridable via `i18n.messages`), icons = the four same-named `dialog.icons` keys |
 
 ### Extension points
 
@@ -533,8 +499,8 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 2428 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 764 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm test            # 2437 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 769 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test
@@ -586,11 +552,11 @@ The package ships three builds — pick by integration scenario:
 
 | Build | File | When to use | Approx. size |
 |---|---|---|---|
-| ESM (bundled, peer external) | `dist/page-agent-sdk.js` | `import` via npm or esm.sh — recommended for module hosts | ~620 KB |
-| UMD | `dist/page-agent-sdk.umd.cjs` | `require()` in Node/legacy bundlers | ~560 KB |
-| IIFE (all-inlined, single file) | `dist/page-agent-sdk.iife.js` | `<script src>` CDN direct include, zero config | ~1.4 MB |
-| **headless ESM** (no UI layer) | `dist/page-agent-sdk.headless.js` | `page-agent-sdk/headless` — pure core for `ui:false` custom UI | **~325 KB** |
-| **legacy ESM** (es2017, all-inlined) | `dist/page-agent-sdk.legacy.js` | `page-agent-sdk/legacy` — **webpack ≤4 / vue-cli 2-3 hosts**: `await import('page-agent-sdk/legacy')` lazy chunk, zero transpile/peers | **~2.9 MB** |
+| ESM (bundled, peer external) | `dist/page-agent-sdk.js` | `import` via npm or esm.sh — recommended for module hosts | ~963 KB |
+| UMD | `dist/page-agent-sdk.umd.cjs` | `require()` in Node/legacy bundlers | ~762 KB |
+| IIFE (all-inlined, single file) | `dist/page-agent-sdk.iife.js` | `<script src>` CDN direct include, zero config | ~2.0 MB |
+| **headless ESM** (no UI layer) | `dist/page-agent-sdk.headless.js` | `page-agent-sdk/headless` — pure core for `ui:false` custom UI | **~446 KB** |
+| **legacy ESM** (es2017, all-inlined) | `dist/page-agent-sdk.legacy.js` | `page-agent-sdk/legacy` — **webpack ≤4 / vue-cli 2-3 hosts**: `await import('page-agent-sdk/legacy')` lazy chunk, zero transpile/peers | **~3.0 MB** |
 
 ### Import only what you need (subpath exports)
 
@@ -612,7 +578,7 @@ import { jpEval, searchJson } from 'page-agent-sdk/query'
 
 `sideEffects` is set to `["**/*.css"]` only, so bundlers can tree-shake the JS when you import named symbols. Tips to keep your bundle lean:
 
-- **Headless (`ui:false`)**: skip the built-in dialog and render `agent.messages` yourself. For the leanest bundle, import from the **headless subpath** — `import { createChatSdk } from 'page-agent-sdk/headless'` (~325 KB ESM vs ~789 KB main; drops marked/highlight.js/dompurify/ChatDialog you never use at runtime). Same `createChatSdk(options): ChatSdk` signature; pair with `ui:false`. From the main package you can also avoid importing `ChatDialog`/`CodePreview` and drop the CSS (`import 'page-agent-sdk'` without `'page-agent-sdk/style.css'`). **Persistence pitfall**: `sdk.stream` does NOT auto-persist (built-in `useChat` calls `afterRound` via `onPersist`); in a self-built dialog call `sdk.afterRound()` after each turn, otherwise `switchSession` won't restore messages. **Reuse the built-in DebugDrawer** (main package only): `import { DebugDrawer }` — pure-props (`logs=sdk.debugLogs`, `getInfo=()=>sdk.inspect()`, `infoTick=sdk.infoTick`), mount it in your own UI without needing ChatDialog.
+- **Headless (`ui:false`)**: skip the built-in dialog and render `agent.messages` yourself. For the leanest bundle, import from the **headless subpath** — `import { createChatSdk } from 'page-agent-sdk/headless'` (~446 KB ESM vs ~963 KB main; drops marked/highlight.js/dompurify/ChatDialog you never use at runtime). Same `createChatSdk(options): ChatSdk` signature; pair with `ui:false`. From the main package you can also avoid importing `ChatDialog`/`CodePreview` and drop the CSS (`import 'page-agent-sdk'` without `'page-agent-sdk/style.css'`). **Persistence pitfall**: `sdk.stream` does NOT auto-persist (built-in `useChat` calls `afterRound` via `onPersist`); in a self-built dialog call `sdk.afterRound()` after each turn, otherwise `switchSession` won't restore messages. **Reuse the built-in DebugDrawer** (main package only): `import { DebugDrawer }` — pure-props (`logs=sdk.debugLogs`, `getInfo=()=>sdk.inspect()`, `infoTick=sdk.infoTick`), mount it in your own UI without needing ChatDialog.
 - **Disable unused capabilities**: `capabilities:{ dataOps:false, fetch:false, planning:false, skills:false, vfs:false, summarization:false, memory:false, subagent:false }` — removes the corresponding tool schemas and middleware from the agent prompt (saves tokens, not bytes).
 - **CDN via esm.sh**: `import { createChatSdk } from 'https://esm.sh/page-agent-sdk'` — peer deps (`zod`, `@langchain/*`) are resolved and deduped by esm.sh automatically; smallest for module scenarios.
 - **IIFE only for zero-config**: the all-inlined single file is convenient but heaviest; prefer ESM when the host supports modules.

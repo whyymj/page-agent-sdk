@@ -107,6 +107,8 @@ onMounted(() => {
     dialog: {
       title: '嵌套页面编辑',
       placeholder: '试试:主标题改成红色;给商品列表加一张「新品」卡;删掉商品卡 2',
+      // 顶部按钮恒纯图标(默认 true = 宽度足够时展示「图标+文字」;browser 测试 fixture)
+      headerLabels: false,
     },
     // 非 reactive bind:监听 data_change 触发 tick,:key 强制树重渲染读最新 pageInfo
     onEvent(e) {

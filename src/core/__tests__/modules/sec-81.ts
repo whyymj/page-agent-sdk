@@ -30,6 +30,11 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(sd.send === '🚀', 'resolveDialogIcons send 传值 → 透传(替换内置纸飞机 SVG)')
     assert(resolveDialogIcons({ send: '' }).send === undefined, 'resolveDialogIcons send 空串 → 视为未传(防空按钮)')
     assert(resolveDialogIcons().send === undefined, 'resolveDialogIcons 缺省 send → undefined(内置 SVG,默认零变化)')
+    // 顶部按钮图标四键(newSession/history/more/close)+ 历史删除键(sessionDelete):undefined = 内置图形;空串视为未传(防空图标)
+    const hb = resolveDialogIcons({ newSession: '➕', history: '', more: '⋯', close: '✕', sessionDelete: '🗑️' })
+    assert(hb.newSession === '➕' && hb.more === '⋯' && hb.close === '✕' && hb.sessionDelete === '🗑️', 'resolveDialogIcons 顶部按钮/历史删除图标传值 → 透传(替换内置图形)')
+    assert(hb.history === undefined, 'resolveDialogIcons 顶部按钮图标空串 → 视为未传(内置 SVG)')
+    assert(resolveDialogIcons().newSession === undefined && resolveDialogIcons().close === undefined, 'resolveDialogIcons 缺省顶部按钮图标 → undefined(内置 SVG,默认零变化)')
   }
   {
     // 边界:非字符串值忽略(不抛错不污染);文本键空串=隐藏合法保留

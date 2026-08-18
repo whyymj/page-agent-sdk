@@ -4,6 +4,31 @@
 
 ## [Unreleased]
 
+## [3.27.0] - 2026-08-18
+
+### Added(滚动条统一替换:OverlayScrollbars v2 —— 用户诉求「聊天框横/纵向滚动条优化 + 用现成框架替换原生」)
+- **主滚动面 overlay 自定义滚动条**:`overlayscrollbars@2`(新 dependency,打包进主包/headless 不含)接管 `.chat-main`(消息区)与 DebugDrawer `.drawer-body`(日志区)—— 隐藏原生滚动条换 overlay 细滚动条(8px 圆角手柄,autoHide scroll 700ms,支持轨道点击跳转),**保留原生滚动行为/键盘/触摸**;ResizeObserver 自动跟随聊天内容动态增高。**关键坑(实测踩中)**:默认「元素初始化」会把宿主子节点搬进插件自建 content 层,与 Vue patch 冲突 → `insertBefore` 崩(DebugDrawer 日志实时刷新即栽此);正解 = **模板预置 host/viewport/contents 三层 + 对象初始化 `({ target, elements: { viewport, content } })` 认领既有节点**,零 DOM 搬运,onScroll/onWheel/scrollToBottom 零改动。DebugDrawer 为 v-if 挂载,初始化挂 visible watch + onMounted 双入口(幂等)。手柄颜色经 `--cs-scrollbar-thumb(-hover)` / `--dd-scrollbar-thumb(-hover)` 跟随 light/dark 主题(集成方可覆盖)
+- **对话框级横向滚动消灭**:`overflow.x:'hidden'`(代码块/表格各自内部 `overflow-x:auto` 保持)—— 长代码行不再撑出外层横向滚动条
+- **小滚动区原生细条兜底**(代码块/历史菜单/输入框 textarea 等不接 JS 的区域):`scrollbar-width: thin` + `scrollbar-color` 继承属性(Firefox/Chromium121+)与 `::-webkit-scrollbar` 伪元素(6px 圆角、轨道透明、主题色),与 os viewport 的原生隐藏规则互不打架(显式再断言)
+- 测试:browser scrollbar.spec +3(os viewport 接管 + overflow-x hidden + 细条继承 / 长代码行横向收敛在代码块内 + .chat-main 零横向溢出 / DebugDrawer 同构接管);体积阈值同步(IIFE 2.15MB / UMD 1.15MB / CSS 85KB)
+
+### Added(历史记录删除按钮图标可配置)
+- **`dialog.icons.sessionDelete`**(editor_fangzhou bin.png 驱动):历史下拉「删除会话」按钮 undefined = ✕ 文本(默认零变化);传 emoji/字符/HTML 片段(如 `<img>`)替换,与 send/顶部按钮键同机制 IconGlyph 净化渲染。selftest sec-81 断言扩展 + browser icons.spec +1(双会话 → 历史下拉 → 🗑️ fixture 断言)
+
+### Added(顶部按钮自适应文字标签,editor_fangzhou 集成驱动)
+- **头部按钮宽度自适应「文字+图标」**:聊天框够宽(头部内容区 ≥440px,默认 padding 下 ≈ 对话框 ≥472px)时「新建会话/历史记录/更多」展示文字+图标,收窄自动回退纯图标(关闭钮恒纯图标)。纯 CSS 容器查询实现(零 JS/零布局抖动);不支持 `@container` 的旧浏览器恒纯图标 = 旧行为优雅降级。**可配置双通道**:文字走 i18n 既有键 `newSession`/`history`/`more`(`i18n.messages` 键级覆盖天然生效,en locale → New chat/History/More);图标走 `dialog.icons` 新增四键 `newSession`/`history`/`more`/`close`(undefined=内置 SVG,空串视为未传,与 `send` 同机制 IconGlyph 渲染);`dialog.headerLabels`(默认 `true` 自适应,`false` 恒纯图标)。附带:`.header-title` 补 ellipsis 截断(长标题不再溢出挤压按钮);`types/index.d.ts` 对齐既有漂移(`DialogIcons.send`、`DialogConfig.sections` 补漏)
+- 测试:selftest sec-81 +3(顶部按钮图标四键透传/空串视为未传/缺省 undefined)/ browser header-labels.spec +5(宽=文字+图标 / 窄=纯图标且可交互 / icons.newSession 替换内置 SVG / en-US 英文标签 / headerLabels:false 恒纯图标;minimal-demo/nested-demo 挂 fixture)
+
+### Changed(docs)
+- **README 中英补全使用索引并去重**:「Extension points / Built-in tools / File structure」三段重复出现两次 → 删重;新增「Usage map」任务导向索引(我想做 X → 去 Y:README 锚点 + doc/usage-guide 对应节),便于人类与 AI 代理(Claude Code/Cursor)从 README 单入口找到全部用法
+
+## [3.26.1] - 2026-08-17
+
+### Fixed(focus 对开放 schema 的支持 —— editor_fangzhou「画布选中 → AI 聚焦」接入驱动)
+- **`getSchemaAtPath` 支持 record/any/unknown**:修前 `z.record(...)` 恒返 null、`z.any()`/`z.unknown()` 子树任意深度亦返 null → `validateFocusInput` 第 4 道校验恒拒 → 开放 schema 集成(如编辑器页面树 `z.record(z.string(), z.unknown())` 绑整个组件树)**setFocus/addFocus 永远失败,Focus 功能整体不可用**。修:record 任意段下探 valueType(键集开放,与 getSchemaTopKeys 返 null 全开放口径一致);any/unknown 子树任意深度保持开放续走。附带正收益:`schema_data`/read 子路径投影对开放 schema 子路径同理解禁
+- 行为边界:valueType 非开放(如 `z.record(z.string(), z.object({...}))`)时未声明字段仍返 null(不放宽声明过的形状);严格 schema 路径零变化(record/any/unknown 此前一律 null,新增分支只解禁不排除)
+- 测试:selftest sec-31 +6(record 任意路径 / record·object valueType 命中与拒绝 / any·unknown 子树 / record·array·object 深层)+ e2e focus.mjs +5(record schema setFocus/addFocus/clearFocus 全链路)
+
 ## [3.26.0] - 2026-08-17
 
 ### Added(legacy-bundle-channel:老构建链宿主官方接入通道)

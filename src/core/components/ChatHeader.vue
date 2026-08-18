@@ -27,6 +27,8 @@ const props = defineProps<{
   sessions?: SessionMeta[]
   /** 当前会话 id(历史列表高亮) */
   currentSessionId?: string
+  /** 宽度足够时按钮展示文字标签(默认 true 自适应;false 恒纯图标) */
+  labels?: boolean
   onNewSession?: () => void
   onOpenSession?: (sessionId: string) => void
   onRemoveSession?: (sessionId: string) => void
@@ -64,19 +66,27 @@ function handleOpenSession(id: string): void {
 
 <template>
   <!-- 原 ChatDialog header 有 cursor:pointer 但未绑 click(折叠功能 dead,isExpanded 恒 true);保持原行为不接 toggleCollapse,遵守「默认路径行为零变化」(design §6) -->
-  <div class="chat-header">
-    <div class="header-left">
-      <span class="header-icon"><IconGlyph :icon="icons.header" /></span>
-      <span class="header-title"><MsgText :text="title" /></span>
-      <span v-if="state.loading" class="status-dot pulse"></span>
-    </div>
-    <div class="header-actions" @click.stop>
-      <!-- 会话管理(sessions 注入 = storage 开启;不传则隐藏) -->
-      <button v-if="sessions" class="action-btn" data-test="new-chat" :title="m.newSession" @click="handleNewSession">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"></path></svg>
+  <div class="chat-header" :class="{ 'cs-no-labels': labels === false }">
+    <!-- header-main:容器查询锚点(inline-size),驱动按钮文字标签按可用宽度自适应;
+         遮罩(more-overlay)必须留在这层之外 —— contain 会把它变成 fixed 后代的包含块,套进来整页遮罩会缩成头部条 -->
+    <div class="header-main">
+      <div class="header-left">
+        <span class="header-icon"><IconGlyph :icon="icons.header" /></span>
+        <span class="header-title"><MsgText :text="title" /></span>
+        <span v-if="state.loading" class="status-dot pulse"></span>
+      </div>
+      <div class="header-actions" @click.stop>
+      <!-- 会话管理(sessions 注入 = storage 开启;不传则隐藏);has-label = 宽度足够时展示文字+图标(关闭钮恒纯图标;
+           文字在前图标在后,Figma 469-6355);图标经 dialog.icons.{newSession,history,more,close} 可配(未传 = 内置 SVG) -->
+      <button v-if="sessions" class="action-btn has-label" data-test="new-chat" :title="m.newSession" @click="handleNewSession">
+        <span class="action-label">{{ m.newSession }}</span>
+        <IconGlyph v-if="icons.newSession" :icon="icons.newSession" />
+        <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"></path></svg>
       </button>
-      <button v-if="sessions" class="action-btn" :class="{ active: historyOpen }" data-test="toggle-history" :title="m.history" @click="moreOpen = false; historyOpen = !historyOpen">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path><path d="M12 7v5l3 2"></path></svg>
+      <button v-if="sessions" class="action-btn has-label" :class="{ active: historyOpen }" data-test="toggle-history" :title="m.history" @click="moreOpen = false; historyOpen = !historyOpen">
+        <span class="action-label">{{ m.history }}</span>
+        <IconGlyph v-if="icons.history" :icon="icons.history" />
+        <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path><path d="M12 7v5l3 2"></path></svg>
       </button>
       <!-- 历史面板(弹出) -->
       <div v-if="sessions && historyOpen" class="cs-history-menu" @click.stop>
@@ -91,13 +101,18 @@ function handleOpenSession(id: string): void {
           <div class="hist-title">{{ s.title || m.sessionFallbackPrefix + s.sessionId.slice(-6) }}</div>
           <div class="hist-meta">
             <span>{{ fmtSessionTime(s.lastAccessed) }}</span>
-            <button v-if="currentSessionId !== s.sessionId" class="hist-del" data-test="del-btn" @click.stop="onRemoveSession?.(s.sessionId)">✕</button>
+            <button v-if="currentSessionId !== s.sessionId" class="hist-del" data-test="del-btn" @click.stop="onRemoveSession?.(s.sessionId)">
+              <IconGlyph v-if="icons.sessionDelete" :icon="icons.sessionDelete" />
+              <span v-else>✕</span>
+            </button>
           </div>
         </div>
       </div>
       <!-- 更多(调试 / skill / 清空 合并下拉) -->
-      <button class="action-btn more-btn" :class="{ active: moreOpen }" :title="m.more" @click="historyOpen = false; moreOpen = !moreOpen">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+      <button class="action-btn more-btn has-label" :class="{ active: moreOpen }" :title="m.more" @click="historyOpen = false; moreOpen = !moreOpen">
+        <span class="action-label">{{ m.more }}</span>
+        <IconGlyph v-if="icons.more" :icon="icons.more" />
+        <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
           <circle cx="12" cy="5" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="12" cy="19" r="1.6"></circle>
         </svg>
         <span v-if="debug && hasDebugLogs" class="debug-badge">{{ debugLogs?.length }}</span>
@@ -124,14 +139,16 @@ function handleOpenSession(id: string): void {
           <span>{{ m.clearChat }}</span>
         </button>
       </div>
-      <!-- 关闭(抽屉模式) -->
+      <!-- 关闭(抽屉模式;恒纯图标) -->
       <button v-if="drawer" class="action-btn" :title="m.close" @click="$emit('close')">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <IconGlyph v-if="icons.close" :icon="icons.close" />
+        <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M18 6L6 18M6 6l12 12"></path>
         </svg>
       </button>
+      </div>
     </div>
-    <!-- 下拉遮罩(点外部关闭:更多菜单 / 历史面板) -->
+    <!-- 下拉遮罩(点外部关闭:更多菜单 / 历史面板;在 header-main 之外,contain 不影响其 fixed 定位) -->
     <div v-if="moreOpen || historyOpen" class="more-overlay" @click="moreOpen = false; historyOpen = false"></div>
   </div>
 </template>
@@ -145,11 +162,18 @@ function handleOpenSession(id: string): void {
   flex-shrink: 0;
   position: relative; z-index: 16;
 }
-.header-left { display: flex; align-items: center; gap: 8px; }
+.header-main {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  /* 容器查询锚点:按钮文字标签按头部可用宽度自适应(宽 = 文字+图标 / 窄 = 纯图标)。
+     不支持 @container 的旧浏览器恒走窄分支 = 纯图标(即旧行为,优雅降级) */
+  container-type: inline-size;
+}
+.header-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .header-icon { font-size: 20px; }
-.header-title { font-size: 15px; font-weight: 600; }
+.header-title { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.status-dot { width: 8px; height: 8px; border-radius: 50%; background: #4ade80; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: #4ade80; flex-shrink: 0; }
 .status-dot.pulse { animation: cs-pulse 1.5s infinite; }
 @keyframes cs-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
@@ -159,6 +183,16 @@ function handleOpenSession(id: string): void {
   width: 28px; height: 28px; border: none; border-radius: 6px;
   background: var(--cs-action-bg, rgba(255, 255, 255, 0.15)); color: var(--cs-action-text, #fff); cursor: pointer;
   transition: background 0.2s;
+}
+.action-btn svg { flex-shrink: 0; }
+.action-btn :deep(.icon-text) { font-size: 14px; line-height: 1; }
+/* 文字标签:默认(窄)隐藏;头部内容区 ≥440px(默认 padding 下 ≈ 对话框 ≥472px)展示文字+图标(文字在前,Figma 469-6355)。
+   headerLabels:false 显式关闭(压过容器查询分支) */
+.action-label { display: none; }
+.chat-header.cs-no-labels .action-label { display: none !important; }
+@container (min-width: 440px) {
+  .action-btn.has-label { width: auto; min-width: 28px; padding: 0 10px; gap: 5px; }
+  .action-btn.has-label .action-label { display: inline; font-size: 12px; white-space: nowrap; }
 }
 .action-btn:hover:not(:disabled) { background: var(--cs-action-hover, rgba(255, 255, 255, 0.3)); }
 .action-btn:disabled { opacity: 0.4; cursor: not-allowed; }

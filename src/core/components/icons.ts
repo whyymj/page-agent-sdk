@@ -33,6 +33,16 @@ export interface DialogIcons {
   userAvatar?: string
   /** 发送按钮图标(undefined = 内置纸飞机 SVG;传 emoji/字符/HTML 片段替换;loading 态停止方块恒内置)。空串视为未传(防空按钮) */
   send?: string
+  /** 顶部「新建会话」按钮图标(undefined = 内置 + SVG;文字标签走 i18n newSession 键,宽度足够时展示) */
+  newSession?: string
+  /** 顶部「历史记录」按钮图标(undefined = 内置时钟 SVG) */
+  history?: string
+  /** 顶部「更多」按钮图标(undefined = 内置 ⋈ SVG) */
+  more?: string
+  /** 顶部「关闭」按钮图标(抽屉模式;undefined = 内置 × SVG)。空串视为未传 */
+  close?: string
+  /** 历史记录下拉的「删除会话」按钮图标(undefined = ✕ 文本;传 emoji/字符/HTML 片段替换,如 <img>) */
+  sessionDelete?: string
 }
 
 /** 默认图标集(与拆 emoji 前的硬编码值一致,默认路径行为零变化) */
@@ -60,5 +70,11 @@ export function resolveDialogIcons(partial?: Partial<DialogIcons>): DialogIcons 
   if (partial.assistantAvatar) merged.assistantAvatar = partial.assistantAvatar
   if (partial.userAvatar) merged.userAvatar = partial.userAvatar
   if (partial.send) merged.send = partial.send
+  // 顶部按钮图标四键(newSession/history/more/close)+ 历史删除键(sessionDelete):undefined = 内置图形;空串视为未传(防空图标)
+  if (partial.newSession) merged.newSession = partial.newSession
+  if (partial.history) merged.history = partial.history
+  if (partial.more) merged.more = partial.more
+  if (partial.close) merged.close = partial.close
+  if (partial.sessionDelete) merged.sessionDelete = partial.sessionDelete
   return merged
 }

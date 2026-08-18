@@ -5,7 +5,9 @@
  * 业务逻辑全部下沉到 chatContext + 原子组件;本文件只做组装 + 根样式/主题变量/动画。
  * 默认路径(全开 + 无 slot)行为与拆分前零变化(design §6)。
  */
-import { computed, provide, type Ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, provide, ref, type Ref } from 'vue'
+import { OverlayScrollbars } from 'overlayscrollbars'
+import 'overlayscrollbars/overlayscrollbars.css'
 import { createChatContext, chatContextKey } from '../composables/chatContext'
 import ChatHeader from './ChatHeader.vue'
 import FocusBar from './FocusBar.vue'
@@ -106,6 +108,8 @@ const props = withDefaults(defineProps<{
   csTheme?: 'light' | 'dark'
   /** 图标局部覆盖(→ ctx.icons;未传键用默认 emoji 🤖/🎯/…) */
   icons?: Partial<DialogIcons>
+  /** 顶部按钮宽度足够时展示文字标签(默认 true 自适应;false 恒纯图标) */
+  headerLabels?: boolean
   /** 国际化(顶层 i18n 配置透传;locale 切语言 + messages 键级覆盖 → ctx.messages/locale;缺省 zh-CN) */
   i18n?: { locale?: DialogLocale; messages?: Partial<DialogMessages> }
 }>(), {
@@ -145,6 +149,27 @@ const { isExpanded, debugVisible, skillVisible, closeSkill } = ctx
 // approval-bar 不再被 overflow:hidden 裁剪 —— 与消息一起滚动,超高内容可达。
 const { scrollContainer, onScroll, onWheel } = ctx.chat
 
+// 滚动条替换(OverlayScrollbars v2):隐藏原生滚动条 + overlay 自定义滚动条(主题经 --cs-scrollbar-* 映射),
+// 保留原生滚动行为/键盘/触摸;ResizeObserver 自动跟随聊天内容动态增高。
+// 模板预置 data-overlayscrollbars-initialize 结构(host/viewport/contents)→ 插件认领不搬 DOM(与 Vue patch 和解);
+// init 目标 = host(.chat-main),滚动元素 = viewport(scrollContainer ref,onScroll/onWheel/scrollTo 零改动);
+// destroy 后回落原生滚动(CSS 细滚动条兜底)。
+const chatMainEl = ref<HTMLElement | null>(null)
+const chatContentsEl = ref<HTMLElement | null>(null)
+let osInstance: ReturnType<typeof OverlayScrollbars> | null = null
+onMounted(() => {
+  if (!chatMainEl.value || !scrollContainer.value || !chatContentsEl.value) return
+  osInstance = OverlayScrollbars(
+    // 对象初始化:认领模板自有 host/viewport/content 三层,不生成不搬运 DOM(与 Vue patch 和解)
+    { target: chatMainEl.value, elements: { viewport: scrollContainer.value, content: chatContentsEl.value } },
+    {
+      overflow: { x: 'hidden' },  // 对话框级横向不滚(代码块/表格各自内部 overflow-x:auto)
+      scrollbars: { autoHide: 'scroll', autoHideDelay: 700, clickScroll: true },
+    },
+  )
+})
+onBeforeUnmount(() => { osInstance?.destroy(); osInstance = null })
+
 /** 区块是否渲染:sections[k] !== false(默认全开,向后兼容)。
  *  例外:focus 默认移至 ChatInput 内 inline chip(输入框区,更贴近输入位置);集成方显式 sections.focus=true 恢复顶部独立条(向后兼容)。 */
 function renderSection(k: SectionKey): boolean {
@@ -177,6 +202,7 @@ const drawerWidthStyle = computed(() => {
           :skill-available="skillAvailable"
           :sessions="sessions"
           :current-session-id="currentSessionId"
+          :labels="headerLabels !== false"
           :on-new-session="onNewSession"
           :on-open-session="onOpenSession"
           :on-remove-session="onRemoveSession"
@@ -193,8 +219,14 @@ const drawerWidthStyle = computed(() => {
     </template>
 
     <!-- 统一滚动区:消息 + 排队 + 人工确认 + 冲突(一起滚动;header/footer 固定)。
-         approval-bar 高内容不再被 overflow:hidden 裁剪 —— 用户可滚动查看全部。 -->
-    <div class="chat-main" ref="scrollContainer" @scroll="onScroll" @wheel="onWheel">
+         approval-bar 高内容不再被 overflow:hidden 裁剪 —— 用户可滚动查看全部。
+         结构说明:host(.chat-main)/viewport(.chat-scroll-viewport)/contents 三层为本模板自有结构,
+         OverlayScrollbars 经对象初始化认领(elements.viewport/content)—— 不生成不搬运 DOM 节点
+         (默认元素初始化会挪节点,与 Vue patch 冲突致 insertBefore 崩);
+         滚动元素 = viewport(scrollContainer ref / @scroll / @wheel 均在其上),插件 init 目标 = host。 -->
+    <div class="chat-main" ref="chatMainEl">
+      <div class="chat-scroll-viewport" tabindex="-1" ref="scrollContainer" @scroll="onScroll" @wheel="onWheel">
+        <div ref="chatContentsEl">
     <!-- 消息列表 -->
     <template v-if="renderSection('body')">
       <Transition name="cs-slide">
@@ -220,6 +252,8 @@ const drawerWidthStyle = computed(() => {
         <ConflictBar :pending-conflict="pendingConflict" :on-resolve="onResolveConflict" :icons="ctx.icons" :messages="ctx.messages" />
       </slot>
     </template>
+        </div>
+      </div>
     </div>
 
     <!-- 输入区域 -->
@@ -304,6 +338,8 @@ const drawerWidthStyle = computed(() => {
   --cs-md-th-bg: #f9fafb;
   --cs-md-code-bg: rgba(102, 126, 234, 0.1);
   --cs-md-code-text: #4338ca;
+  --cs-scrollbar-thumb: rgba(0, 0, 0, 0.22);
+  --cs-scrollbar-thumb-hover: rgba(0, 0, 0, 0.38);
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -316,8 +352,33 @@ const drawerWidthStyle = computed(() => {
   animation: cs-drawer-in 0.28s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* 统一滚动区:消息 + queued/approval/conflict 一起滚动;flex:1 占满 header~footer 之间,overflow 限高 */
-.chat-main { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+/* 统一滚动区:消息 + queued/approval/conflict 一起滚动;flex:1 占满 header~footer 之间,overflow 限高。
+   host(.chat-main)承载 os 初始化;滚动发生在 viewport(.chat-scroll-viewport)。
+   overflow-x hidden:横向滚动收敛到内容内部(代码块/表格各自 overflow-x:auto)—— 对话框级不出现横向滚动条;
+   插件初始化前 viewport 也有原生滚动兜底(初始化后由插件接管样式) */
+.chat-main { flex: 1; min-height: 0; }
+.chat-scroll-viewport { height: 100%; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+
+/* ===== 滚动条统一(3.27)=====
+   ① 主滚动区(.chat-main,JS 已初始化 OverlayScrollbars):overlay 自定义滚动条,手柄颜色经 --cs-scrollbar-* 跟随主题
+   ② 其余小滚动区(代码块/历史菜单/输入框 textarea 等,不接 JS):原生滚动条统一为细条 + 主题色
+      —— Firefox/Chromium121+ 走继承属性 scrollbar-width/color;老 WebKit 走 ::-webkit-scrollbar 伪元素
+   ③ viewport 上原生滚动条恒隐藏(os 插件自身规则 + 此处再断言一次,防与小区域细条规则打架) */
+.chat-dialog { scrollbar-width: thin; scrollbar-color: var(--cs-scrollbar-thumb, rgba(0, 0, 0, 0.22)) transparent; }
+.chat-dialog ::-webkit-scrollbar { width: 6px; height: 6px; }
+.chat-dialog ::-webkit-scrollbar-thumb { background: var(--cs-scrollbar-thumb, rgba(0, 0, 0, 0.22)); border-radius: 999px; }
+.chat-dialog ::-webkit-scrollbar-thumb:hover { background: var(--cs-scrollbar-thumb-hover, rgba(0, 0, 0, 0.38)); }
+.chat-dialog ::-webkit-scrollbar-track, .chat-dialog ::-webkit-scrollbar-corner { background: transparent; }
+.chat-dialog [data-overlayscrollbars-viewport] { scrollbar-width: none; }
+.chat-dialog [data-overlayscrollbars-viewport]::-webkit-scrollbar { display: none; width: 0; height: 0; }
+/* OverlayScrollbars 主题映射(手柄即 --cs-scrollbar-*;轨道透明;8px 宽) */
+.chat-dialog .os-scrollbar {
+  --os-size: 8px;
+  --os-handle-border-radius: 999px;
+  --os-handle-bg: var(--cs-scrollbar-thumb, rgba(0, 0, 0, 0.22));
+  --os-handle-bg-hover: var(--cs-scrollbar-thumb-hover, rgba(0, 0, 0, 0.38));
+  --os-handle-bg-active: var(--cs-scrollbar-thumb-hover, rgba(0, 0, 0, 0.38));
+}
 
 @keyframes cs-drawer-in {
   from { opacity: 0; transform: translateX(32px); }
@@ -383,6 +444,8 @@ const drawerWidthStyle = computed(() => {
   --cs-md-th-bg: #444444;
   --cs-md-code-bg: rgba(153, 147, 255, 0.12);
   --cs-md-code-text: #9993ff;
+  --cs-scrollbar-thumb: rgba(255, 255, 255, 0.18);
+  --cs-scrollbar-thumb-hover: rgba(255, 255, 255, 0.34);
   --cs-input-bg: rgba(18, 18, 18, 0.4);
   --cs-input-border: rgba(115, 114, 255, 0.5);
   --cs-input-radius: 12px;

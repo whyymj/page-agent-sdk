@@ -70,6 +70,17 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert(getSchemaAtPath(schema, 'tags') !== null, 'getSchemaAtPath → 数组子 schema 非 null')
   assert(getSchemaAtPath(schema, 'secret') === null, 'getSchemaAtPath → 不存在路径返 null')
 
+  // getSchemaAtPath 开放 schema(record/any/unknown):编辑器类集成(页面树 z.record)focus/schema_data 可用
+  // (修前 record/any/unknown 恒返 null → validateFocusInput 恒拒 → 开放 schema 集成无法使用 Focus)
+  const recSchema = z.record(z.string(), z.unknown())
+  assert(getSchemaAtPath(recSchema, 'child.0.props') !== null, '✓ getSchemaAtPath → record 开放 schema 任意路径非 null(开放=任意段合法)')
+  const recObj = z.record(z.string(), z.object({ title: z.string() }))
+  assert(getSchemaAtPath(recObj, 'x.title') !== null, '✓ getSchemaAtPath → record(object valueType)下探 shape 命中')
+  assert(getSchemaAtPath(recObj, 'x.nope') === null, '✓ getSchemaAtPath → record(object valueType)未声明字段仍 null(valueType 非开放则不放宽)')
+  assert(getSchemaAtPath(z.object({ data: z.any() }), 'data.a.b.c') !== null, '✓ getSchemaAtPath → any 子树任意深度开放')
+  assert(getSchemaAtPath(z.object({ data: z.unknown() }), 'data.a') !== null, '✓ getSchemaAtPath → unknown 子树开放')
+  assert(getSchemaAtPath(z.record(z.string(), z.array(z.object({ id: z.string() }))), 'child.0.id') !== null, '✓ getSchemaAtPath → record(array·object 嵌套 valueType)深层命中')
+
   // projectBySchemaDeep(按 schema 递归投影)
   const proj = projectBySchemaDeep({ name: 'x', age: 1, secret: 'hidden' }, schema) as any
   assert(proj.name === 'x' && proj.age === 1 && proj.secret === undefined, 'projectBySchemaDeep → 按 schema 投影隐藏未声明字段')

@@ -32,6 +32,25 @@ test.describe('对话框图标自定义(dialog.icons)', () => {
     await expect(page.locator('.chat-dialog .message-row.assistant .message-avatar')).toHaveText('🛰️')
   })
 
+  test('历史记录删除按钮图标可配置(dialog.icons.sessionDelete 替换 ✕)', async ({ page }) => {
+    await page.goto('/examples/minimal-demo/')
+    await page.waitForSelector('.chat-dialog')
+    // 造两个会话:第一条 → 新建会话 → 第二条(del 按钮只在非当前会话上出现)
+    await mockLlm(page, [{ text: '第一条回复' }, { text: '第二条回复' }])
+    await fillInput(page, '第一条')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    await page.click('.chat-dialog [data-test="new-chat"]')
+    await fillInput(page, '第二条')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    await page.click('.chat-dialog [data-test="toggle-history"]')
+    // fixture 🗑️ → IconGlyph 文本路径替换 ✕
+    const del = page.locator('.chat-dialog .hist-del').first()
+    await expect(del).toBeVisible()
+    await expect(del).toHaveText('🗑️')
+  })
+
   test('默认图标回归(未配 icons 的 demo 保持 🤖/💬)', async ({ page }) => {
     await page.goto('/examples/page-demo/')
     await page.waitForSelector('.chat-dialog')

@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch, type Ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
+import { OverlayScrollbars } from 'overlayscrollbars'
+import 'overlayscrollbars/overlayscrollbars.css'
 import type { DebugLog } from '../harness/createAgent'
 import type { AgentInfo } from '../types'
 import type { TraceSpan } from '../harness/createAgent'
@@ -34,6 +36,28 @@ const emit = defineEmits<{
 
 const filter = ref<DebugLog['type'] | 'all'>('all')
 const rawExpanded = ref<Set<number>>(new Set())
+
+// 滚动条替换(OverlayScrollbars v2):.drawer-body(日志主滚动区)隐藏原生滚动条换 overlay 自定义滚动条;
+// 主题经 --dd-scrollbar-* 映射(与 ChatDialog --cs-scrollbar-* 同构);destroy 后回落原生滚动。
+// drawer 是 v-if 挂载(visible 时才存在 DOM)→ 初始化挂在 visible watch + onMounted 双入口(幂等)
+const drawerBodyEl = ref<HTMLElement | null>(null)
+const drawerViewportEl = ref<HTMLElement | null>(null)
+const drawerContentsEl = ref<HTMLElement | null>(null)
+let osInstance: ReturnType<typeof OverlayScrollbars> | null = null
+function initOs(): void {
+  if (osInstance || !drawerBodyEl.value || !drawerViewportEl.value || !drawerContentsEl.value) return
+  osInstance = OverlayScrollbars(
+    // 对象初始化:认领模板自有三层,不生成不搬运 DOM(与 Vue patch 和解)
+    { target: drawerBodyEl.value, elements: { viewport: drawerViewportEl.value, content: drawerContentsEl.value } },
+    {
+      overflow: { x: 'hidden' },
+      scrollbars: { autoHide: 'scroll', autoHideDelay: 700, clickScroll: true },
+    },
+  )
+}
+onMounted(initOs)
+watch(() => props.visible, async (v) => { if (v) { await nextTick(); initOs() } })
+onBeforeUnmount(() => { osInstance?.destroy(); osInstance = null })
 const bodyExpanded = ref<Set<number>>(new Set())
 /** llm_request 长消息展开状态(key=`${日志序}:${消息序}`);超长消息默认 3 行截断点击展开 —— system prompt 动辄数 KB,全展开淹没列表 */
 const msgExpanded = ref<Set<string>>(new Set())
@@ -330,7 +354,12 @@ function flowNodeDetail(lg: DebugLog): string {
             </button>
           </div>
 
-          <div class="drawer-body">
+          <!-- host(.drawer-body)/viewport(.drawer-scroll-viewport)/contents 三层为模板自有结构,
+               OverlayScrollbars 经对象初始化认领(elements.viewport/content)—— 不生成不搬运 DOM 节点
+               (默认元素初始化挪节点,与 Vue patch 冲突致 insertBefore 崩) -->
+          <div class="drawer-body" ref="drawerBodyEl">
+            <div class="drawer-scroll-viewport" tabindex="-1" ref="drawerViewportEl">
+              <div ref="drawerContentsEl">
             <div v-if="tab === 'trace'" class="trace-panel">
               <div v-if="!traceMetrics" class="trace-empty">{{ m.debugTraceEmpty }}</div>
               <template v-else>
@@ -711,6 +740,8 @@ function flowNodeDetail(lg: DebugLog): string {
                 </div>
               </template>
             </div>
+              </div>
+            </div>
           </div>
         </div>
         <div class="drawer-mask" @click="close"></div>
@@ -731,6 +762,8 @@ function flowNodeDetail(lg: DebugLog): string {
   --dd-surface-2: #fafafa;
   --dd-border: #e5e7eb;
   --dd-border-soft: #f3f4f6;
+  --dd-scrollbar-thumb: rgba(0, 0, 0, 0.22);
+  --dd-scrollbar-thumb-hover: rgba(0, 0, 0, 0.38);
   --dd-text: #1f2937;
   --dd-text-2: #374151;
   --dd-text-3: #4b5563;
@@ -800,7 +833,26 @@ function flowNodeDetail(lg: DebugLog): string {
 .filter-chip.active { background: var(--chip-color, var(--cs-primary)); border-color: var(--chip-color, var(--cs-primary)); color: #fff; }
 .chip-count { background: rgba(127,127,127,0.12); border-radius: 8px; padding: 0 5px; font-size: 11px; }
 .filter-chip.active .chip-count { background: rgba(255,255,255,0.25); }
-.drawer-body { flex: 1; overflow-y: auto; padding: 12px; }
+.drawer-body { flex: 1; min-height: 0; }
+/* 滚动发生在 viewport(原 .drawer-body 的滚动+内边距职责移此;插件初始化前原生兜底) */
+.drawer-scroll-viewport { height: 100%; overflow-x: hidden; overflow-y: auto; padding: 12px; }
+
+/* ===== 滚动条统一(3.27;与 ChatDialog 同构)=====
+   drawer-body 已初始化 OverlayScrollbars(overlay 自定义);其余小滚动区(log-raw/info-pre/tc-args 等)原生细条兜底 */
+.drawer-panel { scrollbar-width: thin; scrollbar-color: var(--dd-scrollbar-thumb, rgba(0, 0, 0, 0.22)) transparent; }
+.drawer-panel ::-webkit-scrollbar { width: 6px; height: 6px; }
+.drawer-panel ::-webkit-scrollbar-thumb { background: var(--dd-scrollbar-thumb, rgba(0, 0, 0, 0.22)); border-radius: 999px; }
+.drawer-panel ::-webkit-scrollbar-thumb:hover { background: var(--dd-scrollbar-thumb-hover, rgba(0, 0, 0, 0.38)); }
+.drawer-panel ::-webkit-scrollbar-track, .drawer-panel ::-webkit-scrollbar-corner { background: transparent; }
+.drawer-panel [data-overlayscrollbars-viewport] { scrollbar-width: none; }
+.drawer-panel [data-overlayscrollbars-viewport]::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.drawer-panel .os-scrollbar {
+  --os-size: 8px;
+  --os-handle-border-radius: 999px;
+  --os-handle-bg: var(--dd-scrollbar-thumb, rgba(0, 0, 0, 0.22));
+  --os-handle-bg-hover: var(--dd-scrollbar-thumb-hover, rgba(0, 0, 0, 0.38));
+  --os-handle-bg-active: var(--dd-scrollbar-thumb-hover, rgba(0, 0, 0, 0.38));
+}
 .empty { text-align: center; color: var(--dd-faint); font-size: 13px; padding: 40px 20px; }
 .log-item { margin-bottom: 10px; border: 1px solid var(--dd-border); border-radius: 8px; overflow: hidden; background: var(--dd-bg); }
 .log-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--dd-surface); }
@@ -953,6 +1005,8 @@ function flowNodeDetail(lg: DebugLog): string {
   --dd-surface-2: #2a2a2a;
   --dd-border: #444444;
   --dd-border-soft: #3a3a3a;
+  --dd-scrollbar-thumb: rgba(255, 255, 255, 0.18);
+  --dd-scrollbar-thumb-hover: rgba(255, 255, 255, 0.34);
   --dd-text: #f1f1fa;
   --dd-text-2: #d5d5e2;
   --dd-text-3: #b9b9c8;

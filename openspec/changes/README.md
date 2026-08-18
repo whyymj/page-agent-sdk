@@ -1,5 +1,9 @@
 # 活跃 Changes 优先级索引
 
+> **2026-08-18 立项 `scrollbar-overlay` + `header-adaptive-labels`(两 change 实施完成,随 3.27.0 发布)**:① **`scrollbar-overlay`**:滚动条统一替换 —— `overlayscrollbars@2.16`(新 dependency,仅主包)接管主滚动面(消息区 + DebugDrawer 日志区,overlay 细滚动条 + 保留原生滚动行为 + 内容增高自动跟随)+ 对话框级横向滚动消灭 + 小滚动区 CSS 细条兜底 + `--cs-dd-scrollbar-thumb` 主题变量;附带 `dialog.icons.sessionDelete`(历史删除按钮换图,editor bin.png 驱动);② **`header-adaptive-labels`**:顶部按钮自适应文字标签(容器查询 ≥440px 文字+图标/窄回退纯图标)+ 图标四键 + i18n 键复用 + `dialog.headerLabels` 开关。selftest 2437 / e2e 769 / browser 93。见 [`2026-08-18-scrollbar-overlay/`](./2026-08-18-scrollbar-overlay/) + [`2026-08-18-header-adaptive-labels/`](./2026-08-18-header-adaptive-labels/)。
+
+> **2026-08-17 发布 3.26.0 / 3.26.1**(minor + patch):① **3.26.0**(`legacy-bundle-channel`):webpack≤4 宿主官方通道(见下方详细条目);② **3.26.1**(未立 change 直发,editor_fangzhou 开放 schema 接入驱动):`getSchemaAtPath` 支持 record/any/unknown —— 修前 `z.record(...)` 恒返 null → `validateFocusInput` 第 4 道校验恒拒 → 开放 schema 集成 `setFocus/addFocus` 永远失败(Focus 整体不可用);附带 `schema_data`/read 子路径投影对开放 schema 同理解禁。selftest 2434 / e2e 769。
+
 > **2026-08-17 发布 3.25.0 / 3.25.1**(minor + patch):① **3.25.0**(未立 change 直发,deferred「流停滞看门狗黑洞盲区」触发):`streamMaxDurationMs` 流总时长上限(默认 600s,0 关)—— 直连鉴别实验定性中转站并发流单请求级死亡(200+SSE 头已发、正文永不送达、keepalive 空转绕过间隔看门狗;vite 代理与 per-key 配额均排除),绝对截止抛 `StreamMaxDurationError`(继承 408 不重试,重委派/重发自愈);② **3.25.1**(`write-path-cost-reduction`,audit A3):写路径 O(N) 成本收敛 —— 同调用 hash 单算(`commitBaseline`)+ codeAsset 改前态单拷贝(`beforeBind` 复用为快照条目)+ **冲突检查 hash 实时性不变量固化**(跨调用缓存因人工直改盲区显式否决,M4 实证);bench 留证 1MB 单写 median **-12%/-19%**,零行为变化。selftest 2428 / e2e 753 / browser 84。见 [`archive/2026-08-17-write-path-cost-reduction/`](./archive/2026-08-17-write-path-cost-reduction/)。
 
 > **2026-08-16/17 发布 3.22.0 / 3.22.1 / 3.23.0 / 3.23.1**(minor + patch + minor + patch):两 change 实施完成并归档 —— ① **3.22.0**(`dialog-i18n-phase2`):i18n 顶层配置组(**breaking**:`dialog.locale`/`dialog.messages` 两键合并至顶层 `i18n`;locale 除 UI 文案外驱动默认 systemPrompt/autoTitle 语言,en → 英文身份 + reliableWriteRulesEn)+ messages 富文本渲染位行内 HTML 支持(文案白名单净化 `sanitizeMessageHtml`;~219 键全量接入 DebugDrawer/SkillPanel/CodePreview);3.22.1:净化函数无 DOM 环境(Node)剥标签纯文本兜底;② **3.23.0**(`preference-persistence`):跨会话用户偏好记忆 —— 三层信号捕获(显式命令句式零 LLM 强信号 / 模式词+小 LLM 提炼中信号 / 行为推断不做宁漏勿误)→ preferenceStore(IndexedDB 独立存储,同 topic 后说覆盖,FIFO 20)→ augmentPrompt pin 段注入;`capabilities.preferences` opt-in + `getPreferences`/`removePreference`/`clearPreferences` + DebugDrawer 视图;3.23.1:并行同轮双委派 UI 归属修复(tool_call/result 事件带 `id` + subagent 事件带 `toolCallId`,useChat 按 id 精确归属)。同窗口 3.24.0(debug:true 调试入口门控 + DebugDrawer 布局优化 + 调试日志跨轮累积 + MCP 降级可观测 + DOM 检视工具族)未立 change 直发。selftest 2396 / e2e 753 / browser 83。见 [`archive/2026-08-16-dialog-i18n-phase2/`](./archive/2026-08-16-dialog-i18n-phase2/) + [`archive/2026-08-16-preference-persistence/`](./archive/2026-08-16-preference-persistence/)。
@@ -50,7 +54,9 @@
 
 ## 进行中
 
-- **`legacy-bundle-channel`**(2026-08-17 立项):老构建链宿主(webpack≤4)官方接入通道 —— `page-agent-sdk/legacy` 子路径(es2017 + 全量打包,动态 import 懒加载)+ IIFE 集成文档官方化。editor_fangzhou 接入实测驱动(npm 主产物对 webpack4 的 acorn 6 parse 失败,现状手工拷 IIFE 与 npm 版本管理脱钩)。见 [2026-08-17-legacy-bundle-channel/](./2026-08-17-legacy-bundle-channel/)。
+_(活跃:`2026-08-18-scrollbar-overlay` + `2026-08-18-header-adaptive-labels`,见顶部条目 —— 实施完成随 3.27.0 发布归档。前一个 `legacy-bundle-channel` 已于 2026-08-17 随 3.26.0 发布归档:es2017 全量打包 + 包根物理转发 + editor_fangzhou 正式版靶场端到端闭环)_
+
+> **2026-08-17 发布 3.26.0**(minor):`legacy-bundle-channel` 实施完成并归档 —— webpack≤4 宿主官方通道:`page-agent-sdk/legacy` 子路径(es2017 全量打包单文件,`await import()` 懒加载 chunk,零 transpileDependencies/零 peer)+ 包根 `legacy.js`/`style.css` 物理转发(webpack4 enhanced-resolve 不认 exports map)。见 [`archive/2026-08-17-legacy-bundle-channel/`](./archive/2026-08-17-legacy-bundle-channel/)。
 
 _(write-path-cost-reduction 已于 2026-08-17 实施完成随 3.25.1 发布归档:bench 1MB 单写 median -12%/-19%,A+B 两段全保留,冲突检查 hash 实时性不变量固化)_
 

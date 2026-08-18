@@ -111,6 +111,25 @@ export async function run() {
   assert(!sdkOff.inspect().middleware.includes('focus'), 'capabilities.focus:false → middleware 不含 focus')
   sdkOff.unmount()
 
+  // 开放 schema(z.record,编辑器页面树集成形态)→ focus 可用(修前 getSchemaAtPath 对 record 恒 null → setFocus 恒拒)
+  const sdkRec = createChatSdk({
+    ui: false, id: 'e2e-focus-record', storage: false, llm: FAKE_LLM,
+    capabilities: MIN_CAPS,
+    data: {
+      schema: z.record(z.string(), z.unknown()),
+      bind: { id: 'root', child: [{ id: 'c1', props: { text: 'a' } }, { id: 'c2', child: [] }] },
+      description: '页面树',
+    },
+  })
+  await sdkRec.mount()
+  assert(sdkRec.setFocus({ path: 'child.0', label: '组件 c1' }).ok === true, '✓ record 开放 schema setFocus(child.0)→ {ok:true}(开放 schema 聚焦可用)')
+  assert(sdkRec.getFocus()?.path === 'child.0' && sdkRec.getFocus()?.label === '组件 c1', '✓ record setFocus → getFocus 反映 path+label')
+  assert(sdkRec.setFocus({ path: 'child.1.child.0.props' }).ok === true, '✓ record 深层任意路径可聚焦(child.1.child.0.props)')
+  assert(sdkRec.addFocus({ path: 'child.0' }).ok === true, '✓ record addFocus 合法路径 → {ok:true}')
+  sdkRec.clearFocus()
+  assert(sdkRec.getFocuses().length === 0, '✓ record clearFocus → 清空')
+  sdkRec.unmount()
+
   console.log('[e2e:focus] 持久化 · switchSession 往返 + restore 失效丢弃 + setLlm 保留')
   const sdkP = createChatSdk({
     ui: false, id: 'e2e-focus-persist', storage: 'memory', llm: FAKE_LLM,

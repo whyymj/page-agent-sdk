@@ -1662,7 +1662,7 @@ containerEl.addEventListener('click', (e) => {
 
 完整可运行示例见 `examples/complex-demo`(`PageRenderer.vue` / `CompRenderer.vue` 绑 `data-path` + 点击拾取)。
 
-> **path 校验是「类型合法」非「数据存在」**:`setFocus` 用 `getSchemaAtPath` 校验路径的 schema 形状。数组索引 `components.5` 类型合法即可聚焦(即使数据不足 6 个);叶子字段下取子路径(如 `title.sub`)或顶层不存在字段(如 `nope`)被拒。`capabilities.focus` 默认开,`false` 关闭(中间件 + 工具 + chip 都不装)。
+> **path 校验是「类型合法」非「数据存在」**:`setFocus` 用 `getSchemaAtPath` 校验路径的 schema 形状。数组索引 `components.5` 类型合法即可聚焦(即使数据不足 6 个);叶子字段下取子路径(如 `title.sub`)或顶层不存在字段(如 `nope`)被拒。**开放 schema**(`z.record(...)` / `z.any()` / `z.unknown()` 子树)任意路径均可聚焦(如编辑器页面树 `z.record(z.string(), z.unknown())` 绑整个组件树,点选任一组件即 `setFocus` 其路径)。`capabilities.focus` 默认开,`false` 关闭(中间件 + 工具 + chip 都不装)。
 
 ## 8. 高级:自定义中间件
 
@@ -2019,7 +2019,11 @@ createChatSdk({
   dialog: {
     theme: 'dark',                        // ① 内置主题:'dark'(默认)/'light';亦可祖先覆盖 --cs-* 变量完全自定义
     icons: { header: '🦈', send: '🚀' },   // ② 逐图标覆盖(纯文本 emoji/字符,或 '<' 开头的 HTML 片段——
-                                          //    经 DOMPurify 图标白名单净化;空串=隐藏;未传键用默认)
+                                          //    经 DOMPurify 图标白名单净化;空串=隐藏;未传键用默认;
+                                          //    顶部按钮四键 newSession/history/more/close 同理,缺省=内置 SVG)
+    headerLabels: true,                   // ⑤ 顶部按钮自适应文字标签(默认 true):宽度足够(头部内容区
+                                          //    ≥440px,≈对话框 ≥472px)展示「文字+图标」,更窄回退纯图标;
+                                          //    false 恒纯图标。文字走 i18n newSession/history/more 键
   },
   i18n: {                                 // ③④ 国际化配置组(顶层,3.22+;原 dialog.locale/messages 合并至此)
     locale: 'en-US',                      // ③ 整语言切换('zh-CN' 缺省):聊天面 + Debug 抽屉 + Skill 面板 +
@@ -2039,6 +2043,9 @@ createChatSdk({
 - **键空间** ~226 键(标题/占位/状态标签/按钮/确认/冲突/聚焦/Debug 各 tab/Agent 信息 kv/Skill 表单/代码预览),完整清单看 `types/index.d.ts` 的 `DialogMessages` 接口
 - **HTML 富文本位**:状态标签/标题/思考中/空态问候/确认与冲突/重试回退按钮的文案值以 `<` 开头 = 行内 HTML 片段,经文案白名单(b/em/u/s/span/mark/code + class/style)净化后渲染;title/placeholder 属性位与拼接键(prefix/suffix)按纯文本(传 HTML 字面显示);`sanitizeMessageHtml` 导出可自查净化结果
 - **自建 UI 复用**(headless):`MESSAGES_ZH_CN` / `MESSAGES_EN_US` / `resolveDialogMessages(locale, partial)` 均从入口导出,同一套词条驱动你自己的 UI
+- **顶部按钮自适应文字标签**(⑤):纯 CSS 容器查询实现 —— 头部内容区 ≥440px 时「新建会话/历史记录/更多」展示文字+图标(关闭钮恒纯图标),更窄自动回退纯图标;不支持 `@container` 的旧浏览器恒纯图标(= 旧行为优雅降级)。文字即 i18n 键(`newSession`/`history`/`more`,`messages` 键级覆盖同机制生效);图标即 `dialog.icons` 同名四键
+- **滚动条统一替换**(3.27):主滚动面(消息区 + DebugDrawer 日志区)经 [OverlayScrollbars v2](https://github.com/KingSora/OverlayScrollbars) 接管 —— 隐藏原生滚动条换 overlay 细滚动条(保留原生滚动/键盘/触摸,内容增高自动跟随);对话框级横向不滚(长代码行收敛在代码块内部);其余小滚动区原生细条兜底。手柄颜色经 `--cs-scrollbar-thumb(-hover)` 覆盖(dark 主题已内置适配)
+- **历史记录「删除会话」按钮图标**:`dialog.icons.sessionDelete`(缺省 ✕ 文本;传 `<img src="…" width="12" height="12">` 换自定义图)
 - **默认 systemPrompt 英文版**单独导出:`DEFAULT_SYSTEM_PROMPT_EN` + `systemPromptHelpers.reliableWriteRulesEn`(英文场景想自定义 prompt 时可拼用)
 - 完整示例:`examples/i18n-demo`(en locale + statusDone/emptyGreeting HTML 覆盖)
 

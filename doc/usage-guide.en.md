@@ -1067,7 +1067,7 @@ containerEl.addEventListener('click', (e) => {
 
 Full runnable example: `examples/complex-demo` (`PageRenderer.vue` / `CompRenderer.vue` bind `data-path` + click-pick).
 
-> Path validation is "type-valid", not "data-exists": `setFocus` checks the schema shape via `getSchemaAtPath`. An array index like `components.5` is type-valid and focusable even if fewer than 6 exist; a sub-path under a leaf (e.g. `title.sub`) or a non-existent top-level field is rejected. `capabilities.focus` defaults on.
+> Path validation is "type-valid", not "data-exists": `setFocus` checks the schema shape via `getSchemaAtPath`. An array index like `components.5` is type-valid and focusable even if fewer than 6 exist; a sub-path under a leaf (e.g. `title.sub`) or a non-existent top-level field is rejected. **Open schemas** (`z.record(...)` / `z.any()` / `z.unknown()` subtrees) accept any path — e.g. an editor page tree bound as `z.record(z.string(), z.unknown())` can `setFocus` any picked component path. `capabilities.focus` defaults on.
 
 ## 7. Custom middleware
 
@@ -1369,7 +1369,12 @@ createChatSdk({
     theme: 'dark',                        // ① built-in theme: 'dark' (default) / 'light'; or override --cs-* vars for full control
     icons: { header: '🦈', send: '🚀' },   // ② per-icon override (plain emoji/char, or an HTML fragment starting
                                           //    with '<' — sanitized via the DOMPurify icon allowlist; empty string
-                                          //    hides; unset keys keep defaults)
+                                          //    hides; unset keys keep defaults; header-button keys
+                                          //    newSession/history/more/close work the same, default = built-in SVG)
+    headerLabels: true,                   // ⑤ adaptive header-button text labels (default true): when wide enough
+                                          //    (header content ≥440px ≈ dialog ≥472px) buttons show text+icon,
+                                          //    narrower falls back to icon-only; false = always icon-only.
+                                          //    Text comes from the i18n newSession/history/more keys
   },
   i18n: {                                 // ③④ top-level i18n group (3.22+; former dialog.locale/messages merged here)
     locale: 'en-US',                      // ③ switch the whole message pack ('zh-CN' default): chat surface +
@@ -1391,6 +1396,9 @@ createChatSdk({
 - **Key space** ~226 keys (title/placeholder/status labels/buttons/confirm/conflict/focus/Debug tabs/Agent-info kvs/Skill form/code preview); full list in the `DialogMessages` interface in `types/index.d.ts`
 - **HTML rich-text spots**: message values starting with `<` on status labels/title/thinking/empty greeting/confirm & conflict/retry-undo buttons render as inline HTML, sanitized via a text allowlist (b/em/u/s/span/mark/code + class/style); title/placeholder attribute spots and concatenation keys (prefix/suffix) stay plain text (HTML shows literally); `sanitizeMessageHtml` is exported to inspect the sanitized result
 - **Custom-UI reuse** (headless): `MESSAGES_ZH_CN` / `MESSAGES_EN_US` / `resolveDialogMessages(locale, partial)` are all exported from the entry — drive your own UI with the same packs
+- **Adaptive header-button text labels** (⑤): pure CSS container queries — when the header content area is ≥440px wide, "New chat / History / More" show text+icon (close stays icon-only); narrower widths fall back to icon-only automatically. Browsers without `@container` support always get icon-only (= graceful degradation to the old look). Label text = i18n keys (`newSession`/`history`/`more`, overridable via `messages` like any key); label icons = the four same-named `dialog.icons` keys
+- **Unified scrollbar replacement** (3.27): the main scroll surfaces (message area + Debug drawer log area) are taken over by [OverlayScrollbars v2](https://github.com/KingSora/OverlayScrollbars) — native scrollbars hidden, replaced with thin overlay scrollbars (native scrolling/keyboard/touch preserved, auto-follows content growth); no dialog-level horizontal scrolling (long code lines stay inside the code block); remaining small scroll areas fall back to thin native scrollbars. Handle color overridable via `--cs-scrollbar-thumb(-hover)` (dark theme built in)
+- **History "delete session" button icon**: `dialog.icons.sessionDelete` (default ✕ text; pass `<img src="…" width="12" height="12">` for a custom image)
 - The **English default systemPrompt** is exported separately: `DEFAULT_SYSTEM_PROMPT_EN` + `systemPromptHelpers.reliableWriteRulesEn` (handy when writing your own English prompt)
 - Full example: `examples/i18n-demo` (en locale + statusDone/emptyGreeting HTML overrides)
 

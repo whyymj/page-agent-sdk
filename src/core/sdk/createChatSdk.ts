@@ -404,6 +404,8 @@ export interface DialogConfig {
   icons?: Partial<DialogIcons>
   /** ChatDialog 区块显隐(chatdialog-component-split):键=false 关闭整块(含 slot);默认全开。键:header/focus/body/queued/approval/conflict/footer/debug/skill */
   sections?: Record<string, boolean>
+  /** 顶部按钮宽度足够时展示文字标签(默认 true 自适应:头部内容区 ≥440px 展示「文字+图标」,更窄纯图标);false 恒纯图标。按钮文字走 i18n(newSession/history/more),图标走 dialog.icons 同名键 */
+  headerLabels?: boolean
 }
 
 export interface ChatSdk {

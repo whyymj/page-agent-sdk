@@ -197,6 +197,18 @@ export interface DialogIcons {
   assistantAvatar?: string;
   /** user 头像字形(undefined = 内置 user SVG) */
   userAvatar?: string;
+  /** 发送按钮图标(undefined = 内置纸飞机 SVG;传 emoji/字符/HTML 片段替换;loading 态停止方块恒内置)。空串视为未传(防空按钮) */
+  send?: string;
+  /** 顶部「新建会话」按钮图标(undefined = 内置 + SVG;文字标签走 i18n newSession 键,宽度足够时展示) */
+  newSession?: string;
+  /** 顶部「历史记录」按钮图标(undefined = 内置时钟 SVG) */
+  history?: string;
+  /** 顶部「更多」按钮图标(undefined = 内置 ⋈ SVG) */
+  more?: string;
+  /** 顶部「关闭」按钮图标(抽屉模式;undefined = 内置 × SVG)。空串视为未传 */
+  close?: string;
+  /** 历史记录下拉的「删除会话」按钮图标(undefined = ✕ 文本;传 emoji/字符/HTML 片段替换,如 <img>) */
+  sessionDelete?: string;
 }
 
 /** 对话框文案键空间(dialog.locale 选包 / dialog.messages 键级覆盖优先;含插值的键组件侧拼数字) */
@@ -1205,6 +1217,10 @@ export interface DialogConfig {
   theme?: 'light' | 'dark';
   /** Icon overrides (partial; unset keys keep default emojis 🤖/🧬/🎯/📋/✏️/💡/⚠️/💬; empty string hides the icon; avatar keys undefined = built-in SVG). Values: plain text, or an HTML fragment starting with '<' (inline svg/img, sanitized via a DOMPurify icon allowlist) */
   icons?: Partial<DialogIcons>;
+  /** ChatDialog 区块显隐:键=false 关闭整块(含 slot);默认全开。键:header/focus/body/queued/approval/conflict/footer/debug/skill */
+  sections?: Record<string, boolean>;
+  /** 顶部按钮宽度足够时展示文字标签(默认 true 自适应:头部内容区 ≥440px 展示「文字+图标」,更窄纯图标);false 恒纯图标。按钮文字走 i18n(newSession/history/more),图标走 dialog.icons 同名键 */
+  headerLabels?: boolean;
 }
 /**
  * 国际化配置(顶层 i18n;3.22 起,原 dialog.locale/dialog.messages 两键移入此处合并)。

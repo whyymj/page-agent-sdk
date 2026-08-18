@@ -71,7 +71,7 @@ export function unwrapSchema(schema: any): any {
   return s
 }
 
-/** 按 jsonPath 逐级定位子 schema(支持 ZodObject.shape / ZodArray.element;union 下探含该字段的 option;record/lazy 返回 null) */
+/** 按 jsonPath 逐级定位子 schema(支持 ZodObject.shape / ZodArray.element / record 下探 valueType / any·unknown 全开放;union 下探含该字段的 option) */
 export function getSchemaAtPath(schema: ZodType, jsonPath: string): ZodType | null {
   if (!jsonPath) return schema
   let s: any = unwrapSchema(schema)
@@ -98,6 +98,12 @@ export function getSchemaAtPath(schema: ZodType, jsonPath: string): ZodType | nu
         .map((opt: any) => getSchemaAtPath(opt, rest))
         .filter((x: any) => x != null)
       return hits.length ? hits[0] : null
+    } else if (s && s._def?.type === 'record') {
+      // ZodRecord:键集开放(getSchemaTopKeys 对 record 返 null → 写侧全开放,口径一致),任意段合法 → 下探 valueType。
+      // 编辑器类集成(页面树 z.record(z.string(), z.unknown()))的 focus/schema_data 据此可用(修前恒 null → setFocus 恒拒)。
+      s = s._def.valueType
+    } else if (s && (s._def?.type === 'any' || s._def?.type === 'unknown')) {
+      // z.any()/z.unknown():完全开放子树,任意深度任意段合法 → 保持开放性续走(s 不变)
     } else {
       return null
     }
