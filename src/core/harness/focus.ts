@@ -124,6 +124,11 @@ export interface FocusMiddlewareOptions {
    * - 'report-parent':子 agent(继承焦点,授权面永不带 focus 工具)→ 收口回复反馈需先取消焦点
    */
   unfocusGuidance?: 'tool' | 'ask-user' | 'report-parent'
+  /**
+   * 工具呈现模式(提示词与工具面一致性):焦点子树 schema 走 extractSchemaHint 分层披露时,
+   * simple/minimal 未装载 schema_data → 深层指引改教 read 子路径。默认 'advanced'。
+   */
+  toolMode?: 'simple' | 'advanced' | 'minimal'
 }
 
 export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware & FocusController {
@@ -160,12 +165,13 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
         'read 不带路径时默认只返回聚焦子树;需要全量主数据时显式列顶层键(read({jsonPaths:[...]}) )',
       ]
       // 视野收敛:注入每个焦点子树 schema 描述(LLM 每轮看到所有焦点组件结构)
+      // toolMode 透传:分层披露的深层指引按工具面分支(simple/minimal 勿教 schema_data)
       const schema = opts.getSchema()
       if (schema) {
         const subs = focuses
           .map((f) => {
             const sub = getSchemaAtPath(schema, f.path)
-            return sub ? extractSchemaHint(sub) : null
+            return sub ? extractSchemaHint(sub, opts.toolMode ? { toolMode: opts.toolMode } : undefined) : null
           })
           .filter((h): h is string => !!h)
         if (subs.length) {

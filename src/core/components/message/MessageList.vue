@@ -82,7 +82,7 @@ const lastIsAssistant = computed(() => state.messages[state.messages.length - 1]
 .message-row { display: flex; gap: 10px; margin-bottom: 16px; align-items: flex-start; }
 .message-avatar { width: 32px; height: 32px; border-radius: 50%; background: #f3f4f6; display: flex; align-items: center; justify-content: center; color: #4b5563; flex-shrink: 0; }
 .message-row.assistant .message-avatar { background: var(--cs-avatar-grad, linear-gradient(135deg, #92a2fe 0%, #645bff 100%)); color: #fff; }
-.message-content { max-width: 80%; min-width: 0; }
+.message-content { width: 80%; min-width: 0; }
 
 .error-bar { display: flex; align-items: flex-start; gap: 10px; padding: 8px 12px; border-radius: 8px; background: #fef2f2; color: #dc2626; font-size: 13px; margin-top: 8px; }
 .error-text { flex: 1; min-width: 0; word-break: break-word; overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.5; max-height: 120px; overflow-y: auto; }

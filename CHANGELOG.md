@@ -4,6 +4,23 @@
 
 ## [Unreleased]
 
+## [3.28.0] - 2026-08-18
+
+### Added(image-input-vision Phase 1:图片输入 + 多模态直连 + 集成方识图钩子)
+- **输入侧**:ChatInput 📎 选择/拖拽/粘贴三入口,缩略图 chip(可删,≤4 张/轮);`compressImage` 压缩闸导出(长边 ≤1568 / jpeg q0.85 / 透明保 png / >20MB 拒,抛 `ImageInputError` 结构化错误码);MessageRow user 消息缩略图行渲染
+- **多模态直连**:`send(text, { images })` API + `AgentMessage.images`;modelCaps 增 `vision` 表驱动标志(+`llm.vision` 显式覆盖,setLlm 重解析);constructLlm 双协议 content parts 组装(openai `image_url` / anthropic `image` block;URL 与 base64 双形态;子 agent anthropic 同步)
+- **诚实闸三分支**:多模态主模型直发 / 非多模态配 `images.describe` 转述注入 / 都没有 → send 拒绝 + 结构化错误(不静默丢图)
+- **集成方钩子 `images: { upload?, describe?, describeTimeoutMs? }`**(顶层配置组):`upload` 压缩后原图换 https URL(content parts 用 URL 形态 + 持久化轻引用,失败回退 dataURI 内联留痕);`describe` 识图转述(自有 vision API / 识图子 agent),转述文本注入该轮 user 上下文随消息持久化;describe 失败/超时(默认 15s)→ 占位描述 + observable `VISION_DESCRIBE_FAILED`,对话继续。原规划 SDK 内置 vision 中间件改此钩子形态(识图能力归属集成方)
+- **持久化轻形态**:消息只存 `{id, thumb≤8KB, vfsRef/url}`,原图入 vfs `userImages/*` 池(LRU + `extractVfsRefs` 引用保护扩展);restore 后从 vfs 重水化 dataUri,缺省降级占位
+- 测试:selftest +59(压缩闸纯函数/双协议 parts/modelCaps vision 表/vfs 引用保护/ImageInputError)/ e2e +30(直发/转述/upload/诚实闸/持久化往返/数量上限)/ browser +6(三入口交互/chip 删除/大图拒绝)
+
+### Changed(3.28 默认 toolMode:simple → advanced,提示词与工具面一致性)
+- **`toolMode` 默认改 `advanced`**(breaking):修前默认 simple 隐藏 `schema_data`/`diff_data`,但 SDK 内置提示词(read 根结果说明 / 大 schema 分层披露)无条件教 LLM 调 `schema_data` → 误调报「工具不存在」烧轮次(editor_fangzhou 集成事故驱动)。advanced 全暴露 = 教了的工具必在池中;要收敛用显式 `toolMode: 'simple'`/`'minimal'`
+- **`hintsMode`**(新增,默认 `'auto'`):usageHints 提示词档位跟随 toolMode;auto 档检测集成方 systemPrompt 已声明「simple 模式/未暴露/勿调用」字样时自动降级 simple 提示词 + warn(提示对齐,不静默)
+- **内置提示词按 toolMode 分支**(残差收口):dataOps `read` 根结果说明 / presets 大 schema 分层深层指引 / focus 子树概览 —— simple/minimal 档改教 `read({jsonPath})` 子路径,不再提 `schema_data`;`buildDataPrompt`/`extractSchemaHint`/`createDataOps`/FocusMiddleware 增 `toolMode` 参数(createChatSdk 装配期自动接线)
+- **record 字段「键集开放」标注**:`renderSchemaHint`/`renderSchemaFieldShallow`/`renderSchemaOverview` 对 `z.record` 字段输出 `[键集开放,任意键可写]`(全量与分层两路)—— 裸 record 无字段清单,LLM 闭世界假设易推断「键不在 schema → 不能写」而拒绝合法写入(editor_fangzhou style.padding 拒写事故驱动;写路径机械上本就全开放,此为呈现层机制化防拒写)
+- 测试:selftest sec-31/sec-37 +13(read 概览 simple 不教 schema_data / 分层 toolMode 分支 / 缓存按 toolMode 隔离 / record 键集开放标注 ×4 渲染路)/ e2e inspect +6(顶层集成视角:simple 分层不教 schema_data / advanced 教 / record 标注进 systemPrompt)
+
 ## [3.27.1] - 2026-08-18
 
 ### Fixed(dependencies 清理 —— npm≤6 + engine-strict 宿主安装 ENOTSUP,editor_fangzhou node10 日常环境驱动)

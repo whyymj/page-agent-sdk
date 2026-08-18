@@ -46,6 +46,9 @@ export { createHtmlSubagent, createHtmlFormatCheck, htmlFragmentSkill, buildHtml
 export type { CreateHtmlSubagentOptions, HtmlFormatCheckOptions } from './sdk/htmlSubagent'
 export { validateHtmlFormat, HTML_VOID_TAGS } from './tools/htmlValidate'
 export type { HtmlFormatIssue } from './tools/htmlValidate'
+// 图片输入(image-input-vision):compressImage 压缩闸(headless 自建 UI 的集成方制备 AgentImage 用)
+// + ImageInputError 结构化错误码;types(AgentImage/ImagesConfig)随下方 './types' 类型导出行整体导出
+export { compressImage, ImageInputError } from './tools/imageInput'
 export { createVerifyMiddleware, createWriteBackCheck } from './harness/verify'
 export type { VerifyCheck, VerifyCheckContext, VerifyCheckResult, VerifyMiddlewareOptions, WriteBackCheckOptions } from './harness/verify'
 export { createContextInspectorMiddleware } from './harness/contextInspector'
@@ -120,7 +123,7 @@ export type { PreferenceStore, PreferenceStoreConfig, PersistedPreference, Prefe
 export { createPreferencesMiddleware, extractExplicitPreference, looksLikePreferenceSignal, parsePreferenceJson, buildExtractPrompt, buildPreferencePrompt } from './harness/preferences'
 export type { PreferencesMiddlewareOptions } from './harness/preferences'
 // 通用消息 / 上下文类型
-export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, SdkEvent, SdkEventHandler, TokenUsage, ToolStep, BatchResult, BatchProgress } from './types'
+export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, SdkEvent, SdkEventHandler, TokenUsage, ToolStep, BatchResult, BatchProgress, AgentImage, ImagesConfig } from './types'
 export type { Focus } from './harness/state'
 export type { AgentInfo, ToolInfo, SkillInfo, DataInfo, SubagentInfo } from './types'
 export type { ContextManagerOptions, CompressionStats } from './composables/useContextManager'

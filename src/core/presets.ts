@@ -138,6 +138,12 @@ export interface SchemaHintOptions {
   maxKeys?: number
   /** 全量渲染字符超此 → 分层(默认 4000) */
   maxChars?: number
+  /**
+   * 工具呈现模式(提示词与工具面一致性):非 advanced(simple/minimal)时 schema_data 未装载,
+   * 分层披露的深层指引改教 read 子路径(勿教工具池不存在的工具,防 LLM 误调报「工具不存在」)。
+   * 默认 'advanced'。
+   */
+  toolMode?: 'simple' | 'advanced' | 'minimal'
 }
 
 const DEFAULT_SCHEMA_HINT_MAX_KEYS = 15
@@ -150,7 +156,7 @@ const schemaHintCache = new WeakMap<object, { optsKey: string; hint: string }>()
 
 export function extractSchemaHint(schema: any, opts?: SchemaHintOptions): string {
   if (!schema) return ''
-  const optsKey = opts ? `${opts.maxKeys ?? ''}|${opts.maxChars ?? ''}` : ''
+  const optsKey = opts ? `${opts.maxKeys ?? ''}|${opts.maxChars ?? ''}|${opts.toolMode ?? ''}` : ''
   // 仅对象 schema 缓存(WeakMap key 限对象;非对象走直算)
   if (typeof schema === 'object') {
     const cached = schemaHintCache.get(schema)
@@ -173,6 +179,12 @@ function computeSchemaHintImpl(schema: any, opts?: SchemaHintOptions): string {
     if (keyCount > maxKeys || overview.length > maxChars) {
       const shallow = renderSchemaShallow(schema)
       if (shallow) {
+        // 深层指引按 toolMode 分支(提示词与工具面一致性):simple/minimal 未装载 schema_data,
+        // 改教 read 子路径(全模式可用);advanced 才教 schema_data({jsonPath}) 查约束
+        if (opts?.toolMode === 'simple' || opts?.toolMode === 'minimal') {
+          return '## 可操作数据(顶层概览;深层实际值用 read 子路径查)\n' + shallow
+            + '\n提示:改某组件深层字段前,先 read({jsonPath}) 看该位置实际值与形状,照现有字段写。'
+        }
         return '## 可操作数据(顶层概览;深层约束查 schema_data)\n' + shallow
           + '\n提示:改某组件深层字段前,先 schema_data({jsonPath}) 查完整约束(advanced);或 read 子路径见实际值。'
       }

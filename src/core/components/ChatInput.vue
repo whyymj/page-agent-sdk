@@ -1,9 +1,11 @@
 <script setup lang="ts">
 /**
- * 输入区域(chat-footer):textarea + 发送/停止按钮 + 回退(checkpoint 开启时)。
+ * 输入区域(chat-footer):textarea + 发送/停止按钮 + 回退(checkpoint 开启时)+ 图片输入(image-input-vision)。
  * inputText 绑 ctx.inputText(同一 ref,QueuedBar「修改」也写它);send/keydown 走 ctx;
  * loading/stop 走 ctx.chat;canUndo/undo 走 ctx;placeholder/inputRows 走 props(展示配置)。
+ * 图片三入口:📎 按钮(file input)+ 拖拽(dragover/drop)+ 粘贴(paste clipboardData)→ ctx.addImageFiles 压缩闸。
  */
+import { ref } from 'vue'
 import IconGlyph from './IconGlyph.vue'
 import { useChatContext } from '../composables/chatContext'
 
@@ -12,12 +14,48 @@ defineProps<{ placeholder: string; inputRows: number }>()
 const ctx = useChatContext()
 const { inputText, send, keydown, canUndo, undo, focuses, removeFocus, focusChipClick, icons, messages: m } = ctx
 const { state, stop } = ctx.chat
+const { pendingImages, addImageFiles, removePendingImage, imageInputError, compressingImages } = ctx
+
+const fileInput = ref<HTMLInputElement | null>(null)
+const dragOver = ref(false)
+
+const openFilePicker = (): void => fileInput.value?.click()
+const onFileChange = (e: Event): void => {
+  const files = (e.target as HTMLInputElement).files
+  if (files?.length) void addImageFiles(files)
+  ;(e.target as HTMLInputElement).value = '' // 清选择:同名文件可重复添加
+}
+const onDrop = (e: DragEvent): void => {
+  dragOver.value = false
+  const files = e.dataTransfer?.files
+  if (files?.length) void addImageFiles(files)
+}
+const onPaste = (e: ClipboardEvent): void => {
+  const items = e.clipboardData?.items
+  if (!items) return
+  const files: File[] = []
+  for (const it of items) {
+    if (it.kind === 'file' && it.type.startsWith('image/')) {
+      const f = it.getAsFile()
+      if (f) files.push(f)
+    }
+  }
+  if (files.length) void addImageFiles(files) // 图片粘贴不进 textarea(不触发默认文本插入行为即可,这里只加图)
+}
 </script>
 
 <template>
   <div class="chat-footer">
     <button v-if="canUndo" class="undo-foot-btn" :title="m.undoTitle" @click="undo">{{ m.undo }}</button>
-    <div class="chat-input-wrap">
+    <div
+      class="chat-input-wrap"
+      :class="{ 'drag-over': dragOver }"
+      @dragover.prevent="dragOver = true"
+      @dragleave="dragOver = false"
+      @drop.prevent="onDrop"
+    >
+      <!-- 拖拽提示浮层 -->
+      <div v-if="dragOver" class="drop-hint">{{ m.imageDropHint }}</div>
       <!-- 聚焦标签(inline chip):聚焦组件精修时,输入框内顶部显示多 chip(🎯 path,multi-focus)。
            chip 本体点击 → 回调(滚动/高亮组件);✕ 移除单个焦点(全移除=退出精修) -->
       <div v-if="focuses.length" class="focus-chips">
@@ -32,20 +70,43 @@ const { state, stop } = ctx.chat
           <button type="button" class="focus-chip-x" data-test="focus-clear" :title="m.removeFocus" @click.stop="removeFocus(f.path)">✕</button>
         </span>
       </div>
+      <!-- 待发送图片 chip(image-input-vision):缩略图 + ✕;随下一条消息发出 -->
+      <div v-if="pendingImages.length" class="img-chips" data-test="img-chips">
+        <span v-for="im in pendingImages" :key="im.id" class="img-chip" :title="im.name || m.imageAlt">
+          <img class="img-chip-thumb" :src="im.dataUri" :alt="im.name || m.imageAlt" />
+          <button type="button" class="img-chip-x" data-test="img-chip-x" @click="removePendingImage(im.id)">✕</button>
+        </span>
+      </div>
+      <!-- 输入侧图片错误(超限/损坏;4s 自动清) -->
+      <div v-if="imageInputError" class="img-error" data-test="img-error">{{ imageInputError }}</div>
       <textarea
         v-model="inputText"
         class="chat-input"
-        :class="{ 'has-focus-chip': focuses.length > 0 }"
+        :class="{ 'has-focus-chip': focuses.length > 0, 'has-img-chip': pendingImages.length > 0 || imageInputError }"
         :placeholder="placeholder"
         :rows="inputRows"
         @keydown="keydown"
+        @paste="onPaste"
       ></textarea>
       <div class="input-actions">
         <span class="send-hint">{{ m.sendHint }}</span>
+        <!-- 添加图片(📎):image-input-vision 三入口之一 -->
+        <button
+          class="attach-btn"
+          :title="m.attachImageTitle"
+          data-test="attach-btn"
+          @click="openFilePicker"
+        >
+          <IconGlyph v-if="icons.attachImage" :icon="icons.attachImage" />
+          <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+          </svg>
+        </button>
+        <input ref="fileInput" type="file" accept="image/*" multiple hidden data-test="attach-input" @change="onFileChange" />
         <button
           class="send-btn"
           :class="{ 'stop-btn': state.loading }"
-          :disabled="!state.loading && !inputText.trim()"
+          :disabled="!state.loading && !inputText.trim() && !pendingImages.length && !compressingImages"
           :title="state.loading ? m.stopTitle : m.sendTitle"
           @click="state.loading ? stop() : send()"
         >
@@ -72,6 +133,14 @@ const { state, stop } = ctx.chat
   flex-shrink: 0;
 }
 .chat-input-wrap { flex: 1; position: relative; min-width: 0; }
+.chat-input-wrap.drag-over::after {
+  content: ''; position: absolute; inset: -3px; border: 2px dashed var(--cs-primary, #1f4d3a); border-radius: 10px;
+  pointer-events: none; z-index: 2;
+}
+.drop-hint {
+  position: absolute; top: 8px; left: 0; right: 0; z-index: 3; text-align: center;
+  font-size: 11px; color: var(--cs-primary, #1f4d3a); pointer-events: none;
+}
 /* 聚焦 inline chip:输入框内顶部多 chip(multi-focus);chip 本体点击 → 回调,✕ 移除单个 */
 .focus-chips {
   position: absolute; top: 5px; left: 8px; right: 8px; z-index: 1;
@@ -90,7 +159,26 @@ const { state, stop } = ctx.chat
 .focus-chip-path { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
 .focus-chip-x { border: none; background: transparent; color: inherit; cursor: pointer; padding: 0 4px; border-radius: 8px; font-size: 11px; line-height: 1; opacity: 0.55; transition: opacity 0.15s, background 0.15s; }
 .focus-chip-x:hover { opacity: 1; background: rgba(var(--cs-err-rgb, 220, 38, 38), 0.15); color: var(--cs-err, #dc2626); }
+/* 待发送图片 chip(image-input-vision):输入框内顶部缩略图行(与 focus chip 同区位,二者可共存纵向堆叠) */
+.img-chips {
+  position: absolute; top: 5px; left: 8px; right: 8px; z-index: 1;
+  display: flex; flex-wrap: wrap; gap: 4px;
+}
+.chat-input-wrap:not(:has(.focus-chips:empty)) .img-chips { top: 30px; }
+.img-chip { position: relative; width: 44px; height: 44px; border-radius: 8px; overflow: visible; flex-shrink: 0; }
+.img-chip-thumb { width: 100%; height: 100%; object-fit: cover; border-radius: 8px; border: 1px solid var(--cs-surface-border, rgba(0,0,0,0.08)); display: block; }
+.img-chip-x {
+  position: absolute; top: -6px; right: -6px; width: 16px; height: 16px; border-radius: 50%;
+  border: none; background: var(--cs-err, #dc2626); color: #fff; font-size: 10px; line-height: 1;
+  cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0;
+}
+.img-chip-x:hover { opacity: 0.85; }
+.img-error {
+  position: absolute; left: 8px; right: 8px; z-index: 1;
+  font-size: 11px; color: var(--cs-err, #dc2626); line-height: 1.4;
+}
 .chat-input.has-focus-chip { padding-top: 30px; }
+.chat-input.has-img-chip { padding-top: 56px; }
 .chat-input {
   width: 100%; resize: vertical; border: 1px solid var(--cs-input-border, rgba(var(--cs-primary-rgb, 31, 77, 58), 0.2)); border-radius: var(--cs-input-radius, 8px);
   padding: 9px 12px 38px 12px; font-size: 13px; font-family: inherit; line-height: 1.5; color: var(--cs-bg-text, inherit);
@@ -99,8 +187,15 @@ const { state, stop } = ctx.chat
 }
 .chat-input::placeholder { color: var(--cs-bg-muted, #9ca3af); opacity: 0.7; }
 .chat-input:focus { border-color: var(--cs-primary); box-shadow: 0 0 0 2px rgba(var(--cs-primary-rgb), 0.1); }
-.input-actions { position: absolute; bottom: 10px; right: 10px; display: flex; align-items: center; gap: 8px; }
+.input-actions { position: absolute; bottom: 10px; right:  10px; display: flex; align-items: center; gap: 8px; }
 .send-hint { font-size: 10px; color: var(--cs-bg-muted, #9ca3af); opacity: 0.6; pointer-events: none; white-space: nowrap; }
+.attach-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border: none; border-radius: 6px;
+  background: transparent; color: var(--cs-bg-muted, #6b7280); cursor: pointer;
+  transition: color 0.15s, background 0.15s; flex-shrink: 0;
+}
+.attach-btn:hover { color: var(--cs-primary, #1f4d3a); background: rgba(var(--cs-primary-rgb, 31, 77, 58), 0.08); }
 .send-btn {
   display: flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; border: none; border-radius: var(--cs-send-radius, 50%);

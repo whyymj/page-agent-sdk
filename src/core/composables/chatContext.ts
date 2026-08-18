@@ -13,8 +13,9 @@ import { useChat } from './useChat'
 import { copyText } from '../utils/clipboard'
 import { resolveDialogIcons, type DialogIcons } from '../components/icons'
 import { resolveDialogMessages, type DialogMessages, type DialogLocale } from '../components/messages'
-import type { AgentMessage, AgentInfo, StreamHandler } from '../types'
+import type { AgentMessage, AgentInfo, StreamHandler, AgentImage } from '../types'
 import type { Focus } from '../harness/state'
+import { compressImage, MAX_IMAGES_PER_ROUND, ImageInputError } from '../tools/imageInput'
 
 /** useChat 返回类型(对话状态 + 操作,14 项) */
 export type ChatStore = ReturnType<typeof useChat>
@@ -93,6 +94,17 @@ export interface ChatContext {
   send: () => void
   /** 输入框键盘事件(Enter 发送;IME 合成期 / Shift+Enter 不发) */
   keydown: (e: KeyboardEvent) => void
+  // ===== 图片输入(image-input-vision Phase 1)=====
+  /** 待发送图片(压缩后;随下一条消息发出,发送后清空) */
+  pendingImages: Ref<AgentImage[]>
+  /** 添加图片(压缩闸 + 数量上限;错误写入 imageInputError,不抛) */
+  addImageFiles: (files: File[] | FileList) => Promise<void>
+  /** 移除待发送图片(by id;chip ✕) */
+  removePendingImage: (id: string) => void
+  /** 输入侧图片错误(超限/损坏等;4s 自动清除) */
+  imageInputError: Ref<string>
+  /** 是否正在压缩图片(禁用发送按钮防重复添加) */
+  compressingImages: Ref<boolean>
   /** 修改排队任务:填回输入框(供编辑)+ 从队列移除 */
   editQueued: (idx: number) => void
   /** 是否为流式占位 assistant(末位 + loading + content/reasoning 均空 → 显示三点动画) */
@@ -194,9 +206,51 @@ export function createChatContext(opts: ChatContextOptions = {}): ChatContext {
 
   // 输入动作
   const send = (): void => {
-    if (!inputText.value.trim()) return
-    sendMessage(inputText.value, focuses.value) // 附发送时焦点快照(user message 标注背景组件限制)
+    const images = pendingImages.value
+    if (!inputText.value.trim() && !images.length) return
+    sendMessage(inputText.value, focuses.value, images.length ? [...images] : undefined) // 附发送时焦点快照 + 待发送图片
     inputText.value = ''
+    pendingImages.value = [] // 图片已随消息持有,清待发区
+  }
+
+  // 图片输入(image-input-vision Phase 1):压缩闸 + 数量上限;错误走输入区提示条(4s 自动清),不弹窗
+  const pendingImages = ref<AgentImage[]>([])
+  const imageInputError = ref('')
+  const compressingImages = ref(false)
+  let imageErrorTimer: ReturnType<typeof setTimeout> | undefined
+  const showImageError = (msg: string): void => {
+    imageInputError.value = msg
+    clearTimeout(imageErrorTimer)
+    imageErrorTimer = setTimeout(() => {
+      imageInputError.value = ''
+    }, 4000)
+  }
+  const addImageFiles = async (files: File[] | FileList): Promise<void> => {
+    const list = Array.from(files).filter((f) => /^image\//i.test(f.type) || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(f.name))
+    if (!list.length) return
+    const room = MAX_IMAGES_PER_ROUND - pendingImages.value.length
+    if (room <= 0) {
+      showImageError(`${messages.imageCountLimitPrefix}${MAX_IMAGES_PER_ROUND}${messages.imageCountLimitSuffix}`)
+      return
+    }
+    if (list.length > room) showImageError(`${messages.imageCountLimitPrefix}${MAX_IMAGES_PER_ROUND}${messages.imageCountLimitSuffix}`)
+    compressingImages.value = true
+    try {
+      for (const f of list.slice(0, room)) {
+        try {
+          const im = await compressImage(f, { name: f.name })
+          pendingImages.value.push(im)
+        } catch (e) {
+          // 输入侧即时拒绝(D6):损坏/超限单图跳过并提示,不影响其余图
+          showImageError(e instanceof ImageInputError ? `${e.message}` : messages.imageInvalid)
+        }
+      }
+    } finally {
+      compressingImages.value = false
+    }
+  }
+  const removePendingImage = (id: string): void => {
+    pendingImages.value = pendingImages.value.filter((im) => im.id !== id)
   }
   const keydown = (e: KeyboardEvent): void => {
     // IME 输入法合成期回车(确认候选词)不发送(isComposing / keyCode 229);否则中文输入必现误发
@@ -260,6 +314,11 @@ export function createChatContext(opts: ChatContextOptions = {}): ChatContext {
     formatTime,
     send,
     keydown,
+    pendingImages,
+    addImageFiles,
+    removePendingImage,
+    imageInputError,
+    compressingImages,
     editQueued,
     isPendingAssistant,
     focuses,

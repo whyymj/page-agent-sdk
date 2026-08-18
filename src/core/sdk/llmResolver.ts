@@ -277,6 +277,7 @@ export function resolveLlm(options: ChatSdkOptions): {
     model: llmCfg?.model ?? llm?.model ?? llm?.modelName,
     contextWindow: options.contextWindow ?? llmCfg?.contextWindow ?? llm?.contextWindow,
     maxOutputTokens: options.maxOutputTokens ?? llmCfg?.maxOutputTokens ?? llm?.maxOutputTokens,
+    vision: llmCfg?.vision ?? llm?.vision,
   })
   const summaryLlmInvoke = buildSummaryLlmInvoke(options)
   const titleLlmInvoke = buildTitleLlmInvoke(options)

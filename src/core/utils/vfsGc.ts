@@ -20,8 +20,8 @@ export const LARGE_RESULTS_PREFIX = 'large_results/'
 const REF_RE = /large_results\/[^\s"'`),]+\.txt/g
 
 /**
- * 扫描 messages 提取所有 `large_results/...` vfs 引用地址 → 引用集(可达性 GC 用)。
- * 扫 content + steps.result(工具结果文本含 offload 地址)。地址去重(Set)。
+ * 扫描 messages 提取所有 vfs 引用地址 → 引用集(LRU 淘汰保护 + 可达性 GC 用)。
+ * 扫 content + steps.result(工具结果文本含 offload 地址)+ images[].vfsRef(image-input-vision:原图在 userImages/* 池,LRU 淘汰保护)。地址去重(Set)。
  */
 export function extractVfsRefs(messages: AgentMessage[]): Set<string> {
   const refs = new Set<string>()
@@ -34,6 +34,7 @@ export function extractVfsRefs(messages: AgentMessage[]): Set<string> {
   for (const m of messages) {
     collect(m.content as string)
     if (m.steps) for (const st of m.steps) collect(st.result as string)
+    if (m.images) for (const im of m.images) if (im.vfsRef) refs.add(im.vfsRef)
   }
   return refs
 }

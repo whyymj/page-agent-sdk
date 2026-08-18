@@ -62,6 +62,21 @@ const showCursor = computed(() => isAssistant.value && props.loading && props.is
           @click="ctx.focusChipClick(f)"
         ><IconGlyph :icon="ctx.icons.focus" /> {{ f.path }}</span>
       </div>
+      <!-- user 消息附带图片(image-input-vision):气泡上方缩略图行(thumb 优先,恢复后轻形态仍有;LRU 淘汰且无 thumb 显示占位框) -->
+      <div v-if="message.role === 'user' && message.images?.length" class="msg-images" :data-img-count="message.images.length">
+        <a
+          v-for="im in message.images"
+          :key="im.id"
+          class="msg-image"
+          :href="im.url || im.dataUri"
+          :title="im.name || ctx.messages.imageAlt"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <img v-if="im.thumb || im.dataUri" class="msg-image-thumb" :src="im.thumb || im.dataUri" :alt="im.name || ctx.messages.imageAlt" />
+          <span v-else class="msg-image-lost">🖼️</span>
+        </a>
+      </div>
       <MessageBubble
         :messages="ctx.messages"
         :content="message.content"
@@ -85,12 +100,17 @@ const showCursor = computed(() => isAssistant.value && props.loading && props.is
 }
 .message-row.assistant .message-avatar { background: var(--cs-avatar-grad, var(--cs-avatar-bg, #f3f4f6)); color: var(--cs-avatar-fg, #fff); }
 .message-row.user .message-avatar { background: var(--cs-avatar-user-bg, #ecf5ef); color: var(--cs-avatar-user-fg, #3b5e4a); }
-.message-content { max-width: 80%; min-width: 0; }
+.message-content { width: 80%; min-width: 0; }
 /* user 消息发送时焦点快照 chip(背景组件限制标注) */
 .msg-focuses { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; margin-bottom: 4px; }
 .msg-focus-chip { display: inline-flex; align-items: center; gap: 2px; padding: 1px 4px 1px 6px; border-radius: 10px; background: rgba(var(--cs-primary-rgb, 31, 77, 58), 0.12); color: var(--cs-primary, #1f4d3a); font-size: 11px; line-height: 1.6; cursor: pointer; white-space: nowrap; }
 .msg-focus-chip:hover { background: rgba(var(--cs-primary-rgb, 31, 77, 58), 0.2); }
 .message-row.user .message-content { display: flex; flex-direction: column; align-items: flex-end; }
+/* user 消息图片缩略图行(image-input-vision):右对齐(user 侧),点开原图新窗(rel=noopener) */
+.msg-images { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; margin-bottom: 4px; max-width: 100%; }
+.msg-image { display: block; width: 72px; height: 72px; border-radius: 8px; overflow: hidden; border: 1px solid var(--cs-surface-border, rgba(0,0,0,0.08)); flex-shrink: 0; }
+.msg-image-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+.msg-image-lost { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 20px; background: var(--cs-surface, #f3f4f6); opacity: 0.6; }
 /* 跨边界:hover message-row.assistant 时显示子组件 MessageActions 的 .msg-actions(后代选择器穿透) */
 .message-row.assistant:hover :deep(.msg-actions) { opacity: 1; }
 </style>

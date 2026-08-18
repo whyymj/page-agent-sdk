@@ -13,6 +13,8 @@ export interface ModelCaps {
   contextWindow: number
   /** 模型最大输出(token) */
   maxOutputTokens: number
+  /** 是否支持多模态识图(image-input-vision):true = user 消息 images 组装 content parts 直发;缺省 false(保守,宁走旁路/报错不误发 parts 吃 400) */
+  vision?: boolean
 }
 
 /**
@@ -23,20 +25,22 @@ const MODEL_TABLE: Array<{ pattern: RegExp; caps: ModelCaps }> = [
   { pattern: /deepseek-v4/i, caps: { contextWindow: 1048576, maxOutputTokens: 393216 } }, // v4:1M 上下文 / 384K 输出
   { pattern: /deepseek-reasoner|deepseek-r1/i, caps: { contextWindow: 65536, maxOutputTokens: 8192 } },
   { pattern: /deepseek/i, caps: { contextWindow: 131072, maxOutputTokens: 8192 } },
-  { pattern: /gpt-4\.1/i, caps: { contextWindow: 1047576, maxOutputTokens: 32768 } },
-  { pattern: /gpt-4o-mini/i, caps: { contextWindow: 131072, maxOutputTokens: 16384 } },
-  { pattern: /gpt-4o/i, caps: { contextWindow: 131072, maxOutputTokens: 16384 } },
-  { pattern: /gpt-4-turbo|gpt-4-1106|gpt-4-0125/i, caps: { contextWindow: 131072, maxOutputTokens: 4096 } },
+  { pattern: /gpt-4\.1/i, caps: { contextWindow: 1047576, maxOutputTokens: 32768, vision: true } },
+  { pattern: /gpt-4o-mini/i, caps: { contextWindow: 131072, maxOutputTokens: 16384, vision: true } },
+  { pattern: /gpt-4o/i, caps: { contextWindow: 131072, maxOutputTokens: 16384, vision: true } },
+  { pattern: /gpt-4-turbo|gpt-4-1106|gpt-4-0125/i, caps: { contextWindow: 131072, maxOutputTokens: 4096, vision: true } },
   { pattern: /gpt-3\.5/i, caps: { contextWindow: 16385, maxOutputTokens: 4096 } },
-  { pattern: /claude-3-7-sonnet/i, caps: { contextWindow: 200000, maxOutputTokens: 8192 } },
-  { pattern: /claude-3-5-sonnet/i, caps: { contextWindow: 200000, maxOutputTokens: 8192 } },
-  { pattern: /claude-3-opus/i, caps: { contextWindow: 200000, maxOutputTokens: 4096 } },
-  { pattern: /claude-3-haiku/i, caps: { contextWindow: 200000, maxOutputTokens: 4096 } },
+  { pattern: /claude-3-7-sonnet/i, caps: { contextWindow: 200000, maxOutputTokens: 8192, vision: true } },
+  { pattern: /claude-3-5-sonnet/i, caps: { contextWindow: 200000, maxOutputTokens: 8192, vision: true } },
+  { pattern: /claude-3-opus/i, caps: { contextWindow: 200000, maxOutputTokens: 4096, vision: true } },
+  { pattern: /claude-3-haiku/i, caps: { contextWindow: 200000, maxOutputTokens: 4096, vision: true } },
+  { pattern: /qwen2\.5-vl|qwen2-vl|qwen-vl|qvq/i, caps: { contextWindow: 32768, maxOutputTokens: 2048, vision: true } }, // Qwen-VL 系:32K / 2K,多模态
   { pattern: /qwen-max|qwen-plus/i, caps: { contextWindow: 32768, maxOutputTokens: 8192 } }, // Qwen-Max/Plus:默认 32K(128K 需申请)/ 8K 输出
   { pattern: /qwen2\.5-1m|qwen-1m/i, caps: { contextWindow: 1048576, maxOutputTokens: 8192 } }, // Qwen2.5-1M:1M / 8K
   { pattern: /qwen2\.5/i, caps: { contextWindow: 32768, maxOutputTokens: 8192 } }, // Qwen2.5:默认 32K / 8K
   { pattern: /glm-5\.2/i, caps: { contextWindow: 1048576, maxOutputTokens: 65536 } }, // GLM-5.2:1M / 64K
   { pattern: /glm-5/i, caps: { contextWindow: 200000, maxOutputTokens: 65536 } }, // GLM-5/5.1:200K / 64K
+  { pattern: /glm-4v|glm4v/i, caps: { contextWindow: 32768, maxOutputTokens: 2048, vision: true } }, // GLM-4V:32K / 2K,多模态
   { pattern: /glm-4\.[6-9]/i, caps: { contextWindow: 131072, maxOutputTokens: 131072 } }, // GLM-4.6/4.7:128K / 128K 输出
   { pattern: /glm-4\.5/i, caps: { contextWindow: 131072, maxOutputTokens: 98304 } }, // GLM-4.5:128K / 96K 输出
   { pattern: /glm-4|glm4/i, caps: { contextWindow: 131072, maxOutputTokens: 4096 } }, // GLM-4:128K / 4K
@@ -63,6 +67,8 @@ export interface ResolveCapsOptions {
   contextWindow?: number
   /** 集成方显式声明:最大输出(优先) */
   maxOutputTokens?: number
+  /** 集成方显式声明:是否多模态识图(优先;网关代理模型名不可辨时用,true/false 均覆盖表值) */
+  vision?: boolean
 }
 
 /**
@@ -85,7 +91,9 @@ export function resolveModelCaps(opts: ResolveCapsOptions = {}): ModelCaps {
   })()
   const contextWindow = opts.contextWindow ?? fromTable?.contextWindow ?? DEFAULT_CAPS.contextWindow
   const maxOutputTokens = opts.maxOutputTokens ?? fromTable?.maxOutputTokens ?? DEFAULT_CAPS.maxOutputTokens
-  return { contextWindow, maxOutputTokens }
+  // vision:显式声明(含显式 false)> 表 > 缺省 false(保守:误发 parts 吃 400 比走旁路/报错更糟)
+  const vision = opts.vision ?? fromTable?.vision ?? false
+  return { contextWindow, maxOutputTokens, vision }
 }
 
 /**

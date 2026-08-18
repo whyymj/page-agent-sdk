@@ -94,6 +94,12 @@ export interface DataOpsOptions {
    * agent 写 __pgId 被 isPathAllowed 自然拒(__pg* 前缀段)。集成商原 schema 不动(框架内部用 extendedSchema)。
    */
   pgIdPaths?: string[]
+  /**
+   * 工具呈现模式(提示词与工具面一致性):read 根结果的「字段约束」指引按此分支 ——
+   * simple/minimal 未装载 schema_data,改教 read 子路径(勿教工具池不存在的工具,防误调报「工具不存在」)。
+   * 默认 'advanced'(与 createChatSdk 默认一致)。createChatSdk 装配期透传解析后的 toolMode。
+   */
+  toolMode?: 'simple' | 'advanced' | 'minimal'
 }
 
 export interface DataSnapshotEntry {
@@ -138,7 +144,7 @@ export type ToolMode = 'simple' | 'advanced' | 'minimal'
 const SIMPLE_HIDDEN = new Set(['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data', 'schema_data', 'diff_data', 'draft_write', 'draft_commit', 'resource_get', 'resource_update', 'resource_list', 'resource_delete'])
 const MINIMAL_ALLOWED = new Set(['read', 'write'])
 
-export function filterByToolMode(tools: StructuredToolInterface[], mode: ToolMode = 'simple'): StructuredToolInterface[] {
+export function filterByToolMode(tools: StructuredToolInterface[], mode: ToolMode = 'advanced'): StructuredToolInterface[] {
   if (mode === 'advanced') return tools
   if (mode === 'minimal') return tools.filter((t) => MINIMAL_ALLOWED.has(t.name))
   return tools.filter((t) => !SIMPLE_HIDDEN.has(t.name))
@@ -998,7 +1004,11 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (fields && fields.length) resolved = projectFields(resolved, fields)
       if (depth !== undefined && depth !== null) resolved = limitDepth(resolved, depth)
       resolved = summarizeLargeText(resolved, scope === MAIN_SCOPE, largeTextSpecs, largeTextThreshold)
-      const desc = !jsonPath ? `主数据说明: ${description}\n格式: 写入值需为 JSON,且通过声明的 schema 校验(校验失败时 write 会返回结构化错误)。字段约束(类型/min/max/enum/必填/默认)见 systemPrompt「可操作数据」段,或用 schema_data({ jsonPath }) 按需查。\n\n` : ''
+      // 字段约束指引按 toolMode 分支:simple/minimal 未装载 schema_data → 教 read 子路径(提示词与工具面一致性)
+      const constraintGuide = opts.toolMode === 'simple' || opts.toolMode === 'minimal'
+        ? '字段约束与形状见 systemPrompt「可操作数据」段,或 read 子路径见实际值,照现有字段写。'
+        : '字段约束(类型/min/max/enum/必填/默认)见 systemPrompt「可操作数据」段,或用 schema_data({ jsonPath }) 按需查。'
+      const desc = !jsonPath ? `主数据说明: ${description}\n格式: 写入值需为 JSON,且通过声明的 schema 校验(校验失败时 write 会返回结构化错误)。${constraintGuide}\n\n` : ''
       const proj = fields && fields.length ? `(字段裁剪:${fields.join(',')})` : ''
       const dlim = depth !== undefined && depth !== null ? `(深度≤${depth})` : ''
       const meta = proj || dlim ? ` ${proj}${dlim}` : ''

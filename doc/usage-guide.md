@@ -312,18 +312,38 @@ write({ patch: { jsonPath: 'oldField' }, del: true })
 
 ### `toolMode` 工具呈现模式
 
+控制「暴露多少数据工具给 LLM + usageHints 教哪套工作流」。**只需配这一个旋钮**(`hintsMode` 默认 auto 自动跟随,仅迁移兼容用,正常无需配置):
+
 ```ts
 createChatSdk({
   // ...,
-  toolMode: 'simple',  // 默认:主推 read/write,隐藏底层 get/set/edit/delete/describe(5 个),保留 read/write + query/search/eval/snapshot/list/restore(共 8 个数据工具)
-  // toolMode: 'advanced',  // 全暴露(13 个,等价 11 底层 + read/write;依赖底层工具名时用)
-  // toolMode: 'minimal',   // 只 read/write(2 个,最简)
+  // 不配即 'advanced'(默认):全暴露,内置提示词与工具面恒一致
+  toolMode: 'simple',   // opt-down:隐藏底层/诊断工具,主推 read/write
+  // toolMode: 'minimal',  // 只 read/write(最收敛,最省 token)
 })
 ```
 
-- `simple`(默认):LLM 只见 `read`/`write` + 高级查询/快照,认知负担最低;`usageHints` 自动注入 read/write 用法
-- `advanced`:全暴露(兼容旧代码/调试/需精确控制时用)
-- `minimal`:只 `read`/`write`(纯读写场景,最省 token)
+| 工具族 | advanced(默认) | simple | minimal |
+|---|:-:|:-:|:-:|
+| `read`/`write`(高层入口,自动乐观锁 + 自动快照) | ✅ | ✅ | ✅ |
+| `query_data`/`search_data`/`eval_script`(查询/搜索/沙箱) | ✅ | ✅ | — |
+| `restore_data`/`history_data`(快照回退/查历史) | ✅ | ✅ | — |
+| `get/set/edit/delete/describe_data`(底层 CRUD,手动传 hash 乐观锁) | ✅ | — | — |
+| `schema_data`/`diff_data`(查约束/对比差异) | ✅ | — | — |
+| `set/add/remove/clear_focus`(聚焦工具族) | ✅ | — | — |
+| `draft_*`/`resource_*`(opt-in 能力时) | ✅ | — | — |
+| 数据工具装载数 | 14 | 7 | 2 |
+
+**行为差异**:
+- **锁语义**:advanced 教「先 `get_data` 拿 hash → 写时回传 `expectedHash`」(显式锁);simple/minimal 用 read/write 自动乐观锁(隐式锁,LLM 无感)
+- **聚焦归属**:advanced 下 agent 可自主 `set_focus` 收敛;simple/minimal 下 focus 工具不装载,改由宿主调 `sdk.setFocus()/addFocus()` API 触发(Focus 能力仍在)
+- **提示词与工具面一致性**:usageHints 只教池内存在的工具(simple 档不教 schema_data,改教 read 子路径);内置提示词(read 说明/大 schema 分层/focus 子树)同样按档分支
+
+**选型指引**:
+- 默认不配(advanced):内置能力全套可用(查约束/差异/自主聚焦),提示词与工具面天然一致
+- 想收敛工具面 / 省 token / 不想 LLM 碰底层工具 → `simple`
+- 宿主全控、只要 AI 改值 → `minimal`
+- 存量集成 systemPrompt 含「simple 模式/未暴露/勿调用」措辞会被自动检测(提示词降级 + warn),但建议显式传 `toolMode:'simple'` 让工具池一并对齐
 
 ### `interceptors` 读写拦截器
 

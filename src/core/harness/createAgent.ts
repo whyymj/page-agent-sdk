@@ -22,6 +22,7 @@ import type { StructuredToolInterface } from '@langchain/core/tools'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { AgentMessage, StreamHandler } from '../types'
 import { asAgentError } from '../tools/toolError'
+import { buildImageContentParts, appendImageDescriptions } from '../tools/imageInput'
 import { offloadLargeResult } from '../utils/offload'
 import { runPool } from '../utils/pool'
 import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars, type ModelCaps } from '../utils/modelCaps'
@@ -241,10 +242,19 @@ export interface CreateAgentOptions {
   onTrace?: (spans: TraceSpan[], metrics: TraceMetrics) => void
   /** LLM 运行时切换回调(setLlm 后触发,供 createChatSdk 重解析模型能力 contextWindow/maxOutputTokens) */
   onLlmChange?: (newLlm: BaseChatModel) => void
+  /**
+   * 显式声明主模型是否多模态识图(image-input-vision;声明 > model 名查表 > 缺省 false)。
+   * true 时 user 消息 images 在 toLC 组装 content parts 直发;vision 能力随 setModelCaps 回灌(setLlm 链)。
+   */
+  vision?: boolean
+  /** content parts 协议形态(默认 'openai' 即 LangChain 标准多模态格式,ChatAnthropic 亦兼容转换;'anthropic' 原生 image block) */
+  imageContentFormat?: 'openai' | 'anthropic'
   debug?: boolean
 }
 
-const DEFAULT_MAX_TOOL_ROUNDS = 10
+// 默认工具轮预算(3.28 调整:原 10 对「读 N 个组件 props + 逐个 write 配置」类多组件任务过紧,模型 serial 调用易触顶被 while 截断致任务中断;
+//   15 给多组件场景留 buffer;总闸 maxIterations = max(maxToolRounds*3, 30) 跟随,防自纠死循环仍兜底。集成方大 JSON 从零生成(draft)仍建议显式配 ≥20)
+const DEFAULT_MAX_TOOL_ROUNDS = 15
 /** debugLogs 条目上限:超限丢最旧,防异常多轮/子 agent 大量转发日志撑爆内存(纯内存,每轮重置,此为单轮兜底) */
 const MAX_DEBUG_LOGS = 300
 /** 单条日志内 message content 截断阈值:llm_request 每轮记录完整 messages(O(N²) 增长),截断既保可读又控内存 */
@@ -337,6 +347,7 @@ export function createAgent(options: CreateAgentOptions) {
     onSpan,
     onTrace,
     onLlmChange,
+    imageContentFormat = 'openai' as 'openai' | 'anthropic',
     debug = false,
   } = options
 
@@ -357,6 +368,7 @@ export function createAgent(options: CreateAgentOptions) {
     model,
     contextWindow: options.contextWindow,
     maxOutputTokens: options.maxOutputTokens,
+    vision: options.vision,
   })
   const resolvedMaxTokens = maxTokens ?? caps.maxOutputTokens
   let offloadThreshold = offloadThresholdChars(caps.contextWindow)
@@ -482,8 +494,15 @@ export function createAgent(options: CreateAgentOptions) {
   function toLC(messages: AgentMessage[]): BaseMessage[] {
     const lc: BaseMessage[] = [new SystemMessage(buildSystemPrompt())]
     for (const msg of messages) {
-      if (msg.role === 'user') lc.push(new HumanMessage(msg.content))
-      else if (msg.role === 'assistant') lc.push(new AIMessage(msg.content))
+      if (msg.role === 'user') {
+        // image-input-vision:多模态主模型(caps.vision)把 images 组装成 content parts 直发;
+        // 非 vision 主模型走 describe 旁路的转述文本(有 description 拼附加段,不改原消息);
+        // 无 parts 且无 description(旁路未配/失败且入口闸未拦住)兜底纯文本 —— 不误发 parts 吃 400
+        const parts = caps.vision && msg.images?.length ? buildImageContentParts(msg.content, msg.images, imageContentFormat) : null
+        if (parts) lc.push(new HumanMessage({ content: parts as any })) // content parts(LangChain 多模态标准形态;Record 结构跨 provider 收敛,类型层宽松)
+        else if (msg.images?.some((im) => im.description)) lc.push(new HumanMessage(appendImageDescriptions(msg.content, msg.images)))
+        else lc.push(new HumanMessage(msg.content))
+      } else if (msg.role === 'assistant') lc.push(new AIMessage(msg.content))
       else if (msg.role === 'system') lc.push(new SystemMessage(msg.content))
     }
     return lc

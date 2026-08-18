@@ -18,6 +18,45 @@ export interface ToolStep {
   subReasonFull?: string
 }
 
+/** user 消息附带图片(image-input-vision):内存态带 dataUri(直发/重发用);持久化轻形态只留 thumb+vfsRef/url(restore 后按需重水化) */
+export interface AgentImage {
+  /** 图片 id(消息内唯一;vfs 路径与持久化引用的锚) */
+  id: string
+  /** 压缩后原图 dataURI(base64;持久化时剥离,恢复后从 vfs 重水化;配 images.upload 成功后释放只留 url) */
+  dataUri?: string
+  name?: string
+  width?: number
+  height?: number
+  /** 压缩后 base64 字节估算 */
+  bytes?: number
+  /** 缩略图 dataURI(≤~8KB;持久化轻形态的渲染位) */
+  thumb?: string
+  /** 原图在 vfs 的路径(userImages/<id>;LRU 淘汰后缺省 → UI 降级占位) */
+  vfsRef?: string
+  /** 集成方上传后的 URL(images.upload 返回;URL 形态直发 + 持久化轻引用,原图不再内联/不入 vfs) */
+  url?: string
+  /** 识图转述文本(images.describe 产出 / 集成方注入;非多模态主模型时拼入该轮 user 上下文;随消息持久化) */
+  description?: string
+}
+
+/** 图片输入配置组(image-input-vision;顶层 `images` 选项) */
+export interface ImagesConfig {
+  /**
+   * 上传换 URL(集成方 OSS):压缩后原图经此上传,返回 https URL。
+   * 配置后:消息/持久化存 URL(content parts 用 URL 形态),原图 dataURI 上传成功即释放,不入 vfs。
+   * 失败:回退 dataURI 内联直发(留痕 console.warn,不阻塞发送)。
+   */
+  upload?: (dataUri: string, image: AgentImage) => Promise<string>
+  /**
+   * 识图转述(集成方绑定识图能力:自有 vision API / 识图子 agent / describe_image 工具等)。
+   * 非多模态主模型(modelCaps.vision=false)且带图时,发送前逐图调用,转述文本注入该轮 user 上下文
+   * (图片不再直发,主模型只读文本描述)。全部图有 description 后跳过重复转述(随消息持久化)。
+   */
+  describe?: (image: AgentImage, context: { text: string }) => Promise<string>
+  /** 单次 describe 超时 ms(默认 15000;超时/失败 → 该图占位描述 + observable error VISION_DESCRIBE_FAILED,对话继续) */
+  describeTimeoutMs?: number
+}
+
 export interface AgentMessage {
   role: 'user' | 'assistant' | 'system'
   content: string
@@ -28,6 +67,8 @@ export interface AgentMessage {
   steps?: ToolStep[]
   /** user 消息发送时的焦点快照(multi-focus;MessageRow 渲染 🎯 chip 标注该消息的背景组件限制,持久化随 messages) */
   focuses?: import('../harness/state').Focus[]
+  /** user 消息附带图片(image-input-vision;仅多模态主模型(visionCapable)在 toLC 组装 content parts,旁路配置见 Phase 2) */
+  images?: AgentImage[]
 }
 
 export interface AgentConfig {

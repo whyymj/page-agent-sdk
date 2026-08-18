@@ -62,9 +62,41 @@ export interface AgentMessage {
   timestamp: number;
   reasoning?: string;
   steps?: ToolStep[];
-  /** user 消息发送时的焦点快照(multi-focus;MessageRow 渲染 🎯 chip 标注背景组件限制,持久化随 messages) */
+  /** user 消息发送时的焦点快照(multi-focus;MessageRow 渲染 🎯 chip 标注该消息的背景组件限制,持久化随 messages) */
   focuses?: Focus[];
+  /** user 消息附带图片(image-input-vision;多模态主模型 toLC 组装 content parts 直发,非多模态走 images.describe 转述注入) */
+  images?: AgentImage[];
 }
+
+/** user 消息附带图片(image-input-vision);详见主包 types/index.d.ts AgentImage */
+export interface AgentImage {
+  id: string;
+  dataUri?: string;
+  name?: string;
+  width?: number;
+  height?: number;
+  bytes?: number;
+  thumb?: string;
+  vfsRef?: string;
+  url?: string;
+  description?: string;
+}
+
+/** 图片输入配置组(image-input-vision;顶层 `images` 选项) */
+export interface ImagesConfig {
+  upload?: (dataUri: string, image: AgentImage) => Promise<string>;
+  describe?: (image: AgentImage, context: { text: string }) => Promise<string>;
+  describeTimeoutMs?: number;
+}
+
+/** 图片输入错误(image-input-vision;code 稳定,输入侧拒绝不静默丢图);详见主包 types/index.d.ts */
+export declare class ImageInputError extends Error {
+  code: 'IMAGE_TOO_LARGE' | 'IMAGE_COUNT_LIMIT' | 'IMAGE_DECODE_FAILED' | 'IMAGE_COMPRESS_FAILED' | 'IMAGE_UNSUPPORTED_TYPE';
+  constructor(code: ImageInputError['code'], message: string);
+}
+
+/** 压缩闸(image-input-vision):原图 >20MB 拒;等比缩放长边 ≤1568;浏览器域 API(依赖 canvas),headless 自建 UI 制备 AgentImage 用 */
+export declare function compressImage(source: Blob, opts?: { name?: string }): Promise<AgentImage>;
 
 export interface AgentConfig {
   model: string;
@@ -467,6 +499,8 @@ export interface DataOpsOptions {
   autoLock?: boolean;
   /** 读写拦截器:read/write 透传给数据工具(脱敏/转换/审计/拒绝 LLM 读写) */
   interceptors?: DataInterceptors;
+  /** 工具呈现模式(提示词与工具面一致性):read 根结果约束指引按此分支(simple/minimal 未装载 schema_data 时改教 read 子路径)。默认 'advanced' */
+  toolMode?: 'simple' | 'advanced' | 'minimal';
 }
 
 /** 数据读写拦截器(集成方可脱敏/转换/审计/拒绝 LLM 的读写) */
@@ -477,7 +511,7 @@ export interface DataInterceptors {
   write?: (payload: any, current: any) => any | { error: string };
 }
 
-/** 工具呈现模式:simple=主推 read/write 但保留高级能力(默认)| advanced=全暴露| minimal=只 read/write */
+/** 工具呈现模式:advanced=全暴露含 schema_data/diff_data(默认,提示词与工具面一致性)| simple=主推 read/write 但保留高级能力| minimal=只 read/write */
 export type ToolMode = 'simple' | 'advanced' | 'minimal';
 
 /** 数据操作控制器(运行时替换配置;createDataOps 返回的工具数组上以不可枚举属性 `controller` 挂载) */
@@ -749,8 +783,10 @@ export interface ChatSdkOptions {
   autoLock?: boolean;
   /** 数据操作审计回调:每次 set/edit/delete/restore 经此回调外发结构化事件(独立于 debug,无需 debug:true);集成方做合规审计/操作追溯 */
   onAudit?: (entry: { op: string; value?: unknown; detail?: string; timestamp: number }) => void;
-  /** 工具呈现模式:simple(默认,主推 read/write 但保留 query/search/eval/snapshot)| advanced(全暴露)| minimal(只 read/write) */
+  /** 工具呈现模式:advanced(默认,全暴露含 schema_data/diff_data/底层 get/set/edit/focus 工具族)| simple(主推 read/write 但保留 query/search/eval/snapshot,隐藏底层与诊断类)| minimal(只 read/write)。3.28 breaking:默认由 simple 改 advanced */
   toolMode?: 'simple' | 'advanced' | 'minimal';
+  /** 能力用法提示(usageHints)注入模式:'auto'(默认)跟随 toolMode,但 toolMode 为 advanced 且 systemPrompt 含「simple 模式」措辞时自动降级 simple;或显式锁定提示词模式与 toolMode 解耦 */
+  hintsMode?: 'auto' | 'simple' | 'advanced' | 'minimal';
   /** 读写拦截器:read/write 透传给数据工具(脱敏/转换/审计/拒绝 LLM 读写);input/output 在 agent IO 入口/出口预处理 */
   interceptors?: {
     read?: (value: any) => any;
@@ -763,7 +799,7 @@ export interface ChatSdkOptions {
   /** 内存中保留的对话轮数上限(默认 50);超限把最旧轮次压缩为摘要 system 消息(防 OOM);0 关闭 */
   maxMemoryRounds?: number;
   debug?: boolean;
-  /** agent 工具调用轮次上限(默认 10);大 JSON 分块构建(draft_write×N + draft_commit + read 确认)是多轮场景,可能触顶被截断,建议调大到 20-30 */
+  /** agent 工具调用轮次上限(默认 15);大 JSON 分块构建(draft_write×N + draft_commit + read 确认)是多轮场景,可能触顶被截断,建议调大到 20-30 */
   maxToolRounds?: number;
   /** 规划阶段总轮次预算(默认 5);planning 状态下超限 → write_todos/update_todo 回灌,防"光规划不执行"死循环。与 maxIterations 正交 */
   maxPlanRevisions?: number;
@@ -884,7 +920,7 @@ export interface ChatSdk {
   hide(): void;
   /** 抽屉模式显示:移除 cs-hidden class 恢复可见(配合 hide 使用;首次挂载用 mount) */
   show(): void;
-  send(message: string, options?: { mission?: Partial<Mission>; interceptors?: { input?: (input: unknown) => unknown; output?: (json: unknown) => unknown }; maxAutoRetries?: number; /** 中断信号(fix-hang-and-feedback P1-4) */ signal?: AbortSignal }): Promise<string>;
+  send(message: string, options?: { mission?: Partial<Mission>; interceptors?: { input?: (input: unknown) => unknown; output?: (json: unknown) => unknown }; maxAutoRetries?: number; /** 中断信号(fix-hang-and-feedback P1-4) */ signal?: AbortSignal; /** 附带图片(image-input-vision;需主模型多模态 vision 或 images.describe,否则拒绝 —— 不静默丢图) */ images?: AgentImage[] }): Promise<string>;
   switchSession(sessionId?: string): Promise<string>;
   /**
    * 新建/清空会话(同步;「清空对话」编程式入口):中止在途流 + 收口挂起冲突(keep_external)
@@ -1043,8 +1079,8 @@ export declare function createChatSdk(options: ChatSdkOptions): ChatSdk;
 // ============ system prompt 构建(promptBuilder,refactor-module-extraction 从 createChatSdk 抽离)============
 /** 默认 systemPrompt(用户未传 systemPrompt 时用);含身份 + 能力概述 + 可靠写入规则 */
 export declare const DEFAULT_SYSTEM_PROMPT: string;
-/** 拼接「可操作数据」段(从 data schema .describe() 自动提取注入) */
-export declare function buildDataPrompt(data: DataConfig | undefined): string;
+/** 拼接「可操作数据」段(从 data schema .describe() 自动提取注入);toolMode 透传分层披露(simple/minimal 勿教 schema_data) */
+export declare function buildDataPrompt(data: DataConfig | undefined, schemaHint?: SchemaHintOptions, toolMode?: 'simple' | 'advanced' | 'minimal'): string;
 /**
  * 统一 systemPrompt base 段入口:处理 appendReliableWriteRules 分支 + '---' 分割线。
  * 传 systemPrompt 默认追加 reliableWriteRules(设 appendReliableWriteRules:false 关闭);不传用 DEFAULT_SYSTEM_PROMPT(已内置)。纯函数。
@@ -1147,7 +1183,7 @@ export declare function renderSchemaOverview(schema: any): string;
 /** 渲染 schema 顶层字段浅概览(分层模式:只 key+type+desc,不带约束/不递归;大 schema 用,体积降) */
 export declare function renderSchemaShallow(schema: any): string;
 /** extractSchemaHint 分层阈值配置(默认 maxKeys=15/maxChars=4000;超则转顶层概览) */
-export interface SchemaHintOptions { maxKeys?: number; maxChars?: number }
+export interface SchemaHintOptions { maxKeys?: number; maxChars?: number; /** 工具呈现模式:非 advanced 时分层深层指引改教 read 子路径(schema_data 未装载;默认 'advanced') */ toolMode?: 'simple' | 'advanced' | 'minimal' }
 // ============ 上下文索引纯函数(contextIndex,refactor-module-extraction 期二 从 useContextManager 抽离)============
 export declare const STOP_WORDS: Set<string>;
 export declare function tokenize(text: string): string[];
@@ -1282,7 +1318,7 @@ export declare const systemPromptHelpers: {
 /** HTML 页面搭建主 agent 委派编排(按子 agent id 动态生成,use_<id> 正确;htmlPageOrchestrator 为 id='html' 静态快照) */
 export declare function htmlOrchestratorPrompt(id: string): string;
 /** 从 zod schema 提取字段说明(io 契约注入 systemPrompt 用);非 object schema 用 description 兜底 */
-export declare function extractSchemaHint(schema: any): string;
+export declare function extractSchemaHint(schema: any, opts?: SchemaHintOptions): string;
 export declare function createSessionStore(config?: StorageConfig): SessionStore;
 export declare function createMemoryBackend(): StorageBackend;
 export declare function createWebStorageBackend(storage: Storage): StorageBackend;

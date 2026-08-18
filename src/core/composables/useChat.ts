@@ -12,7 +12,8 @@
  * sendMessage / regenerate 共用 runAssistantStream:前者先 push user,后者移除旧 assistant 后以历史重发。
  */
 import { reactive, ref } from 'vue'
-import type { AgentMessage, AgentState, StreamHandler, ToolStep } from '../types'
+import type { AgentMessage, AgentState, StreamHandler, ToolStep, AgentImage } from '../types'
+import { IMAGE_ONLY_PLACEHOLDER } from '../tools/imageInput'
 import type { Focus } from '../harness/state'
 import { isAbort } from '../harness/retry'
 
@@ -99,8 +100,8 @@ export function useChat(
     })
   }
 
-  function addMessage(role: AgentMessage['role'], content: string, focuses?: Focus[]) {
-    state.messages.push({ role, content, timestamp: Date.now(), ...(focuses && focuses.length ? { focuses } : {}) })
+  function addMessage(role: AgentMessage['role'], content: string, focuses?: Focus[], images?: AgentImage[]) {
+    state.messages.push({ role, content, timestamp: Date.now(), ...(focuses && focuses.length ? { focuses } : {}), ...(images?.length ? { images } : {}) })
     // 新消息默认跟随到底部(addMessage 用于 user 消息 + 非流式 assistant 回复)
     isStickyBottom.value = true
     scrollToBottom()
@@ -279,16 +280,18 @@ export function useChat(
   /**
    * 发送消息:添加用户消息 → 跑 assistant 生成。
    * 每次新建 AbortController;stop() 可中止,abort 不计入 error。
+   * images(image-input-vision):user 消息附带图片(压缩后 AgentImage);多模态校验/vfs 入库在 core.stream 收口。
+   * 排队路径(loading 中再发)不携图:排队任务是纯文本队列,带图消息等生成完再发。
    */
-  async function sendMessage(content: string, focuses?: Focus[]) {
-    if (!content.trim()) return
+  async function sendMessage(content: string, focuses?: Focus[], images?: AgentImage[]) {
+    if (!content.trim() && !images?.length) return
     // 生成中(loading):入排队区(不先进 messages,避免多条排队时打乱"最后 user"定位);生成完 finishRound 依次自动执行。
     // 修 bug:旧版 loading 时直接 return 不发,但 ChatDialog 已清空 inputText → 输入内容丢失 + 无反馈。排队区可撤销/修改
     if (state.loading) {
       queuedTasks.value.push(content.trim())
       return
     }
-    addMessage('user', content.trim(), focuses)
+    addMessage('user', content.trim() || IMAGE_ONLY_PLACEHOLDER, focuses, images)
     state.loading = true
     state.error = null
     currentController = new AbortController()

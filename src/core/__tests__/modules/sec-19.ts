@@ -100,11 +100,11 @@ export async function run(ctx: TestCtx): Promise<void> {
   // ============ usageHints 中间件(能力用法默认提示,克制注入)============
   console.log('\n[usageHints middleware]')
   {
-    // 全开 → 含 planning/snapshot/spawn 三条提示
-    const mwFull = createUsageHintsMiddleware({ planning: true, subagent: true }, true)
+    // 全开 → 含 planning/snapshot/spawn 三条提示(显式 simple:3.28 默认改 advanced,此处测 simple 分支提示词)
+    const mwFull = createUsageHintsMiddleware({ planning: true, subagent: true }, true, 'simple')
     const segFull = mwFull.augmentPrompt?.(createState()) || ''
     assert(/write_todos/.test(segFull) && /restore_data/.test(segFull) && /spawn_agent/.test(segFull), '能力全开 → 注入 planning/snapshot/spawn 用法')
-    // dataOps 开 + simple(默认)→ 主推 read/write(高层入口)
+    // dataOps 开 + simple → 主推 read/write(高层入口)
     assert(/\bread\b/.test(segFull) && /\bwrite\b/.test(segFull), 'dataOps 开 + simple → 注入 read/write 高层用法')
     assert(/offset|分页/.test(segFull), 'dataOps 开 + simple → 注入分页(offset)用法(refine-dataops 可达性)')
     assert(/history_data/.test(segFull), 'dataOps 开 + simple → 注入 history_data 提示(followup 可达性)')
@@ -126,8 +126,8 @@ export async function run(ctx: TestCtx): Promise<void> {
     const segNoData = mwNoData.augmentPrompt?.(createState()) || ''
     assert(!/restore_data/.test(segNoData), '无数据工具 → 不注入 snapshot 提示')
 
-    // 全关 → undefined(不增上下文)
-    const mwNone = createUsageHintsMiddleware({ planning: false, subagent: false, inspectEnv: false }, false)
+    // 全关 → undefined(不增上下文);focus 默认 opt-out 开,advanced 下会注入 focus 段 → 须显式关 focus 才真"全关"(3.28 默认改 advanced 后的回归点)
+    const mwNone = createUsageHintsMiddleware({ planning: false, subagent: false, inspectEnv: false, focus: false }, false)
     assert(mwNone.augmentPrompt?.(createState()) === undefined, '全关 → augmentPrompt 返回 undefined(不增上下文)')
 
     // ===== 提示词与工具面一致性(同类坑:focus 引导 simple 下不存在的 clear_tool)=====
@@ -165,9 +165,9 @@ export async function run(ctx: TestCtx): Promise<void> {
     // minimal → 只 read/write
     const minimal = filterByToolMode(all, 'minimal')
     assert(minimal.length === 2 && names(minimal).includes('read') && names(minimal).includes('write'), 'minimal → 只 read/write')
-    // 默认(不传 mode)= simple
+    // 默认(不传 mode)= advanced(3.28 breaking:默认由 simple 改 advanced,防 LLM 误调 schema_data 等报「工具不存在」)
     const def = filterByToolMode(all)
-    assert(def.length === 7, '默认 toolMode = simple')
+    assert(def.length === 14 && def.length === all.length, '默认 toolMode = advanced(全暴露)')
   }
 
   // ============ history_data(只读查看快照,evolve-default-toolset 期一)============

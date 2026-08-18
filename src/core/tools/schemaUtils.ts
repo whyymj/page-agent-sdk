@@ -394,7 +394,11 @@ export function formatConstraints(c: NonNullable<SchemaNodeDesc['constraints']>)
 /** 渲染单行字段标注:`- key (Type?)[约束]: description`(供 read 概览 / systemPrompt) */
 export function renderSchemaHint(key: string, desc: SchemaNodeDesc): string {
   const scalar = desc.constraints ? formatConstraints(desc.constraints) : ''
-  const bracket = scalar ? `[${scalar}]` : ''
+  // record 显式标注键集开放(机制化防拒写:裸 record schema 无字段清单,LLM 闭世界假设易推断
+  // 「该键不在 schema 里 → 不能写」而拒绝合法写入(如 style.padding,editor_fangzhou 实测);
+  // 显式标注让「可写任意键」成为呈现事实,不依赖集成方 describe 或 systemPrompt 补救)
+  const bracketParts = [scalar, desc.type === 'record' ? '键集开放,任意键可写' : ''].filter(Boolean)
+  const bracket = bracketParts.length ? `[${bracketParts.join(', ')}]` : ''
   const opt = desc.optional ? '?' : ''
   const tail = desc.description ? `: ${desc.description}` : ''
   return `- ${key} (${desc.type}${opt})${bracket}${tail}`
@@ -426,7 +430,10 @@ export function renderSchemaOverview(schemaRaw: any): string {
 function renderSchemaFieldShallow(key: string, schemaRaw: any): string {
   const desc = describeSchemaNode(schemaRaw)
   const tail = desc.description ? `: ${desc.description}` : ''
-  return `- ${key} (${desc.type})${tail}`
+  // record 同样标注键集开放(分层场景更需要:大 schema 走浅概览,record 字段无清单更易触发闭世界拒写)
+  const bracket = desc.type === 'record' ? '[键集开放,任意键可写]' : ''
+  const opt = desc.optional ? '?' : ''
+  return `- ${key} (${desc.type}${opt})${bracket}${tail}`
 }
 
 /**

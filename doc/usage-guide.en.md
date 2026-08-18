@@ -277,18 +277,38 @@ write({ path: 'page.oldField', del: true })
 
 #### `toolMode` — tool presentation
 
+Controls "how many data tools the LLM sees + which workflow usageHints teaches". **This is the only knob you need** (`hintsMode` defaults to `auto` and follows toolMode; it is a migration-compat option, no need to configure normally):
+
 ```ts
 createChatSdk({
   // ...,
-  toolMode: 'simple',  // default: promote read/write, hide low-level get/set/edit/delete/list/describe (6), keep query/search/eval/snapshot (9 data-slot tools total)
-  // toolMode: 'advanced',  // expose all (15 = old 13 + read/write; use when depending on low-level tool names)
-  // toolMode: 'minimal',   // only read/write (2, simplest)
+  // leave unset → 'advanced' (default): expose all; built-in prompts always match the tool surface
+  toolMode: 'simple',   // opt-down: hide low-level/diagnostic tools, promote read/write
+  // toolMode: 'minimal',  // read/write only (most constrained, most token-efficient)
 })
 ```
 
-- `simple` (default): LLM sees only `read`/`write` + advanced query/snapshot — lowest cognitive load; `usageHints` auto-injects read/write guidance
-- `advanced`: expose all (backward compat / debugging / precise control)
-- `minimal`: only `read`/`write` (pure read/write scenarios, most token-efficient)
+| Tool family | advanced (default) | simple | minimal |
+|---|:-:|:-:|:-:|
+| `read`/`write` (high-level, auto optimistic lock + auto snapshot) | ✅ | ✅ | ✅ |
+| `query_data`/`search_data`/`eval_script` (query/search/sandbox) | ✅ | ✅ | — |
+| `restore_data`/`history_data` (snapshot rollback / history) | ✅ | ✅ | — |
+| `get/set/edit/delete/describe_data` (low-level CRUD, manual hash lock) | ✅ | — | — |
+| `schema_data`/`diff_data` (constraints / diff) | ✅ | — | — |
+| `set/add/remove/clear_focus` (focus tools) | ✅ | — | — |
+| `draft_*`/`resource_*` (when the opt-in capability is on) | ✅ | — | — |
+| Data tools loaded | 14 | 7 | 2 |
+
+**Behavioral differences**:
+- **Lock semantics**: advanced teaches "read via `get_data` → pass `expectedHash` on write" (explicit lock); simple/minimal use read/write's auto optimistic lock (implicit; LLM is unaware of hash)
+- **Focus ownership**: under advanced the agent can call `set_focus` itself; under simple/minimal the focus tools are not loaded — the host drives focus via `sdk.setFocus()/addFocus()` (the Focus capability itself remains available)
+- **Prompt ↔ tool-surface consistency**: usageHints only teaches tools that exist in the pool (under simple it does NOT teach schema_data, steering to read sub-paths instead); built-in prompts (read header / large-schema tiered disclosure / focus subtree) branch the same way
+
+**Choosing**:
+- Leave unset (advanced): full built-in capability (constraints/diff/self-focus), prompts always match the tool surface
+- Want to constrain the tool surface / save tokens / keep the LLM off low-level tools → `simple`
+- Host fully in control, only need the AI to change values → `minimal`
+- Legacy systemPrompts phrased for "simple mode / not exposed / do not call" are auto-detected (hints downgraded + warn), but prefer passing `toolMode:'simple'` explicitly so the tool pool matches too
 
 #### `interceptors` — read/write interceptors
 

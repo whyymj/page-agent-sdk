@@ -43,6 +43,8 @@ export interface DialogIcons {
   close?: string
   /** 历史记录下拉的「删除会话」按钮图标(undefined = ✕ 文本;传 emoji/字符/HTML 片段替换,如 <img>) */
   sessionDelete?: string
+  /** 输入区「添加图片」按钮图标(undefined = 内置回形针 SVG;image-input-vision) */
+  attachImage?: string
 }
 
 /** 默认图标集(与拆 emoji 前的硬编码值一致,默认路径行为零变化) */
@@ -76,5 +78,6 @@ export function resolveDialogIcons(partial?: Partial<DialogIcons>): DialogIcons 
   if (partial.more) merged.more = partial.more
   if (partial.close) merged.close = partial.close
   if (partial.sessionDelete) merged.sessionDelete = partial.sessionDelete
+  if (partial.attachImage) merged.attachImage = partial.attachImage
   return merged
 }

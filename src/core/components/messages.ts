@@ -67,6 +67,13 @@ export interface DialogMessages {
   sendHint: string
   sendTitle: string
   stopTitle: string
+  // ===== ChatInput 图片输入(image-input-vision)=====
+  attachImageTitle: string     // 添加图片(可拖拽 / 粘贴)
+  imageDropHint: string        // 松开添加图片
+  imageCountLimitPrefix: string // 单轮最多 / Up to
+  imageCountLimitSuffix: string // 张图片 / images per message
+  imageInvalid: string         // 图片读取失败,已忽略 / Failed to read image, skipped
+  imageAlt: string             // 用户图片 / User image
   // ===== QueuedBar =====
   queuedTitle: string
   queuedEditTitle: string
@@ -305,6 +312,12 @@ export const MESSAGES_ZH_CN: DialogMessages = {
   sendHint: 'Enter 发送 · Shift+Enter 换行',
   sendTitle: '发送',
   stopTitle: '停止生成',
+  attachImageTitle: '添加图片(可拖拽 / 粘贴)',
+  imageDropHint: '松开添加图片',
+  imageCountLimitPrefix: '单轮最多 ',
+  imageCountLimitSuffix: ' 张图片',
+  imageInvalid: '图片读取失败,已忽略',
+  imageAlt: '用户图片',
   queuedTitle: '排队中 · 生成完后自动执行',
   queuedEditTitle: '修改(填回输入框编辑)',
   removeQueuedTitle: '撤销该任务',
@@ -539,6 +552,12 @@ export const MESSAGES_EN_US: DialogMessages = {
   sendHint: 'Enter to send · Shift+Enter for newline',
   sendTitle: 'Send',
   stopTitle: 'Stop generating',
+  attachImageTitle: 'Add image (drag & drop / paste)',
+  imageDropHint: 'Drop to attach image',
+  imageCountLimitPrefix: 'Up to ',
+  imageCountLimitSuffix: ' images per message',
+  imageInvalid: 'Failed to read image, skipped',
+  imageAlt: 'User image',
   queuedTitle: 'Queued · runs when current finishes',
   queuedEditTitle: 'Edit (fill back into input)',
   removeQueuedTitle: 'Drop this task',

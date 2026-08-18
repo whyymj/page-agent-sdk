@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-2437%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-2496%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -302,7 +302,7 @@ createChatSdk({ subagents: [
 
 ### Built-in tools (Agent-callable)
 
-- **data ops** (default `toolMode:'simple'`): `read` (list/get/describe merged) / `write` (set/edit/delete merged + auto optimistic lock + auto snapshot) — recommended; `toolMode:'advanced'` also exposes low-level `describe_data` / `get_data` (@deprecated, use read) / `set_data` / `edit_data` (jsonPath patch) / `delete_data` / `restore_data` / `history_data` (with list mode) / `diff_data`
+- **data ops** (default `toolMode:'advanced'`, expose all; opt-down `simple` promotes read/write, `minimal` read/write only): `read` (list/get/describe merged) / `write` (set/edit/delete merged + auto optimistic lock + auto snapshot) — recommended; `restore_data` / `history_data` (snapshot rollback/history); `advanced` additionally exposes low-level `describe_data` / `get_data` (@deprecated, use read) / `set_data` / `edit_data` (jsonPath patch) / `delete_data` / `schema_data` / `diff_data` / focus tools
 - **window query**: `query_data` (JSONPath) / `search_data` (fuzzy) / `eval_script` (sandboxed)
 - **fetch**: `fetch_document`
 - **vfs**: `vfs_read` / `vfs_write` / `vfs_edit` / `vfs_ls` / `vfs_glob` / `vfs_grep`
@@ -397,7 +397,7 @@ createChatSdk({
   id: 'my-agent',              // stable id (multi-agent isolation + persistence resume)
   systemPrompt: '...',
   data: { schema, bind, description? },  // single main object: bind directly connects reactive/plain object (tools read/write bind, not auto-mounted to window); schema field .describe() auto-injected into systemPrompt「可操作数据」section
-  toolMode: 'simple',           // tool presentation: simple (default, promotes read/write) / advanced (all) / minimal (read/write only)
+  // toolMode: 'simple',        // optional: default 'advanced' (expose all); simple promotes read/write; minimal = read/write only
   interceptors: {              // read/write interceptors (desensitize/transform/audit/reject; input/output at agent IO entry/exit)
     read: (value) => value,
     write: (payload) => payload,
@@ -499,8 +499,8 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 2437 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 769 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm test            # 2496 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 801 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test

@@ -72,16 +72,54 @@ export async function run() {
     assert(toolsOn.includes('fetch_document') === false, 'MIN_CAPS(fetch:false) → 不含 fetch_document')
     sdkOn.unmount()
 
-    // simple 模式(默认):evolve 精简后 7 个(去 snapshot/list,补 history_data;仍隐藏底层 5 + schema_data)
+    // simple 模式(显式 opt-down;3.28 默认改 advanced 后,集成方需显式传 simple 才走精简工具面):evolve 精简后 7 个(去 snapshot/list,补 history_data;仍隐藏底层 5 + schema_data)
     const sdkSimple = createChatSdk({
       ui: false, id: 'e2e-tools-simple', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
       data: { schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'x' },
+      toolMode: 'simple',
     })
     await sdkSimple.mount()
     const toolsSimple = sdkSimple.inspect().tools.map((t) => t.name)
     assert(['read', 'write', 'query_data', 'search_data', 'eval_script', 'restore_data', 'history_data'].every((n) => toolsSimple.includes(n)), 'simple → 含 read/write + query/search/eval/restore/history(7 个,evolve 精简)')
     assert(['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data', 'schema_data', 'diff_data'].every((n) => !toolsSimple.includes(n)), 'simple → 隐藏底层 5 + schema_data + diff_data(snapshot/list 已移除)')
     sdkSimple.unmount()
+
+    // 默认(不传 toolMode)= advanced(3.28 breaking:原默认 simple 致 LLM 误调 schema_data 报「工具不存在」;改 advanced 全暴露)
+    const sdkDefault = createChatSdk({
+      ui: false, id: 'e2e-tools-default', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      data: { schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'x' },
+    })
+    await sdkDefault.mount()
+    const toolsDefault = sdkDefault.inspect().tools.map((t) => t.name)
+    assert(['schema_data', 'diff_data', 'describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data'].every((n) => toolsDefault.includes(n)), '默认(不传 toolMode)= advanced → 含 schema_data/diff_data 等底层工具')
+    assert(toolsDefault.includes('clear_focus'), '默认 advanced → focus 工具族装载(clear_focus 在 simple 下不装载)')
+    sdkDefault.unmount()
+
+    // 提示词与工具面一致性(顶层集成视角):大 schema(>15 顶层 key)触发分层披露,
+    // 深层指引按 toolMode 分支 —— simple 未装载 schema_data 时 systemPrompt 不得教 schema_data(editor_fangzhou 误调事故驱动)
+    const bigShape = {}
+    for (let i = 0; i < 20; i++) bigShape[`f${i}`] = z.string()
+    const sdkTierSimple = createChatSdk({
+      ui: false, id: 'e2e-tier-simple', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      data: { schema: z.object(bigShape), bind: {}, description: 'big' },
+      toolMode: 'simple',
+    })
+    await sdkTierSimple.mount()
+    const spSimple = sdkTierSimple.inspect().systemPrompt
+    assert(spSimple.includes('顶层概览'), 'toolMode simple + 大 schema → systemPrompt 含分层概览')
+    assert(!spSimple.includes('深层约束查 schema_data'), 'toolMode simple → 分层深层指引不教 schema_data(工具池未装载)')
+    assert(spSimple.includes('read({jsonPath})'), 'toolMode simple → 分层深层指引改教 read 子路径')
+    sdkTierSimple.unmount()
+
+    const sdkTierDefault = createChatSdk({
+      ui: false, id: 'e2e-tier-default', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      data: { schema: z.object({ ...bigShape, style: z.record(z.string(), z.unknown()).optional() }), bind: {}, description: 'big' },
+    })
+    await sdkTierDefault.mount()
+    const spDefault = sdkTierDefault.inspect().systemPrompt
+    assert(spDefault.includes('深层约束查 schema_data'), '默认 advanced + 大 schema → 分层深层指引用 schema_data(工具池已装载)')
+    assert(spDefault.includes('键集开放'), 'record 字段(style)→ systemPrompt 概览带「键集开放」标注(防 LLM 闭世界假设拒写)')
+    sdkTierDefault.unmount()
 
     // minimal 模式:只 read/write
     const sdkMin = createChatSdk({
@@ -166,6 +204,7 @@ export async function run() {
       ui: false, id: 'e2e-draft-simple', storage: 'memory', llm: FAKE_LLM,
       capabilities: { ...MIN_CAPS, vfs: true, draftWrite: true },
       data: { schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'x' },
+      toolMode: 'simple',  // 3.28 默认改 advanced 后,测 simple 隐藏 draft 须显式 opt-down
     })
     await sdkDraftSimple.mount()
     assert(!sdkDraftSimple.inspect().tools.some((t) => t.name === 'draft_write'), 'draftWrite:true 但 simple 模式 → 隐藏 draft(advanced 才暴露)')

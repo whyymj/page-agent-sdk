@@ -85,7 +85,8 @@ import { extractVfsRefs, gcVfsLargeResults } from '../utils/vfsGc'
 import { DEFAULT_STREAM_STALL_MS, DEFAULT_STREAM_MAX_DURATION_MS } from '../utils/stallTimeout'
 import { createSerialRunner } from '../utils/serialRunner'
 import { normalizeUsage } from '../utils/contentParts'
-import type { AgentMessage, StreamHandler, AgentInfo, SdkEvent, SdkEventHandler, TokenUsage, BatchResult, BatchProgress } from '../types'
+import type { AgentMessage, StreamHandler, AgentInfo, SdkEvent, SdkEventHandler, TokenUsage, BatchResult, BatchProgress, AgentImage, ImagesConfig } from '../types'
+import { lightenMessages, hydrateImages, makeThumb, MAX_IMAGES_PER_ROUND } from '../tools/imageInput'
 import type { ToolCallContext } from '../harness/middleware'
 
 export interface LLMConfig {
@@ -100,6 +101,8 @@ export interface LLMConfig {
   contextWindow?: number
   /** 模型最大输出(token);缺省按 model 名查表。maxTokens 未传时作其缺省,避免设错被截断 */
   maxOutputTokens?: number
+  /** 显式声明是否多模态识图(image-input-vision;缺省按 model 名查表,再缺省 false 保守)。true = user 消息图片组装 content parts 直发;网关代理模型名不可辨时用 */
+  vision?: boolean
   /** 透传 ChatOpenAI 的 modelKwargs:额外请求 body 参数(如 deepseek thinking: { thinking: { type: 'enabled' } }) */
   extraBody?: Record<string, any>
   /** 透传 ChatOpenAI configuration 的额外字段(如 headers/timeout/customFetch),与 baseUrl 合并 */
@@ -218,8 +221,15 @@ export interface ChatSdkOptions {
   autoLock?: boolean
   /** 数据操作审计回调:每次 set/edit/delete/restore 经此回调外发结构化事件(独立于 debug,无需 debug:true);集成方做合规审计/操作追溯 */
   onAudit?: (entry: { op: string; value?: unknown; detail?: string; timestamp: number }) => void
-  /** 工具呈现模式:simple(默认,主推 read/write 但保留 query/search/eval/snapshot)| advanced(全暴露)| minimal(只 read/write) */
+  /** 工具呈现模式:advanced(默认,全暴露含 schema_data/diff_data/底层 get/set/edit/focus 工具族)| simple(主推 read/write 但保留 query/search/eval/snapshot,隐藏底层与诊断类)| minimal(只 read/write)。3.28 breaking:默认由 simple 改 advanced,集成方按需 opt-down */
   toolMode?: 'simple' | 'advanced' | 'minimal'
+  /**
+   * 能力用法提示(usageHints)注入模式:控制 usageHints 中间件教 LLM 哪些工具的用法。
+   * - `'auto'`(默认):跟随 `toolMode`;但若 toolMode 为 advanced 且 systemPrompt 含「simple 模式」措辞(存量集成 systemPrompt 按 simple 写),自动降级为 simple 提示词 + warn,避免提示词与集成方 systemPrompt 打架(advanced 提示词教 get_data/edit_data/set_focus,而集成方 systemPrompt 说「这些工具未暴露勿调用」)
+   * - `'simple'` / `'advanced'` / `'minimal'`:显式锁定提示词模式,与 `toolMode` 解耦(如 advanced 工具池 + simple 风格提示词)
+   * 典型:存量集成 systemPrompt 写了「simple 模式」但希望用 advanced 工具池 → 显式传 `hintsMode:'simple'`;或直接传 `toolMode:'simple'` 让工具池也匹配
+   */
+  hintsMode?: 'auto' | 'simple' | 'advanced' | 'minimal'
   /** 读写拦截器:read/write 透传给数据工具(脱敏/转换/审计/拒绝 LLM 读写);input/output 在 agent IO 入口/出口预处理 */
   interceptors?: {
     read?: (value: unknown) => unknown
@@ -259,6 +269,8 @@ export interface ChatSdkOptions {
   contextWindow?: number
   /** 模型最大输出(token);顶层声明对 llm 实例场景也生效,缺省按 model 名查表 */
   maxOutputTokens?: number
+  /** 图片输入配置组(image-input-vision):images.upload 上传换 URL(集成方 OSS)/ images.describe 绑定识图转述(集成方识图子 agent / 自有 vision API,非多模态主模型时转述注入) */
+  images?: ImagesConfig
   /** 内置能力开关(默认全开;关掉某能力则对应中间件/工具不装载) */
   capabilities?: {
     dataOps?: boolean          // 数据操作工具集(默认 true;关 → 不装数据工具,省 token/上下文)
@@ -593,6 +605,8 @@ interface SendOptions {
   maxAutoRetries?: number
   /** 中断信号(fix-hang-and-feedback P1-4):abort → 本次 send 中止(挂起的确认/冲突随 signal 自动收口)。headless 无停止按钮场景的退出通道 */
   signal?: AbortSignal
+  /** 附带图片(image-input-vision;≤4 张,压缩后 AgentImage;需主模型多模态 vision,否则 send 拒绝并 emit 结构化错误 —— 不静默丢图) */
+  images?: AgentImage[]
 }
 
 /** 内存中保留的对话轮数上限(超限压缩为摘要,防 OOM);0 表示关闭 */
@@ -881,6 +895,12 @@ function validateFocusInput(
 
 /** 构建一个独立的核心上下文(含持久化恢复 + agent 构造 + 操作函数) */
 function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
+  // toolMode 默认 'advanced'(3.28 breaking:原默认 simple 隐藏 schema_data/diff_data 等致 LLM 误调报「工具不存在」;advanced 全暴露,集成方按需 opt-down simple/minimal)
+  const toolMode = options.toolMode ?? 'advanced'
+  // hintsMode 解析(3.28):'auto'(默认)跟随 toolMode,但检测到集成方 systemPrompt 含「simple 模式」措辞时自动降级 simple,避免 advanced 提示词与存量 systemPrompt 打架
+  //   纯文本检测(baseSystemPrompt 装配期已可用,见下方);命中即降级 + warn 引导集成方显式对齐(传 toolMode:'simple' 或更新 systemPrompt 措辞)
+  //   注:仅降级提示词,工具池仍按 toolMode(advanced 暴露 schema_data 等);若需工具池也对齐,集成方应显式传 toolMode:'simple'
+  let hintsMode: 'simple' | 'advanced' | 'minimal' = toolMode
   // ===== 累计 token 用量(每轮 LLM 调用经 sdk-events 中间件 afterModel 提取累加;供 sdk.usage 暴露 + onEvent('usage') 单轮外发) =====
   const usage: TokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
   // ===== 乐观锁冲突人工介入(dataOps 写入时检测到主数据已被外部改过 → 挂起等用户决定保留外部/强制覆盖/回退) =====
@@ -936,7 +956,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 上下文聚焦(focus-context):指定组件精修,目标/视野/范围三层收敛。getSchema 延迟引用 liveData(适配 setData 运行时替换,同 checkpointMgr.getData 模式)
   // 焦点变更统一 emit focus_change(所有入口:API/agent 工具/dialog chip/reset;闭包引用 emit,运行时已初始化)
   // unfocusGuidance:focus 工具仅 advanced 装载(见下 focusTools),simple/minimal 下文案须引导「提示用户移除 chip」而非调用不存在的工具
-  const focusMw = createFocusMiddleware({ getSchema: () => liveData()?.schema, getBind: () => liveData()?.bind, unfocusGuidance: options.toolMode === 'advanced' ? 'tool' : 'ask-user', onChange: (focuses) => emit({ type: 'focus_change', focuses }) })
+  const focusMw = createFocusMiddleware({ getSchema: () => liveData()?.schema, getBind: () => liveData()?.bind, unfocusGuidance: toolMode === 'advanced' ? 'tool' : 'ask-user', toolMode, onChange: (focuses) => emit({ type: 'focus_change', focuses }) })
   const workingMemoryMw = createWorkingMemoryMiddleware()
   const memoryMw = createMemoryMiddleware(options.memory || '')
   // memory 为函数(同步/异步)时,后台预求值,首次 beforeAgent 前尽量就绪(不阻塞 mount)
@@ -1041,6 +1061,16 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     console.warn('[page-agent-sdk] 检测到 schema 含 code 字段但未注册 html 子 agent:已自动注入「主 agent 自己写 HTML」编排(code 作普通字段直接 write,无 vfs 工作副本 / 无格式校验门禁)。如需代码资产机制(vfs + 格式校验 + 增量 commit + 主上下文 code 摘要),注册 createHtmlSubagent;若确为降级意图可忽略。')
   }
 
+  // hintsMode 显式配置解析(3.28):'auto' 跟随 toolMode,但检测到 systemPrompt 含「simple 模式」措辞时自动降级 simple
+  // 存量集成 systemPrompt 按 simple 写(告知 LLM「schema_data 等未暴露勿调用」),3.28 默认改 advanced 后 usageHints 会注入 advanced 提示词教 get_data/edit_data/set_focus → 与 systemPrompt 打架
+  // 自动降级仅修提示词侧(工具池仍 advanced);集成方应显式传 toolMode:'simple' 让工具池也对齐,或更新 systemPrompt 措辞
+  if (options.hintsMode && options.hintsMode !== 'auto') {
+    hintsMode = options.hintsMode
+  } else if (toolMode === 'advanced' && /simple\s*模式|未暴露|勿调用/.test(baseSystemPrompt)) {
+    hintsMode = 'simple'
+    console.warn('[page-agent-sdk][hintsMode] 检测到 systemPrompt 含「simple 模式/未暴露/勿调用」措辞但 toolMode 为 advanced(默认):usageHints 已自动降级为 simple 提示词,避免教 LLM 调用集成方 systemPrompt 声明「未暴露」的工具。建议显式对齐:① 集成方 systemPrompt 按 simple 工作流设计 → 传 toolMode:\'simple\' 让工具池也匹配(推荐);② 确需 advanced 工具池 + simple 风格提示词 → 显式传 hintsMode:\'simple\';③ systemPrompt 措辞已过时(实际想要 advanced)→ 更新 systemPrompt 去掉「simple 模式」字样。')
+  }
+
   // 工具:数据操作 + 文档抓取 + 用户自定义(子 agent 中间件据此筛选只读子集)
   // dataOps/fetch 可经 capabilities 关闭(默认开,保持零配置;关则不进工具池,省 token/上下文);筛选经纯函数 selectBuiltinTools(可单测)
   const dataOpsTools = useDataOps && finalDataConfig
@@ -1050,14 +1080,15 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         onConflict: conflictMgr.set,
         autoLock: options.autoLock,
         interceptors: options.interceptors,
+        toolMode,  // 提示词与工具面一致性:read 根结果约束指引按工具面分支(simple/minimal 勿教 schema_data)
         vfsStore: (useDraft || !!finalDataConfig?.resources?.length) ? vfsStore : undefined,  // draft 工具 / 受保护资源(opt-in):vfsStore 提供 → createDataOps 装 draft_write/draft_commit + resource_*
         // code-as-data-asset:htmlSubagent writablePaths → pgIdPaths(schema extend 加 __pgId:safeParse 不剥离 + afterWrite 补 __pgId)+ largeTextPaths(主 scope read code 摘要)
         ...(codeAssetPgIdPaths.length ? { pgIdPaths: codeAssetPgIdPaths } : {}),
         ...(codeAssetLargeTextPaths.length ? { largeTextPaths: codeAssetLargeTextPaths } : {}),
       })
     : []
-  // toolMode 筛选:simple(默认)主推 read/write 但保留高级能力;advanced 全暴露;minimal 只 read/write
-  const dataOpsFiltered = useDataOps ? filterByToolMode(dataOpsTools, options.toolMode) : []
+  // toolMode 筛选:advanced(默认)全暴露;simple 主推 read/write 但保留高级能力;minimal 只 read/write
+  const dataOpsFiltered = useDataOps ? filterByToolMode(dataOpsTools, toolMode) : []
   // 数据操作控制器(运行时替换配置;dataOps 关闭时为 null)
   const dataOpsController = useDataOps && finalDataConfig
     ? (dataOpsTools as StructuredToolInterface[] & { controller?: DataOpsController }).controller ?? null
@@ -1067,7 +1098,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ? createResourcesPinMiddleware({
         getResourcesSnapshot: () => dataOpsController?.getResourcesSnapshot?.() ?? [],
         // resource_* 仅 advanced 暴露(SIMPLE_HIDDEN);simple/minimal 下提示词不教调用(与工具面一致)
-        toolsExposed: options.toolMode === 'advanced',
+        toolsExposed: toolMode === 'advanced',
       })
     : undefined
   /** 当前主数据配置(反映运行时替换;供 inspect/verify 等读最新状态) */
@@ -1176,7 +1207,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       schema: z.object({ path: z.string().describe('要移除的焦点 jsonPath') }),
     },
   )
-  const focusTools: StructuredToolInterface[] = useFocus && options.toolMode === 'advanced' ? [setFocusTool, clearFocusTool, addFocusTool, removeFocusTool] : []
+  const focusTools: StructuredToolInterface[] = useFocus && toolMode === 'advanced' ? [setFocusTool, clearFocusTool, addFocusTool, removeFocusTool] : []
   focusTools.forEach((t) => toolSources.set(t.name, 'builtin'))
   // skill 附带工具(load_skill 后动态注入;skill-external-scripts §5)。按 skill 名记录归属,便于 invalidate/setSkills 卸载
   let loadedSkillTools: StructuredToolInterface[] = []
@@ -1360,7 +1391,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       subagents: effectiveSubagents?.map((s) => ({ id: s.id, description: s.description, temperature: s.temperature })),
     },
     useDataOps && !!finalDataConfig,
-    options.toolMode,
+    hintsMode,
     !!finalDataConfig?.resources?.length,
     // C1 自感知预算:softCap 解析结果(token 维度触发;装配期一次,阈值近似够用)
     { promptSoftCap: resolvePromptSoftCap(modelCaps.contextWindow, resolvedCtxOpts.promptSoftCapTokens) },
@@ -1369,7 +1400,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 插中间件栈最前(usageHints 之前),保证数据段紧跟 base —— LLM 看到的 system 结构与现状等价
   // 仅 finalDataConfig 存在时装载;无 data → buildDataPrompt 返 '' → augmentPrompt 返 undefined → 跳过
   const dataHintMw: Middleware | null = finalDataConfig
-    ? { name: 'dataHint', augmentPrompt: () => buildDataPrompt(liveData(), options.schemaHint) || undefined }
+    ? { name: 'dataHint', augmentPrompt: () => buildDataPrompt(liveData(), options.schemaHint, toolMode) || undefined }
     : null
 
   // augmentSystem 钩子:集成方按运行时状态(state/data)动态注入 system prompt 段
@@ -1692,8 +1723,12 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
     /** 持久化恢复:灌入 messages / vfs / todos / memory / userSkills(hydrate 不触发 vfs save) */
     applySnapshot(snap: SessionSnapshot): void {
-      if (snap.messages?.length) messages.push(...snap.messages)
+      // vfs 先于 messages 恢复:image-input-vision 的轻形态重水化从 vfs 读原图,顺序反了会读空
       if (snap.vfs && vfsStore.hydrate) vfsStore.hydrate(snap.vfs)
+      if (snap.messages?.length) {
+        // image-input-vision:轻形态恢复 —— 从 vfs 重水化原图 dataUri(直发/重发需要;LRU 已淘汰的图保留轻形态,UI 缩略图降级 + 再发图时诚实报错)
+        messages.push(...hydrateImages(snap.messages, (ref) => (ref ? core.vfsStore?.files?.[ref]?.content : undefined) || undefined))
+      }
       if (snap.todos?.length) todosMw.reset(snap.todos)
       // memory:options.memory 优先(非空覆盖),否则用持久化的
       if (snap.memory && !options.memory) memoryMw.reset(snap.memory)
@@ -1780,6 +1815,22 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       if (options.interceptors?.input) {
         try { const r = options.interceptors.input(message); if (typeof r === 'string') msg = r } catch { /* 拦截器抛错忽略,用原 message */ }
       }
+      // image-input-vision 三分支收口(D6 诚实语义):
+      // ① 多模态主模型(vision)→ content parts 直发;② 非 vision + 配 images.describe → 集成方识图转述注入(图片不直发);
+      // ③ 非 vision + 未配 describe → send 拒绝 + emit(recoverable;不静默丢图 —— 丢图后 agent 凭空回答比报错恶劣)
+      const images = (options.images ?? []).filter((im) => im && (im.dataUri || im.vfsRef || im.url))
+      if (images.length > MAX_IMAGES_PER_ROUND) {
+        throw new Error(`[page-agent-sdk] 单轮最多 ${MAX_IMAGES_PER_ROUND} 张图片(收到 ${images.length})`)
+      }
+      if (images.length) {
+        await stowImages(images) // url 型跳过;原图入 vfs + thumb(轻形态持久化引用锚;失败留痕不阻塞)
+        await describeIfNeeded(images, msg)
+      }
+      if (images.length && !modelCaps.vision && !images.every((im) => im.description)) {
+        const em = '当前主模型不支持图片输入(modelCaps.vision=false)。请换多模态模型(gpt-4o/claude/qwen-vl)或 LLMConfig 声明 vision:true;或配置 images.describe 绑定识图转述(集成方识图子 agent / 自有 vision API)'
+        emit({ type: 'error', message: em, severity: 'recoverable', code: 'IMAGE_UNSUPPORTED_MODEL' } as any)
+        throw new Error(`[page-agent-sdk] ${em}`)
+      }
       // automation 无人值守错误恢复:致命错误(invoke 抛错)→ restore_last_checkpoint 回到本轮前 + 重试(限 maxAutoRetries 次防循环)。
       // 适合无人值守批量/长任务:单点模型/工具致命错误不永久中断,自动回退重试;确定性错误重试仍耗尽 → fatal(emit + throw)。
       // checkpoint 在 beforeModel save(时点在 push user 后)→ restore 后 messages 已含本轮 user,故用 pushed 标记避免重复 push。
@@ -1791,7 +1842,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       const sidAtSend = core.sessionId  // 孤儿收口(rv-core F5):invoke 期间 resetSession/switch 换会话的比对锚
       while (true) {
         if (!pushed) {
-          messages.push({ role: 'user', content: msg, timestamp: Date.now() })
+          messages.push({ role: 'user', content: msg, timestamp: Date.now(), ...(images.length ? { images } : {}) })
           pushed = true
         }
         try {
@@ -1959,8 +2010,20 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       lastTitle = undefined; titleLLMDone = false
     },
 
-    stream: (msgs, onEvent, signal) => {
+    stream: async (msgs, onEvent, signal) => {
       if (!core.agent) throw new Error('page-agent-sdk: agent 尚未初始化完成,请先 await mount()')
+      // image-input-vision(UI 路径,send 走 invoke 不经此):带图 user 消息的收口 ——
+      // stow(原图入 vfs + thumb)+ 非 vision 主模型的 describe 旁路 + 诚实闸(三分支同 sdk.send)
+      const imgMsg = [...msgs].reverse().find((m) => m.role === 'user' && (m as AgentMessage).images?.length) as AgentMessage | undefined
+      if (imgMsg?.images?.length) {
+        await stowImages(imgMsg.images)
+        await describeIfNeeded(imgMsg.images, imgMsg.content)
+        if (!modelCaps.vision && !imgMsg.images.every((im) => im.description)) {
+          const em = '当前主模型不支持图片输入(modelCaps.vision=false)。请换多模态模型(gpt-4o/claude/qwen-vl)或 LLMConfig 声明 vision:true;或配置 images.describe 绑定识图转述'
+          emit({ type: 'error', message: em, severity: 'recoverable', code: 'IMAGE_UNSUPPORTED_MODEL' } as any)
+          throw new Error(`[page-agent-sdk] ${em}`)
+        }
+      }
       // P4(harden-context-resilience):注入被引用集 → vfs LRU 淘汰时跳过被消息引用的 large_results(防 vfs_read 404)
       vfsStore?.setProtectedRefs?.(extractVfsRefs(msgs))
       // 包装:流式事件恒转发内部 UI handler + emit(外发 options.onEvent + sdk.hook listeners)。
@@ -2057,6 +2120,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         model: llmCfg?.model ?? (llmOpt as any).model ?? (llmOpt as any).modelName,
         contextWindow: options.contextWindow ?? llmCfg?.contextWindow,
         maxOutputTokens: options.maxOutputTokens ?? llmCfg?.maxOutputTokens,
+        vision: llmCfg?.vision ?? (llmOpt as any).vision,
       })
       if (modelCaps.contextWindow < MIN_CONTEXT_WINDOW) {
         throw new Error(`[page-agent-sdk][setLlm] 新模型上下文窗口 ${modelCaps.contextWindow} 小于最小支持 ${MIN_CONTEXT_WINDOW}(需 ≥200K 窗口模型)`)
@@ -2124,7 +2188,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         sessionId: core.sessionId,
         model: isChatModel(currentLlm) ? ((currentLlm as any).model ?? (currentLlm as any).modelName) : (currentLlm as LLMConfig).model,
         // 代理到 createAgent 权威拼装(base + Σ augmentPrompt,含 usageHints/skills/memory/todos/subagents/augmentSystem 等全部段);agent 未构造时回退 base+data(fix-introspection-consistency)
-        systemPrompt: core.agent?.getEffectiveSystemPrompt?.() ?? (baseSystemPrompt + buildDataPrompt(liveData(), options.schemaHint)),
+        systemPrompt: core.agent?.getEffectiveSystemPrompt?.() ?? (baseSystemPrompt + buildDataPrompt(liveData(), options.schemaHint, toolMode)),
         tools: (core.agent?.allTools ?? allTools).map((t) => ({ name: t.name, description: t.description, schema: (t as any).schema, source: toolSources.get(t.name) || 'user' })),
         skills: (skillsMw ? (skillsMw as any).controller.get() as SkillSpec[] : (options.skills ?? [])).map((s) => ({ name: s.name, description: s.description })),
         data: liveData() ? { description: liveData()!.description, schema: liveData()!.schema } : undefined,
@@ -2392,12 +2456,78 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     store.updateTitle(agentId, sid, title).catch((e: unknown) => notePersistFailure('updateTitle', e))
   }
 
+  /**
+   * 图片原图收口(image-input-vision,send/stream 前调;send 与 core.stream 双路径共用):
+   * - 配 images.upload(集成方 OSS):缩略图 → 上传换 url → 释放 dataUri(url 即持久引用,不入 vfs;content parts 用 URL 形态)。
+   *   上传失败回退 dataURI 内联(留痕不阻塞)。
+   * - 未配 upload:原图入 vfs `userImages/<id>`(userFiles 池,2MB LRU;轻形态持久化引用锚)。
+   * 就地补挂 im.url / im.vfsRef / im.thumb。失败留痕不阻塞 —— 会话内直发不受影响,仅丢跨刷新恢复。
+   */
+  async function stowImages(images: AgentImage[]): Promise<void> {
+    const upload = options.images?.upload
+    for (const im of images) {
+      // 三步各自独立容错:缩略图失败不带崩 upload/vfs(headless Node 无 Image 也照常收口)
+      try {
+        if (im.dataUri && !im.thumb) im.thumb = await makeThumb(im.dataUri)
+      } catch (e) {
+        notePersistFailure('imageThumb', e)
+      }
+      if (upload && im.dataUri && !im.url) {
+        try {
+          const url = await upload(im.dataUri, im)
+          if (url) {
+            im.url = url
+            im.dataUri = undefined // 释放内联:直发/持久化均走 url
+            if (im.vfsRef && core.vfsStore) delete core.vfsStore.files[im.vfsRef] // 上传成功撤 vfs 副本(url 已是持久引用)
+          }
+        } catch (e) {
+          console.warn('[page-agent-sdk][images] upload 失败,回退 dataURI 内联直发:', (e as Error)?.message ?? e)
+        }
+      }
+      if (im.dataUri && !im.vfsRef && core.vfsStore) {
+        im.vfsRef = `userImages/${im.id}`
+        core.vfsStore.files[im.vfsRef] = { content: im.dataUri, updatedAt: Date.now() }
+      }
+    }
+  }
+
+  /**
+   * 识图转述旁路(image-input-vision,集成方绑定):非多模态主模型 + 配 images.describe 时,
+   * 发送前逐图调 describe(集成方识图子 agent / 自有 vision API),转述文本写 im.description
+   * (toLC 拼入该轮 user 上下文,图片不直发;随消息持久化,恢复后不重复转述)。
+   * 单图超时(describeTimeoutMs,默认 15s)/失败 → 占位描述 + observable VISION_DESCRIBE_FAILED,对话继续(D6 诚实降级)。
+   */
+  async function describeIfNeeded(images: AgentImage[], text: string): Promise<void> {
+    const describe = options.images?.describe
+    if (modelCaps.vision || !describe) return
+    const timeoutMs = options.images?.describeTimeoutMs ?? 15000
+    for (const im of images) {
+      if (im.description) continue // 已转述(重发/恢复场景)不重复
+      try {
+        const ac = new AbortController()
+        const timer = setTimeout(() => ac.abort(), timeoutMs)
+        try {
+          im.description = (await Promise.race([
+            describe(im, { text }),
+            new Promise<never>((_, rej) => ac.signal.addEventListener('abort', () => rej(new Error(`识图转述超时(${timeoutMs}ms)`)))),
+          ])).trim()
+        } finally {
+          clearTimeout(timer)
+        }
+      } catch (e) {
+        im.description = '[图片描述不可用]'
+        emit({ type: 'error', message: `识图转述失败:${(e as Error)?.message ?? String(e)}`, severity: 'observable', code: 'VISION_DESCRIBE_FAILED' } as any)
+      }
+    }
+  }
+
   /** 持久化当前会话的 messages + todos(一轮结束 / send 后调用) */
   function persistRuntime(): void {
     if (!core.sessionId || !store) return
     // messages 元素是 Vue reactive proxy → IDB structured clone 会抛 DataCloneError(静默失败,messages 存不进);
     // 先 JSON 纯化为普通对象。localStorage 走 JSON.stringify 本就纯化,故 local 不受影响、indexed 受影响。
-    const pureMessages = JSON.parse(JSON.stringify(messages)) as AgentMessage[]
+    // image-input-vision:轻形态落盘(剥 dataUri 原图只留 thumb+vfsRef;原图走 vfs kind 各自持久化,快照体积不放大 —— design D2)
+    const pureMessages = lightenMessages(JSON.parse(JSON.stringify(messages)) as AgentMessage[])
     persistSave({ messages: pureMessages })
     // todos 始终同步当前态(含空数组覆写):否则会话内 todos 由有变空(LLM 主动 write_todos([]))后,
     // storage 仍残留旧清单 → 刷新恢复出遗留的已完成 todos。代价:未用过 todos 的会话多写一条空记录(可忽略)。
@@ -2532,6 +2662,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       // 模型能力透传(已在 buildCore 解析,声明优先 > 表 > 缺省):驱动 maxTokens 缺省与 offload 阈值
       contextWindow: modelCaps.contextWindow,
       maxOutputTokens: modelCaps.maxOutputTokens,
+      // image-input-vision:多模态主模型 user 消息图片直发;anthropic provider 用原生 image block 格式
+      vision: modelCaps.vision,
+      imageContentFormat: (!isChatModel(options.llm) && ((options.llm as LLMConfig).provider ?? 'openai') === 'anthropic') ? 'anthropic' : 'openai',
       // verify 自纠上限:装载 verify 时用 verify.maxAttempts(默认 2),否则 0(关闭自纠 = 现状)
       maxVerifyAttempts: useVerify ? verifyMaxAttempts : 0,
       // C4 单 invoke token 预算(opt-in,默认关):超限友好收口;与 automation 全局 tokenBudget 正交

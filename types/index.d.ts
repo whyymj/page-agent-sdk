@@ -59,6 +59,50 @@ export interface ToolStep {
   subReasonFull?: string;
 }
 
+/** user 消息附带图片(image-input-vision):内存态带 dataUri(直发/重发用);持久化轻形态只留 thumb+vfsRef/url(restore 后按需重水化) */
+export interface AgentImage {
+  /** 图片 id(消息内唯一;vfs 路径与持久化引用的锚) */
+  id: string;
+  /** 压缩后原图 dataURI(base64;持久化时剥离,恢复后从 vfs 重水化;配 images.upload 成功后释放只留 url) */
+  dataUri?: string;
+  name?: string;
+  width?: number;
+  height?: number;
+  /** 压缩后 base64 字节估算 */
+  bytes?: number;
+  /** 缩略图 dataURI(≤~8KB;持久化轻形态的渲染位) */
+  thumb?: string;
+  /** 原图在 vfs 的路径(userImages/<id>;LRU 淘汰后缺省 → UI 降级占位) */
+  vfsRef?: string;
+  /** 集成方上传后的 URL(images.upload 返回;URL 形态直发 + 持久化轻引用) */
+  url?: string;
+  /** 识图转述文本(images.describe 产出;非多模态主模型时拼入该轮 user 上下文;随消息持久化) */
+  description?: string;
+}
+
+/** 图片输入配置组(image-input-vision;顶层 `images` 选项) */
+export interface ImagesConfig {
+  /** 上传换 URL(集成方 OSS):压缩后原图经此上传返回 https URL;配置后消息/持久化存 URL(content parts 用 URL 形态),原图不再内联/不入 vfs;失败回退 dataURI 内联(留痕) */
+  upload?: (dataUri: string, image: AgentImage) => Promise<string>;
+  /** 识图转述(集成方绑定识图能力:自有 vision API / 识图子 agent):非多模态主模型时发送前逐图调用,转述文本注入该轮 user 上下文(图片不直发);已转述(持久化恢复)不重复 */
+  describe?: (image: AgentImage, context: { text: string }) => Promise<string>;
+  /** 单次 describe 超时 ms(默认 15000;超时/失败 → 占位描述 + observable VISION_DESCRIBE_FAILED,对话继续) */
+  describeTimeoutMs?: number;
+}
+
+/** 图片输入错误(image-input-vision;code 稳定,UI/i18n 可按键分发;输入侧拒绝,不静默丢图) */
+export declare class ImageInputError extends Error {
+  code: 'IMAGE_TOO_LARGE' | 'IMAGE_COUNT_LIMIT' | 'IMAGE_DECODE_FAILED' | 'IMAGE_COMPRESS_FAILED' | 'IMAGE_UNSUPPORTED_TYPE';
+  constructor(code: ImageInputError['code'], message: string);
+}
+
+/**
+ * 压缩闸(image-input-vision;headless 自建 UI 的集成方制备 AgentImage 用):
+ * 原图 >20MB 拒(抛 ImageInputError);等比缩放长边 ≤1568;含透明保 png 否则 jpeg q0.85。
+ * 浏览器域 API(依赖 canvas/document);node 环境不可用。
+ */
+export declare function compressImage(source: Blob, opts?: { name?: string }): Promise<AgentImage>;
+
 export interface AgentMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
@@ -67,6 +111,8 @@ export interface AgentMessage {
   steps?: ToolStep[];
   /** user 消息发送时的焦点快照(multi-focus;MessageRow 渲染 🎯 chip 标注背景组件限制,持久化随 messages) */
   focuses?: Focus[];
+  /** user 消息附带图片(image-input-vision;多模态主模型 toLC 组装 content parts 直发,非多模态走 images.describe 转述注入) */
+  images?: AgentImage[];
 }
 
 export interface AgentConfig {
@@ -209,6 +255,8 @@ export interface DialogIcons {
   close?: string;
   /** 历史记录下拉的「删除会话」按钮图标(undefined = ✕ 文本;传 emoji/字符/HTML 片段替换,如 <img>) */
   sessionDelete?: string;
+  /** 输入区「添加图片」按钮图标(undefined = 内置回形针 SVG;image-input-vision) */
+  attachImage?: string;
 }
 
 /** 对话框文案键空间(dialog.locale 选包 / dialog.messages 键级覆盖优先;含插值的键组件侧拼数字) */
@@ -759,6 +807,8 @@ export interface LLMConfig {
   contextWindow?: number;
   /** 模型最大输出(token);缺省按 model 名查表。maxTokens 未传时作其缺省,避免设错被截断 */
   maxOutputTokens?: number;
+  /** 显式声明是否多模态识图(image-input-vision;缺省按 model 名查表,再缺省 false 保守)。true = user 消息图片组装 content parts 直发;网关代理模型名不可辨时用 */
+  vision?: boolean;
   /** 透传 ChatOpenAI 的 modelKwargs:额外请求 body 参数(如 deepseek thinking: { thinking: { type: 'enabled' } }) */
   extraBody?: Record<string, any>;
   /** 透传 ChatOpenAI configuration 的额外字段(如 headers/timeout/customFetch),与 baseUrl 合并 */
@@ -809,6 +859,8 @@ export interface DataOpsOptions {
   autoLock?: boolean;
   /** 读写拦截器:read/write 透传给数据工具(脱敏/转换/审计/拒绝 LLM 读写) */
   interceptors?: DataInterceptors;
+  /** 工具呈现模式(提示词与工具面一致性):read 根结果约束指引按此分支(simple/minimal 未装载 schema_data 时改教 read 子路径)。默认 'advanced' */
+  toolMode?: 'simple' | 'advanced' | 'minimal';
 }
 
 /** 数据读写拦截器(集成方可脱敏/转换/审计/拒绝 LLM 的读写) */
@@ -819,7 +871,7 @@ export interface DataInterceptors {
   write?: (payload: any, current: any) => any | { error: string };
 }
 
-/** 工具呈现模式:simple=主推 read/write 但保留高级能力(默认)| advanced=全暴露| minimal=只 read/write */
+/** 工具呈现模式:advanced=全暴露(默认)| simple=主推 read/write 但保留高级能力 | minimal=只 read/write(3.28 起默认 advanced) */
 export type ToolMode = 'simple' | 'advanced' | 'minimal';
 
 /** 数据操作控制器(运行时替换配置;createDataOps 返回的工具数组上以不可枚举属性 `controller` 挂载) */
@@ -1116,8 +1168,10 @@ export interface ChatSdkOptions {
   autoLock?: boolean;
   /** 数据操作审计回调:每次 set/edit/delete/restore 经此回调外发结构化事件(独立于 debug,无需 debug:true);集成方做合规审计/操作追溯 */
   onAudit?: (entry: { op: string; value?: unknown; detail?: string; timestamp: number }) => void;
-  /** 工具呈现模式:simple(默认,主推 read/write 但保留 query/search/eval/snapshot)| advanced(全暴露)| minimal(只 read/write) */
+  /** 工具呈现模式:advanced(默认,全暴露含 schema_data/diff_data/底层 get/set/edit/focus 工具族)| simple(主推 read/write 但保留 query/search/eval/snapshot,隐藏底层与诊断类)| minimal(只 read/write)。3.28 breaking:默认由 simple 改 advanced */
   toolMode?: 'simple' | 'advanced' | 'minimal';
+  /** 能力用法提示(usageHints)注入模式:'auto'(默认)跟随 toolMode,但 toolMode 为 advanced 且 systemPrompt 含「simple 模式」措辞时自动降级 simple;或显式锁定提示词模式与 toolMode 解耦 */
+  hintsMode?: 'auto' | 'simple' | 'advanced' | 'minimal';
   /** 读写拦截器:read/write 透传给数据工具(脱敏/转换/审计/拒绝 LLM 读写);input/output 在 agent IO 入口/出口预处理 */
   interceptors?: {
     read?: (value: any) => any;
@@ -1130,7 +1184,7 @@ export interface ChatSdkOptions {
   /** 内存中保留的对话轮数上限(默认 50);超限把最旧轮次压缩为摘要 system 消息(防 OOM);0 关闭 */
   maxMemoryRounds?: number;
   debug?: boolean;
-  /** agent 工具调用轮次上限(默认 10);大 JSON 分块构建(draft_write×N + draft_commit + read 确认)是多轮场景,可能触顶被截断,建议调大到 20-30 */
+  /** agent 工具调用轮次上限(默认 15);大 JSON 分块构建(draft_write×N + draft_commit + read 确认)是多轮场景,可能触顶被截断,建议调大到 20-30 */
   maxToolRounds?: number;
   /** 规划阶段总轮次预算(默认 5);planning 状态下超限 → write_todos/update_todo 回灌,防"光规划不执行"死循环。与 maxIterations 正交 */
   maxPlanRevisions?: number;
@@ -1154,6 +1208,8 @@ export interface ChatSdkOptions {
   contextWindow?: number;
   /** 模型最大输出(token);顶层声明对 llm 实例场景也生效,缺省按 model 名查表 */
   maxOutputTokens?: number;
+  /** 图片输入配置组(image-input-vision):images.upload 上传换 URL(集成方 OSS)/ images.describe 绑定识图转述(集成方识图子 agent / 自有 vision API,非多模态主模型时转述注入) */
+  images?: ImagesConfig;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
   capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; tracing?: boolean; todoDeps?: boolean; automation?: boolean; workingMemory?: boolean; focus?: boolean; skillHostScript?: boolean; contextInspector?: boolean; agentCompression?: boolean; preferences?: boolean };
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number; timeoutMs?: number };
@@ -1276,7 +1332,7 @@ export interface ChatSdk {
   hide(): void;
   /** 抽屉模式显示:移除 cs-hidden class 恢复可见(配合 hide 使用;首次挂载用 mount) */
   show(): void;
-  send(message: string, options?: { mission?: Partial<Mission>; interceptors?: { input?: (input: unknown) => unknown; output?: (json: unknown) => unknown }; maxAutoRetries?: number; /** 中断信号(fix-hang-and-feedback P1-4) */ signal?: AbortSignal }): Promise<string>;
+  send(message: string, options?: { mission?: Partial<Mission>; interceptors?: { input?: (input: unknown) => unknown; output?: (json: unknown) => unknown }; maxAutoRetries?: number; /** 中断信号(fix-hang-and-feedback P1-4) */ signal?: AbortSignal; /** 附带图片(image-input-vision;≤4 张,压缩后 AgentImage;需主模型多模态 vision 或配置 images.describe,否则 send 拒绝并 emit 结构化错误 —— 不静默丢图) */ images?: AgentImage[] }): Promise<string>;
   switchSession(sessionId?: string): Promise<string>;
   /**
    * 新建/清空会话(同步;「清空对话」编程式入口,与 UI ChatHeader 清空同语义):
@@ -1443,8 +1499,8 @@ export declare function createChatSdk(options: ChatSdkOptions): ChatSdk;
 export declare const DEFAULT_SYSTEM_PROMPT: string;
 /** 默认 systemPrompt 英文版(dialog.locale:'en-US' 且未传 systemPrompt 时用;末行语言锚确保英文输出) */
 export declare const DEFAULT_SYSTEM_PROMPT_EN: string;
-/** 拼接「可操作数据」段(从 data schema .describe() 自动提取注入) */
-export declare function buildDataPrompt(data: DataConfig | undefined): string;
+/** 拼接「可操作数据」段(从 data schema .describe() 自动提取注入);toolMode 透传分层披露(simple/minimal 勿教 schema_data) */
+export declare function buildDataPrompt(data: DataConfig | undefined, schemaHint?: SchemaHintOptions, toolMode?: 'simple' | 'advanced' | 'minimal'): string;
 /**
  * 统一 systemPrompt base 段入口:处理 appendReliableWriteRules 分支 + '---' 分割线。
  * 传 systemPrompt 默认追加 reliableWriteRules(设 appendReliableWriteRules:false 关闭);不传用 DEFAULT_SYSTEM_PROMPT(已内置)。纯函数。
@@ -1550,7 +1606,7 @@ export declare function renderSchemaOverview(schema: any): string;
 /** 渲染 schema 顶层字段浅概览(分层模式:只 key+type+desc,不带约束/不递归;大 schema 用,体积降) */
 export declare function renderSchemaShallow(schema: any): string;
 /** extractSchemaHint 分层阈值配置(默认 maxKeys=15/maxChars=4000;超则转顶层概览) */
-export interface SchemaHintOptions { maxKeys?: number; maxChars?: number }
+export interface SchemaHintOptions { maxKeys?: number; maxChars?: number; /** 工具呈现模式:非 advanced 时分层深层指引改教 read 子路径(schema_data 未装载;默认 'advanced') */ toolMode?: 'simple' | 'advanced' | 'minimal' }
 // ============ 上下文索引纯函数(contextIndex,refactor-module-extraction 期二 从 useContextManager 抽离)============
 export declare const STOP_WORDS: Set<string>;
 export declare function tokenize(text: string): string[];
@@ -1687,7 +1743,7 @@ export declare const systemPromptHelpers: {
 /** HTML 页面搭建主 agent 委派编排(按子 agent id 动态生成,use_<id> 正确;htmlPageOrchestrator 为 id='html' 静态快照) */
 export declare function htmlOrchestratorPrompt(id: string): string;
 /** 从 zod schema 提取字段说明(io 契约注入 systemPrompt 用);非 object schema 用 description 兜底 */
-export declare function extractSchemaHint(schema: any): string;
+export declare function extractSchemaHint(schema: any, opts?: SchemaHintOptions): string;
 export declare function createSessionStore(config?: StorageConfig): SessionStore;
 export declare function createMemoryBackend(): StorageBackend;
 export declare function createWebStorageBackend(storage: Storage): StorageBackend;
