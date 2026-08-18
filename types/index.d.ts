@@ -1178,10 +1178,8 @@ export interface ChatSdkOptions {
   conflictPolicy?: ConflictPolicy;
   /** 数据操作审计回调:每次 set/edit/delete/restore 经此回调外发结构化事件(独立于 debug,无需 debug:true);集成方做合规审计/操作追溯 */
   onAudit?: (entry: { op: string; value?: unknown; detail?: string; timestamp: number }) => void;
-  /** 工具呈现模式:advanced(默认,全暴露含 schema_data/diff_data/底层 get/set/edit/focus 工具族)| simple(主推 read/write 但保留 query/search/eval/snapshot,隐藏底层与诊断类)| minimal(只 read/write)。3.28 breaking:默认由 simple 改 advanced */
+  /** 工具呈现模式:advanced(默认,全暴露含 schema_data/diff_data/底层 get/set/edit/focus 工具族)| simple(主推 read/write 但保留 query/search/eval/snapshot,隐藏底层与诊断类)| minimal(只 read/write)。3.28 breaking:默认由 simple 改 advanced。usageHints 提示词内部自动跟随 toolMode(并对存量「simple 模式/未暴露」systemPrompt 自动降级兼容),无独立开关 */
   toolMode?: 'simple' | 'advanced' | 'minimal';
-  /** 能力用法提示(usageHints)注入模式:'auto'(默认)跟随 toolMode,但 toolMode 为 advanced 且 systemPrompt 含「simple 模式」措辞时自动降级 simple;或显式锁定提示词模式与 toolMode 解耦 */
-  hintsMode?: 'auto' | 'simple' | 'advanced' | 'minimal';
   /** 读写拦截器:read/write 透传给数据工具(脱敏/转换/审计/拒绝 LLM 读写);input/output 在 agent IO 入口/出口预处理 */
   interceptors?: {
     read?: (value: any) => any;

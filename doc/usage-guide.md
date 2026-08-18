@@ -313,7 +313,7 @@ write({ patch: { jsonPath: 'oldField' }, del: true })
 
 ### `toolMode` 工具呈现模式
 
-控制「暴露多少数据工具给 LLM + usageHints 教哪套工作流」。**只需配这一个旋钮**(`hintsMode` 默认 auto 自动跟随,仅迁移兼容用,正常无需配置):
+控制「暴露多少数据工具给 LLM + usageHints 教哪套工作流」。**只需配这一个旋钮**(提示词档位内部自动跟随 toolMode,并对存量「simple 模式/未暴露」systemPrompt 自动降级兼容,无需额外配置):
 
 ```ts
 createChatSdk({

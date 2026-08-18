@@ -225,15 +225,8 @@ export interface ChatSdkOptions {
   conflictPolicy?: ConflictPolicy
   /** 数据操作审计回调:每次 set/edit/delete/restore 经此回调外发结构化事件(独立于 debug,无需 debug:true);集成方做合规审计/操作追溯 */
   onAudit?: (entry: { op: string; value?: unknown; detail?: string; timestamp: number }) => void
-  /** 工具呈现模式:advanced(默认,全暴露含 schema_data/diff_data/底层 get/set/edit/focus 工具族)| simple(主推 read/write 但保留 query/search/eval/snapshot,隐藏底层与诊断类)| minimal(只 read/write)。3.28 breaking:默认由 simple 改 advanced,集成方按需 opt-down */
+  /** 工具呈现模式:advanced(默认,全暴露含 schema_data/diff_data/底层 get/set/edit/focus 工具族)| simple(主推 read/write 但保留 query/search/eval/snapshot,隐藏底层与诊断类)| minimal(只 read/write)。3.28 breaking:默认由 simple 改 advanced,集成方按需 opt-down。usageHints 提示词内部自动跟随 toolMode(并对存量「simple 模式/未暴露」systemPrompt 自动降级兼容),无独立开关 */
   toolMode?: 'simple' | 'advanced' | 'minimal'
-  /**
-   * 能力用法提示(usageHints)注入模式:控制 usageHints 中间件教 LLM 哪些工具的用法。
-   * - `'auto'`(默认):跟随 `toolMode`;但若 toolMode 为 advanced 且 systemPrompt 含「simple 模式」措辞(存量集成 systemPrompt 按 simple 写),自动降级为 simple 提示词 + warn,避免提示词与集成方 systemPrompt 打架(advanced 提示词教 get_data/edit_data/set_focus,而集成方 systemPrompt 说「这些工具未暴露勿调用」)
-   * - `'simple'` / `'advanced'` / `'minimal'`:显式锁定提示词模式,与 `toolMode` 解耦(如 advanced 工具池 + simple 风格提示词)
-   * 典型:存量集成 systemPrompt 写了「simple 模式」但希望用 advanced 工具池 → 显式传 `hintsMode:'simple'`;或直接传 `toolMode:'simple'` 让工具池也匹配
-   */
-  hintsMode?: 'auto' | 'simple' | 'advanced' | 'minimal'
   /** 读写拦截器:read/write 透传给数据工具(脱敏/转换/审计/拒绝 LLM 读写);input/output 在 agent IO 入口/出口预处理 */
   interceptors?: {
     read?: (value: unknown) => unknown
@@ -907,7 +900,8 @@ function validateFocusInput(
 function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // toolMode 默认 'advanced'(3.28 breaking:原默认 simple 隐藏 schema_data/diff_data 等致 LLM 误调报「工具不存在」;advanced 全暴露,集成方按需 opt-down simple/minimal)
   const toolMode = options.toolMode ?? 'advanced'
-  // hintsMode 解析(3.28):'auto'(默认)跟随 toolMode,但检测到集成方 systemPrompt 含「simple 模式」措辞时自动降级 simple,避免 advanced 提示词与存量 systemPrompt 打架
+  // usageHints 提示词档位(内部一致性对齐,无公开开关,唯一旋钮是 toolMode):默认跟随 toolMode,
+  // 但检测到集成方 systemPrompt 含「simple 模式/未暴露」措辞时自动降级 simple,避免 advanced 提示词与存量 systemPrompt 打架
   //   纯文本检测(baseSystemPrompt 装配期已可用,见下方);命中即降级 + warn 引导集成方显式对齐(传 toolMode:'simple' 或更新 systemPrompt 措辞)
   //   注:仅降级提示词,工具池仍按 toolMode(advanced 暴露 schema_data 等);若需工具池也对齐,集成方应显式传 toolMode:'simple'
   let hintsMode: 'simple' | 'advanced' | 'minimal' = toolMode
@@ -1071,14 +1065,12 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     console.warn('[page-agent-sdk] 检测到 schema 含 code 字段但未注册 html 子 agent:已自动注入「主 agent 自己写 HTML」编排(code 作普通字段直接 write,无 vfs 工作副本 / 无格式校验门禁)。如需代码资产机制(vfs + 格式校验 + 增量 commit + 主上下文 code 摘要),注册 createHtmlSubagent;若确为降级意图可忽略。')
   }
 
-  // hintsMode 显式配置解析(3.28):'auto' 跟随 toolMode,但检测到 systemPrompt 含「simple 模式」措辞时自动降级 simple
+  // usageHints 内部一致性对齐(无公开开关):检测到 systemPrompt 含「simple 模式/未暴露」措辞时自动降级 simple 提示词
   // 存量集成 systemPrompt 按 simple 写(告知 LLM「schema_data 等未暴露勿调用」),3.28 默认改 advanced 后 usageHints 会注入 advanced 提示词教 get_data/edit_data/set_focus → 与 systemPrompt 打架
   // 自动降级仅修提示词侧(工具池仍 advanced);集成方应显式传 toolMode:'simple' 让工具池也对齐,或更新 systemPrompt 措辞
-  if (options.hintsMode && options.hintsMode !== 'auto') {
-    hintsMode = options.hintsMode
-  } else if (toolMode === 'advanced' && /simple\s*模式|未暴露/.test(baseSystemPrompt)) {
+  if (toolMode === 'advanced' && /simple\s*模式|未暴露/.test(baseSystemPrompt)) {
     hintsMode = 'simple'
-    console.warn('[page-agent-sdk][hintsMode] 检测到 systemPrompt 含「simple 模式/未暴露」措辞但 toolMode 为 advanced(默认):usageHints 已自动降级为 simple 提示词,避免教 LLM 调用集成方 systemPrompt 声明「未暴露」的工具。建议显式对齐:① 集成方 systemPrompt 按 simple 工作流设计 → 传 toolMode:\'simple\' 让工具池也匹配(推荐);② 确需 advanced 工具池 + simple 风格提示词 → 显式传 hintsMode:\'simple\';③ systemPrompt 措辞已过时(实际想要 advanced)→ 更新 systemPrompt 去掉「simple 模式」字样。注:仅「勿调用」字样不再触发降级(3.29 收窄;集成方常用它描述自己禁用的工具,属合法 advanced 用法)。')
+    console.warn('[page-agent-sdk][usageHints] 检测到 systemPrompt 含「simple 模式/未暴露」措辞但 toolMode 为 advanced(默认):usageHints 已自动降级为 simple 提示词,避免教 LLM 调用集成方 systemPrompt 声明「未暴露」的工具。建议显式对齐:① 集成方 systemPrompt 按 simple 工作流设计 → 传 toolMode:\'simple\' 让工具池也匹配(推荐);② systemPrompt 措辞已过时(实际想要 advanced)→ 更新 systemPrompt 去掉「simple 模式/未暴露」字样。注:仅「勿调用」字样不触发降级(3.29 收窄;集成方常用它描述自己禁用的工具,属合法 advanced 用法)。')
   }
 
   // 工具:数据操作 + 文档抓取 + 用户自定义(子 agent 中间件据此筛选只读子集)

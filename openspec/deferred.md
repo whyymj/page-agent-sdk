@@ -420,6 +420,10 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 | `types/index.d.ts` 手动维护漂移防再发 | 3.27 又发现 `DialogIcons.send`(3.20 引入)漏标(连同 `DialogConfig.sections`);`tests/types.test-d.ts` 字段级 Pick 断言未覆盖 DialogIcons/DialogConfig 键集 → 符号级门禁抓不到键缺失 | 下次 types 漂移再现或 4.0 大版本时:把 DialogIcons/DialogConfig 键集纳入字段级断言(与 capabilities 17 开关 Pick 断言同模式) |
 | editor_fangzhou focus 联动(画布选中 → AI 聚焦) | ✅ 已接入(2026-08-18,随 editor 升 3.27.0):`select.one`(载荷=组件 id)→ `getComponentInfo` 查相对根 jsonPath → `sdk.setFocus({path, label})`;`select.noOne` → `clearFocus`;同批修 walkComponents 路径 bug(旧 'root.' 前缀致 select_component 传 null)、补 list_components/save_page 工具注册、`nodeInfo.replace` → setData 换树重绑 | —(已收口留痕) |
 
+### [2026-08-18] codeAsset `forEachCodeItem` 嵌套遍历盲区 — ⏸ 暂缓(数据无损,机制失跟;等嵌套移动真需求)
+
+**来源**:用户问询「代码组件移动到另一层级数组(如 `container.children`)能否无损」核实结论。`write` op `move` 结构搬运本身无损(节点含 `__pgId`/`__pgNotes` 整体随行,findStrippedKeys 对 move 位移有深度相等匹配防误判),但 `codeAssetMiddleware.forEachCodeItem`(src/core/sdk/codeAssetMiddleware.ts:112-128)**只扫 writablePaths 数组的直接元素,不递归嵌套数组** —— 代码组件一旦移进嵌套容器(如 `components.N.props.children`):checkout/afterAgent commit/组件代码文件地图/焦点守卫(`focusPathsToPgIds` 同遍历口径)全部「看不见」该组件 → 后续 `use_html` 委派无法同步其 vfs 工作副本(data.code 停在移动前内容,vfs 编辑回流不到新位置)。组件锁 `collectComponentNames` 同源,锁目标集也漏。**重启触发**:集成方(editor_fangzhou 类)实际出现「把 custom 组件拖进容器 children」需求或事故。修法候选:`forEachCodeItem` 改按 schema 深遍历(z.lazy 递归路径展开)或 writablePaths 支持多路径声明(`['components', 'components.*.props.children']` 通配);同步修 `focusPathsToPgIds`/`collectComponentNames`/文件地图同口径。
+
 ## 维护约定
 
 - 暂缓项**不进** `project.md`「进行中的 change」(避免占心智);本文件是唯一索引。

@@ -164,7 +164,7 @@ export async function run() {
     sdk.unmount()
   }
 
-  console.log('[e2e:systemprompt] hintsMode auto 检测收窄(3.29 Bug B):「勿调用」单独出现不再误降级(editor_fangzhou 实测形态)')
+  console.log('[e2e:systemprompt] usageHints 自动对齐收窄(3.29 Bug B):「勿调用」单独出现不再误降级(editor_fangzhou 实测形态)')
   {
     // editor_fangzhou 形态:systemPrompt 用「勿调用」描述自己禁用的工具(draft_*/resource_* 等),
     // 工具面实为 advanced —— 修复前正则含「勿调用」→ 误降级 simple 提示词,与 advanced 工具面自相矛盾
@@ -181,7 +181,7 @@ export async function run() {
     sdk.unmount()
   }
 
-  console.log('[e2e:systemprompt] hintsMode auto 检测保留:含「未暴露」/「simple 模式」仍自动降级 simple(存量集成兼容不回退)')
+  console.log('[e2e:systemprompt] usageHints 自动对齐保留:含「未暴露」/「simple 模式」仍自动降级 simple(存量集成兼容不回退)')
   {
     // 「未暴露」命中 → 降级
     const sdk1 = createChatSdk({

@@ -477,7 +477,7 @@ flowchart LR
 
 **分块写(opt-in `capabilities.draftWrite`):**`draft_write`/`draft_commit`(类 git add→commit),commit 走完整校验链 + 乐观锁;大 JSON 场景建议 `maxToolRounds` 20-30。
 
-**toolMode:**`advanced`(默认,14 工具,全暴露)/ `simple`(7,主推 read/write)/ `minimal`(2);`filterByToolMode` 纯函数;usageHints 按 mode 注入运行时工具说明(**集成方 systemPrompt 只写业务知识,不重复声明工具语法**);`hintsMode`(默认 `'auto'` 跟随 toolMode)控制提示词档位,检测到存量 systemPrompt 含「simple 模式/未暴露/勿调用」措辞时自动降级 simple 提示词 + warn(3.28,提示词与工具面一致性)。
+**toolMode:**`advanced`(默认,14 工具,全暴露)/ `simple`(7,主推 read/write)/ `minimal`(2);`filterByToolMode` 纯函数;usageHints 按 mode 注入运行时工具说明(**集成方 systemPrompt 只写业务知识,不重复声明工具语法**);提示词档位内部自动跟随 toolMode(无公开开关,3.30 移除 `hintsMode`),检测到存量 systemPrompt 含「simple 模式/未暴露」措辞时自动降级 simple 提示词 + warn(3.28 一致性对齐;3.29 正则收窄,「勿调用」单独出现不再触发)。
 
 **interceptors:**`read(value)` 脱敏/派生(只改 LLM 看到的值);`write(payload, current)` 转换/审计/拒绝(返回 `{error}`)。**仅守高层 read/write;advanced 底层工具绕过**(集成方需知情);`input(input)`/`output(json)` 在 agent IO 入口/出口改写。
 

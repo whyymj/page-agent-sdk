@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+## [3.30.0] - 2026-08-18
+
+### Removed(配置面收敛:移除公开 `hintsMode` 选项 —— 「使用太复杂」反馈,toolMode 成为唯一旋钮)
+- **移除顶层 `hintsMode` 选项**(3.28 新增,本为迁移兼容开关;几乎无集成方实际使用):usageHints 提示词档位改为**内部自动跟随 toolMode**,行为不变、配置面 -1;集成方只需关心 `toolMode` 一个旋钮(advanced/simple/minimal 同时决定工具池与提示词档位)
+- **保留的兼容行为(内部化)**:toolMode 为 advanced 且 systemPrompt 含「simple 模式/未暴露」措辞时,提示词仍自动降级 simple + warn(存量集成不回退);「勿调用」单独出现仍不触发(3.29 收窄不变)
+- 迁移:曾显式传 `hintsMode:'simple'`(advanced 工具池 + simple 风格提示词的解耦形态)的集成方 —— 该形态无公开替代,改传 `toolMode:'simple'` 让工具池与提示词一致(推荐);TS 上传入该字段将编译报错(字段已从 `ChatSdkOptions` 与两份 d.ts 删除),运行时多余键被忽略不崩
+- 同步:warn 文案去掉「显式传 hintsMode」建议项;usage-guide 中英/architecture 描述更新;e2e systemprompt 现有断言(勿调用不误降/未暴露与 simple 模式仍降级)零改动全绿,覆盖保留行为
+
 ## [3.29.0] - 2026-08-18
 
 ### Added(conflictPolicy:乐观锁冲突自动裁决 —— editor_fangzhou 实测「agent 清空数组后添加组件自冲突」驱动)

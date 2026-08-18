@@ -277,7 +277,7 @@ write({ path: 'page.oldField', del: true })
 
 #### `toolMode` — tool presentation
 
-Controls "how many data tools the LLM sees + which workflow usageHints teaches". **This is the only knob you need** (`hintsMode` defaults to `auto` and follows toolMode; it is a migration-compat option, no need to configure normally):
+Controls "how many data tools the LLM sees + which workflow usageHints teaches". **This is the only knob you need** (the hints tier follows toolMode internally, with auto-downgrade compat for legacy "simple mode / not exposed" systemPrompts — no extra config):
 
 ```ts
 createChatSdk({
