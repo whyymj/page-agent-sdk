@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-2496%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-2531%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -33,7 +33,7 @@ Starting point for both humans and AI agents (Claude Code / Cursor): find the fe
 | Long conversations / big JSON (context & compression) | [usage-guide §6.8](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md) · [context-management doc](https://github.com/whyymj/page-agent-sdk/blob/master/doc/context-management.md) |
 | Events / audit / token usage | [Configuration](#configuration) (`onEvent`/`onAudit`/`sdk.usage`) · [usage-guide §6.9](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md) |
 | Unattended automation / batch / budget | [options cheat sheet](#createchatsdk-options-cheat-sheet) (`capabilities.automation`, `sdk.batch`) · [usage-guide automation section](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md) |
-| Debug (prompts / tool IO / context) | `debug: true` + built-in DebugDrawer · `sdk.inspect()` / `sdk.debugLogs` / `sdk.inspectContext()` |
+| Debug (prompts / tool IO / context) | `debug: true` + built-in DebugDrawer · `sdk.inspect()` / `sdk.debugLogs` / `sdk.inspectContext()` / `sdk.exportDiagnostics()` (one-click diagnostics report, copy the full text to the maintainer) |
 | Everything, full API | [Agent Integration Cheat Sheet](#agent-integration-cheat-sheet-for-ai-agents) · [usage-guide](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md) · [doc index](https://github.com/whyymj/page-agent-sdk/blob/master/doc/README.en.md) |
 
 ## Who is it for
@@ -53,7 +53,7 @@ At its core, it gives the AI a **standardized, safe JSON-operation channel**. AI
 | **Incremental op** | `write` with `patch`/`patches` (batch, atomic rollback) or advanced `edit_data` patches by `jsonPath` (set/remove/merge/append) | Avoid re-sending the whole large JSON; precise local edits; use `patches` to edit many at once |
 | **Large-object retrieval** | `read` supports `fields` (projection) + `depth` (truncation) to shrink payload; `query_data` (JSONPath)/`search_data` (text)/`eval_script` (sandboxed JS) | Efficient retrieval + pinpoint location in large JSON |
 | **Rollbackable** | per-path snapshots (auto-stacked) + session checkpoint | Bad edit → one-click restore to the last good state |
-| **Optimistic lock** | `expectedHash` on `set`/`edit`/`delete` + conflict human-in-the-loop | Concurrent external edits detected → suspend, user picks keep/overwrite/restore |
+| **Optimistic lock** | `expectedHash` on `set`/`edit`/`delete` + conflict human-in-the-loop (3.29+ `conflictPolicy` declares auto-adjudication: overwrite / keep_external) | Concurrent external edits detected → suspend, user picks keep/overwrite/restore |
 
 "Editing JSON" moves from free-form LLM text generation to **structured, validatable, auditable, rollbackable** tool operations. This is the fundamental difference from "let the AI output a JSON string directly".
 
@@ -499,8 +499,8 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 2496 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 801 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm test            # 2531 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 832 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test

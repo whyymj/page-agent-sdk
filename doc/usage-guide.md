@@ -26,6 +26,7 @@
   - [6.12 LLM 连接:直连 / 代理 / OpenAI 兼容端点](#612-llm-连接直连--代理--openai-兼容端点)
   - [6.13 结构化追踪 TraceSpan(性能归因 / 调试)](#613-结构化追踪-tracespan性能归因--调试220)
   - [6.13b 上下文归档 context_trimmed](#613b-上下文归档-context_trimmed对话超长时抢救即将删除的内容context-persist-resilience)
+  - [6.13c 诊断报告导出 exportDiagnostics](#613c-诊断报告导出-exportdiagnostics调试排查329)
   - [6.14 无人值守自动化](#614-无人值守自动化资源预算--错误恢复--批处理--断点续跑220)
   - [6.14 上下文聚焦 Focus(指定组件精修)](#614-上下文聚焦-focus指定组件精修focus-context)
   - [6.15 UI 定制与国际化(图标 / 主题 / 语言 / 文案覆盖)](#615-ui-定制与国际化图标--主题--语言--文案覆盖317321)
@@ -501,6 +502,22 @@ sdk.hook((e) => {
 ```
 
 **挂起自动收口(防永久挂起):** 用户停止生成(abort)/ `unmount()` / `switchSession()` 时,自动按「保留外部」收口挂起的冲突。
+
+**自动裁决策略(`conflictPolicy`,3.29+):** 宿主与 agent 争同一份数据、且集成方明确「以 agent 写入为准」时(典型:编辑器宿主有 watcher/同步层会回写 bind,agent 连续两步写之间 bind 被宿主改过 → 第二步写触发冲突;无人值守场景没人点冲突条 → 流程永挂),声明策略跳过人工介入:
+
+| 策略 | 行为 |
+|------|------|
+| `'ask'`(默认) | 挂起等人工 `resolveConflict`(现有行为) |
+| `'overwrite'` | **agent 强制覆盖**:冲突时 agent 写入直接落地,不挂起、不等人工 |
+| `'keep_external'` | 自动保留外部修改:冲突时放弃本次写入,回灌提示让 agent 重新 read 再改 |
+
+```ts
+createChatSdk({ /* ... */ conflictPolicy: 'overwrite' })
+```
+
+自动裁决不挂起 `pendingConflict`,但 `conflict` 事件照常外发(`e.conflict.autoResolved` 标记裁决结果),集成方可经 `onEvent`/`hook` 观测审计。
+
+> **基线守卫(3.29+)**:集成方经 `defineTool` 注册的自定义工具若在工具体内直接改 `bind`(如整体替换组件树的结构化工具),SDK 会在该工具调用后**自动重算乐观锁基线**,agent 下一步正常 write 不会被误判「外部改过」而自冲突。工具窗口**之外**的修改(宿主 watcher / 用户直改)仍按设计触发冲突 —— 那是乐观锁的本职,按 `conflictPolicy` 声明裁决即可。
 
 > 不传 `expectedHash` → 向后兼容直接写(不校验)。独立使用 `createDataOps(props, { onConflict })` 不接 ChatDialog 时,自行处理冲突(返回 `Promise<{action}>`)。
 
@@ -1323,6 +1340,30 @@ createChatSdk({
 
 - 不订阅 = 跟现在一样(AI 照删,你不管)。完全可选。
 - 同链路:vfs 孤儿 GC(trim 后自动回收没人引用的大结果,防堆积);mission / workingMemory 跨刷新持久化(长任务目标 + 工作记忆刷新不丢)。
+
+### 6.13c 诊断报告导出 `exportDiagnostics`(调试排查,3.29+)
+
+用户报「agent 行为不对」时,最难的是拿到现场:完整日志 + 消息 + 上下文快照。**`sdk.exportDiagnostics()`** 一键聚合当前会话诊断快照为 JSON 字符串,用户复制全文发维护者即可排查(内置 UI 的 DebugDrawer 头部有 📋 按钮直接复制):
+
+```ts
+const text = sdk.exportDiagnostics()  // JSON 字符串,可直接复制/上传
+```
+
+报告内容:`debugLogs` 全量(完整日志主体)+ `messages` + `inspect()` 快照(tools/middleware/subagent/上下文构成)+ `usage` 累计用量 + `pendingConflict` + `dataSummary`(数据描述/顶层键/字节量级)+ `sessionId`(多会话锚点)+ 环境信息。
+
+**隐私收口**:apiKey 不入报告;data schema 剥 zod 内部结构(只留顶层键摘要);**bind 数据不 dump 全文**(只留摘要);url 凭据查询参数自动打码;单字段 >50KB 截断留痕(图片 dataUri 防撑爆)。
+
+**总长闸**:报告 >6MB 时从最旧日志丢弃至达标(头部插 `diagnostics_truncated` 标记,保留排查相关性最高的近段日志),剪贴板友好。
+
+纯函数可单独用(headless 集成方自建排查入口):
+
+```ts
+import { buildDiagnosticsReport, stringifyDiagnosticsReport, maskUrlCredentials } from 'page-agent-sdk'
+// buildDiagnosticsReport({ debugLogs, messages, info, usage, ... }) → 结构化报告
+// stringifyDiagnosticsReport(report) → 应用总长闸的 JSON 字符串
+```
+
+> headless 集成方复用内置 DebugDrawer 时不传 `exportDiagnostics` prop 也可:按钮降级为本地聚合(仅 logs + getInfo,无 messages/usage/dataSummary)。
 
 ### 6.14 无人值守自动化(资源预算 / 错误恢复 / 批处理 / 断点续跑,2.20+)
 

@@ -4,11 +4,18 @@
  *
  * getEmit 为延迟求值的事件分发 getter:emit 在 buildCore 内晚于本工厂定义(listeners 之后),
  * set 运行时才调用 getEmit(),此时 emit 已赋值;工厂创建时无需 emit 就绪。
+ *
+ * getPolicy(3.29):冲突自动裁决策略 getter(createChatSdk 的 conflictPolicy 选项)。
+ * 'ask'(默认)= 挂起等人工;'overwrite'/'keep_external' = 不挂起,按策略立即收口
+ * (宿主与 agent 争同一份数据且集成方明确 agent 优先时用 overwrite,防无人值守场景永挂)。
  */
 import { ref, type Ref } from 'vue'
 import type { SdkEventHandler } from '../types'
 import type { ConflictInfo, ConflictResolution } from '../tools/dataOps'
 import type { PendingConflict } from './createChatSdk'
+
+/** 乐观锁冲突裁决策略:ask=挂起等人工(默认)| overwrite=agent 强制覆盖 | keep_external=保留外部修改 */
+export type ConflictPolicy = 'ask' | 'overwrite' | 'keep_external'
 
 export interface ConflictManager {
   /** 冲突挂起状态(响应式 ref;无冲突为 null,UI 据此渲染冲突对话框) */
@@ -19,10 +26,19 @@ export interface ConflictManager {
   resolve(action: ConflictResolution['action']): void
 }
 
-export function createConflictManager(getEmit?: () => SdkEventHandler | undefined): ConflictManager {
+export function createConflictManager(getEmit?: () => SdkEventHandler | undefined, getPolicy?: () => ConflictPolicy): ConflictManager {
   const pendingConflict = ref<PendingConflict | null>(null)
   let conflictSeq = 0
   function set(info: ConflictInfo): Promise<ConflictResolution> {
+    const policy = getPolicy?.() ?? 'ask'
+    if (policy !== 'ask') {
+      // 自动裁决(conflictPolicy):不挂起 pendingConflict、不等人工,按策略立即收口。
+      // 仍外发 conflict 事件(带 autoResolved 标记)供集成方观测/审计;resolve 给 no-op 保持事件 shape 一致
+      const pending: PendingConflict = { ...info, id: ++conflictSeq, resolve: () => { /* 自动裁决无需收口 */ }, autoResolved: policy }
+      const emit = getEmit?.()
+      emit?.({ type: 'conflict', conflict: pending })
+      return Promise.resolve({ action: policy })
+    }
     return new Promise((resolve) => {
       // shareContext 多实例并发冲突时,新冲突覆盖旧 pendingConflict.value,旧 resolve 函数会丢失 → 旧工具永挂。
       // 兜底:覆盖前若仍有未解决冲突,自动按「保留外部」收口旧冲突(防 resolve 丢失)

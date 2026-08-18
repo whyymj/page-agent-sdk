@@ -6,6 +6,7 @@ import type { DebugLog } from '../harness/createAgent'
 import type { AgentInfo } from '../types'
 import type { TraceSpan } from '../harness/createAgent'
 import { copyText } from '../utils/clipboard'
+import { buildDiagnosticsReport, stringifyDiagnosticsReport } from '../sdk/diagnostics'
 import { MESSAGES_ZH_CN, type DialogLocale, type DialogMessages } from './messages'
 
 const props = withDefaults(defineProps<{
@@ -13,6 +14,8 @@ const props = withDefaults(defineProps<{
   visible: boolean
   /** 获取 agent 详细信息(「Agent 信息」tab 展示) */
   getInfo?: () => AgentInfo
+  /** 导出诊断报告 JSON(sdk.exportDiagnostics 透传;缺省时从 logs+getInfo 本地聚合降级) */
+  exportDiagnostics?: () => string
   /** Agent 信息刷新 tick(setSkills/setData 后 ++);watch 后重新拉 getInfo() 实时反映动态 skill/data */
   infoTick?: Ref<number>
   /** 读取 skill 全文(展开 skill 时调,优先缓存);返回 null 表示无内容或读取失败 */
@@ -74,6 +77,23 @@ async function copyJson(text: string, key: string) {
   if (!ok) return
   copiedKey.value = key
   setTimeout(() => { if (copiedKey.value === key) copiedKey.value = '' }, 1200)
+}
+/**
+ * 复制诊断报告(完整日志文件,一键交给维护者排查):
+ * 优先 sdk.exportDiagnostics 透传(含 messages/usage/conflict 全量);独立复用(headless 纯 props)降级本地聚合 logs+getInfo()
+ */
+async function copyReport() {
+  let text = ''
+  try {
+    text = props.exportDiagnostics
+      ? props.exportDiagnostics()
+      : stringifyDiagnosticsReport(buildDiagnosticsReport({
+          debugLogs: logs.value,
+          info: props.getInfo ? props.getInfo() : null,
+        }))
+  } catch { text = '' }
+  if (!text) return
+  await copyJson(text, 'report')
 }
 const m = computed(() => props.messages)
 
@@ -332,6 +352,7 @@ function flowNodeDetail(lg: DebugLog): string {
               <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'info' }" @click="switchTab('info')">🧬 {{ m.debugTabInfo }}</button>
             </div>
             <div class="header-actions">
+              <button class="hd-btn" :title="m.debugCopyReport" @click="copyReport">{{ copiedKey === 'report' ? '✓' : '📋' }}</button>
               <button v-if="tab === 'logs'" class="hd-btn" :title="m.debugClearLogs" @click="clearLogs">🗑️</button>
               <button class="hd-btn" :title="m.close" @click="close">✕</button>
             </div>
@@ -1005,8 +1026,8 @@ function flowNodeDetail(lg: DebugLog): string {
   --dd-surface-2: #2a2a2a;
   --dd-border: #444444;
   --dd-border-soft: #3a3a3a;
-  --dd-scrollbar-thumb: rgba(255, 255, 255, 0.18);
-  --dd-scrollbar-thumb-hover: rgba(255, 255, 255, 0.34);
+  --dd-scrollbar-thumb: rgba(255, 255, 255, 0.38);
+  --dd-scrollbar-thumb-hover: rgba(255, 255, 255, 0.6);
   --dd-text: #f1f1fa;
   --dd-text-2: #d5d5e2;
   --dd-text-3: #b9b9c8;

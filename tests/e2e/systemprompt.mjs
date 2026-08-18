@@ -164,5 +164,48 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:systemprompt] hintsMode auto 检测收窄(3.29 Bug B):「勿调用」单独出现不再误降级(editor_fangzhou 实测形态)')
+  {
+    // editor_fangzhou 形态:systemPrompt 用「勿调用」描述自己禁用的工具(draft_*/resource_* 等),
+    // 工具面实为 advanced —— 修复前正则含「勿调用」→ 误降级 simple 提示词,与 advanced 工具面自相矛盾
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-hints-no-false-positive', storage: 'memory', llm: FAKE_LLM,
+      capabilities: MIN_CAPS,
+      systemPrompt: '你是方舟编辑器助手。draft_write/draft_commit/resource_* 工具本环境不存在,勿调用;焦点工具虽暴露但勿调用,聚焦由宿主控制。',
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' }, description: '页面' },
+    })
+    await sdk.mount()
+    const sp = sdk.inspect().systemPrompt
+    assert(/改主数据前先 get_data|edit_data/.test(sp), '✓ 含「勿调用」但无「未暴露/simple 模式」→ 保持 advanced 提示词(教 get_data/edit_data)')
+    assert(!/当前未装载勿调用/.test(sp), '✓ 不误降级 simple(无「schema_data/diff_data 当前未装载勿调用」文案)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:systemprompt] hintsMode auto 检测保留:含「未暴露」/「simple 模式」仍自动降级 simple(存量集成兼容不回退)')
+  {
+    // 「未暴露」命中 → 降级
+    const sdk1 = createChatSdk({
+      ui: false, id: 'e2e-hints-downgrade-1', storage: 'memory', llm: FAKE_LLM,
+      capabilities: MIN_CAPS,
+      systemPrompt: '你是定制助手。schema_data 等高级工具未暴露,不要尝试。',
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' }, description: '页面' },
+    })
+    await sdk1.mount()
+    const sp1 = sdk1.inspect().systemPrompt
+    assert(/当前未装载勿调用/.test(sp1), '✓ 含「未暴露」→ 自动降级 simple 提示词(schema_data/diff_data 未装载文案出现)')
+    sdk1.unmount()
+    // 「simple 模式」命中 → 降级
+    const sdk2 = createChatSdk({
+      ui: false, id: 'e2e-hints-downgrade-2', storage: 'memory', llm: FAKE_LLM,
+      capabilities: MIN_CAPS,
+      systemPrompt: '你是定制助手,工作在 simple 模式:只用 read/write。',
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' }, description: '页面' },
+    })
+    await sdk2.mount()
+    const sp2 = sdk2.inspect().systemPrompt
+    assert(/当前未装载勿调用/.test(sp2), '✓ 含「simple 模式」→ 自动降级 simple 提示词')
+    sdk2.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

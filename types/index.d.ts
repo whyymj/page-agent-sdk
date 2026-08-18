@@ -361,6 +361,8 @@ export interface DialogMessages {
   debugTabSubagent: string
   debugTabInfo: string
   debugClearLogs: string
+  /** 复制诊断报告(完整日志文件,一键交排查) */
+  debugCopyReport: string
   debugTypeContext: string
   debugTypeLlmRequest: string
   debugTypeLlmResponse: string
@@ -882,6 +884,12 @@ export interface DataOpsController {
   set(config: DataConfig): void;
   /** 仅替换 bind 引用;清空快照栈与乐观锁缓存 */
   update(bind: any): void;
+  /** 框架直改 bind 后(如 codeAsset commit)重算指定 scope 乐观锁基线;不传 = 主 scope */
+  recomputeBaseline?(scope?: string): void;
+  /** 一次性重算所有已存在 scope 的基线(baseline-guard 用;bind 为各 scope 共享,一次 hash 全部刷新) */
+  recomputeAllBaselines?(): void;
+  /** 是否存在乐观锁基线条目 */
+  hasBaselines?(): boolean;
   /** 受保护资源清单快照(供跨压缩 pin 中间件注入「受保护资源」段;freeze 无 handle,verbatim 有) */
   getResourcesSnapshot?(): { path: string; mode: 'freeze' | 'verbatim'; handle?: string }[];
   /** 资源池操作(经 controller 同闭包;有 vfsStore 时可用) */
@@ -1166,6 +1174,8 @@ export interface ChatSdkOptions {
   maxSnapshots?: number;
   /** 自动乐观锁(默认 true):写入时若 LLM 未传 expectedHash,自动用其最后 get 读到的 hash 比对;设 false 回退「不传 = 不校验」 */
   autoLock?: boolean;
+  /** 乐观锁冲突裁决策略(默认 'ask'):ask=挂起 pendingConflict 等人工 resolveConflict;overwrite=agent 强制覆盖(宿主与 agent 争同一份数据且 agent 优先时用,冲突自动收口不挂起,无人值守场景防永挂);keep_external=自动保留外部修改(agent 收到提示重新 read)。自动裁决仍外发 conflict 事件(conflict.autoResolved 标记) */
+  conflictPolicy?: ConflictPolicy;
   /** 数据操作审计回调:每次 set/edit/delete/restore 经此回调外发结构化事件(独立于 debug,无需 debug:true);集成方做合规审计/操作追溯 */
   onAudit?: (entry: { op: string; value?: unknown; detail?: string; timestamp: number }) => void;
   /** 工具呈现模式:advanced(默认,全暴露含 schema_data/diff_data/底层 get/set/edit/focus 工具族)| simple(主推 read/write 但保留 query/search/eval/snapshot,隐藏底层与诊断类)| minimal(只 read/write)。3.28 breaking:默认由 simple 改 advanced */
@@ -1357,6 +1367,8 @@ export interface ChatSdk {
   readonly infoTick: Ref<number>;
   /** 检视 agent 详细信息(tools/skills/data/middleware/todos) */
   inspect(): AgentInfo;
+  /** 导出诊断报告 JSON 字符串(完整日志文件:debugLogs/messages/inspect/usage/conflict/主数据摘要聚合;复制交维护者排查;zod schema/apiKey 不入报告) */
+  exportDiagnostics(): string;
   /** 读取最近一次上下文构成快照(每轮 wrapModelCall 覆盖;capabilities.contextInspector:false → undefined) */
   inspectContext(): ContextSnapshot | undefined;
   /** 读取当前任务目标锚点 mission(自动 capture 或 setMission;capabilities.missionAnchor:false → undefined) */
@@ -1475,7 +1487,12 @@ export interface PendingConflict {
   expectedHash: string;
   snapshotId: number;
   resolve: (r: ConflictResolution) => void;
+  /** conflictPolicy 自动裁决标记:非 ask 策略时该冲突未挂起、已按此 action 立即收口;仅随 conflict 事件外发供观测 */
+  autoResolved?: 'overwrite' | 'keep_external';
 }
+
+/** 乐观锁冲突裁决策略:ask=挂起等人工(默认)| overwrite=agent 强制覆盖 | keep_external=保留外部修改 */
+export type ConflictPolicy = 'ask' | 'overwrite' | 'keep_external';
 
 /** 冲突解决决定:保留外部修改 / 强制覆盖 / 回退到写前快照 */
 export type ConflictResolution =
@@ -1631,7 +1648,33 @@ export interface ConflictManager {
   set(info: any): Promise<any>;
   resolve(action: any): void;
 }
-export declare function createConflictManager(getEmit?: () => (((e: any) => void) | undefined)): ConflictManager;
+export declare function createConflictManager(getEmit?: () => (((e: any) => void) | undefined), getPolicy?: () => ConflictPolicy): ConflictManager;
+
+/** 诊断报告 · 主数据摘要(替代 dump 全量 bind) */
+export interface DiagnosticsDataSummary {
+  description?: string;
+  /** bind 顶层 key 列表(数组 bind → []) */
+  topKeys: string[];
+  /** bind JSON 序列化字符数(-1 = 序列化失败) */
+  approxBytes: number;
+}
+/** 诊断报告聚合输入(sdk.exportDiagnostics 的纯函数底座) */
+export interface DiagnosticsInput {
+  debugLogs?: DebugLog[];
+  messages?: Array<Record<string, unknown>>;
+  info?: AgentInfo | null;
+  usage?: Record<string, number> | null;
+  pendingConflict?: unknown;
+  sessionId?: string;
+  dataSummary?: DiagnosticsDataSummary | null;
+  extra?: Record<string, unknown>;
+}
+/** 聚合诊断报告对象(JSON 可序列化;字段顺序即排查动线) */
+export declare function buildDiagnosticsReport(input: DiagnosticsInput): Record<string, unknown>;
+/** 序列化诊断报告为 JSON 字符串(超总长阈值从最旧 debugLogs 丢弃并留痕) */
+export declare function stringifyDiagnosticsReport(report: Record<string, unknown>): string;
+/** url 查询串凭据键打码(key/token/secret/password/signature 键值 → ***) */
+export declare function maskUrlCredentials(url: string): string;
 // ============ 配置解析 + 事件系统(optionsResolver/events,refactor-module-extraction 期三)============
 // capabilities 能力开关注册表 + 单一解析(p2-refactor 子项 4:消除 11/17 开关 ===true/!==false 混)
 export interface Capability { name: string; defaultOn: boolean; requires?: readonly string[] }

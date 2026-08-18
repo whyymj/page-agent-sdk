@@ -4,6 +4,35 @@
 
 ## [Unreleased]
 
+## [3.29.0] - 2026-08-18
+
+### Added(conflictPolicy:乐观锁冲突自动裁决 —— editor_fangzhou 实测「agent 清空数组后添加组件自冲突」驱动)
+- **`conflictPolicy`**(顶层选项,默认 `'ask'` 零变化):① `'ask'` = 挂起 `pendingConflict` 等人工 `resolveConflict`(现有行为);② `'overwrite'` = agent 强制覆盖,冲突自动收口不挂起(宿主与 agent 争同一份数据、agent 写入优先的场景;无人值守/自动化防流程永挂);③ `'keep_external'` = 自动保留外部修改,放弃本次写入并回灌提示让 agent 重新 read
+- 自动裁决仍外发 `conflict` 事件(`conflict.autoResolved` 标记裁决结果),集成方可经 `onEvent`/`hook` 观测审计;`PendingConflict` 类型增 `autoResolved` 字段;导出 `ConflictPolicy` 类型(主入口 + headless 子路径)
+- **定性**:纯 SDK 内「清空数组 → 添加组件」四写路径复现均零冲突(同 scope 连续写基线随写刷新,不变量成立);实测冲突源 = 两次写之间 bind 被 SDK 写路径之外的代码改过(宿主 watcher/编辑器同步层回写),乐观锁按设计拦下 —— 本选项给集成方声明「以 agent 为准」的出口
+- 测试:selftest sec-32 +5(conflictManager 自动裁决三策略:overwrite 立即收口不挂起 + 事件留痕 / keep_external / 显式 ask 仍挂起)/ e2e conflict +7(顶层选项全链路:overwrite 强制落地 / keep_external 保留外部 / 显式 ask 挂起照常收口)
+
+### Added(diagnostics:诊断报告一键导出 —— editor_fangzhou 实测「需要更方便的调试方式 / 完整日志文件复制过来分析」驱动)
+- **`sdk.exportDiagnostics()`**(顶层 API + AgentCore):聚合当前会话完整诊断快照为 JSON 字符串 —— debugLogs 全量(完整日志文件主体)+ messages + `inspect()` 快照 + usage 累计 + pendingConflict + dataSummary(description/topKeys/字节量级)+ sessionId;DebugDrawer 头部新增 📋 复制按钮(`debugCopyReport` 文案键),一键复制全文交维护者排查
+- **隐私收口**:apiKey 不入报告;data schema 剥 zod 内部结构替换为 topKeys 摘要;bind 不 dump 全文(仅摘要);url 凭据查询参数(key/token/secret/password/signature 类)自动打码;单字段 >50KB 截断留痕(图片 dataUri 类防撑爆)
+- **总长闸**:报告 >6MB 从最旧日志丢弃至达标,头部插 `diagnostics_truncated` 标记留痕(保留最新日志,排查相关性最高);剪贴板友好
+- 纯函数导出(主入口 + headless 子路径):`buildDiagnosticsReport` / `stringifyDiagnosticsReport` / `maskUrlCredentials` + `DiagnosticsInput`/`DiagnosticsDataSummary` 类型;DebugDrawer 纯 props 复用(headless 集成方传 `logs`+`getInfo` 即可,无 exportDiagnostics 时降级本地聚合)
+- 测试:selftest sec-87 +17(报告形状契约/url 凭据打码/超长截断/总长闸丢旧留痕)/ e2e diagnostics +14(一轮对话后导出全链路:日志含工具轨迹/messages/info 剥 schema/dataSummary/usage/sessionId 一致/zod _def 不外泄 + 无 data 边界不抛错)
+
+### Fixed(baseline-guard:集成方自定义工具改 bind 后乐观锁基线自动刷新 —— editor_fangzhou 实测「agent 清空数组下一步添加组件自冲突」机制层根因修复)
+- **问题**:集成方经 `defineTool` 注册的结构化工具(整体替换组件树等)在工具体内直接改 `bind`,绕过 SDK 写路径 → per-scope 基线停留在旧值 → agent 下一次正常 write 被乐观锁误判「外部改过」挂起冲突(自冲突)
+- **修复**:`createBaselineGuardMiddleware`(wrapToolCall,装载在 subagent 中间件外层):非 dataOps 工具调用前后对 bind 哈希比对,变了 → `recomputeAllBaselines()` 全 scope 基线重算(主 + 各子 scope);dataOps 管理工具跳过(自有 commitBaseline);无基线时短路零开销。**残余边界**:工具窗口之外(宿主 watcher/用户直改)的修改仍按设计触发冲突(这是乐观锁的职责),走 `conflictPolicy` 声明裁决
+- 不变量保持:冲突检查 hash 恒实时计算,基线只作「上次 SDK 确认点」,不跨调用缓存检查 hash
+- 测试:selftest sec-86 +13(守卫中间件:自定义工具改 bind 后 write 不冲突/不改 bind 零重算/无基线短路/dataOps 工具跳过/多 scope 全量重算)/ e2e conflict +6(顶层全链路:结构化工具改 bind 后 agent write 直接落地 + 工具窗口外修改仍触发冲突的边界)
+
+### Fixed(hintsMode:auto 降级检测正则收窄 —— 「勿调用」误报修复)
+- **问题**:集成方 systemPrompt 合法使用「勿调用」措辞(约束 agent 别调某些已暴露工具)被 3.28 的 auto 降级检测误判为「工具未暴露」→ 错误降级 simple 提示词 + warn
+- **修复**:检测正则收窄为 `/simple\s*模式|未暴露/`(去「勿调用」);「勿调用」单独出现不再触发降级,「未暴露」/「simple 模式」仍按 3.28 行为降级
+- 测试:e2e systemprompt +4(「勿调用」不误报:advanced 提示词保留 / 「未暴露」降级保持 / 「simple 模式」降级保持)
+
+### Fixed(dark 主题滚动条可见性)
+- dark 主题滚动条手柄透明度 0.18 → 0.38(ChatDialog 主滚动面 + DebugDrawer 日志区 CSS 变量),深色背景下不再「看不清」(editor_fangzhou 用户反馈)
+
 ## [3.28.0] - 2026-08-18
 
 ### Added(image-input-vision Phase 1:图片输入 + 多模态直连 + 集成方识图钩子)

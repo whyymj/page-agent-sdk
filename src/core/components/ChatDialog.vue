@@ -49,6 +49,8 @@ const props = withDefaults(defineProps<{
   onClear?: () => void
   /** 获取 agent 详细信息(debug 窗口「Agent 信息」tab) */
   getInfo?: () => AgentInfo
+  /** 导出诊断报告 JSON(DebugDrawer「复制诊断报告」按钮;sdk.exportDiagnostics 透传) */
+  exportDiagnostics?: () => string
   /** 回退到上次正常 checkpoint(checkpoint 选项开启时注入) */
   onUndo?: () => boolean
   /** 是否有可回退的 checkpoint(checkpoint 选项开启时注入) */
@@ -268,7 +270,7 @@ const drawerWidthStyle = computed(() => {
     <!-- 调试抽屉 -->
     <template v-if="renderSection('debug')">
       <slot name="debug" :chat="ctx">
-        <DebugDrawer v-model:visible="debugVisible" :logs="debugLogs" :get-info="getInfo" :info-tick="infoTick" :get-skill-content="getSkillContent" :cs-theme="csTheme" :messages="ctx.messages" :locale="ctx.locale" />
+        <DebugDrawer v-model:visible="debugVisible" :logs="debugLogs" :get-info="getInfo" :export-diagnostics="exportDiagnostics" :info-tick="infoTick" :get-skill-content="getSkillContent" :cs-theme="csTheme" :messages="ctx.messages" :locale="ctx.locale" />
       </slot>
     </template>
 
@@ -444,8 +446,8 @@ const drawerWidthStyle = computed(() => {
   --cs-md-th-bg: #444444;
   --cs-md-code-bg: rgba(153, 147, 255, 0.12);
   --cs-md-code-text: #9993ff;
-  --cs-scrollbar-thumb: rgba(255, 255, 255, 0.18);
-  --cs-scrollbar-thumb-hover: rgba(255, 255, 255, 0.34);
+  --cs-scrollbar-thumb: rgba(255, 255, 255, 0.38);
+  --cs-scrollbar-thumb-hover: rgba(255, 255, 255, 0.6);
   --cs-input-bg: rgba(18, 18, 18, 0.4);
   --cs-input-border: rgba(115, 114, 255, 0.5);
   --cs-input-radius: 12px;

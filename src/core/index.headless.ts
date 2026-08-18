@@ -104,7 +104,10 @@ export { CompressDecisionSchema, type CompressDecision } from './sdk/compressDec
 export { isChatModel, resolveLlm, deriveTitle } from './sdk/llmResolver'
 // 乐观锁冲突管理器(headless 自建冲突 UI 可复用)
 export { createConflictManager } from './sdk/conflictManager'
-export type { ConflictManager } from './sdk/conflictManager'
+export type { ConflictManager, ConflictPolicy } from './sdk/conflictManager'
+// 诊断报告聚合(日志收集:完整日志文件一键复制交排查;sdk.exportDiagnostics 的纯函数底座)
+export { buildDiagnosticsReport, stringifyDiagnosticsReport, maskUrlCredentials } from './sdk/diagnostics'
+export type { DiagnosticsInput, DiagnosticsDataSummary } from './sdk/diagnostics'
 // 配置解析
 export { resolveStorage, resolveDialogConfig } from './sdk/optionsResolver'
 // SDK 事件系统工厂

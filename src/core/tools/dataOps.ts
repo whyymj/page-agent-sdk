@@ -129,6 +129,14 @@ export interface DataOpsController {
    * code-as-data-asset commit 用。
    */
   recomputeBaseline?(scope?: string): void
+  /**
+   * 一次性重算所有已存在 scope 的基线(baseline-guard 中间件用)。
+   * bind 为全 scope 共享(基线 = 整体 bind hash),非 dataOps 工具(集成方 defineTool/actions 等)改 bind 后
+   * 所有 scope 基线同时过期,一次 hashValue 全部刷新,防后续 autoLock 误冲突(editor_fangzhou 自冲突根因修)。
+   */
+  recomputeAllBaselines?(): void
+  /** 是否存在基线条目(baseline-guard 短路:无基线则无过期问题,跳过 before/after hash 开销) */
+  hasBaselines?(): boolean
   /** 受保护资源清单快照(供 resourcesPin 中间件每轮 augmentPrompt 注入「受保护资源」段;freeze 无 handle,verbatim 有) */
   getResourcesSnapshot?(): { path: string; mode: 'freeze' | 'verbatim'; handle?: string }[]
   /** 资源池操作(经 controller 同闭包;有 vfsStore 时可用) */
@@ -509,6 +517,9 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     exitScope: (id) => { baselines.delete(id) },
     // code-as-data-asset:框架 commit 直改 bind 后重算基线(默认主 scope),防后续 autoLock 误冲突
     recomputeBaseline: (scope) => { baselines.set(scope ?? MAIN_SCOPE, hashValue(bindRef)) },
+    // baseline-guard:非 dataOps 工具改 bind 后全 scope 基线一次刷新(bind 共享,一次 hash 更新全部)
+    recomputeAllBaselines: () => { const h = hashValue(bindRef); for (const k of baselines.keys()) baselines.set(k, h) },
+    hasBaselines: () => baselines.size > 0,
     getResourcesSnapshot: () => {
       const out: { path: string; mode: 'freeze' | 'verbatim'; handle?: string }[] = []
       for (const [path, spec] of resourcesByPath) {

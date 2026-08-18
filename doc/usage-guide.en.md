@@ -448,6 +448,22 @@ sdk.hook((e) => {
 
 **Auto-resolution (prevent permanent hang):** on user stop (abort) / `unmount()` / `switchSession()`, a pending conflict is auto-resolved as "keep external".
 
+**Automatic adjudication policy (`conflictPolicy`, 3.29+):** when the host and the agent contend over the same data and the integrator declares "the agent's writes win" (typical: an editor host with watchers/sync layers writing back to `bind` — between two consecutive agent writes the host mutates `bind`, so the second write conflicts; in unattended scenarios nobody clicks the conflict bar → the flow hangs forever), declare a policy to skip human intervention:
+
+| Policy | Behavior |
+|--------|----------|
+| `'ask'` (default) | Suspend and wait for manual `resolveConflict` (existing behavior) |
+| `'overwrite'` | **Agent force-overwrite**: on conflict the agent's write lands directly; no suspension, no human needed |
+| `'keep_external'` | Auto-keep external changes: on conflict the write is dropped and the agent is told to re-read and retry |
+
+```ts
+createChatSdk({ /* ... */ conflictPolicy: 'overwrite' })
+```
+
+Auto-adjudication never sets `pendingConflict`, but the `conflict` event is still emitted (`e.conflict.autoResolved` marks the adjudicated action), so integrators can observe/audit via `onEvent`/`hook`.
+
+> **Baseline guard (3.29+)**: if a custom tool registered via `defineTool` mutates `bind` directly inside its body (e.g. a structural tool that replaces the whole component tree), the SDK **automatically recomputes the optimistic-lock baselines** after that tool call, so the agent's next normal `write` is not falsely flagged as "externally modified" (self-conflict). Mutations **outside** the tool window (host watchers / direct user edits) still trigger a conflict by design — that is the optimistic lock's job; adjudicate via `conflictPolicy`.
+
 > Omitting `expectedHash` → backward-compatible direct write (no check). Using `createDataOps(props, { onConflict })` standalone (without ChatDialog), handle conflicts yourself (return `Promise<{action}>`).
 
 #### Optimistic lock under concurrent tools (`maxParallelTools > 1`)
@@ -987,6 +1003,30 @@ createChatSdk({
 
 - Not subscribing = same as now (AI deletes as usual, you do nothing). Fully optional.
 - Same chain: vfs orphan GC (auto-reclaims unreferenced large results after trim, prevents buildup); mission/workingMemory persist across refresh (long-task goal + working memory survive reload).
+
+### 6.13c Diagnostics report export `exportDiagnostics` (debugging / troubleshooting, 3.29+)
+
+When a user reports "the agent misbehaved", the hardest part is capturing the scene: full logs + messages + context snapshot. **`sdk.exportDiagnostics()`** aggregates the current session's diagnostics snapshot into one JSON string — the user copies the whole text and sends it to the maintainer (the built-in DebugDrawer header has a 📋 button that copies it directly):
+
+```ts
+const text = sdk.exportDiagnostics()  // JSON string, ready to copy/upload
+```
+
+Report contents: full `debugLogs` (the log-file body) + `messages` + `inspect()` snapshot (tools/middleware/subagent/context makeup) + cumulative `usage` + `pendingConflict` + `dataSummary` (description/top keys/approx bytes) + `sessionId` (multi-session anchor) + environment info.
+
+**Privacy guardrails**: apiKey never enters the report; the data schema's zod internals are stripped (only top-level key summary); **bind data is never dumped in full** (summary only); credential query params in URLs are masked; fields >50KB are truncated with a marker (image dataUri won't blow up the report).
+
+**Size cap**: reports >6MB drop the oldest logs until under the cap (a `diagnostics_truncated` marker is prepended; the most recent — most relevant — logs are kept), clipboard-friendly.
+
+Pure functions are exported for standalone use (headless integrators building their own troubleshooting entry):
+
+```ts
+import { buildDiagnosticsReport, stringifyDiagnosticsReport, maskUrlCredentials } from 'page-agent-sdk'
+// buildDiagnosticsReport({ debugLogs, messages, info, usage, ... }) → structured report
+// stringifyDiagnosticsReport(report) → JSON string with the size cap applied
+```
+
+> Headless integrators reusing the built-in DebugDrawer without the `exportDiagnostics` prop still get the button: it falls back to local aggregation (logs + getInfo only, no messages/usage/dataSummary).
 
 ### Unattended automation (resource budget / error recovery / batch / resume, 2.20+)
 

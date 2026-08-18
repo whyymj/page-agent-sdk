@@ -29,6 +29,7 @@ import { run as runSessionIntegrity } from './e2e/session-integrity.mjs'
 import { run as runContextEconomy } from './e2e/context-economy.mjs'
 import { run as runMcp } from './e2e/mcp.mjs'
 import { run as runPreferences } from './e2e/preferences.mjs'
+import { run as runDiagnostics } from './e2e/diagnostics.mjs'
 
 const modules = [
   ['systemprompt', runSystemprompt],
@@ -59,6 +60,7 @@ const modules = [
   ['context-economy', runContextEconomy],
   ['mcp', runMcp],
   ['preferences', runPreferences],
+  ['diagnostics', runDiagnostics],
 ]
 
 let totalPass = 0, totalFail = 0

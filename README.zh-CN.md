@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-2496%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-2531%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -33,7 +33,7 @@
 | 长对话 / 大 JSON(上下文与压缩) | [usage-guide §6.8](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.md) · [context-management 文档](https://github.com/whyymj/page-agent-sdk/blob/master/doc/context-management.md) |
 | 事件 / 审计 / token 用量 | [配置](#配置)(`onEvent`/`onAudit`/`sdk.usage`)· [usage-guide §6.9](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.md) |
 | 无人值守自动化 / 批处理 / 预算 | [配置项速查](#createchatsdk-配置项速查)(`capabilities.automation`、`sdk.batch`)· [usage-guide 自动化节](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.md) |
-| 调试(提示词 / 工具 IO / 上下文构成) | `debug: true` + 内置 DebugDrawer · `sdk.inspect()` / `sdk.debugLogs` / `sdk.inspectContext()` |
+| 调试(提示词 / 工具 IO / 上下文构成) | `debug: true` + 内置 DebugDrawer · `sdk.inspect()` / `sdk.debugLogs` / `sdk.inspectContext()` / `sdk.exportDiagnostics()`(一键诊断报告,全文复制交维护者排查) |
 | 全量 API / 逐项深挖 | [Agent 接入速查](#agent-接入速查给-ai-agent-读) · [usage-guide](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.md) · [doc 索引](https://github.com/whyymj/page-agent-sdk/blob/master/doc/README.md) |
 
 ## 适合谁
@@ -53,7 +53,7 @@
 | **增量操作** | `write` 的 `patch`/`patches`(批量,原子回滚)或 advanced `edit_data` 按 `jsonPath` 发 patch(set/remove/merge/append) | 避免重传整个大 JSON,精确改局部;一次改多处用 `patches` |
 | **大对象检索** | `read` 支持 `fields`(字段裁剪)+ `depth`(深度截断)减体积;`query_data`(JSONPath)/`search_data`(文本)/`eval_script`(沙箱 JS) | 大 JSON 高效检索 + 局部定位 |
 | **可回滚** | per-path 快照(自动入栈)+ 会话 checkpoint | 改坏了一键回退到上次正常态 |
-| **乐观锁** | `set`/`edit`/`delete` 传 `expectedHash` + 冲突人工介入 | 检测并发外部修改 → 挂起,用户选保留/覆盖/回退 |
+| **乐观锁** | `set`/`edit`/`delete` 传 `expectedHash` + 冲突人工介入(3.29+ `conflictPolicy` 可声明自动裁决:overwrite / keep_external) | 检测并发外部修改 → 挂起,用户选保留/覆盖/回退 |
 
 「改 JSON」从 LLM 自由生成文本 → **结构化、可校验、可审计、可回滚**的工具操作。这是它区别于「让 AI 直接输出 JSON 字符串」的根本所在。
 
@@ -502,8 +502,8 @@ function switchTo(i: number) {
 ## 自测
 
 ```bash
-npm test            # 2496 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 801 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm test            # 2531 项断言（tsx 源码级，不依赖 LLM）
+npm run test:e2e    # 832 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试
@@ -581,7 +581,7 @@ import { jpEval, searchJson } from 'page-agent-sdk/query'
 
 `sideEffects` 仅标记 `["**/*.css"]`,打包器可对 JS 做 tree-shaking。瘦身建议:
 
-- **headless(`ui:false`)**:不渲染内置对话框,自渲染 `agent.messages`。要最精简 bundle,从 **headless 子路径** 引入 —— `import { createChatSdk } from 'page-agent-sdk/headless'`(ESM ~446KB vs 主包 ~963KB;去掉运行时从不使用的 marked/highlight.js/dompurify/ChatDialog)。`createChatSdk(options): ChatSdk` 签名不变,配 `ui:false` 用。从主包引入也可不引 `ChatDialog`/`CodePreview` 并省略 CSS(`import 'page-agent-sdk'` 不引 `'page-agent-sdk/style.css'`)。**持久化坑**:`sdk.stream` 不自动落盘(内置 useChat 经 onPersist 调 afterRound);自建对话框每轮后需手动 `sdk.afterRound()`,否则 `switchSession` 切回丢消息。**复用内置 DebugDrawer**(仅主包):`import { DebugDrawer }`(纯 props:`logs=sdk.debugLogs` / `getInfo=()=>sdk.inspect()` / `infoTick=sdk.infoTick`),在自己的 UI 里挂载,无需 ChatDialog。
+- **headless(`ui:false`)**:不渲染内置对话框,自渲染 `agent.messages`。要最精简 bundle,从 **headless 子路径** 引入 —— `import { createChatSdk } from 'page-agent-sdk/headless'`(ESM ~446KB vs 主包 ~963KB;去掉运行时从不使用的 marked/highlight.js/dompurify/ChatDialog)。`createChatSdk(options): ChatSdk` 签名不变,配 `ui:false` 用。从主包引入也可不引 `ChatDialog`/`CodePreview` 并省略 CSS(`import 'page-agent-sdk'` 不引 `'page-agent-sdk/style.css'`)。**持久化坑**:`sdk.stream` 不自动落盘(内置 useChat 经 onPersist 调 afterRound);自建对话框每轮后需手动 `sdk.afterRound()`,否则 `switchSession` 切回丢消息。**复用内置 DebugDrawer**(仅主包):`import { DebugDrawer }`(纯 props:`logs=sdk.debugLogs` / `getInfo=()=>sdk.inspect()` / `infoTick=sdk.infoTick`,可选 `exportDiagnostics=()=>sdk.exportDiagnostics()`,缺省降级本地聚合),在自己的 UI 里挂载,无需 ChatDialog。
 - **关闭无用能力**:`capabilities:{ dataOps:false, fetch:false, planning:false, skills:false, vfs:false, summarization:false, memory:false, subagent:false }` —— 移除对应工具 schema 与中间件(省 token,非字节)。
 - **CDN 用 esm.sh**:`import { createChatSdk } from 'https://esm.sh/page-agent-sdk'` —— peer(`zod`、`@langchain/*`)由 esm.sh 自动解析去重,模块场景最小。
 - **IIFE 仅用于零配置**:全量单文件方便但最重,宿主支持模块时优先 ESM。

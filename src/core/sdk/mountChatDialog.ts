@@ -50,6 +50,7 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
           debug: ctx.debug === true,
           initialMessages: core.messages,
           getInfo: () => core.getInfo(),
+          exportDiagnostics: () => core.exportDiagnostics(),  // DebugDrawer「复制诊断报告」按钮(完整日志文件排查通道)
           onUndo: core.checkpoint ? () => core.checkpoint!.restore() : undefined,
           canUndo: core.checkpoint ? () => core.checkpoint!.canRestore() : undefined,
           onPersist: async () => {

@@ -24,7 +24,7 @@ import { createAgent, type DebugLog } from '../harness/createAgent'
 import { asAgentError } from '../tools/toolError'
 import { isAbort } from '../harness/retry'
 import { z, type ZodType } from 'zod'
-import { getSchemaAtPath, schemaHasCodeField, inferWritablePaths } from '../tools/schemaUtils'
+import { getSchemaAtPath, schemaHasCodeField, inferWritablePaths, getSchemaTopKeys } from '../tools/schemaUtils'
 import { systemPromptHelpers } from '../presets'
 import { createTodosMiddleware } from '../harness/todos'
 import { createMissionMiddleware } from '../harness/mission'
@@ -50,10 +50,12 @@ import { createSummarizationMiddleware } from '../harness/summarization'
 import { buildDataPrompt, buildSystemPrompt } from './promptBuilder'
 import { createCodeAssetMiddleware, collectComponentNames } from './codeAssetMiddleware'
 import { createComponentLock, resolveTargetComponents, createComponentWriteGuardMiddleware, codeFieldIndexPaths } from './componentLock'
+import { createBaselineGuardMiddleware } from './baselineGuard'
+import { buildDiagnosticsReport, stringifyDiagnosticsReport, type DiagnosticsDataSummary } from './diagnostics'
 import { createHtmlSubagent } from './htmlSubagent'
 import { isChatModel, resolveLlm, deriveTitle } from './llmResolver'
 import { constructLlmFromConfig, constructOpenLlmSync } from '../llm/constructLlm'
-import { createConflictManager } from './conflictManager'
+import { createConflictManager, type ConflictPolicy } from './conflictManager'
 import { resolveStorage, resolveDialogConfig } from './optionsResolver'
 import { resolveCapabilities } from '../capabilities'
 import { createSdkEvents } from './events'
@@ -219,6 +221,8 @@ export interface ChatSdkOptions {
   maxSnapshots?: number
   /** 自动乐观锁(默认 true):写入时若 LLM 未传 expectedHash,自动用其最后 get 读到的 hash 比对;设 false 回退「不传 = 不校验」 */
   autoLock?: boolean
+  /** 乐观锁冲突裁决策略(默认 'ask'):ask=挂起 pendingConflict 等人工 resolveConflict;overwrite=agent 强制覆盖(宿主与 agent 争同一份数据且 agent 优先时用,冲突自动收口不挂起,无人值守场景防永挂);keep_external=自动保留外部修改(agent 收到提示重新 read)。自动裁决仍外发 conflict 事件(conflict.autoResolved 标记) */
+  conflictPolicy?: ConflictPolicy
   /** 数据操作审计回调:每次 set/edit/delete/restore 经此回调外发结构化事件(独立于 debug,无需 debug:true);集成方做合规审计/操作追溯 */
   onAudit?: (entry: { op: string; value?: unknown; detail?: string; timestamp: number }) => void
   /** 工具呈现模式:advanced(默认,全暴露含 schema_data/diff_data/底层 get/set/edit/focus 工具族)| simple(主推 read/write 但保留 query/search/eval/snapshot,隐藏底层与诊断类)| minimal(只 read/write)。3.28 breaking:默认由 simple 改 advanced,集成方按需 opt-down */
@@ -462,6 +466,8 @@ export interface ChatSdk {
   inspect(): AgentInfo
   /** 读取最近一次上下文构成快照(每轮 wrapModelCall 覆盖;capabilities.contextInspector:false → undefined) */
   inspectContext(): import('../utils/contextAnalysis').ContextSnapshot | undefined
+  /** 导出诊断报告 JSON 字符串(完整日志文件:debugLogs/messages/inspect/usage/conflict/数据摘要聚合;复制交维护者排查;zod schema/apiKey 不入报告) */
+  exportDiagnostics(): string
   /** 读取当前任务目标锚点 mission(自动 capture 或 setMission;capabilities.missionAnchor:false → undefined) */
   getMission(): Mission | undefined
   /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
@@ -631,6 +637,8 @@ export interface PendingConflict {
   expectedHash: string
   snapshotId: number
   resolve: (r: ConflictResolution) => void
+  /** conflictPolicy 自动裁决标记(3.29):非 ask 策略时该冲突未挂起、已按此 action 立即收口;仅随 conflict 事件外发供观测 */
+  autoResolved?: 'overwrite' | 'keep_external'
 }
 
 export interface AgentCore {
@@ -709,6 +717,8 @@ export interface AgentCore {
   resolveConflict(action: ConflictResolution['action']): void
   /** 检视 agent 详情(inspect() 与 debug 窗口消费) */
   getInfo(): AgentInfo
+  /** 导出诊断报告 JSON 字符串(debugLogs/messages/inspect/usage/conflict/数据摘要聚合;DebugDrawer「复制诊断报告」与集成方排查共用) */
+  exportDiagnostics(): string
   /** 读取当前 mission(capture 或 setMission;capabilities.missionAnchor:false → undefined) */
   getMission(): Mission | undefined
   /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
@@ -905,7 +915,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const usage: TokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
   // ===== 乐观锁冲突人工介入(dataOps 写入时检测到主数据已被外部改过 → 挂起等用户决定保留外部/强制覆盖/回退) =====
   // ===== 乐观锁冲突人工介入管理器(emit getter 延迟求值:emit 在下方 listeners 后定义,set 运行时才调) =====
-  const conflictMgr = createConflictManager(() => emit)
+  const conflictMgr = createConflictManager(() => emit, () => options.conflictPolicy ?? 'ask')
   // Agent 信息刷新 tick:setSkills/setData 等运行时变更后 ++,经 ChatDialog 传给 DebugDrawer 触发 agentInfo 重新拉取(实时反映动态 skill/data)
   const infoTick = ref(0)
 
@@ -1066,9 +1076,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 自动降级仅修提示词侧(工具池仍 advanced);集成方应显式传 toolMode:'simple' 让工具池也对齐,或更新 systemPrompt 措辞
   if (options.hintsMode && options.hintsMode !== 'auto') {
     hintsMode = options.hintsMode
-  } else if (toolMode === 'advanced' && /simple\s*模式|未暴露|勿调用/.test(baseSystemPrompt)) {
+  } else if (toolMode === 'advanced' && /simple\s*模式|未暴露/.test(baseSystemPrompt)) {
     hintsMode = 'simple'
-    console.warn('[page-agent-sdk][hintsMode] 检测到 systemPrompt 含「simple 模式/未暴露/勿调用」措辞但 toolMode 为 advanced(默认):usageHints 已自动降级为 simple 提示词,避免教 LLM 调用集成方 systemPrompt 声明「未暴露」的工具。建议显式对齐:① 集成方 systemPrompt 按 simple 工作流设计 → 传 toolMode:\'simple\' 让工具池也匹配(推荐);② 确需 advanced 工具池 + simple 风格提示词 → 显式传 hintsMode:\'simple\';③ systemPrompt 措辞已过时(实际想要 advanced)→ 更新 systemPrompt 去掉「simple 模式」字样。')
+    console.warn('[page-agent-sdk][hintsMode] 检测到 systemPrompt 含「simple 模式/未暴露」措辞但 toolMode 为 advanced(默认):usageHints 已自动降级为 simple 提示词,避免教 LLM 调用集成方 systemPrompt 声明「未暴露」的工具。建议显式对齐:① 集成方 systemPrompt 按 simple 工作流设计 → 传 toolMode:\'simple\' 让工具池也匹配(推荐);② 确需 advanced 工具池 + simple 风格提示词 → 显式传 hintsMode:\'simple\';③ systemPrompt 措辞已过时(实际想要 advanced)→ 更新 systemPrompt 去掉「simple 模式」字样。注:仅「勿调用」字样不再触发降级(3.29 收窄;集成方常用它描述自己禁用的工具,属合法 advanced 用法)。')
   }
 
   // 工具:数据操作 + 文档抓取 + 用户自定义(子 agent 中间件据此筛选只读子集)
@@ -1103,6 +1113,25 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     : undefined
   /** 当前主数据配置(反映运行时替换;供 inspect/verify 等读最新状态) */
   const liveData = (): DataConfig | undefined => dataOpsController?.get() ?? finalDataConfig
+  // baseline-guard(editor_fangzhou「自冲突」根因修):非 dataOps 内置工具(集成方 defineTool 结构性工具/
+  // actions/checkpoint restore/skill exec/委派等)在 SDK 写路径之外改 bind → 乐观锁基线不刷新 →
+  // agent 下一次 write(autoLock 拿基线当 effHash)与实时 hash 不匹配,触发「自己跟自己冲突」。
+  // wrapToolCall 调用前后 hash 比对,变化则全 scope 基线一次刷新;dataOps 内置工具自管基线跳过。
+  const dataOpsManagedNames = new Set(dataOpsTools.map((t) => t.name))
+  const baselineGuardMw = dataOpsController
+    ? createBaselineGuardMiddleware({
+        getBind: () => liveData()?.bind,
+        recomputeAll: () => dataOpsController!.recomputeAllBaselines?.(),
+        hasBaselines: () => dataOpsController!.hasBaselines?.() ?? false,
+        isManaged: (n) => dataOpsManagedNames.has(n),
+        log: (_type, data) => {
+          const logs = core.agent?.debugLogs
+          if (!logs) return
+          logs.value.push({ timestamp: Date.now(), type: 'middleware', data: { stage: 'baseline_guard', ...(data as Record<string, unknown>) } })
+          triggerRef(logs)
+        },
+      })
+    : undefined
   // 工具来源标注(builtin / mcp:<name> / user),供 getInfo 展示(DebugDrawer 区分内置/MCP/用户工具)
   const toolSources = new Map<string, string>()
   // skills 关 + domInspect 开 → dom_search/dom_info 无法经 skill 注入,降级直接进工具池(功能可达优先,牺牲常驻 schema)
@@ -1280,7 +1309,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const approvalMw = options.approval && (options.approval.tools !== undefined || !!options.approval.confirm)
     ? createApprovalMiddleware(options.approval)
     : undefined
-  const childGuards: Middleware[] = [...(permissionsMw ? [permissionsMw] : []), ...(approvalMw ? [approvalMw] : [])]  // 序同主栈:permissions 外层 → approval 内层
+  const childGuards: Middleware[] = [...(permissionsMw ? [permissionsMw] : []), ...(approvalMw ? [approvalMw] : []), ...(baselineGuardMw ? [baselineGuardMw] : [])]  // 序同主栈:permissions 外层 → approval 内层;baseline-guard 子栈自定义工具改 bind 同样刷基线
   const subagentMw =
     !useSubagent || subOpts?.enabled === false
       ? undefined
@@ -1568,6 +1597,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(useHumanConfirm ? [createHumanConfirmMiddleware()] : []),
     // 人工确认(被动侧):白名单工具调用前确认(wrapToolCall 洋葱,此处更内层;实例同 childGuards 注入子栈,fix-authorization-surface)
     ...(approvalMw ? [approvalMw] : []),
+    // baseline-guard(自冲突根因修):非 dataOps 工具改 bind(自定义工具/actions/委派落地等)→ 基线一次刷新。
+    // 位置须在 subagentMw/subagentsMw 之外(数组靠前 = 洋葱外层),才能包住 spawn/use_<id> 委派调用全程
+    ...(baselineGuardMw ? [baselineGuardMw] : []),
     ...(verifyMw ? [verifyMw] : []), // permissions 之后(beforeReturn 正序,verify 在用户自定义中间件前)
     ...(subagentMw ? [subagentMw] : []),
     ...(subagentsMw ? [subagentsMw] : []),
@@ -2251,6 +2283,43 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           : undefined,
       }
     },
+    /**
+     * 导出诊断报告(JSON 字符串):debugLogs/messages/inspect/usage/conflict/主数据摘要一次聚合,
+     * 用户复制给维护者排查(editor_fangzhou 实测需求)。
+     * 隐私/安全:不含 apiKey(inspect/debugLogs 源无凭据);zod schema 不进报告(内部结构含引用,替换为 topKeys 摘要);
+     * bind 不 dump 全量(仅 description+顶层 keys+字节量级);url 凭据键打码(diagnostics.maskUrlCredentials)。
+     */
+    exportDiagnostics(): string {
+      const info = core.getInfo()
+      // zod schema 对象不可安全 JSON 化(_def 内部结构/可能的 lazy 循环)→ 替换为摘要字段
+      const safeInfo: Record<string, unknown> = {
+        ...info,
+        tools: info.tools.map(({ schema: _schema, ...rest }) => rest),
+        data: info.data ? { description: info.data.description, schemaTopKeys: getSchemaTopKeys(info.data.schema as never) ?? [] } : undefined,
+      }
+      const cfg = core.liveData()
+      let dataSummary: DiagnosticsDataSummary | null = null
+      if (cfg) {
+        let approxBytes = -1
+        let topKeys: string[] = []
+        try {
+          const s = JSON.stringify(cfg.bind)
+          approxBytes = s ? s.length : 0
+          if (cfg.bind && typeof cfg.bind === 'object' && !Array.isArray(cfg.bind)) topKeys = Object.keys(cfg.bind as Record<string, unknown>)
+        } catch { approxBytes = -1 }
+        dataSummary = { description: cfg.description, topKeys, approxBytes }
+      }
+      const report = buildDiagnosticsReport({
+        debugLogs: core.agent?.debugLogs?.value ?? [],
+        messages: core.messages as unknown as Array<Record<string, unknown>>,
+        info: safeInfo as never,
+        usage: { ...core.usage },
+        pendingConflict: core.pendingConflict?.value ?? null,
+        sessionId: core.sessionId,
+        dataSummary,
+      })
+      return stringifyDiagnosticsReport(report)
+    },
     /** 读取当前 mission(capture 或 setMission;capabilities.missionAnchor:false → undefined) */
     getMission(): Mission | undefined {
       return useMission ? missionMw.getMission() : undefined
@@ -2867,6 +2936,8 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
     /** Agent 信息刷新 tick(传 DebugDrawer 实时重拉 inspect) */
     infoTick: core.infoTick,
     inspect: core.getInfo,
+    /** 导出诊断报告 JSON 字符串(完整日志文件:debugLogs/messages/inspect/usage/conflict/数据摘要;一键复制交排查) */
+    exportDiagnostics: () => core.exportDiagnostics(),
     /** 读取最近一次上下文构成快照(每轮 wrapModelCall 覆盖;capabilities.contextInspector:false → undefined) */
     inspectContext: () => core.getInfo().context,
     getMission: core.getMission,

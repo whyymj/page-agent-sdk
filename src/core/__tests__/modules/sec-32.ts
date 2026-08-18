@@ -111,6 +111,21 @@ export async function run(ctx: TestCtx): Promise<void> {
   mgr4.set({ op: 'delete', currentValue: {}, currentHash: 'h3', expectedHash: 'h0', snapshotId: 0 })
   assert(mgr4.pendingConflict.value !== null, 'createConflictManager(无 getEmit).set → 仍挂起(不依赖 emit)')
 
+  // conflictPolicy 自动裁决(3.29):非 ask 策略不挂起、立即收口,仍外发 conflict 事件(autoResolved 标记)
+  const autoEmitted: { conflict: { autoResolved?: string; currentHash?: string } }[] = []
+  const mgr5 = createConflictManager(() => (e) => { autoEmitted.push(e as never) }, () => 'overwrite')
+  const r5 = await mgr5.set({ op: 'set', currentValue: {}, currentHash: 'h9', expectedHash: 'h0', snapshotId: 0 })
+  assert(r5.action === 'overwrite', '✓ conflictPolicy overwrite → set 立即收口(返回 overwrite,不挂起)')
+  assert(mgr5.pendingConflict.value === null, '✓ conflictPolicy overwrite → pendingConflict 不挂起(保持 null)')
+  assert(autoEmitted.length === 1 && autoEmitted[0].conflict.autoResolved === 'overwrite', '✓ conflictPolicy overwrite → 仍外发 conflict 事件(autoResolved=overwrite 观测留痕)')
+  const mgr6 = createConflictManager(undefined, () => 'keep_external')
+  const r6 = await mgr6.set({ op: 'edit', currentValue: {}, currentHash: 'h10', expectedHash: 'h0', snapshotId: 0 })
+  assert(r6.action === 'keep_external' && mgr6.pendingConflict.value === null, '✓ conflictPolicy keep_external → 立即收口不挂起')
+  const mgr7 = createConflictManager(undefined, () => 'ask')
+  mgr7.set({ op: 'set', currentValue: {}, currentHash: 'h11', expectedHash: 'h0', snapshotId: 0 })
+  assert(mgr7.pendingConflict.value !== null, '✓ conflictPolicy ask(显式)→ 行为不变仍挂起等人工')
+  mgr7.resolve('overwrite')
+
   // vfsGc:引用扫描 + 可达性 GC(context-persist-resilience 功能B —— 解 vfs 孤儿堆积/引用悬空)
   const gcMsgs = [
     { role: 'assistant', content: '结果见 vfs_read({ path: "large_results/read-abc.txt" })', steps: [{ name: 'read', result: '另有 large_results/read-def.txt 引用' }] },

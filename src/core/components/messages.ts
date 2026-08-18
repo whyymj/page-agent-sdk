@@ -117,6 +117,8 @@ export interface DialogMessages {
   debugTabSubagent: string
   debugTabInfo: string
   debugClearLogs: string
+  /** 复制诊断报告(完整日志文件,一键交排查) */
+  debugCopyReport: string
   debugTypeContext: string
   debugTypeLlmRequest: string
   debugTypeLlmResponse: string
@@ -357,6 +359,7 @@ export const MESSAGES_ZH_CN: DialogMessages = {
   debugTabSubagent: '子 agent',
   debugTabInfo: 'Agent 信息',
   debugClearLogs: '清空日志',
+  debugCopyReport: '复制诊断报告(完整日志,交维护者排查)',
   debugTypeContext: '上下文',
   debugTypeLlmRequest: 'LLM请求',
   debugTypeLlmResponse: 'LLM响应',
@@ -597,6 +600,7 @@ export const MESSAGES_EN_US: DialogMessages = {
   debugTabSubagent: 'Sub-agents',
   debugTabInfo: 'Agent info',
   debugClearLogs: 'Clear logs',
+  debugCopyReport: 'Copy diagnostics report (full logs for troubleshooting)',
   debugTypeContext: 'Context',
   debugTypeLlmRequest: 'LLM request',
   debugTypeLlmResponse: 'LLM response',
