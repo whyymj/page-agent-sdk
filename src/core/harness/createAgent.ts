@@ -96,6 +96,23 @@ export function detectTransitionalReply(content: string): boolean {
   return TRANSITIONAL_RE.test(text)
 }
 
+/** 第 0 轮「行动叙述」模式:点名已知工具 + 第一人称行动动词(实测 flash 粒子任务 2782 字纯叙述)。导出供测试 */
+const ACTION_TOOL_RE = /(add_component|delete_component|move_component|list_components|select_component|load_skill|use_[a-z]+|rag_[a-z]+|request_human_confirmation|\bwrite\b|\bread\b)/
+const ACTION_VERB_RE = /(我来|让我|我先|现在|开始|先加载|先添加|先写|先删|先看看|执行|添加|写入|加载|删除)/
+/**
+ * 检测「第 0 轮行动叙述」:首回合纯文本、零 tool_calls,但文本点名工具并表态要执行
+ * (「我来添加 / 先加载 page-tools / 用 add_component_tree…」)—— ReAct 见无 tool_calls 会当最终回答结束,
+ * 用户看到「我要做…做完了」但零执行(幻觉叙述,实测 deepseek-v4-flash)。
+ * 与 detectTransitionalReply 区别:① 不限长度(叙述常为长文)② 不豁免完成动词 —— 第 0 轮没有任何工具执行,
+ *   文本里的「已添加/成功」只能是幻觉,反而是叙述的铁证;③ 仅在 rounds===0 且无 tool_calls 时调用(上下文消歧,
+ *   真实完成汇报必有 tool_calls 不会落到这里)。误判代价仅一轮回灌(有界 ≤2)。
+ */
+export function detectActionNarration(content: string): boolean {
+  if (!content) return false
+  const text = content.trim()
+  return ACTION_TOOL_RE.test(text) && ACTION_VERB_RE.test(text)
+}
+
 /** 强守卫标记(DeepSeek 内部 token,模型正文不会随意产生)—— fix-write-safety-bypass P0-2:
  *  parseGarbledToolCalls 仅当 content 匹配到强守卫标记才自动解析执行;纯伪 XML `<invoke>`(无守卫)→ 返回 null,
  *  交 garbled-retry 回灌让模型用标准 function calling 重发,防「模型贴的示例 / 用户让示范写法」被当真执行写入数据。 */
@@ -868,14 +885,17 @@ export function createAgent(options: CreateAgentOptions) {
               log('error', { stage: 'garbled_exhausted', retries: formatRetries, content: response.content.slice(0, 200) })
               onEvent({ type: 'error', message: msg, severity: 'observable', code: 'GARBLED_TOOL_CALL_EXHAUSTED', context: { content: response.content.slice(0, 200) } } as any)
             }
-            // 过程性收口回灌(flash 实测):本轮已执行过工具(rounds>0 = 任务进行中)且最终文本是过渡性计划表态
-            // (「我先看看…稍后委派」)而非完成汇报 —— 回灌让模型继续执行,限次防死循环;
+            // 过程性收口回灌(flash 实测):最终文本是计划/行动叙述而非完成汇报时回灌让模型继续执行,限次防死循环。
+            //  - rounds>0:短文本过渡性收口(detectTransitionalReply,「我先看看…稍后委派」调研完即停)
+            //  - rounds===0:第 0 轮零 tool_calls 长文行动叙述(detectActionNarration,修「中途停止」:
+            //    模型把「我来添加/先加载」当正文吐、不走 function calling,ReAct 误当最终回答结束、零执行)
             // pendingFormatRetry=true 同款语义:绕过 rounds 预算给重试机会(此轮非工具轮次)
-            if (!garbled && rounds > 0 && transitionalRetries < maxTransitionalRetries && detectTransitionalReply(response.content)) {
+            const transitional = rounds > 0 ? detectTransitionalReply(response.content) : detectActionNarration(response.content)
+            if (!garbled && transitionalRetries < maxTransitionalRetries && transitional) {
               transitionalRetries += 1
               pendingFormatRetry = true
-              log('middleware', { stage: 'transitional_retry', attempt: transitionalRetries, content: response.content.slice(0, 160) })
-              currentMessages.push(new HumanMessage('⚠️ 你刚才输出的是计划/过渡性表述(如「我先看看」「稍后委派」),任务尚未完成。请立即继续执行 —— 调用所需工具把任务做完,全部完成后再给出总结回复。'))
+              log('middleware', { stage: 'transitional_retry', attempt: transitionalRetries, rounds, content: response.content.slice(0, 160) })
+              currentMessages.push(new HumanMessage('⚠️ 你刚才只输出了计划/行动叙述(如「我先看看」「开始添加」),没有发起任何工具调用,因此什么都未执行。请立即用标准 function calling 调用所需工具把任务做完,全部完成后再给出总结回复。'))
               continue
             }
             // beforeReturn 钩子(正序):agent 返回前可拦截自纠(回灌 user 消息继续循环)。

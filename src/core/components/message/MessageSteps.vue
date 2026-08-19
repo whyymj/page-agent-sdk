@@ -212,7 +212,7 @@ function copyDetail(text: string, truncated: boolean, full?: unknown): void {
 .step-detail-head { display: flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 600; color: var(--cs-step-meta); letter-spacing: 0.3px; }
 .step-detail-copy { border: none; background: transparent; color: var(--cs-step-meta); cursor: pointer; font-size: 10px; padding: 0 2px; border-radius: 3px; }
 .step-detail-copy:hover { color: var(--cs-primary); background: rgba(var(--cs-primary-rgb, 31, 77, 58), 0.1); }
-.step-detail-pre { margin: 0; padding: 6px 8px; border-radius: 4px; background: rgba(127, 127, 127, 0.1); color: var(--cs-step-text); font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 10px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto; }
+.step-detail-pre { margin: 0; padding: 6px 8px; border-radius: 4px; background: rgba(127, 127, 127, 0.1); color: var(--cs-step-text); font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 10px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto; user-select: text; -webkit-user-select: text; }
 .step-detail-pre.err { color: var(--cs-err); }
 .step-detail-empty { font-size: 10px; color: var(--cs-step-meta); font-style: italic; }
 /* 子 agent 委派工具标记(use_*):区分普通工具;紫色系呼应「🧬 子 agent 进度」子块 */

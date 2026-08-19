@@ -48,3 +48,4 @@ local/
 
 # 用户实测数据文件,保持 untracked
 test.txt
+test.json

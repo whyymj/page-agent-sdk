@@ -184,5 +184,28 @@ export async function run() {
     sdk3.unmount()
   }
 
+  console.log('[e2e:hang-feedback] 第0轮行动叙述(零 tool_calls)→ 回灌请用工具执行,不「中途停止」')
+  {
+    // ① 首轮纯文本行动叙述(点名工具+行动动词,无 tool_calls)→ detectActionNarration 命中回灌;
+    // ② 回灌后模型改用标准 function calling(read)→ ③ 最终完成汇报
+    const llm = stubModel(
+      { text: '好的,开始执行！让我先调用 read 看看当前值,然后用 write 写入,先加载 page-tools。' },
+      { toolCalls: [{ name: 'read', args: { jsonPath: 'title' } }] },
+      { text: '已把标题改成「世界杯」。' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-action-narration', storage: false, llm,
+      capabilities: { ...CAPS, subagent: false },
+      data: { schema: z.object({ title: z.string() }), bind: { title: 'orig' }, description: '测试' },
+    })
+    await sdk.mount()
+    const reply = await sdk.send('把标题改成世界杯')
+    assert(reply.includes('已把标题改成「世界杯」'), '✓ 行动叙述回灌后模型继续执行并给出完成汇报(不中途停止)')
+    assert(sdk.debugLogs.value.some((l) => l.data?.stage === 'transitional_retry' && l.data?.rounds === 0), '✓ debugLogs 留痕 transitional_retry(rounds=0,第0轮行动叙述回灌)')
+    const toolResults = sdk.debugLogs.value.filter((l) => l.type === 'tool_result' && l.data?.name === 'read')
+    assert(toolResults.length >= 1, '✓ 回灌后 read 工具真实执行(非幻觉叙述)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

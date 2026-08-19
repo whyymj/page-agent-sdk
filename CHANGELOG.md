@@ -2,6 +2,15 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.33.0] - 2026-08-19
+
+### Fixed(第 0 轮「行动叙述」中途停止)
+- 新增 `detectActionNarration`:首回合纯文本、零 tool_calls 但点名工具并表态执行(「我来添加/先加载」幻觉叙述)时回灌「请用工具执行」(上限 2 次),修 deepseek-v4-flash 把行动写成正文致 ReAct 误当最终回答「中途停止」;与 detectTransitionalReply 区别:不限长度、不豁免完成动词(第 0 轮无执行,完成词即幻觉铁证)
+
+### Added(聊天可读性:思考过程字符数 + 可选中复制)
+- MessageReasoning「思考过程」折叠态显示「N 字」计数,不展开也有内容量反馈
+- 宿主页面常全局 `user-select:none`(如编辑器),SDK 消息区显式 `user-select:text`(气泡/reasoning/step 细节)保证可鼠标选中复制
+
 ## [3.32.0] - 2026-08-19
 
 ### Changed(breaking:乐观锁自动检测 opt-in 翻转 —— editor_fangzhou 实测「宿主元数据噪声高频误报」驱动)

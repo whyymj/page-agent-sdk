@@ -36,6 +36,8 @@ withDefaults(defineProps<{
 .message-bubble {
   padding: 9px 13px; border-radius: var(--cs-radius-bubble, 12px); font-size: 12px; line-height: 1.7;
   overflow-wrap: anywhere; word-break: break-word; white-space: pre-wrap;
+  /* 宿主页面常全局 user-select:none(如编辑器),聊天气泡显式开选中保证可鼠标复制 */
+  user-select: text; -webkit-user-select: text;
 }
 /* role 变体用自身 class(非依赖祖先 .message-row.role),组件自包含 */
 .message-bubble.assistant { background: var(--cs-bubble-ai, #f3f4f6); color: var(--cs-bg-text, #1f2937); border-bottom-left-radius: 4px; white-space: normal; overflow-wrap: anywhere; }

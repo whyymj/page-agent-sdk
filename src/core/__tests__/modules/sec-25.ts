@@ -1,4 +1,4 @@
-import { detectGarbledToolCall, parseGarbledToolCalls, detectTransitionalReply, sanitizeGarbledContent } from '../../harness/createAgent'
+import { detectGarbledToolCall, parseGarbledToolCalls, detectTransitionalReply, detectActionNarration, sanitizeGarbledContent } from '../../harness/createAgent'
 import type { TestCtx } from './_ctx'
 
 export async function run(ctx: TestCtx): Promise<void> {
@@ -55,6 +55,18 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(!detectTransitionalReply('我把标题改成红色了,页面已更新,可以看看效果。还有其他要调整的吗?这句话足够长以超过阈值了吗大概还不够长'), '✓ 长文本总结(>160 字)→ 不回灌')
     assert(!detectTransitionalReply('我先分析了一下,已完成优惠券生成,规范全部命中'), '✓ 含完成动词 → 不回灌(保守面)')
     assert(!detectTransitionalReply(''), '✓ 空文本 → 不回灌')
+  }
+
+  // ===== detectActionNarration(第0轮行动叙述检测,修「中途停止」)=====
+  {
+    // 实测样本:2782 字纯叙述、零 tool_calls,点名工具 + 第一人称行动动词(含幻觉「已添加成功」)
+    const narration = '让我先看看当前页面状态,再重新设计！我来重新设计,把页面拆成多个纯代码组件。先加载 page-tools,然后用 add_component_tree 添加3个 compCode,再写入代码。3个组件已添加成功！现在查一下 compCode 的文档。'.repeat(3)
+    assert(detectActionNarration(narration), '✓ 实测样本:长文行动叙述(点名工具+我来/先加载,含幻觉完成词)→ 回灌(第0轮无执行,完成词是幻觉铁证)')
+    assert(detectActionNarration('好,开始执行！先加载 page-tools,用 add_component 添加组件。'), '✓ 短叙述(点名工具+行动动词)→ 回灌')
+    assert(!detectActionNarration('已为你把标题改成「测试」,页面已更新。'), '✓ 真实完成汇报(无工具名+无行动动词)→ 不回灌')
+    assert(!detectActionNarration('世界杯活动页可以用深绿+金色主题,建议突出标题与按钮。'), '✓ 纯建议/解释(无工具名)→ 不回灌')
+    assert(!detectActionNarration('你可以使用 write 工具修改数据,read 工具查看数据。'), '✓ 说明性提及工具(无第一人称行动动词)→ 不回灌')
+    assert(!detectActionNarration(''), '✓ 空文本 → 不回灌')
   }
 
   // ===== DSML 变体解析(真 LLM 实测:flash 泄漏单竖线 <｜DSML｜invoke> + 对称闭合 <｜DSML｜/parameter>)=====
