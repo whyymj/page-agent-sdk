@@ -46,9 +46,11 @@ export function useChat(
     onClear?: () => void
     /** stop() 清空排队任务时回调(fix-hang-and-feedback P1-5 可见性:丢弃条数与内容由消费方记日志,防无声丢失) */
     onQueuedCleared?: (dropped: string[]) => void
+    /** regenerate 前回调(清代码资产复用缓存,强制子 agent 重新生成而非复用工作副本) */
+    onBeforeRegenerate?: () => void
   } = {},
 ) {
-  const { fetchResponse, fetchStream, onPersist, onClear, onQueuedCleared } = opts
+  const { fetchResponse, fetchStream, onPersist, onClear, onQueuedCleared, onBeforeRegenerate } = opts
 
   /** 对话状态:消息列表 + loading + 错误(messages 可与父级共享同一引用) */
   const state = reactive<AgentState>({
@@ -301,6 +303,7 @@ export function useChat(
   /** 重新生成最后一条 assistant 回复:移除它(及尾部)→ 以当前历史(含最后 user)重发 */
   async function regenerate() {
     if (state.loading) return
+    onBeforeRegenerate?.()  // 清代码资产复用缓存:用户主动重新生成 → 强制子 agent 重生成而非复用工作副本
     const msgs = state.messages
     for (let i = msgs.length - 1; i >= 0; i--) {
       if (msgs[i].role === 'assistant') {

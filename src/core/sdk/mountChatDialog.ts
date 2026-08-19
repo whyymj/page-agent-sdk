@@ -61,6 +61,8 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
             if (core.store) await core.store.flush() // 等待落盘完成(useChat await 此 Promise,确保刷新前 indexed 已写入)
           },
           onClear: () => core.resetSession(),   // P0-4:收编进 core(见 core.resetSession);原闭包越界引用 buildCore 局部 lastTitle/titleLLMDone 致 ReferenceError
+          // 代码资产复用:用户点「重新生成」→ 清 vfs 未提交重试集合 + checkout hash,强制子 agent 重新生成而非复用工作副本
+          onBeforeRegenerate: () => (core as unknown as { clearCodeReuse?: () => void }).clearCodeReuse?.(),
           // P1-5(fix-hang-and-feedback):stop() 清空排队的丢弃留痕(记 debugLogs,防无声丢失)
           onQueuedCleared: (dropped: string[]) => {
             const logs = core.agent?.debugLogs

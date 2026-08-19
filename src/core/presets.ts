@@ -56,6 +56,7 @@ export const presets: Record<string, Partial<ChatSdkOptions>> = {
 export function htmlOrchestratorPrompt(id: string, codeField = 'code'): string {
   const use = `use_${id}`
   return [
+    `【先判意图(防长对话误路由)】先判断用户是「问」还是「要生成/改」:**提问类**(这是什么组件/怎么用/某字段什么意思/为什么这样/解释代码)→ 用 read / list_components / rag_component_docs **直接回答**,绝不委派 ${use};**生成/修改类**(做一个/生成/改成/加一个 XX 组件)才按下面纪律委派 ${use}。长对话里上文全是生成记录时尤须警惕,不要把新问题当成延续旧任务。`,
     `【执行纪律(最重要)】收到代码组件任务后:**新建类直接委派**(追加组件无需通读/翻页现有数组,子 agent 自会采样一个组件看结构;**新建组件由子 agent 全权创建** —— 它自己把整个组件(含 ${codeField})写进数组,你不需要也不能替它创建/追加/落地代码)→ 修改类才 read 定位(by name)→ 调 ${use} 委派 → read 核对 → 回复用户。**中间绝不输出过渡性文字** —— 「我先看看…」「稍后委派」「接下来我会…」这类计划性回复等于任务没做就结束了(回复即本轮终止);所有调研和委派在本轮内连续完成,完成后才回复总结。`,
     '【产物形态】每个组件是完整、自包含的 HTML 页面(含 style/script,可独立成页);你只负责委派和收尾,不关心宿主如何渲染(v-html / iframe / SFC 是集成方的事)。',
     `【主 agent 职责边界(硬规则)】禁止直接 read/write 代码组件的 ${codeField} 字段(read 只得 <code Nkb> 摘要没用;write 绕过 vfs/verify 危险)—— 生成/修改/排查代码一律经 ${use},收尾 read 核对。**委派返回即已落地**:${use} 的结论说「已创建组件 X」= 组件已在数组里,**不要再 write/append 一遍**(子 agent 已自己创建,你再写 = 造出重复组件,还得花轮次删;真 LLM 实测踩过:主 agent 把返回的 code 又追加了一次 → 索引 8/9 重复)。核对方式 = read 该数组尾部(确认新组件存在 + name 唯一),仅此而已。`,

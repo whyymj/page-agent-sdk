@@ -176,6 +176,13 @@ function focusPathsToPgIds(
  */
 export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Middleware {
   const { writablePaths, codeVfsPrefix, ext, codeField = 'code', onWarning, getController, vfsStore, craftNotes = true } = opts
+  // 复用机制 holder(存 vfsStore 命名空间,跨 use_html 委派持久,且 core 可触达供「重新生成」清除):
+  //  - __pgLastCheckout:上次 checkout 时 data.code 的 hash(判「data 是否被人工/宿主改过」)
+  //  - __pgPendingRetry:vfs 有「未提交的生成代码」且 data 未变 → 保留工作副本并在 afterAgent 重试提交,
+  //    修「子 agent 耗时生成的代码被拦后重委派又重生成、浪费 token/时间」(重试写入而非重生成)
+  const vfsAny = vfsStore as unknown as { __pgLastCheckout?: Map<string, string>; __pgPendingRetry?: Set<string> }
+  const lastCheckoutHash = (vfsAny.__pgLastCheckout ??= new Map<string, string>())
+  const pendingRetry = (vfsAny.__pgPendingRetry ??= new Set<string>())
   return {
     name: 'code-asset-checkout-commit',
     beforeAgent: (state) => {
@@ -192,9 +199,23 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
         const code = getByPath(o, codeField)
         if (typeof code === 'string') {
           codeHit++
-          codeHashes.set(o.__pgId as string, hashString(code))
-          const vfsPath = `${codeVfsPrefix}${o.__pgId}.${ext}`
-          vfsStore.files[vfsPath] = { content: code, updatedAt: Date.now() }
+          const pgId = o.__pgId as string
+          const curHash = hashString(code)
+          codeHashes.set(pgId, curHash)
+          const vfsPath = `${codeVfsPrefix}${pgId}.${ext}`
+          const existing = vfsStore.files[vfsPath]
+          const prev = lastCheckoutHash.get(pgId)
+          // 复用:vfs 已有「未提交的生成代码」(existing≠data.code)且 data.code 自上次 checkout 未变
+          // (prev===curHash,无人工/宿主改动)→ 保留 vfs 工作副本 + 记 pendingRetry(afterAgent 重试提交),
+          // 子 agent 从已生成代码续做/直接重试写入,不重新生成(省 token+时间);
+          // 否则(首次/vfs 干净/data 被人工改=人工优先)→ 覆盖式刷新 vfs=data 最新快照
+          if (existing && typeof existing.content === 'string' && existing.content !== code && prev === curHash) {
+            pendingRetry.add(vfsPath)
+          } else {
+            vfsStore.files[vfsPath] = { content: code, updatedAt: Date.now() }
+            pendingRetry.delete(vfsPath)
+          }
+          lastCheckoutHash.set(pgId, curHash)
         }
       })
       // 命中校验:有组件但全员未命中 codeField string → 多半集成方填错路径(静默失败极难排查)。onWarning 提示,不阻断 checkout
@@ -309,7 +330,7 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
           const pgId = o.__pgId as string
           dataPgIds.add(pgId)
           const vfsPath = `${codeVfsPrefix}${pgId}.${ext}`
-          if (!touched.has(vfsPath)) return
+          if (!touched.has(vfsPath) && !pendingRetry.has(vfsPath)) return
           try {
             const f = vfsStore.files[vfsPath]
             if (f && typeof f.content === 'string') {
@@ -337,6 +358,7 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
                 return  // forEachCodeItem 回调内 return = 跳过当前组件 commit;dataPgIds 已加(孤儿清理仍认此组件)
               }
               setByPath(o, codeField, f.content)  // 直改 bind(Vue 响应式触发 UI;不进快照栈;按 codeField 写回嵌套字段)
+              pendingRetry.delete(vfsPath)  // 提交成功 → 移出重试集合(下次 checkout 视为干净)
             }
             // vfs_rm 删了文件:f 为空 → 不改 data.code(组件项还在;子 agent 意图删整个组件应 write del components.N,触发孤儿清理)
           } catch (e) {

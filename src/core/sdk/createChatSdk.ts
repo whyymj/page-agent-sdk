@@ -425,6 +425,8 @@ export interface ChatSdk {
   stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>
   /** 显式持久化当前轮(headless 用 sdk.stream 时需手动调:把 messages/vfs/todos 存 store;内置 useChat 经 onPersist 自动调。storage 未开启 → no-op) */
   afterRound(): void
+  /** 清除代码资产复用缓存(重新生成前调,强制子 agent 重新生成而非复用未提交工作副本) */
+  clearCodeReuse(): void
   /** 调试日志(LLM 请求/响应/工具调用/中间件/错误;switchSession/onClear 清空;供 DebugDrawer 或外部消费) */
   readonly debugLogs: Ref<DebugLog[]>
   /** Agent 信息刷新 tick(setSkills/setData/setFocus 后 ++);传给 DebugDrawer watch 后重拉 inspect() 实时反映 */
@@ -674,6 +676,7 @@ export interface AgentCore {
   emit: SdkEventHandler
   applySnapshot(snap: SessionSnapshot): void
   afterRound(): void
+  clearCodeReuse(): void
   send(message: string, options?: SendOptions): Promise<string>
   switchSession(sessionId?: string): Promise<string>
   /** 新建/清空会话:重置内存态 + 新 sessionId + emit session_restored(onClear 调;P0-4 收编,原 onClear 闭包越界引用 buildCore 局部致 ReferenceError) */
@@ -1796,6 +1799,13 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       persistRuntime()
     },
 
+    /** 清除代码资产复用缓存(vfs 命名空间 holder):重新生成前调,强制子 agent 重新生成而非复用未提交工作副本 */
+    clearCodeReuse(): void {
+      const s = vfsStore as unknown as { __pgPendingRetry?: Set<string>; __pgLastCheckout?: Map<string, string> }
+      s.__pgPendingRetry?.clear()
+      s.__pgLastCheckout?.clear()
+    },
+
     async send(message: string, options?: SendOptions): Promise<string> {
       await core.initDone
       // 存活守卫(rv-core F6):runSerial 排队的 send 在等待期间双实例 unmount(release → refCount 0)后
@@ -2886,6 +2896,8 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
     stream: (msgs, onEvent, signal) => core.stream(msgs, onEvent, signal),
     /** 显式持久化当前轮(headless sdk.stream 不自动落盘,需手动调;storage 未开启 → no-op) */
     afterRound: core.afterRound,
+    /** 清除代码资产复用缓存(用户「重新生成」前调):清 vfs 未提交重试集合 + checkout hash,强制子 agent 重新生成而非复用工作副本 */
+    clearCodeReuse: () => core.clearCodeReuse(),
     /** 调试日志(供 DebugDrawer 等;switchSession/onClear 清空) */
     get debugLogs() { return core.agent!.debugLogs },
     /** Agent 信息刷新 tick(传 DebugDrawer 实时重拉 inspect) */

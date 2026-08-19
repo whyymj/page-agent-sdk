@@ -119,12 +119,21 @@ function fmtArgs(args: unknown): { text: string; truncated: boolean } {
     ? { text: text.slice(0, ARGS_DISPLAY_CAP) + props.messages.displayTruncatedSuffix, truncated: true }
     : { text, truncated: false }
 }
-/** 返回值展示:字符串原样;超长截断(复制可拿全量) */
+/** 字符串若为 JSON 对象/数组 → 格式化成缩进 JSON(便于阅读/复制);否则原样 */
+function prettyJson(s: string): string {
+  try {
+    const p = JSON.parse(s)
+    if (p && typeof p === 'object') return JSON.stringify(p, null, 2)
+  } catch { /* 非 JSON 原样 */ }
+  return s
+}
+/** 返回值展示:JSON 字符串格式化成对象;超长截断(复制可拿全量) */
 function fmtResult(result: string | undefined): { text: string; truncated: boolean } {
   if (result == null || result === '') return { text: '', truncated: false }
-  return result.length > RESULT_DISPLAY_CAP
-    ? { text: result.slice(0, RESULT_DISPLAY_CAP) + props.messages.displayTruncatedSuffix, truncated: true }
-    : { text: result, truncated: false }
+  const base = prettyJson(result)
+  return base.length > RESULT_DISPLAY_CAP
+    ? { text: base.slice(0, RESULT_DISPLAY_CAP) + props.messages.displayTruncatedSuffix, truncated: true }
+    : { text: base, truncated: false }
 }
 function copyDetail(text: string, truncated: boolean, full?: unknown): void {
   // 展示截断时复制原始全量(未 JSON.stringify 的原 args / 原始 result 字符串)
@@ -190,7 +199,7 @@ function copyDetail(text: string, truncated: boolean, full?: unknown): void {
 
 <style scoped>
 .steps-block { margin-bottom: 6px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
-.step-item { display: flex; flex-direction: column; gap: 3px; align-self: flex-start; padding: 5px 10px; border-radius: 8px; background: var(--cs-step-bg); border: 1px solid var(--cs-step-border); font-size: 11px; color: var(--cs-step-text); max-width: 100%; }
+.step-item { display: flex; flex-direction: column; gap: 3px; align-self: flex-start; padding: 5px 10px; border-radius: 8px; background: var(--cs-step-bg); border: 1px solid var(--cs-step-border); font-size: 11px; color: var(--cs-step-text); max-width: 100%; user-select: text; -webkit-user-select: text; }
 .step-head { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .step-name { font-family: 'SF Mono', Monaco, Consolas, monospace; font-weight: 600; }
 .step-count { font-size: 10px; color: var(--cs-step-meta); font-weight: 600; }

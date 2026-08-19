@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick, watch } from 'vue'
-import { useMarkdown, type CodeBlock } from '../composables/useMarkdown'
-import CodePreview from './CodePreview.vue'
+import { useMarkdown } from '../composables/useMarkdown'
 import { copyText } from '../utils/clipboard'
 import { MESSAGES_ZH_CN, type DialogMessages } from './messages'
 
 const props = withDefaults(defineProps<{
   content: string
-  /** 文案集(透传给 CodePreview;独立复用缺省中文) */
+  /** 文案集(独立复用缺省中文) */
   messages?: DialogMessages
 }>(), {
   messages: () => MESSAGES_ZH_CN,
@@ -16,14 +15,6 @@ const props = withDefaults(defineProps<{
 const { html, codeBlocks } = useMarkdown(() => props.content)
 
 const containerRef = ref<HTMLElement | null>(null)
-const previewCode = ref<CodeBlock | null>(null)
-
-/** 可预览的代码语言 */
-const previewableLangs = ['html', 'htm', 'vue', 'javascript', 'js', 'css']
-
-function isPreviewable(lang: string) {
-  return previewableLangs.includes(lang.toLowerCase())
-}
 
 /** 根据语言推断文件扩展名并下载代码 */
 function downloadCode(lang: string, code: string) {
@@ -100,17 +91,7 @@ async function enhanceCodeBlocks() {
     dlBtn.onclick = () => downloadCode(lang, rawCode)
     actions.appendChild(dlBtn)
 
-    if (isPreviewable(lang)) {
-      const previewBtn = document.createElement('button')
-      previewBtn.className = 'code-action-btn preview-btn'
-      previewBtn.title = '在新弹层预览运行'
-      previewBtn.innerHTML = TOOLBAR_ICONS.play + '<span>运行预览</span>'
-      previewBtn.onclick = () => {
-        previewCode.value = { lang, code: rawCode }
-      }
-      actions.appendChild(previewBtn)
-    }
-
+    // 「运行预览」暂不开放(用户诉求):代码块仅保留 复制/下载;CodePreview 组件仍导出,后续可恢复
     toolbar.appendChild(actions)
     pre.appendChild(toolbar)
   })
@@ -124,16 +105,6 @@ watch(html, enhanceCodeBlocks)
 
 <template>
   <div class="message-md" ref="containerRef" v-html="html"></div>
-
-  <Teleport to="body">
-    <CodePreview
-      v-if="previewCode"
-      :code="previewCode.code"
-      :lang="previewCode.lang"
-      :messages="messages"
-      @close="previewCode = null"
-    />
-  </Teleport>
 </template>
 
 <style>

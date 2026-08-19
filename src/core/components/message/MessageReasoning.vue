@@ -1,15 +1,25 @@
 <script setup lang="ts">
-defineProps<{ text: string; expanded: boolean }>()
+import { computed } from 'vue'
+
+const props = withDefaults(defineProps<{ text: string; expanded: boolean; running?: boolean }>(), { running: false })
 defineEmits<{ (e: 'toggle'): void }>()
+
+// 字数展示:≥1000 自动换 k 单位(4200→4.2k、1000→1k、≥10万取整 123k),折叠态也有量级感
+const countLabel = computed(() => {
+  const n = props.text.length
+  if (n < 1000) return String(n)
+  const v = n / 1000
+  return `${v >= 100 ? Math.round(v) : +v.toFixed(1)}k`
+})
 </script>
 
 <template>
   <div v-if="text" class="reasoning-block" :class="{ expanded }">
     <div class="reasoning-header" @click="$emit('toggle')">
-      <span class="status-dot ok"></span>
+      <!-- 思考中(生成中)绿点呼吸,完成后静止 -->
+      <span class="status-dot ok" :class="{ breathe: running }"></span>
       <span class="reasoning-title">思考过程</span>
-      <!-- 折叠态也给出内容量反馈(用户诉求:不展开看不到任何反应);点击 header 不选中计数 -->
-      <span class="reasoning-count">{{ text.length }} 字</span>
+      <span class="reasoning-count">{{ countLabel }} 字</span>
       <span class="reasoning-toggle">{{ expanded ? '收起' : '展开' }}</span>
     </div>
     <div v-if="expanded" class="reasoning-body">{{ text }}</div>
@@ -27,4 +37,7 @@ defineEmits<{ (e: 'toggle'): void }>()
 /* 状态色块(reasoning 头部用 ok 绿点;.status-dot base 各组件 scoped 各自维护,不跨边界共享) */
 .status-dot { width: 8px; height: 8px; border-radius: 3px; flex-shrink: 0; background: var(--cs-step-meta); }
 .status-dot.ok { background: var(--cs-ok); }
+/* 思考中绿点呼吸(生成中活跃指示;完成静止) */
+.status-dot.breathe { animation: cs-reason-breathe 1.2s ease-in-out infinite; }
+@keyframes cs-reason-breathe { 0%, 100% { opacity: 0.35; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } }
 </style>

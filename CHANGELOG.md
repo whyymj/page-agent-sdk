@@ -2,6 +2,22 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.34.0] - 2026-08-19
+
+### Added(代码资产复用:被拦后重试写入,不重生成)
+- codeAsset checkout:vfs 已有「未提交生成代码」且 data.code 未变(无人工改动)时**保留工作副本**并记 pendingRetry,afterAgent 重试提交——修「子 agent 耗时生成的代码被拦后重委派又重生成、浪费 token/时间」;人工/宿主改 data 仍优先(keep_external)
+- `sdk.clearCodeReuse()`:清 vfs 复用缓存;内置 useChat「重新生成」前自动调用 → 用户点重新生成才强制重生成,否则复用
+
+### Added(编排意图消歧,防长对话误路由)
+- htmlOrchestratorPrompt 加【先判意图】:提问类(这是啥组件/怎么用/啥字段)用 read/list_components/rag_component_docs 直接回答,**不委派 use_html**;生成/修改类才委派。修「长对话问这是啥被误路由去生成代码」
+
+### Added(聊天可读性/可复制)
+- 思考过程/子 agent 思考:运行中状态点呼吸;字数 ≥1000 自动 k 单位(4.2k);正文可鼠标选中复制
+- 工具结果为 JSON 字符串时格式化(缩进)展示与复制,方便阅读
+
+### Removed
+- 代码块「运行预览」按钮(暂不需要,仅留 复制/下载;CodePreview 组件仍导出,后续可恢复)
+
 ## [3.33.0] - 2026-08-19
 
 ### Fixed(第 0 轮「行动叙述」中途停止)

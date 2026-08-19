@@ -1331,6 +1331,8 @@ export interface ChatSdk {
   stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>;
   /** 显式持久化当前轮(headless 用 sdk.stream 时需手动调:把 messages/vfs/todos 存 store;内置 useChat 经 onPersist 自动调。storage 未开启 → no-op) */
   afterRound(): void;
+  /** 清除代码资产复用缓存(重新生成前调,强制子 agent 重新生成而非复用未提交工作副本) */
+  clearCodeReuse(): void;
   /** 调试日志(LLM 请求/响应/工具调用/中间件/错误;switchSession/onClear 清空;供 DebugDrawer 或外部消费) */
   readonly debugLogs: Ref<DebugLog[]>;
   /** Agent 信息刷新 tick(setSkills/setData/setFocus 后 ++);传给 DebugDrawer watch 后重拉 inspect() 实时反映 */

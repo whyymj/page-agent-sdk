@@ -30,10 +30,12 @@ watch(
 
 // 总字数(subReasonFull 不截尾,计数照涨过 cap;无则用 subReason 长度)+ 是否已截尾(仅显最近部分)
 const charCount = computed(() => props.subReasonFull?.length ?? props.subReason.length)
-// 字数展示:≥10 万用 k 单位(如 123456 → 123k);10 万以下显示精确数字
+// 字数展示:≥1000 自动换 k 单位(4200→4.2k、1000→1k、≥10万取整 123k),与主推理块口径一致
 const charCountLabel = computed(() => {
   const n = charCount.value
-  return n >= 100000 ? `${Math.round(n / 1000)}k` : `${n}`
+  if (n < 1000) return String(n)
+  const v = n / 1000
+  return `${v >= 100 ? Math.round(v) : +v.toFixed(1)}k`
 })
 const truncated = computed(() => (props.subReasonFull?.length ?? props.subReason.length) > props.subReason.length)
 
@@ -72,7 +74,7 @@ async function copyReason() {
 /* 运行中脉冲点(思考活跃指示,治"卡住"感) */
 .sub-reason-label.pulsing::after { content: ' ●'; animation: cs-think-pulse 1.2s ease-in-out infinite; margin-left: 1px; }
 @keyframes cs-think-pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
-.sub-reason-body { padding: 4px 10px 6px; border-top: 1px solid var(--cs-sub-border); font-size: 10px; line-height: 1.5; color: var(--cs-sub-text); white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow-y: auto; }
+.sub-reason-body { padding: 4px 10px 6px; border-top: 1px solid var(--cs-sub-border); font-size: 10px; line-height: 1.5; color: var(--cs-sub-text); white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow-y: auto; user-select: text; -webkit-user-select: text; }
 .sub-reason-trunc { margin-left: 4px; font-size: 9px; font-weight: 400; opacity: 0.7; }
 /* 复制按钮(右对齐;@click.stop 不触 summary 折叠) */
 .sub-reason-copy { margin-left: auto; border: none; background: rgba(108, 92, 231, 0.14); color: var(--cs-sub-text); border-radius: 4px; padding: 1px 7px; font-size: 10px; cursor: pointer; line-height: 1.5; transition: background 0.15s; }
@@ -80,6 +82,8 @@ async function copyReason() {
 .sub-reason-copy.copied { background: rgba(16, 185, 129, 0.2); color: var(--cs-ok); }
 /* 状态色块(本组件内 status-dot) */
 .status-dot { width: 6px; height: 6px; border-radius: 2px; flex-shrink: 0; background: var(--cs-step-meta); }
-.status-dot.running { background: var(--cs-warn); }
+.status-dot.running { background: var(--cs-warn); animation: cs-sub-breathe 1.2s ease-in-out infinite; }
 .status-dot.ok { background: var(--cs-ok); }
+/* 思考中状态点呼吸(运行中活跃指示) */
+@keyframes cs-sub-breathe { 0%, 100% { opacity: 0.35; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } }
 </style>

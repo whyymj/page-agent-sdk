@@ -45,6 +45,8 @@ const props = withDefaults(defineProps<{
   onPersist?: (messages: AgentMessage[]) => void
   /** stop() 清空排队任务时回调(P1-5 可见性;→ DebugDrawer 日志) */
   onQueuedCleared?: (dropped: string[]) => void
+  /** regenerate 前回调(清代码资产复用缓存) */
+  onBeforeRegenerate?: () => void
   /** 清空时回调(新建会话) */
   onClear?: () => void
   /** 获取 agent 详细信息(debug 窗口「Agent 信息」tab) */
@@ -132,6 +134,7 @@ const ctx = createChatContext({
   onPersist: props.onPersist,
   onClear: props.onClear,
   onQueuedCleared: props.onQueuedCleared,
+  onBeforeRegenerate: props.onBeforeRegenerate,
   getInfo: props.getInfo,
   canUndo: props.canUndo,
   onUndo: props.onUndo,
