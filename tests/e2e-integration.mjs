@@ -30,6 +30,7 @@ import { run as runContextEconomy } from './e2e/context-economy.mjs'
 import { run as runMcp } from './e2e/mcp.mjs'
 import { run as runPreferences } from './e2e/preferences.mjs'
 import { run as runDiagnostics } from './e2e/diagnostics.mjs'
+import { run as runInstructionAdherence } from './e2e/instruction-adherence.mjs'
 
 const modules = [
   ['systemprompt', runSystemprompt],
@@ -61,6 +62,7 @@ const modules = [
   ['mcp', runMcp],
   ['preferences', runPreferences],
   ['diagnostics', runDiagnostics],
+  ['instruction-adherence', runInstructionAdherence],
 ]
 
 let totalPass = 0, totalFail = 0

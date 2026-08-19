@@ -28,6 +28,7 @@ import { getSchemaAtPath, schemaHasCodeField, inferWritablePaths, getSchemaTopKe
 import { systemPromptHelpers } from '../presets'
 import { createTodosMiddleware } from '../harness/todos'
 import { createMissionMiddleware } from '../harness/mission'
+import { createIntentGuardMiddleware } from '../harness/intentGuard'
 import { createFocusMiddleware } from '../harness/focus'
 import { createWorkingMemoryMiddleware } from '../harness/workingMemory'
 import { createSkillsMiddleware, type SkillSpec } from '../harness/skills'
@@ -942,6 +943,11 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
   const todosMw = createTodosMiddleware([], { maxPlanRevisions: options.maxPlanRevisions })
   const missionMw = createMissionMiddleware()
+  // 问句意图守卫(instruction-adherence B):逐消息动态定性,防问句被误路由成操作(长对话实测事故驱动)。
+  // 默认开无开关(3.30/3.31 配置面收敛方向);pin 段跨压缩存活;onHit 留痕去重(闭包引用 core,运行时已初始化)
+  const intentGuardMw = createIntentGuardMiddleware((preview) => {
+    core.agent?.debugLogs?.value?.push({ timestamp: Date.now(), type: 'middleware', data: { stage: 'intent_guard', preview } })
+  })
   // 上下文聚焦(focus-context):指定组件精修,目标/视野/范围三层收敛。getSchema 延迟引用 liveData(适配 setData 运行时替换,同 checkpointMgr.getData 模式)
   // 焦点变更统一 emit focus_change(所有入口:API/agent 工具/dialog chip/reset;闭包引用 emit,运行时已初始化)
   const focusMw = createFocusMiddleware({ getSchema: () => liveData()?.schema, getBind: () => liveData()?.bind, onChange: (focuses) => emit({ type: 'focus_change', focuses }) })
@@ -1519,6 +1525,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     usageHintsMw,
     // 按 capabilities 条件装载内置中间件(默认全开;verify 默认关)
     ...(useMission ? [missionMw] : []), // mission 在 todos 前(pin 段在 todos 段前;revive-mission-anchor)
+    intentGuardMw, // mission 后:问句意图守卫 pin 段(逐消息定性「先答勿做」;instruction-adherence B,默认开)
     ...(preferencesMw ? [preferencesMw] : []), // mission 后:用户偏好 pin 段(跨会话;afterAgent 收口捕获;opt-in 默认关)
     ...(usePlanning ? [todosMw] : []),
     ...(useSkills
@@ -2631,52 +2638,63 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     // 直接随 tools: allTools 进 agent;若在之后走 setTools 注入 —— 两路幂等不重复。
     if (options.mcp?.length) {
       void (async () => {
-        const results = await Promise.allSettled(options.mcp!.map((c) => connectMcp(c)))
-        const closers = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value.close] : []))
-        // release 先行:core 已释放 → 不回填 mcpClosers(release 已 splice 过,回填=泄漏),直接关
-        if (mcpBackgroundReleased) {
-          void Promise.allSettled(closers.map((c) => c()))
-          return
+        // 上游 MCP 网关偶发 502/连接重置(实测 user-bff-api 抖动):一次性连接撞上抖动会整会话丢工具
+        // → 模型调 rag_* 报「不存在」。重试 3 次(递增退避)吸收瞬时故障,仍失败才降级跳过。
+        const connectWithRetry = async (c: McpServerConfig) => {
+          let lastErr: unknown
+          for (let i = 0; i < 3; i++) {
+            try { return await connectMcp(c) } catch (e) { lastErr = e; if (i < 2) await new Promise((r) => setTimeout(r, 600 * (i + 1))) }
+          }
+          throw lastErr
         }
-        core.mcpClosers = closers
-        core.mcpServers = []
-        // 复用外层 mcpTools 数组(buildCore 作用域声明):旧实现在此用 const 声明同名局部变量遮蔽外层,
-        // 致 push 进局部数组、rebuildExtraTools 读外层空数组 → MCP 工具从未注入 agent(主流程审查 P0-3)
         /** C1(MCP 保留字保护):工具注入前查已注册非 mcp 来源工具名,冲突 → skip + warn */
         const reservedNames = new Set<string>()
         for (const t of allTools) {
           const source = toolSources.get(t.name)
           if (source && !source.startsWith('mcp:')) reservedNames.add(t.name)
         }
-        results.forEach((r, i) => {
-          const cfg = options.mcp![i]
+        // 逐 server 渐进注入(修 allSettled 栅障):原实现等全部 server 落定才统一注入 —— 一个坏 server
+        // 的 3 次重试(~5s)会拖累所有好 server 的工具注入(mcp-e2e F4 实测)。改为各自落定即注入,
+        // 谁先连上谁先可用;坏 server 失败只影响自己(故障隔离语义不变)。单线程事件循环保证 push 安全。
+        let settled = 0
+        const total = options.mcp!.length
+        await Promise.allSettled(options.mcp!.map(async (cfg) => {
           const label = cfg.name ?? cfg.url
-          if (r.status === 'fulfilled') {
-            core.mcpServers.push({ name: label, url: cfg.url, toolCount: r.value.tools.length })
-            r.value.tools.forEach((t) => {
+          let injected = false
+          try {
+            const conn = await connectWithRetry(cfg)
+            // release 先行:core 已释放 → 不回填 mcpClosers(release 已 splice 过,回填=泄漏),直接关
+            if (mcpBackgroundReleased) { void conn.close(); return }
+            core.mcpClosers.push(conn.close)
+            core.mcpServers.push({ name: label, url: cfg.url, toolCount: conn.tools.length })
+            conn.tools.forEach((t) => {
               if (reservedNames.has(t.name)) {
                 console.warn(`[page-agent-sdk][mcp] 工具 "${t.name}" 与内置工具重名,已拒绝注入(安全保留字保护)`)
                 return
               }
               toolSources.set(t.name, `mcp:${label}`)
               mcpTools.push(t)
+              injected = true
             })
-          } else {
-            console.warn(`[page-agent-sdk][mcp] server ${label} 连接失败:`, r.reason)
+            // 重建 allTools(纳入 mcpTools)+ 已建 agent 则 rebind 迟到注入(infoTick 刷新 inspect)
+            if (injected) {
+              allTools = rebuildExtraTools()
+              if (core.agent) core.agent.setTools(allTools)
+              core.infoTick.value++
+            }
+          } catch (reason) {
+            if (mcpBackgroundReleased) return
+            console.warn(`[page-agent-sdk][mcp] server ${label} 连接失败:`, reason)
             // 降级可观测(MCP_CONNECT_FAILED):只 console.warn 时 headless/无 console 集成无从得知,
             // 模型仍会按 systemPrompt 引用调工具 →「工具不存在」误导为代码问题。emit observable + inspect 反射。
-            const errText = String((r.reason as Error | undefined)?.message ?? r.reason ?? '').slice(0, 200)
+            const errText = String((reason as Error | undefined)?.message ?? reason ?? '').slice(0, 200)
             core.mcpFailed.push({ name: label, url: cfg.url, error: errText })
             emit({ type: 'error', message: `MCP server「${label}」连接失败,其工具不可用:${errText}`, severity: 'observable', code: 'MCP_CONNECT_FAILED', context: { server: label, url: cfg.url } } as any)
+          } finally {
+            settled++
+            if (settled === total && options.debug) console.log(`[page-agent-sdk][mcp] 注入 ${mcpTools.length} 个工具,${core.mcpServers.length} 个 server`)
           }
-        })
-        // 重建 allTools(纳入 mcpTools)+ 已建 agent 则 rebind 迟到注入(infoTick 刷新 inspect)
-        if (mcpTools.length) {
-          allTools = rebuildExtraTools()
-          if (core.agent) core.agent.setTools(allTools)
-          core.infoTick.value++
-        }
-        if (options.debug) console.log(`[page-agent-sdk][mcp] 注入 ${mcpTools.length} 个工具,${core.mcpServers.length} 个 server`)
+        }))
       })()
     }
     // 主 LLM:实例直传;LLMConfig 经 constructLlmFromConfig(provider 分支,Anthropic 动态 import)构造实例注入

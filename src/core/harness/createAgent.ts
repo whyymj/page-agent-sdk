@@ -32,6 +32,7 @@ import { createInitialState, type HarnessState, type LoopProgress } from './stat
 import { withRetry, isAbort, type RetryOptions } from './retry'
 import { withStallTimeout, StreamStalledError, StreamMaxDurationError, DEFAULT_STREAM_STALL_MS, DEFAULT_STREAM_MAX_DURATION_MS } from '../utils/stallTimeout'
 import { isContextLengthError } from './errors'
+import { detectIncompleteFinish, buildGateFeedback } from './todos'
 import {
   type Middleware,
   type ModelRequest,
@@ -475,7 +476,7 @@ export function createAgent(options: CreateAgentOptions) {
   /** 系统段 token 预算占比(harden-context-resilience Phase 5):system 段最多占窗口 25%,余 75% 留对话+工具结果+输出 */
   const SYSTEM_BUDGET_RATIO = 0.25
   /** 跨压缩锚定段:系统段超预算时永不 drop(目标/工作记忆丢了 agent 跑偏) */
-  const PIN_SEGMENT_NAMES = new Set(['mission', 'workingMemory'])
+  const PIN_SEGMENT_NAMES = new Set(['mission', 'workingMemory', 'intentGuard'])
 
   /** 组装 system prompt:base + 各中间件 augmentPrompt 段。
    *  超系统段预算时按「非 pin 段从大到小 drop」收敛(丢最大段优先 = 丢最少段数;dataHint 巨型 schema 常最大先丢),
@@ -798,6 +799,9 @@ export function createAgent(options: CreateAgentOptions) {
     const maxFormatRetries = 2
     const maxTransitionalRetries = 2  // 过程性收口回灌上限(flash 提前收口实测;误判代价仅一轮回灌)
     let transitionalRetries = 0
+    // 完结门禁(instruction-adherence A):todos 有未完成项却欲纯文本收尾 → 回灌「双出口」反馈续跑。独立预算,与 transitional 正交
+    const maxGateRetries = 2
+    let gateRetries = 0
     try {
       while ((rounds < maxToolRounds || pendingFormatRetry) && iterations < maxIterations) {
         iterations++ // 总循环计数(含自纠轮),触顶 maxIterations 强制退出防死循环
@@ -896,6 +900,18 @@ export function createAgent(options: CreateAgentOptions) {
               pendingFormatRetry = true
               log('middleware', { stage: 'transitional_retry', attempt: transitionalRetries, rounds, content: response.content.slice(0, 160) })
               currentMessages.push(new HumanMessage('⚠️ 你刚才只输出了计划/行动叙述(如「我先看看」「开始添加」),没有发起任何工具调用,因此什么都未执行。请立即用标准 function calling 调用所需工具把任务做完,全部完成后再给出总结回复。'))
+              continue
+            }
+            // 完结门禁(instruction-adherence A):todos 有未完成项却以纯文本收尾 → 回灌「双出口」反馈(已完成→update_todo 标记 / 未完成→继续)续跑。
+            // 同 transitional 模式:pendingFormatRetry 绕过 rounds 预算(补完任务不是新工具轮;maxIterations 总闸兜底)。
+            // 预算 2:「忘标 completed」一次回灌即收敛;两次仍收口 = 模型异常 → 放行强收防死循环烧 token。
+            // 位置在 transitional 之后(先治「光说不做」再治「做了一半」)、beforeReturn 之前(verify 是写后回查 opt-in,语义无关)。
+            // 豁免问句收尾/空 todos 在 detectIncompleteFinish 内(宁漏勿误);子 agent 无 planning 工具 todos 恒空,天然不触发。
+            if (!garbled && gateRetries < maxGateRetries && detectIncompleteFinish(state.todos, response.content)) {
+              gateRetries += 1
+              pendingFormatRetry = true
+              log('middleware', { stage: 'completion_gate', attempt: gateRetries, pending: state.todos.filter((t) => t.status !== 'completed').map((t) => t.id), content: response.content.slice(0, 160) })
+              currentMessages.push(new HumanMessage(buildGateFeedback(state.todos)))
               continue
             }
             // beforeReturn 钩子(正序):agent 返回前可拦截自纠(回灌 user 消息继续循环)。

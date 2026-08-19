@@ -75,6 +75,25 @@ export function renderTodos(todos: Todo[]): string | undefined {
   ].join('\n')
 }
 
+/** 完结门禁判定(instruction-adherence A):模型欲以纯文本收尾但 todos 仍有未完成项 → true(循环层回灌续跑)。
+ *  豁免(宁漏勿误):① todos 为空(未规划的任务不拦)② 全 completed ③ 收尾文本以问号结尾
+ *  (agent 在向用户征询输入,如「要保留哪个方案?」,拦截会破坏交互节奏)。 */
+export function detectIncompleteFinish(todos: Todo[], finalContent: string): boolean {
+  if (!todos.length) return false
+  if (!todos.some((t) => t.status !== 'completed')) return false
+  if (/[?？]\s*$/.test(finalContent)) return false
+  return true
+}
+
+/** 完结门禁回灌文案:双出口 ——「活干完但忘 update_todo」是高频真实场景(flash 实测),
+ *  只喊「继续执行」会逼模型把已完成的活再干一遍,故给「已完成→标记 / 未完成→继续」两条路。
+ *  列未完成项 id+content(单项截断 60 字防超长)让模型精确定位。 */
+export function buildGateFeedback(todos: Todo[]): string {
+  const pending = todos.filter((t) => t.status !== 'completed')
+  const lines = pending.map((t) => `#${t.id} [${t.status}] ${t.content.length > 60 ? `${t.content.slice(0, 60)}…` : t.content}`).join('\n')
+  return `⚠️ 任务未完成:待办清单还有 ${pending.length} 项未完成:\n${lines}\n若这些工作实际已完成,请先用 update_todo 把它们全部标记 completed(或一次 write_todos 整表替换)再给出最终总结;若尚未完成,请继续执行剩余任务。不要中途停止。`
+}
+
 export interface TodosMiddlewareOptions {
   /** 规划阶段总轮次预算(默认 5);planning 状态下超限 → write_todos/update_todo 回灌提示(不强制终止,maxIterations 兜底) */
   maxPlanRevisions?: number

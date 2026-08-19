@@ -1,5 +1,7 @@
 # 活跃 Changes 优先级索引
 
+> **2026-08-19 立项 `instruction-adherence`(规划完成,未实施)**:指令执行力增强,治理「莫名中断 + 注意力漂移」两类实测失效(editor_fangzhou 真 LLM 驱动):① **完结门禁**(防提前收口)—— agent 欲纯文本收尾时若 `state.todos` 有未完成项 → 回灌「双出口」反馈续跑(已完成→update_todo 标记 / 未完成→继续执行),独立预算 ≤2,挂循环条件层(transitional 判定后;beforeReturn 因 maxVerifyAttempts 默认 0 不执行被否决,D1);问句收尾豁免;② **问句意图守卫**(防误路由)—— 新中间件 intentGuard 经 augmentPrompt pin 段逐消息动态定性(三档启发式:句尾问号/疑问词+吗呢/查询词「是什么|怎么用|有哪些」),命中注入「先答勿做 + 除非同条消息明确要求」段,跨压缩存活,与 3.34【先判意图】静态编排互补。两机制默认开、无新配置项(延续 3.30/3.31 配置面收敛)、宁漏勿误;复用 detectActionNarration 范式(纯函数+循环回灌+留痕)。随 3.35.0(连同 MCP 连接重试)。见 [`2026-08-19-instruction-adherence/`](./2026-08-19-instruction-adherence/)。
+
 > **2026-08-18 立项 `subagent-thinking-mode-lock`(规划完成,未实施)**:子 agent 思考深度锁定 —— `SubagentConfig.thinkingMode?: 'simple'|'deep'`(预声明 / `createHtmlSubagent` 透传)+ 顶层 `subagent.thinkingMode?` 全局缺省,强行覆盖继承的思考配置(主深子浅 / 主浅子深)。生效路径:LLMConfig 构造分支经纯函数 `applyThinkingMode` 改写 `extraBody.thinking`(OpenAI 兼容 / deepseek)/ `LLMConfig.thinking`(Anthropic 扩展 `constructLlmFromConfig`);预构造 `BaseChatModel` 实例路径 warn + observable no-op(实例思考配置钉死构造期)。优先级:显式 thinkingMode > 继承的 extraBody.thinking;未设 = 零回归。`inspect().subagents` 反射 applied/inherited/instance-noop。见 [`2026-08-18-subagent-thinking-mode-lock/`](./2026-08-18-subagent-thinking-mode-lock/)。
 
 > **2026-08-18 立项 `image-input-vision`(Phase 1 已随 3.28.0 发布;Phase 2 部分吸收,余 deferred)**:图片上传识图 + **文本主模型的 vision 旁路** —— Phase 1 输入侧(📎/拖拽/粘贴 + 压缩闸 + `AgentMessage.images` + modelCaps.vision 直发 content parts + 原图走 vfs 防快照膨胀)✅ 已实施;Phase 2 旁路实施变化:原规划「SDK 内置 vision 中间件」改为**集成方钩子** `images:{upload,describe}`(识图能力归属集成方),诚实闸三分支 + describe 失败/超时降级占位 ✅;余 `describe_image` 工具 / usage.vision_tokens 分离 / 真 LLM 旁路三场景 deferred。见 [`2026-08-18-image-input-vision/`](./2026-08-18-image-input-vision/)。
@@ -64,7 +66,7 @@
 
 ## 进行中
 
-_(活跃:`2026-08-18-subagent-thinking-mode-lock` + `2026-08-18-image-input-vision`(均规划完成待实施,见顶部条目)。前一批 `scrollbar-overlay` + `header-adaptive-labels` 已于 2026-08-18 随 3.27.0/3.27.1 发布归档;`legacy-bundle-channel` 已于 2026-08-17 随 3.26.0 发布归档)_
+_(活跃:`2026-08-19-instruction-adherence` + `2026-08-18-subagent-thinking-mode-lock` + `2026-08-18-image-input-vision`(均规划完成待实施,见顶部条目)。前一批 `scrollbar-overlay` + `header-adaptive-labels` 已于 2026-08-18 随 3.27.0/3.27.1 发布归档;`legacy-bundle-channel` 已于 2026-08-17 随 3.26.0 发布归档)_
 
 _(write-path-cost-reduction 已于 2026-08-17 实施完成随 3.25.1 发布归档:bench 1MB 单写 median -12%/-19%,A+B 两段全保留,冲突检查 hash 实时性不变量固化)_
 
