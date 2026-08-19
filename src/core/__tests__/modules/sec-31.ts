@@ -81,6 +81,31 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert(getSchemaAtPath(z.object({ data: z.unknown() }), 'data.a') !== null, '✓ getSchemaAtPath → unknown 子树开放')
   assert(getSchemaAtPath(z.record(z.string(), z.array(z.object({ id: z.string() }))), 'child.0.id') !== null, '✓ getSchemaAtPath → record(array·object 嵌套 valueType)深层命中')
 
+  // P0(isPathAllowed-record):isPathAllowed 漏 ZodRecord 分支 → 写 record 内任意 key(如 style.background-color,style 为 z.record)恒 PATH_DENIED,
+  // 与「record 键集开放,任意键可写」契约矛盾(集成方 systemPrompt 明示 style 任意 CSS 键可写,模型反复重试烧光轮次预算致任务中断)。
+  // 修复:补 record 分支(下探 valueType,任意段合法),与 getSchemaAtPath 口径对齐。
+  const recRoot = z.object({ style: z.record(z.string(), z.string()), props: z.record(z.string(), z.unknown()) })
+  const recRootKeys = getSchemaTopKeys(recRoot)
+  assert(isPathAllowed('style.background-color', recRoot, recRootKeys) === true, '✓ isPathAllowed → record 内带连字符 key 放行(修前恒 PATH_DENIED,style 任意 CSS 键写不进)')
+  assert(isPathAllowed('style.padding-left', recRoot, recRootKeys) === true, '✓ isPathAllowed → record 内任意 CSS key 放行')
+  assert(isPathAllowed('style.z-index', recRoot, recRootKeys) === true, '✓ isPathAllowed → record 内数字名 key 放行')
+  assert(isPathAllowed('props.text', recRoot, recRootKeys) === true, '✓ isPathAllowed → record(unknown valueType)深层放行')
+  assert(isPathAllowed('style', recRoot, recRootKeys) === true, '✓ isPathAllowed → record 字段本身放行')
+  assert(isPathAllowed('nope.x', recRoot, recRootKeys) === false, '✓ isPathAllowed → 未声明顶层字段仍拒(record 修复不放宽顶层白名单)')
+  // record valueType 为 object:下探其 shape(非开放字段仍校验,与 getSchemaAtPath 一致)
+  const recObjVal = z.object({ meta: z.record(z.string(), z.object({ title: z.string(), count: z.number() })) })
+  const recObjValKeys = getSchemaTopKeys(recObjVal)
+  assert(isPathAllowed('meta.x.title', recObjVal, recObjValKeys) === true, '✓ isPathAllowed → record(object valueType)声明字段放行')
+  assert(isPathAllowed('meta.x.nope', recObjVal, recObjValKeys) === false, '✓ isPathAllowed → record(object valueType)未声明字段仍拒(valueType 非开放不放宽)')
+  // any/unknown 子树:任意深度任意段合法(与 getSchemaAtPath 对齐;修前落 else→false)
+  const anyRoot = z.object({ data: z.any() })
+  const anyRootKeys = getSchemaTopKeys(anyRoot)
+  assert(isPathAllowed('data.a.b.c', anyRoot, anyRootKeys) === true, '✓ isPathAllowed → any 子树任意深度放行(修前落 else→false)')
+  const unkRoot = z.object({ data: z.unknown() })
+  const unkRootKeys = getSchemaTopKeys(unkRoot)
+  assert(isPathAllowed('data.x', unkRoot, unkRootKeys) === true, '✓ isPathAllowed → unknown 子树放行(修前落 else→false)')
+
+
   // projectBySchemaDeep(按 schema 递归投影)
   const proj = projectBySchemaDeep({ name: 'x', age: 1, secret: 'hidden' }, schema) as any
   assert(proj.name === 'x' && proj.age === 1 && proj.secret === undefined, 'projectBySchemaDeep → 按 schema 投影隐藏未声明字段')

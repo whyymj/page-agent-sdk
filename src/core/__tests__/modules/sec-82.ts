@@ -67,7 +67,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     const bind: any = { pub: 'v1' }
     const toolsArr = createDataOps(
       { schema: z.object({ pub: z.string(), secret: z.string() }), bind, description: 'd' },
-      {},
+      { conflictWatchFields: ['*'] },
     )
     // schema 声明了 secret 但 allowKeys 走 schema 全量 → 模拟范围收窄太绕;直接用 fields 投影不可行。
     // 换更直接形态:isUnsafePath(__proto__ 段)失败读。pub 正常读 → 外部改 → 失败读 → autoLock 写应冲突

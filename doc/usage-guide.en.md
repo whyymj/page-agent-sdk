@@ -162,7 +162,7 @@ createChatSdk({
   id: 'my-agent',                  // stable id (multi-agent isolation + persistence resume)
   llm: { apiKey, baseUrl, model, temperature?, maxTokens? },  // or a LangChain BaseChatModel instance
   systemPrompt: '...',             // Agent identity + business flow (optional: built-in default — JSON operation assistant + reliableWriteRules — used if omitted; passing your own fully overrides it. appendReliableWriteRules defaults to true: auto-appends reliableWriteRules with a '---' separator; set false to disable)
-  // ⚠️ Tool usage (read/write/get/set/patch/autoLock/snapshot etc.) is auto-injected by the usageHints middleware per capability flags — do NOT declare it here; systemPrompt should only carry "business knowledge": identity, field meanings, business flow, skill refs
+  // ⚠️ Tool usage (read/write/get/set/patch/snapshot etc.) is auto-injected by the usageHints middleware per capability flags — do NOT declare it here; systemPrompt should only carry "business knowledge": identity, field meanings, business flow, skill refs
 
   // page data
   data: { schema, bind, description? },  // single main object: bind directly connects reactive/plain object (tools read/write bind, not auto-mounted to window); schema field .describe() auto-injected into systemPrompt「operable data」section
@@ -273,7 +273,7 @@ write({ path: 'page', value: { title: 'Merged title' }, patch: { op: 'merge' } }
 write({ path: 'page.oldField', del: true })
 ```
 
-`write` auto: ① schema validation (no write on failure) ② snapshot (rollback via `restore_data`) ③ optimistic lock (autoLock, compares hash from `read`; conflict → `VERSION_CONFLICT` or human escalation).
+`write` auto: ① schema validation (no write on failure) ② snapshot (rollback via `restore_data`) ③ optimistic lock (opt-in since 3.32: `conflictWatchFields` whitelist or `['*']` whole-field; conflict → `VERSION_CONFLICT` or human escalation).
 
 #### Tool surface: always fully exposed (14 tools; `toolMode` removed in 3.31)
 
@@ -336,7 +336,7 @@ const sdk = createChatSdk({
 
 #### Optimistic lock (prevent stale-overwrite) & conflict human-in-the-loop
 
-When the main data may be modified concurrently by **external code / other agents / manual user edits**, enable optimistic locking: `get_data`/`read` returns a value with `hash=xxx` appended (hash of the entire bound object); pass `expectedHash` on write to verify against the whole object.
+When the main data may be modified concurrently by **external code / other agents / manual user edits**, enable optimistic locking: declare `conflictWatchFields` (whitelist or `['*']`); `get_data`/`read` appends `hash=xxx` (hash of the whole bound object) as the lock token, and writes auto-verify once declared.
 
 ```ts
 // Agent workflow (run by the LLM automatically; integrator writes nothing)
@@ -389,15 +389,15 @@ Auto-adjudication never sets `pendingConflict`, but the `conflict` event is stil
 
 > **Baseline guard (3.29+)**: if a custom tool registered via `defineTool` mutates `bind` directly inside its body (e.g. a structural tool that replaces the whole component tree), the SDK **automatically recomputes the optimistic-lock baselines** after that tool call, so the agent's next normal `write` is not falsely flagged as "externally modified" (self-conflict). Mutations **outside** the tool window (host watchers / direct user edits) still trigger a conflict by design — that is the optimistic lock's job; adjudicate via `conflictPolicy`.
 
-> Omitting `expectedHash` → backward-compatible direct write (no check). Using `createDataOps(props, { onConflict })` standalone (without ChatDialog), handle conflicts yourself (return `Promise<{action}>`).
+> Without `conflictWatchFields` → direct write (no auto check). Using `createDataOps(props, { onConflict })` standalone (without ChatDialog), handle conflicts yourself (return `Promise<{action}>`).
 
 #### Optimistic lock under concurrent tools (`maxParallelTools > 1`)
 
-`autoLock` (default `true`) makes `write` verify the optimistic-lock hash automatically: it reuses **the whole-bind hash from the LLM's most recent `read`** (an internal baseline, caller-scoped since 2.40 — a subagent's read/write uses its own scope baseline and never pollutes the main agent's) for whole-snapshot comparison, so integrators don't pass `expectedHash` by hand. In a serial single-tool flow this is equivalent to "write based on the value I just read".
+**Since 3.32, automatic detection is OFF by default** (opt-in flip: hosts commonly mutate metadata outside the SDK write path, making whole-field detection misfire constantly). Three ways to enable: ① `conflictWatchFields: ['style','props',...]` (whitelist of field names at any depth, **position-insensitive** — index shifts from component add/remove don't misfire; only value changes on watched fields trigger conflicts) ② `conflictWatchFields: ['*']` restores legacy whole-field detection. When enabled, `write` reuses **the whole/watched hash from the LLM's most recent `read`** (internal baseline, caller-scoped since 2.40) for snapshot comparison. In a serial single-tool flow this is equivalent to "write based on the value I just read".
 
 **Under concurrent tools, `autoLock` degrades to "whole-snapshot semantics".** When `maxParallelTools > 1`, multiple `read`s in the same round **concurrently write the same baseline (main scope)** with nondeterministic completion order, and a subsequent `write` compares against "**the whole hash of whichever `read` finished last**" — "is this write using the hash from *my own* read?" is **not reproducible** across tools. This doesn't break the safety boundary (it's still whole-snapshot validation; conflicts are still caught), but you lose the "each write corresponds precisely to its own read" semantics. (Consecutive *writes* in the same scope are unaffected: each successful write refreshes the baseline, so an agent's own consecutive writes never conflict with each other.)
 
-**When you need precise optimistic locking under concurrency: have the LLM pass `expectedHash` explicitly.** Take the `hash` returned by its own `read` and pass it back in `write`:
+**Under concurrency the `conflictWatchFields` baseline provides whole-snapshot protection** (per-scope, caller-isolated):
 
 ```ts
 // Agent workflow (concurrent scenario, run by the LLM automatically)
@@ -406,9 +406,9 @@ Auto-adjudication never sets `pendingConflict`, but the `conflict` event is stil
 //    precisely compares the hash from the LLM's own read, bypassing the shared-lastReadHash race
 ```
 
-Explicit `expectedHash` takes precedence over the `autoLock` shared hash — reproducible and reason-able across concurrent tools.
+`conflictWatchFields` is the single basis for whether a write is verified; `conflictPolicy` decides how a real conflict is adjudicated.
 
-> **Hash algorithm**: from 2.16+, `hashValue` is upgraded to **cyrb53 (53-bit)**, replacing the old djb2 (32-bit) to significantly reduce collisions. Just take the `hash` field from `read` / `get_data` return values for `expectedHash` — integrators never compute it themselves.
+> **Hash algorithm**: from 2.16+, `hashValue` is upgraded to **cyrb53 (53-bit)**, replacing the old djb2 (32-bit) to significantly reduce collisions. Just take the `hash` field from `read` / `get_data` return values — integrators never compute it themselves.
 
 ### Automation loop & scale: `get_dom` / `actions` / `schemaHint` / `workingMemory` (2.18+)
 
@@ -1496,7 +1496,7 @@ function switchTo(i: number) {
 
 **Key points**:
 - Distinct `id` for isolation: each independent agent instance/history/tools/storage, no cross-talk
-- Each managing its own `data` object has no conflict; multiple agents operating on the same `data` need coordination (optimistic lock `expectedHash` or `jsonPath` partitioning)
+- Each managing its own `data` object has no conflict; multiple agents operating on the same `data` need coordination (optimistic lock `conflictWatchFields` or `jsonPath` partitioning)
 - `hide()` does not unmount vueApp / does not release agent — keeps chat history and in-flight generation; `show()` resumes visibility
 - If switch buttons sit under the drawer mask, raise their `z-index` (above mask `9998` + ChatDialog `9999`) to stay clickable
 

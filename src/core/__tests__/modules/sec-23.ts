@@ -104,7 +104,8 @@ export async function run(ctx: TestCtx): Promise<void> {
     const agentA = createAgent({ llm: mockA as any, maxToolRounds: 2, maxRetries: 0 })
     let finalA = ''
     await agentA.stream([{ role: 'user', content: '做点事', timestamp: Date.now() }], (e) => { if (e.type === 'done') finalA = e.content }, undefined)
-    assert(finalA === '最终综合回答', '收口综合:工具轮耗尽后强制再跑一轮综合,返回最终回答(非"请简化问题")')
+    assert(finalA.startsWith('最终综合回答'), '收口综合:工具轮耗尽后强制再跑一轮综合,返回最终回答(非"请简化问题")')
+    assert(finalA.includes('工具调用次数已达上限') && finalA.includes('继续'), '收口综合附超调用次数可见提示(达上限/可回复继续),不「莫名停了」')
 
     // ①+ P1-1(arch-review):收口综合经中间件栈 —— wrap-up 不再直接调 coreModelCall 绕过 wrapModelCall/afterModel。
     // 修复前:收口轮 token 不计入 sdk-events afterModel 的 usage 累加(漏计 sdk.usage)、budget 预算闸与用户自定义 wrapModelCall 失效。

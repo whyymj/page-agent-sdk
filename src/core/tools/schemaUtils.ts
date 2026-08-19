@@ -52,6 +52,14 @@ export function isPathAllowed(jsonPath: string, schema: ZodType | null, allowKey
       // 修复:旧 else if 用 `_def.type` 真值判断,但 _def.type 在所有 zod schema 都是字符串(如 'union'/'object'),
       // 导致 union 被误当 array,s 退化成字符串,后续深层路径(如 components.N.props.X)误返 PATH_DENIED
       return true
+    } else if (s && s._def?.type === 'record') {
+      // ZodRecord:键集开放(与 getSchemaAtPath 口径一致),任意段合法 → 下探 valueType。
+      // 修复(P0):此前 record 落到 else→return false,导致写 record 内任意 key(如 style.background-color,style 为 z.record)恒 PATH_DENIED,
+      // 与「record 键集开放,任意键可写」契约矛盾(集成方 systemPrompt 明示 style 任意 CSS 键可写,模型反复重试烧光轮次预算)
+      s = s._def.valueType
+    } else if (s && (s._def?.type === 'any' || s._def?.type === 'unknown')) {
+      // z.any()/z.unknown():完全开放子树,任意深度任意段合法 → 保持开放性续走(s 不变,与 getSchemaAtPath 对齐)
+      s = s
     } else {
       return false
     }

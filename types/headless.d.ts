@@ -491,12 +491,8 @@ export interface DataOpsOptions {
   maxSnapshots?: number;
   /** 乐观锁冲突人工介入回调(详见 ConflictInfo/ConflictResolution);不传则冲突时返回 VERSION_CONFLICT 错误 */
   onConflict?: (conflict: ConflictInfo) => Promise<ConflictResolution>;
-  /**
-   * 自动乐观锁(默认 true):写入时若 LLM 未显式传 expectedHash,自动用「LLM 最后一次 read/get 读到的 hash」作基准比对。
-   * LLM 无需手动传 expectedHash 即可享受乐观锁保护;冲突走 onConflict(无 onConflict 则返回 VERSION_CONFLICT)。
-   * LLM 未读过直接写(无基准记录)时跳过锁(等同不校验)。设 false 回退「不传 expectedHash = 不校验」的旧行为。
-   */
-  autoLock?: boolean;
+  /** 冲突监听字段白名单(任意深度字段名):声明后仅这些字段的值变动触发自动冲突检测(位置不敏感);未声明 = 不开自动检测(仅显式 expectedHash 校验);['*'] = 全字段检测(旧 autoLock 行为) */
+  conflictWatchFields?: string[];
 }
 
 /** 数据操作控制器(运行时替换配置;createDataOps 返回的工具数组上以不可枚举属性 `controller` 挂载) */
@@ -770,10 +766,10 @@ export interface ChatSdkOptions {
   vfs?: { initialFiles?: Record<string, string>; maxBytes?: number };
   /** 每个数据对象最多保留快照数(默认 20) */
   maxSnapshots?: number;
-  /** 自动乐观锁(默认 true):写入时若 LLM 未传 expectedHash,自动用其最后 get 读到的 hash 比对;设 false 回退「不传 = 不校验」 */
-  autoLock?: boolean;
   /** 乐观锁冲突裁决策略(默认 'ask'):ask=挂起 pendingConflict 等人工 resolveConflict;overwrite=agent 强制覆盖(宿主与 agent 争同一份数据且 agent 优先时用,冲突自动收口不挂起,无人值守场景防永挂);keep_external=自动保留外部修改(agent 收到提示重新 read)。自动裁决仍外发 conflict 事件(conflict.autoResolved 标记) */
   conflictPolicy?: ConflictPolicy;
+  /** 冲突监听字段白名单(3.32 起乐观锁唯一旋钮,autoLock 已废弃;任意深度字段名):**未声明/空 = 不开自动冲突检测**(仅显式 expectedHash 逐次校验);`['*']` = 全字段检测(旧 autoLock 行为);普通名单 = 仅这些字段的值变动触发冲突(位置不敏感)。与 conflictPolicy 正交(watch 定「什么算冲突」,policy 定「真冲突怎么裁决」) */
+  conflictWatchFields?: string[];
   /** 数据操作审计回调:每次 set/edit/delete/restore 经此回调外发结构化事件(独立于 debug,无需 debug:true);集成方做合规审计/操作追溯 */
   onAudit?: (entry: { op: string; value?: unknown; detail?: string; timestamp: number }) => void;
   /** 内存中保留的对话轮数上限(默认 50);超限把最旧轮次压缩为摘要 system 消息(防 OOM);0 关闭 */
@@ -1123,7 +1119,8 @@ export declare function maybeParseValue(v: unknown): { parsed?: unknown; parseEr
 export declare function projectFields(obj: unknown, fields: string[]): unknown;
 export declare function limitDepth(obj: unknown, depth: number): unknown;
 export declare function safeStringify(value: unknown, maxLen?: number): string;
-export declare function hashValue(value: unknown): string;
+export declare function hashValue(value: unknown, ignoreKeys?: ReadonlySet<string>): string;
+export declare function watchFieldsHash(value: unknown, watchKeys: ReadonlySet<string>): string;
 export declare function applyPatchToClone(clone: any, op: EditOp, jsonPath: string, value: unknown): string | null;
 export declare function applyPatchToLive(bind: any, op: EditOp, jsonPath: string, value: unknown): void;
 export declare function restoreLive(bind: any, snapshotVal: unknown): void;

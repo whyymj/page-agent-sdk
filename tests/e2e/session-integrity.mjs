@@ -44,7 +44,7 @@ export async function run() {
       { text: '收尾' },
     )
     const sdk = createChatSdk({
-      ui: false, id: 'e2e-si-reset-conflict', storage: false, llm,
+      ui: false, id: 'e2e-si-reset-conflict', storage: false, llm, conflictWatchFields: ['*'],
       data: { schema: z.object({ title: z.string(), count: z.number() }), bind },
       capabilities: { ...CAPS, vfs: false },
     })

@@ -2,6 +2,27 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.32.0] - 2026-08-19
+
+### Changed(breaking:乐观锁自动检测 opt-in 翻转 —— editor_fangzhou 实测「宿主元数据噪声高频误报」驱动)
+- **自动冲突检测默认关闭**:`autoLock` 不再默认全字段检测 —— 未声明时 `write` 不自动做冲突检测(显式 `expectedHash` 仍逐次校验,零变化);宿主在 SDK 写路径之外持续回写元数据的真实集成形态(editor_fangzhou:Node.vue 每秒回写 `props.minHeight`、挂载注入 `leaf/childLimit/packed/stack`)在全字段检测下必然高频误报、冲突条挂起等人工致流程永挂
+- **新增 `conflictWatchFields`**(顶层 + DataOpsOptions,白名单,任意深度字段名):声明后仅监听字段的值变动触发自动冲突(**位置不敏感**:`watchFieldsHash` 收集监听键值集合排序哈希,组件增删致 jsonPath 位移不误报);read 返回 hash 与冲突比对同源,显式 expectedHash 链路一致;显式 `autoLock:true` 回旧版全字段检测。与 `conflictPolicy` 正交(watch 定「什么算冲突」,policy 定「真冲突怎么裁决」)
+- 迁移:依赖默认 autoLock 的集成方须显式 `autoLock:true` / 声明 `conflictWatchFields` / 逐次传 `expectedHash`,否则 write 不自动检测冲突(schema/快照/路径守卫保护不受影响);存量乐观锁断言同 commit 迁移显式 `autoLock:true`(行为语义保留)
+- 测试:selftest 2502 → **2516**(sec-88 全重写:watchFieldsHash 位置不敏感/默认不检测/watch 双向/expectedHash 同源/autoLock:true 旧行为/baseline-guard hash 入口);e2e 814 → **818**(conflict 模块:默认不检测不挂起 + watch 白名单挂起双向)
+
+### Removed(废弃 `autoLock`,conflictWatchFields 成唯一旋钮)
+- **移除 `autoLock` 选项**(顶层 + DataOpsOptions + 两份 d.ts):`false` 半边与新默认重复、`true` 半边被 `conflictWatchFields:['*']` 通配取代;TS 上传入编译报错,运行时多余键忽略
+- **移除 `expectedHash` 调用层参数**(set/edit/delete/write schema):`conflictWatchFields` 成为「是否校验」的唯一依据,消除「配置层 + 调用层」双机制理解成本;`read` 仍返回 `hash=`(乐观锁标识/workingMemory),冲突记录 `PendingConflict.expectedHash` 字段保留(=被比对的基线 hash)
+
+### Fixed(isPathAllowed 补 record/any 分支)
+- `isPathAllowed` 漏 ZodRecord 分支:写 record 内任意 key(如 `style.background-color`,style 为 `z.record`)恒 `PATH_DENIED`,与「record 键集开放,任意键可写」契约矛盾(集成方 systemPrompt 明示 style 任意 CSS 键可写,模型反复重试烧光轮次预算);补 record 分支(下探 valueType,与 `getSchemaAtPath` 口径对齐)+ any/unknown 子树任意深度放行
+
+### Added(超调用次数中断可见提示)
+- ReAct 循环达 `maxToolRounds`/`maxIterations` 被强制收口时,收口文案(wrap-up/兜底/缓存最终答)追加可见提示「工具调用次数已达上限……任务可能未完成,回复『继续』即可接着做」,并外发 observable `REACT_CALL_LIMIT_EXCEEDED` 事件 + debugLogs 留痕(修 editor_fangzhou 实测「莫名其妙就停了」)
+
+### Added(watchFieldsHash 纯函数导出)
+- `watchFieldsHash(value, watchKeys)`:白名单监听值集合哈希(主入口 + headless 子路径 + 两份 d.ts 同步);`['*']` 通配走全量 hashValue
+
 ## [3.31.0] - 2026-08-18
 
 ### Removed(配置面激进收敛:整体移除 `interceptors` 与 `toolMode` —— editor_fangzhou 实测「用户一般不知道有啥作用」驱动)

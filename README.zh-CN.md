@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-2502%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-2525%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -53,7 +53,7 @@
 | **增量操作** | `write` 的 `patch`/`patches`(批量,原子回滚)或 advanced `edit_data` 按 `jsonPath` 发 patch(set/remove/merge/append) | 避免重传整个大 JSON,精确改局部;一次改多处用 `patches` |
 | **大对象检索** | `read` 支持 `fields`(字段裁剪)+ `depth`(深度截断)减体积;`query_data`(JSONPath)/`search_data`(文本)/`eval_script`(沙箱 JS) | 大 JSON 高效检索 + 局部定位 |
 | **可回滚** | per-path 快照(自动入栈)+ 会话 checkpoint | 改坏了一键回退到上次正常态 |
-| **乐观锁** | `set`/`edit`/`delete` 传 `expectedHash` + 冲突人工介入(3.29+ `conflictPolicy` 可声明自动裁决:overwrite / keep_external) | 检测并发外部修改 → 挂起,用户选保留/覆盖/回退 |
+| **乐观锁** | `conflictWatchFields` 声明式乐观锁 + 冲突人工介入(3.29+ `conflictPolicy` 可声明自动裁决:overwrite / keep_external) | 检测并发外部修改 → 挂起,用户选保留/覆盖/回退 |
 
 「改 JSON」从 LLM 自由生成文本 → **结构化、可校验、可审计、可回滚**的工具操作。这是它区别于「让 AI 直接输出 JSON 字符串」的根本所在。
 
@@ -83,7 +83,7 @@
 
 - **Q：我想在网页里加一个能改页面数据的 AI 助手。** → 用 `page-agent-sdk`：声明 zod schema + `bind`、挂载对话框即可。见[30 秒上手](#30-秒上手)。
 - **Q：CopilotKit / LangChain 的页面内 agent 替代方案?** → `page-agent-sdk` 框架无关（Vue 打包进库，宿主可 React / 原生）、schema 校验、自带乐观锁 + 快照回退 + MCP，不依赖 LangGraph。见[对比](#对比)。
-- **Q：怎么让 AI 安全地改页面上的大 JSON?** → `data` + zod schema + `write` 的 `patch` / `patches` + `expectedHash` 乐观锁。非法编辑写前拦截、改错了一键回退。
+- **Q：怎么让 AI 安全地改页面上的大 JSON?** → `data` + zod schema + `write` 的 `patch` / `patches` + `conflictWatchFields` 乐观锁。非法编辑写前拦截、改错了一键回退。
 - **Q：支持 DeepSeek / OpenAI / 任意 OpenAI 兼容端点 / Anthropic Claude 吗?** → 支持。`llm:{apiKey,baseUrl,model}` 默认接 DeepSeek（OpenAI 协议）；`llm:{provider:'anthropic',apiKey,model:'claude-...'}` 走 Claude 原生协议（动态加载 `@langchain/anthropic`，不用不强求装）；也接受任意 LangChain `BaseChatModel`。
 - **Q：能 headless / 在 Node.js 跑吗?** → 能。`ui:false` + `storage:'memory'`，用 `sdk.send` 驱动。见 [headless-demo](#示例)。
 - **Q：支持 MCP 吗?** → 支持。`mcp:[{transport,url}]` 连远程 MCP server 动态注入工具。
@@ -95,7 +95,7 @@
 | 框架无关、UI 打包进库 | ✅ Vue 打包,宿主任意 | ❌ 仅 React | ✅(无 UI) | ✅(无 UI) | ✅(无 UI) |
 | schema 校验的 JSON 操作 | ✅ zod + 白名单 + merge 防误删 | ⚠️ 部分(工具参数) | ⚠️ 仅工具参数 | ⚠️ 仅工具参数 | ❌ |
 | 增量 patch(jsonPath) | ✅ `write` patch / `edit_data` | ❌ | ❌ | ❌ | ❌ |
-| 乐观锁 + 冲突人工介入 | ✅ `expectedHash` | ❌ | ❌ | ❌ | ❌ |
+| 乐观锁 + 冲突人工介入 | ✅ `conflictWatchFields` | ❌ | ❌ | ❌ | ❌ |
 | 快照回退 + checkpoint | ✅ per-path + 会话级 | ❌ | ❌ | ❌ | ❌ |
 | 主动人工确认 | ✅ 内置 | ⚠️ 手动 | ❌ | ❌ | ❌ |
 | MCP | ✅ | ✅ | ✅ | ✅ | 手动 |
@@ -495,8 +495,8 @@ function switchTo(i: number) {
 ## 自测
 
 ```bash
-npm test            # 2502 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 814 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm test            # 2525 项断言（tsx 源码级，不依赖 LLM）
+npm run test:e2e    # 822 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试

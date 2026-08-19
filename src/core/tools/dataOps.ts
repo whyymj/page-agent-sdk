@@ -20,7 +20,7 @@ import { jpEval, searchJson, runSandboxedScript, type SearchMode } from './dataS
 import { toolError, zodError, jsonParseError, formatZodIssues } from './toolError'
 import {
   isUnsafePath, safeMerge, getByPath, setByPath, deleteByPath, deepClone, maybeParseValue,
-  projectFields, limitDepth, safeStringify, hashValue,
+  projectFields, limitDepth, safeStringify, hashValue, watchFieldsHash,
   applyPatchToClone, restoreLive, restoreInPlace, diffObjects, findStrippedKeys,
   type EditOp,
 } from './jsonUtils'
@@ -68,7 +68,6 @@ export interface DataOpsOptions {
   onAudit?: (entry: DataAuditEntry) => void
   maxSnapshots?: number
   onConflict?: (conflict: ConflictInfo) => Promise<ConflictResolution>
-  autoLock?: boolean
   /** vfs store(提供则装配 draft_write/draft_commit 分块写工具;由 createChatSdk 经 capabilities.draftWrite 控制)。draft 写 drafts/{draftId}.json(drafts 池) */
   vfsStore?: VfsStore
   /**
@@ -87,6 +86,17 @@ export interface DataOpsOptions {
    * agent 写 __pgId 被 isPathAllowed 自然拒(__pg* 前缀段)。集成商原 schema 不动(框架内部用 extendedSchema)。
    */
   pgIdPaths?: string[]
+  /**
+   * 冲突监听字段白名单(3.32 起乐观锁唯一旋钮,任意深度字段名;autoLock 已废弃):
+   * 宿主常在 SDK 写路径之外持续改写元数据(editor_fangzhou 实测 Node.vue 每秒回写
+   * props.minHeight、挂载注入 leaf/childLimit),全字段自动检测必然高频误报。
+   * - 未声明/空 = **不开自动冲突检测**
+   * - `['*']` = 全字段检测(旧 autoLock 行为)
+   * - 普通名单 = 仅这些字段的值变动触发冲突(位置不敏感:watchFieldsHash 收集监听键值
+   *   集合排序哈希,组件增删致 jsonPath 位移不误报)
+   * read 返回 hash 与比对同源。
+   */
+  conflictWatchFields?: string[]
 }
 
 export interface DataSnapshotEntry {
@@ -156,6 +166,8 @@ export function commitSetToBind(args: {
   internalAfterWrite?: (bind: any, before: any) => void
   /** 受保护资源强制层(精确值保护);undefined 或空 → no-op(向后兼容)。dryRun 也走强制(预检即拦) */
   protectedCtx?: ProtectedCtx
+  /** 写后 hash 计算入口(与基线/冲突比对同源;缺省全量 hashValue)。watch 模式传 hashBind */
+  hashFn?: () => string
 }): { ok: true; hash: string; data: unknown } | { ok: false; error: string } {
   const { bindRef, schema, allowKeys, snapshots, maxSnapshots, audit, dryRun, op = 'set', protectedCtx } = args
   let value = args.value
@@ -194,7 +206,7 @@ export function commitSetToBind(args: {
   audit({ op, value: res.data, timestamp: Date.now() })
   args.onWrite?.()  // 真正写入后通知(checkpoint 脏标记;dryRun 在上方早 return 不会触发)
   args.internalAfterWrite?.(bindRef, beforeBind)  // B __pgId 补齐(成功路径,before 用于按位置回填原 id)
-  return { ok: true, hash: hashValue(bindRef), data: res.data }
+  return { ok: true, hash: args.hashFn ? args.hashFn() : hashValue(bindRef), data: res.data }
 }
 
 /**
@@ -451,7 +463,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   // 后续 write 比对"最后完成的 read 的整体 bind hash";单线程下单工具原子,但跨工具的"哪个 read 的 hash 被 autoLock 用"不可重现。
   // ⚠️ 并发写不互锁(audit-five-dimensions CA-P1):同轮并发两个写工具都在 await handleConflict 让出前同步取旧基线 → 均通过乐观锁 →
   //    各自 commitSetToBind 串行写入 → 后写覆盖前写,前写静默丢失,无 VERSION_CONFLICT 回灌 LLM。默认 maxParallelTools=1(串行)规避;
-  //    开 maxParallelTools>1 时写应显式传 expectedHash,中期根因修复 = commitSetToBind 入口 final hash 校验。
+  //    开 maxParallelTools>1 时基线为整体快照语义,中期根因修复 = commitSetToBind 入口 final hash 校验。
   // 并发场景下若需精确乐观锁,LLM 应显式传 expectedHash(取自它自己那次 read 的返回值)。harden-optimistic-lock
   // per-scope 基线(fix-main-sub-isolation P1-13):主×子 agent 共享本闭包,基线按 caller scope 隔离 ——
   //   子 agent 委派期间 enterDataScope 切 activeScope,子 read/write 只动子 scope 基线,主基线不被污染
@@ -465,10 +477,18 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     ((config as { configurable?: Record<string, unknown> } | undefined)?.configurable?.__pgDataScope as string | undefined) ?? activeScope
   const getBaseline = (scope?: string): string | undefined => baselines.get(scope ?? activeScope)
   const setBaseline = (h: string | undefined, scope?: string): void => { const s = scope ?? activeScope; if (h === undefined) baselines.delete(s); else baselines.set(s, h) }
+  // 冲突检测 opt-in(3.32 翻转,autoLock 已废弃):conflictWatchFields 为唯一旋钮 ——
+  // 未声明/空 = 不开自动检测(conflictWatchFields 为是否校验的唯一依据);
+  // ['*'] = 全字段检测(旧 autoLock 行为);普通名单 = 白名单监听(watchFieldsHash 位置不敏感)。
+  // ⚠️ 全部乐观锁 hash 必须走 hashBind 单一入口:read 返回 hash 与冲突 curHash 同源
+  const watchList = opts.conflictWatchFields ?? []
+  const watchAll = watchList.includes('*')
+  const watchKeys: ReadonlySet<string> | undefined = !watchAll && watchList.length ? new Set(watchList) : undefined
+  const lockOn = watchList.length > 0
+  const hashBind = (): string => (watchKeys ? watchFieldsHash(bindRef, watchKeys) : hashValue(bindRef))
   // write-path-cost-reduction A 段:写成功后单次计算新基线并返回 —— 结果消息的「新 hash」复用返回值,
   // 勿在同调用内二次 hashValue(1MB bind 全量 hash 实测 ~10ms,同值双算纯浪费;bench 见 change design §5)
-  const commitBaseline = (scope?: string): string => { const h = hashValue(bindRef); setBaseline(h, scope); return h }
-  const autoLock = opts.autoLock !== false
+  const commitBaseline = (scope?: string): string => { const h = hashBind(); setBaseline(h, scope); return h }
   // 大文本字段摘要(code-as-data-asset):主 scope read 返回时,数组元素里的标记字段(如 code)摘要为 <field Nkb>,
   // 防代码正文灌主 agent 上下文。specs 由 createChatSdk 装配期从 htmlSubagent writablePaths 推断填充。
   const largeTextThreshold = opts.largeTextThreshold ?? 200
@@ -492,9 +512,9 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     enterScope: (id) => { const prev = activeScope; activeScope = id; return () => { activeScope = prev } },
     exitScope: (id) => { baselines.delete(id) },
     // code-as-data-asset:框架 commit 直改 bind 后重算基线(默认主 scope),防后续 autoLock 误冲突
-    recomputeBaseline: (scope) => { baselines.set(scope ?? MAIN_SCOPE, hashValue(bindRef)) },
+    recomputeBaseline: (scope) => { baselines.set(scope ?? MAIN_SCOPE, hashBind()) },
     // baseline-guard:非 dataOps 工具改 bind 后全 scope 基线一次刷新(bind 共享,一次 hash 更新全部)
-    recomputeAllBaselines: () => { const h = hashValue(bindRef); for (const k of baselines.keys()) baselines.set(k, h) },
+    recomputeAllBaselines: () => { const h = hashBind(); for (const k of baselines.keys()) baselines.set(k, h) },
     hasBaselines: () => baselines.size > 0,
     getResourcesSnapshot: () => {
       const out: { path: string; mode: 'freeze' | 'verbatim'; handle?: string }[] = []
@@ -538,7 +558,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     return id
   }
 
-  // ⚠️ 不变量(write-path-cost-reduction C 段固化):下方 curHash = hashValue(bindRef) 必须每次实时计算,
+  // ⚠️ 不变量(write-path-cost-reduction C 段固化):下方 curHash = hashBind() 必须每次实时计算,
   // 禁止任何跨调用缓存(脏标记/版本号/memo 均否)—— 人工/宿主直改 reactive bind 不经任何 SDK 写路径,
   // SDK 侧脏标记感知不到(M4 真实场景:委派在途人工直改 code);缓存 hash 陈旧 → 比对陈旧对陈旧 →
   // 人工修改被静默覆盖(keep_external 保护全线失效)。性能收敛只做同调用消重(commitBaseline),不做跨调用缓存。
@@ -548,13 +568,13 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     agentValue?: unknown,
   ): Promise<string | null> {
     if (!expectedHash || expectedHash === '') return null
-    const curHash = hashValue(bindRef)
+    const curHash = hashBind()
     if (curHash === expectedHash) return null
     if (!opts.onConflict) {
       return toolError({
         code: 'VERSION_CONFLICT',
         message: `乐观锁冲突:expectedHash=${expectedHash} 但当前 hash=${curHash}。主数据在你 read 之后已被修改(外部代码/其他 agent/用户手动改)。`,
-        hint: `重新 read 拿最新值与 hash,基于最新值修改后再写入(传新的 expectedHash)。当前值:${safeStringify(bindRef, 400)}`,
+        hint: `重新 read 拿最新值与 hash,基于最新值修改后再写入。当前值:${safeStringify(bindRef, 400)}`,
       })
     }
     const resolution = await opts.onConflict({
@@ -568,7 +588,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       const entry = snapshots[snapshots.length - 1]
       restoreLive(bindRef, deepClone(entry.value))
       markDataDirty()
-      return `已回退主数据到历史快照 #${entry.id}[${entry.op}]。当前值:${safeStringify(bindRef, 400)} (hash=${hashValue(bindRef)})。请基于回退后的值重写或停止。`
+      return `已回退主数据到历史快照 #${entry.id}[${entry.op}]。当前值:${safeStringify(bindRef, 400)} (hash=${hashBind()})。请基于回退后的值重写或停止。`
     }
     return null
   }
@@ -603,7 +623,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (!jp && allowKeys) val = projectBySchemaDeep(val, schema)
       // 受保护路径占位符替换(结构化读;精确值不入 LLM 消息流)
       if (protectedCtx) val = renderReadPlaceholders({ jp, resolved: val, resourcesByPath: protectedCtx.resourcesByPath, resourceStore: protectedCtx.resourceStore })
-      const h = hashValue(bindRef)
+      const h = hashBind()
       setBaseline(h, scope)
       if (val === undefined) return `主数据${jp ? ` @ ${jp}` : ''} = (undefined) (hash=${h})`
       // 大文本摘要(rv-core F2):read 有 <code Nkb> 摘要而 get_data 没有 → advanced 主 agent 换工具即可确定性击穿;
@@ -620,14 +640,14 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   )
 
   const setData = tool(
-    async ({ value, expectedHash }, config) => {
+    async ({ value }, config) => {
       const scope = scopeOf(config)  // CA 并发修复:per-call scope token
-      const effHash = expectedHash || (autoLock ? getBaseline(scope) : undefined)
+      const effHash = lockOn ? getBaseline(scope) : undefined
       const conflict = await handleConflict('set', effHash)
       if (conflict !== null) return conflict
       const pr = maybeParseValue(value)
       if (pr.parseError) return jsonParseError('', value, pr.parseError)
-      const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit, onWrite: markDataDirty, internalAfterWrite, protectedCtx })
+      const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit, onWrite: markDataDirty, internalAfterWrite, protectedCtx, hashFn: hashBind })
       if (!r.ok) return r.error
       setBaseline(r.hash, scope)
       return `已设置主数据 = ${safeStringify(r.data, 600)} (新 hash=${r.hash})${allowKeys ? '(白名单模式:仅更新 schema 声明字段,未声明字段保留)' : ''}`
@@ -635,10 +655,9 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'set_data',
       description:
-        '@deprecated(改用 write,等价)。整体设置主数据(value 需过 schema 校验)。白名单模式:set 为根级浅合并,深层整体替换(未传字段丢失);保留深层字段用 edit_data({op:"merge"})。expectedHash 乐观锁可选(默认 autoLock)。',
+        '@deprecated(改用 write,等价)。整体设置主数据(value 需过 schema 校验)。白名单模式:set 为根级浅合并,深层整体替换(未传字段丢失);保留深层字段用 edit_data({op:"merge"})。',
       schema: z.object({
         value: z.unknown().describe('JSON 对象(推荐直传,如 {title:"x"}),或 JSON 字符串;需符合 schema'),
-        expectedHash: z.string().optional().describe('乐观锁:改前 read/get 返回的 hash;传入则校验,不一致拒绝写入防覆盖。不传则自动用你最后读到的 hash(autoLock)'),
       }),
     },
   )
@@ -652,7 +671,6 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       const op = args.op ?? args.patch?.op
       const jsonPath = args.jsonPath ?? args.patch?.jsonPath
       const value = args.value ?? args.patch?.value
-      const expectedHash = args.expectedHash
       if (!op) return toolError({ code: 'MISSING_VALUE', message: 'edit_data 需要 op(set/remove/merge/append)', hint: '顶层 op 或 patch.op 至少传一个' })
       const jp = jsonPath || ''
       if (isUnsafePath(jp)) {
@@ -661,7 +679,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (!isPathAllowed(jp, schema, allowKeys)) {
         return toolError({ code: 'PATH_DENIED', message: `edit_data @ "${jp}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可写;若需操作该字段,集成方需在 schema 中声明它' })
       }
-      const effHash = expectedHash || (autoLock ? getBaseline(scope) : undefined)
+      const effHash = lockOn ? getBaseline(scope) : undefined
       const conflict = await handleConflict('edit', effHash)
       if (conflict !== null) return conflict
       if (bindRef == null || typeof bindRef !== 'object') {
@@ -677,13 +695,12 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'edit_data',
       description:
-        '增量编辑主数据(advanced;simple 用 write 等价)。op:set/remove/merge/append/move;jsonPath 相对根(数组索引用数字);value 对象或 JSON 字符串。schema 校验失败不写;expectedHash 可选乐观锁。大对象优先增量改。',
+        '增量编辑主数据(advanced;simple 用 write 等价)。op:set/remove/merge/append/move;jsonPath 相对根(数组索引用数字);value 对象或 JSON 字符串。schema 校验失败不写。大对象优先增量改。',
 
       schema: z.object({
         op: z.enum(['set', 'remove', 'merge', 'append', 'move']).optional().describe('增量操作(顶层或 patch.op 至少一个):set 设值/remove 删/merge 合并/append 追加/move 移动数组元素(value=目标路径字符串,数组本身=追加/数组内下标=插入;同数组即重排,目标下标按移除源后解释)'),
         jsonPath: z.string().optional().describe('相对主数据根的点号路径(如 components.0.text);顶层或 patch.jsonPath。set/remove 必填,merge/append 不填则作用于根'),
         value: z.unknown().optional().describe('JSON 对象(推荐直传,如 {text:"x"})或 JSON 字符串;顶层或 patch.value(set/merge/append 必填)'),
-        expectedHash: z.string().optional().describe('乐观锁:改前 read/get 返回的 hash;传入则校验,不一致拒绝写入防覆盖。不传则自动用你最后读到的 hash(autoLock)'),
         patch: z
           .object({
             op: z.enum(['set', 'remove', 'merge', 'append']).optional(),
@@ -698,7 +715,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   markWrite(editData)
 
   const deleteData = tool(
-    async ({ jsonPath, expectedHash }, config) => {
+    async ({ jsonPath }, config) => {
       const scope = scopeOf(config)  // CA 并发修复:per-call scope token
       if (!jsonPath) return toolError({ code: 'MISSING_VALUE', message: 'delete_data 需要 jsonPath 指定要删的子路径(主数据整体不可删,用 set_data 整体替换)', hint: '如 jsonPath:"components.0" 删数组首项' })
       if (isUnsafePath(jsonPath)) return toolError({ code: 'PATH_UNSAFE', message: `jsonPath "${jsonPath}" 含非法段`, hint: '使用正常属性路径' })
@@ -711,22 +728,21 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           return toolError({ code: hit.spec.mode === 'freeze' ? 'FROZEN_FIELD' : 'VERBATIM_PROTECTED', message: `delete_data @ "${jsonPath}" 命中受保护字段 "${hit.protectedPath}"(${hit.spec.mode}),不可删除`, hint: hit.spec.mode === 'freeze' ? '冻结字段不可删;如需移除请联系集成方调整 data.resources' : 'verbatim 字段不可直接删;先 resource_delete({path}) 释放资源保护后再删' })
         }
       }
-      const effHash = expectedHash || (autoLock ? getBaseline(scope) : undefined)
+      const effHash = lockOn ? getBaseline(scope) : undefined
       const conflict = await handleConflict('delete', effHash)
       if (conflict !== null) return conflict
       pushSnapshot('delete')
       const ok = deleteByPath(bindRef, jsonPath)
       markDataDirty()
       audit({ op: 'delete', detail: jsonPath, timestamp: Date.now() })
-      setBaseline(hashValue(bindRef), scope)
+      setBaseline(hashBind(), scope)
       return ok ? `已删除主数据 @ ${jsonPath}` : `主数据 @ ${jsonPath} 不存在(无需删除)`
     },
     {
       name: 'delete_data',
-      description: '删除主数据的某个子路径(jsonPath)。主数据整体不可删(用 set_data 整体替换)。expectedHash(可选):改前 read/get 返回的 hash;不传时自动用你最后读到的 hash(autoLock,默认开)防"基于过期值删除"。',
+      description: '删除主数据的某个子路径(jsonPath)。主数据整体不可删(用 set_data 整体替换)。',
       schema: z.object({
         jsonPath: z.string().describe('要删除的子路径(相对主数据根,如 components.0)'),
-        expectedHash: z.string().optional().describe('乐观锁:改前 read/get 返回的 hash;传入则校验,不一致拒绝删除防覆盖'),
       }),
     },
   )
@@ -746,7 +762,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       restoreLive(bindRef, deepClone(entry.value))
       markDataDirty()
       audit({ op: 'restore', detail: `#${entry.id}`, timestamp: Date.now() })
-      setBaseline(hashValue(bindRef), scope)
+      setBaseline(hashBind(), scope)
       return `已回退主数据到快照 #${entry.id}[${entry.op}]${entry.label ? `(${entry.label})` : ''}。`
     },
     {
@@ -880,7 +896,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           const r = applyPatchesToBind({ bindRef, patches: [{ op: 'set', jsonPath: jp, value: result }], schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'schema_invalid', snapshotLabel: 'eval_transform_subtree', internalAfterWrite, protectedCtx })
           if (!r.ok) return r.error
           audit({ op: 'edit', detail: `eval_transform_subtree @ ${jp}`, timestamp: Date.now() })
-          setBaseline(hashValue(bindRef), scope)
+          setBaseline(hashBind(), scope)
           return `已通过脚本 transform 子树 @ ${jp} 更新(耗时 ${res.elapsedMs}ms)。当前值: ${safeStringify(bindRef, 600)}`
         }
         // 增量模式:脚本返回 {patches:[{op,jsonPath,value},...]} → 按 patch 应用(避免大对象整体重传)
@@ -893,7 +909,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           const r = applyPatchesToBind({ bindRef, patches: (result as any).patches, schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'schema_invalid', snapshotLabel: 'eval_transform', internalAfterWrite, protectedCtx })
           if (!r.ok) return r.error
           audit({ op: 'edit', detail: `eval_transform(${r.applied.length} patches)`, timestamp: Date.now() })
-          setBaseline(hashValue(bindRef), scope)
+          setBaseline(hashBind(), scope)
           return `已通过脚本 transform(patches) 更新主数据(${r.applied.length} 个 patch,耗时 ${res.elapsedMs}ms)。当前值: ${safeStringify(bindRef, 600)}`
         }
         // 整体替换模式:脚本返回完整新值
@@ -920,7 +936,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         }
         markDataDirty()
         audit({ op: 'edit', detail: 'eval_transform', timestamp: Date.now() })
-        setBaseline(hashValue(bindRef), scope)
+        setBaseline(hashBind(), scope)
         return `已通过脚本 transform 更新主数据(耗时 ${res.elapsedMs}ms)。当前值: ${safeStringify(bindRef, 600)}`
       }
       return safeStringify({ ok: true, result: res.result, elapsedMs: res.elapsedMs })
@@ -942,7 +958,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   const readSlot = tool(
     async ({ jsonPath, jsonPaths, fields, depth, offset, limit }, config) => {
       const scope = scopeOf(config)  // CA 并发修复:per-call scope token(基线归属 + 大文本摘要主/子判定)
-      const h = hashValue(bindRef)  // 整体 hash(与 get_data 一致,乐观锁比对整体);多路径/分页/单路径统一取一次
+      const h = hashBind()  // 整体 hash(与 get_data 一致,乐观锁比对整体);多路径/分页/单路径统一取一次
       // 基线刷新时机(rv-core F3):原在路径校验前 setBaseline → PATH_DENIED/UNSAFE 失败读也刷基线,
       // 可构造「失败读吸收宿主改动 → 后续 autoLock 静默覆盖」;下移到校验通过后(与 get_data 同序,
       // 多路径至少一个合法路径才刷)
@@ -1005,7 +1021,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'read',
       description:
-        '读取主数据(高层入口,合并 describe/get)。不传 jsonPath → 返回主数据说明 + 格式提示(含字段约束);传 jsonPath → 返回该子路径当前值 + hash;传 jsonPaths → 一次读多个不相关子路径(省多轮往返)。hash 用于乐观锁(默认 autoLock,write 时自动比对,无需手动传)。fields(字段裁剪)/depth(深度截断)减体积;offset+limit 对数组目标分页(返回切片 + total/hasMore)。',
+        '读取主数据(高层入口,合并 describe/get)。不传 jsonPath → 返回主数据说明 + 格式提示(含字段约束);传 jsonPath → 返回该子路径当前值 + hash;传 jsonPaths → 一次读多个不相关子路径(省多轮往返)。hash 用于乐观锁(声明 conflictWatchFields 后 write 自动比对;未声明不自动校验)。fields(字段裁剪)/depth(深度截断)减体积;offset+limit 对数组目标分页(返回切片 + total/hasMore)。',
       schema: z.object({
         jsonPath: z.string().optional().describe('要读的子路径(相对主数据根,如 components.0.text);不传则读整个主数据并返回说明'),
         jsonPaths: z.array(z.string()).optional().describe('多路径读取:一次读多个不相关子路径(与 jsonPath 互斥,优先于 jsonPath);返回各路径值,非法路径单项标错不整批失败'),
@@ -1028,10 +1044,10 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       // N1 契约(fix-main-sub-isolation):autoLock 基线在冲突检查之前一刻解析 ——
       // 解析→handleConflict→commitSetToBind 为同步路径(无 await),单线程下同 scope 连续写必然后写看到前写刷新的基线,
       // 「agent 自己连续写自己」永不互相冲突。勿在解析与检查之间插入 await(会回归连环误冲突)
-      const effHash = autoLock ? getBaseline(scope) : undefined
+      const effHash = lockOn ? getBaseline(scope) : undefined
       // dryRun 预检:乐观锁手动比对(不调 onConflict 挂起,只返回冲突信息;dryRun 不实际写无需人工介入)
       if (dryRun && effHash !== undefined) {
-        const curHash = hashValue(bindRef)
+        const curHash = hashBind()
         if (curHash !== effHash) return toolError({ code: 'VERSION_CONFLICT', message: `dryRun 预检发现乐观锁冲突: expectedHash=${effHash} 当前 hash=${curHash}(主数据在你 read 后被改)`, hint: '重新 read 拿最新 hash 再预检/写' })
       }
 
@@ -1059,7 +1075,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         markDataDirty()
         audit({ op: 'delete', detail: patch.jsonPath, timestamp: Date.now() })
         if (internalAfterWrite) { internalAfterWrite(bindRef, null); markDataDirty() }
-        setBaseline(hashValue(bindRef), scope)
+        setBaseline(hashBind(), scope)
         return ok ? `已删除主数据 @ ${patch.jsonPath}` : `主数据 @ ${patch.jsonPath} 不存在(无需删除)`
       }
 
@@ -1085,11 +1101,11 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (pr.parseError) return jsonParseError('', payload, pr.parseError)
       const conflict = await handleConflict('set', effHash)
       if (conflict !== null) return conflict
-      const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit, dryRun, onWrite: markDataDirty, internalAfterWrite, protectedCtx })
+      const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit, dryRun, onWrite: markDataDirty, internalAfterWrite, protectedCtx, hashFn: hashBind })
       if (!r.ok) return r.error
       if (dryRun) return `dryRun(set): schema 校验通过。预览新值:${safeStringify(r.data, 600)}。未实际写入、未入快照。`
       // B __pgId 补齐已由 internalAfterWrite 在 commitSetToBind 成功路径处理
-      const __postHash = hashValue(bindRef)
+      const __postHash = hashBind()
       setBaseline(__postHash, scope)
       redactPgInPlace(r.data)
       return `已 write(set) 主数据 = ${safeStringify(r.data, 600)} (新 hash=${__postHash})${allowKeys ? '(白名单模式:仅更新 schema 声明字段,未声明字段保留)' : ''}`
@@ -1186,7 +1202,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       },
     )
     const draftCommit = tool(
-      async ({ draftId, expectedHash }, config) => {
+      async ({ draftId }, config) => {
         const scope = scopeOf(config)  // CA 并发修复:per-call scope token
         const key = draftKey(draftId)
         const entry = store.files[key]
@@ -1200,11 +1216,11 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         // harden-large-json-write(A1):draft_commit 乐观锁 —— draft 累积跨多轮 LLM 调用,期间 bind 可能被外部改过;
         // 与 set/edit 一致走 handleConflict(autoLock 用最后 read 的 hash;显式 expectedHash 优先),冲突触发人工介入,不静默覆盖整份大 JSON。
         // 顺序:parse 先(草稿非法早返回 JSON_INVALID,不浪费冲突介入)→ handleConflict → commitSetToBind
-        const effHash = expectedHash || (autoLock ? getBaseline(scope) : undefined)
+        const effHash = lockOn ? getBaseline(scope) : undefined
         const conflict = await handleConflict('set', effHash)
         if (conflict !== null) return conflict  // 冲突:草稿保留(未删),LLM 重 read 拿最新 hash 后再 commit
         // 复用 commitSetToBind(与 write(set)/set_data 共用:schema 校验 + 快照 + merge + audit);op='draft_commit' 标记快照/审计
-        const r = commitSetToBind({ bindRef, value: parsed, schema, allowKeys, snapshots, maxSnapshots, audit, op: 'draft_commit', onWrite: markDataDirty, internalAfterWrite, protectedCtx })
+        const r = commitSetToBind({ bindRef, value: parsed, schema, allowKeys, snapshots, maxSnapshots, audit, op: 'draft_commit', onWrite: markDataDirty, internalAfterWrite, protectedCtx, hashFn: hashBind })
         if (!r.ok) return r.error  // schema 校验失败:草稿保留(不删),LLM 据错误修后重 commit
         setBaseline(r.hash, scope)
         delete store.files[key]  // 成功:清草稿
@@ -1216,8 +1232,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           '把 draft_write 累积的草稿合并 + JSON.parse + 乐观锁 + schema 校验,原子提交主数据(任一步失败不写,草稿保留可修后重试;成功清草稿 + 自动快照可回退)。仅大 JSON 从零生成用;小改用 write。',
         schema: z.object({
           draftId: z.string().describe('要提交的草稿标识(对应 draft_write 的 draftId)'),
-          expectedHash: z.string().optional().describe('乐观锁:改前 read/get 返回的 hash;传入则校验,不一致拒绝写入防覆盖。不传则自动用你最后读到的 hash(autoLock)'),
-        }),
+          }),
       },
     )
     markWrite(draftCommit)
@@ -1271,7 +1286,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         // verbatim:更新池 + 同步 bind(D1 一致)+ 标脏(D2)+ 刷新乐观锁 hash(H2,与其他写路径一致,防下次 write VERSION_CONFLICT);handle 路径派生不变
         resourceStore!.update(np, value)
         setByPath(bindRef, np, value)
-        setBaseline(hashValue(bindRef), scope)
+        setBaseline(hashBind(), scope)
         markDataDirty()
         const h = resourceStore!.get(np)?.handle
         return `已更新 verbatim 资源 "${path}" = ${safeStringify(value, 200)}(handle ${h ?? '(未知)'} 不变)。后续 write 该字段写回句柄 ⟦res:${h}⟧ 或新值`

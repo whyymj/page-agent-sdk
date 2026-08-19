@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-2502%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-2525%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -53,7 +53,7 @@ At its core, it gives the AI a **standardized, safe JSON-operation channel**. AI
 | **Incremental op** | `write` with `patch`/`patches` (batch, atomic rollback) or advanced `edit_data` patches by `jsonPath` (set/remove/merge/append) | Avoid re-sending the whole large JSON; precise local edits; use `patches` to edit many at once |
 | **Large-object retrieval** | `read` supports `fields` (projection) + `depth` (truncation) to shrink payload; `query_data` (JSONPath)/`search_data` (text)/`eval_script` (sandboxed JS) | Efficient retrieval + pinpoint location in large JSON |
 | **Rollbackable** | per-path snapshots (auto-stacked) + session checkpoint | Bad edit → one-click restore to the last good state |
-| **Optimistic lock** | `expectedHash` on `set`/`edit`/`delete` + conflict human-in-the-loop (3.29+ `conflictPolicy` declares auto-adjudication: overwrite / keep_external) | Concurrent external edits detected → suspend, user picks keep/overwrite/restore |
+| **Optimistic lock** | `conflictWatchFields` opt-in optimistic lock + conflict human-in-the-loop (3.29+ `conflictPolicy` declares auto-adjudication: overwrite / keep_external) | Concurrent external edits detected → suspend, user picks keep/overwrite/restore |
 
 "Editing JSON" moves from free-form LLM text generation to **structured, validatable, auditable, rollbackable** tool operations. This is the fundamental difference from "let the AI output a JSON string directly".
 
@@ -83,7 +83,7 @@ At its core, it gives the AI a **standardized, safe JSON-operation channel**. AI
 
 - **Q: I want an AI assistant embedded in my web page that can edit the page data.** → `page-agent-sdk`: declare a zod schema + `bind`, mount the dialog, done. See [30-second quickstart](#30-second-quickstart).
 - **Q: Alternative to CopilotKit / LangChain for an in-page agent?** → `page-agent-sdk` is framework-agnostic (Vue bundled, host can be React / vanilla), schema-validated, ships optimistic lock + snapshot rollback + MCP, and needs no LangGraph. See [Comparison](#comparison).
-- **Q: How to let AI safely edit a large JSON on my page?** → `data` + zod schema + `write` with `patch` / `patches` + `expectedHash` optimistic lock. Invalid edits are rejected pre-write; bad edits rollback in one click.
+- **Q: How to let AI safely edit a large JSON on my page?** → `data` + zod schema + `write` with `patch` / `patches` + `conflictWatchFields` optimistic lock. Invalid edits are rejected pre-write; bad edits rollback in one click.
 - **Q: Does it work with DeepSeek / OpenAI / any OpenAI-compatible endpoint / Anthropic Claude?** → Yes. `llm: { apiKey, baseUrl, model }` defaults to DeepSeek (OpenAI protocol); `llm: { provider: 'anthropic', apiKey, model: 'claude-...' }` uses Claude native protocol (dynamic-loaded `@langchain/anthropic`, optional peer); any LangChain `BaseChatModel` also accepted.
 - **Q: Can I run it headless / in Node.js?** → Yes. `ui:false` + `storage:'memory'`, drive via `sdk.send`. See [headless-demo](#examples).
 - **Q: Does it support MCP?** → Yes. `mcp: [{ transport, url }]` connects remote MCP servers and injects tools dynamically.
@@ -95,7 +95,7 @@ At its core, it gives the AI a **standardized, safe JSON-operation channel**. AI
 | Framework-agnostic, UI bundled | ✅ Vue bundled, host-agnostic | ❌ React-only | ✅ (no UI) | ✅ (no UI) | ✅ (no UI) |
 | Schema-validated JSON ops | ✅ zod, whitelist + merge-safe | ⚠️ partial (tool args) | ⚠️ tool args only | ⚠️ tool args only | ❌ |
 | Incremental patch (jsonPath) | ✅ `write` patch / `edit_data` | ❌ | ❌ | ❌ | ❌ |
-| Optimistic lock + conflict HITL | ✅ `expectedHash` | ❌ | ❌ | ❌ | ❌ |
+| Optimistic lock + conflict HITL | ✅ `conflictWatchFields` | ❌ | ❌ | ❌ | ❌ |
 | Snapshot rollback + checkpoint | ✅ per-path + session | ❌ | ❌ | ❌ | ❌ |
 | Proactive human-confirm | ✅ built-in | ⚠️ manual | ❌ | ❌ | ❌ |
 | MCP | ✅ | ✅ | ✅ | ✅ | manual |
@@ -476,7 +476,7 @@ function switchTo(i: number) {
 }
 ```
 
-> Multiple agents operating on the same `data` need coordination (optimistic lock `expectedHash` or `jsonPath` partitioning); each managing its own `data` object has no conflict (recommended). Full example: `examples/multi-agent-demo/`.
+> Multiple agents operating on the same `data` need coordination (optimistic lock `conflictWatchFields` or `jsonPath` partitioning); each managing its own `data` object has no conflict (recommended). Full example: `examples/multi-agent-demo/`.
 
 ## Documentation
 
@@ -492,8 +492,8 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 2502 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 814 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm test            # 2525 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 822 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test

@@ -65,6 +65,7 @@ import { composeMiddlewareStack } from './middlewareStack'
 import { createVfs, createVfsMiddleware, VFS_TOOL_NAMES, normalize as normalizeVfsPath, type VfsStore } from '../backends/vfs'
 import type { VfsFile, HarnessState, Mission, Focus } from '../harness/state'
 import { createDataOps, type DataConfig, type DataOpsController, type ConflictResolution } from '../tools/dataOps'
+import { hashValue, watchFieldsHash } from '../tools/jsonUtils'
 import { fetchDocTools } from '../tools/fetchDoc'
 import { domTools, domInspectSkill, domSearchTool, domInfoTool } from '../tools/domTool'
 import { inspectTools } from '../tools/envTool'
@@ -219,10 +220,10 @@ export interface ChatSdkOptions {
   vfs?: { initialFiles?: Record<string, string>; maxBytes?: number; poolBytes?: { largeResults?: number; drafts?: number; userFiles?: number } }
   /** 每个 数据槽最多保留快照数(默认 20,FIFO 丢最旧) */
   maxSnapshots?: number
-  /** 自动乐观锁(默认 true):写入时若 LLM 未传 expectedHash,自动用其最后 get 读到的 hash 比对;设 false 回退「不传 = 不校验」 */
-  autoLock?: boolean
   /** 乐观锁冲突裁决策略(默认 'ask'):ask=挂起 pendingConflict 等人工 resolveConflict;overwrite=agent 强制覆盖(宿主与 agent 争同一份数据且 agent 优先时用,冲突自动收口不挂起,无人值守场景防永挂);keep_external=自动保留外部修改(agent 收到提示重新 read)。自动裁决仍外发 conflict 事件(conflict.autoResolved 标记) */
   conflictPolicy?: ConflictPolicy
+  /** 冲突监听字段白名单(3.32 起乐观锁唯一旋钮,autoLock 已废弃;任意深度字段名):**未声明/空 = 不开自动冲突检测**(写不自动校验)—— 宿主常在 SDK 写路径之外持续改写元数据(编辑器每秒回写 minHeight 类噪声),全字段自动检测必然高频误报;`['*']` = 全字段检测(旧 autoLock 行为);普通名单 = 仅这些字段的值变动触发冲突(位置不敏感:组件增删致 jsonPath 位移不误报)。与 conflictPolicy 正交:watch 决定「什么算冲突」,policy 决定「真冲突怎么裁决」 */
+  conflictWatchFields?: string[]
   /** 数据操作审计回调:每次 set/edit/delete/restore 经此回调外发结构化事件(独立于 debug,无需 debug:true);集成方做合规审计/操作追溯 */
   onAudit?: (entry: { op: string; value?: unknown; detail?: string; timestamp: number }) => void
   /** 内存中保留的对话轮数上限(默认 50);超限把最旧轮次压缩为摘要 system 消息(防 OOM);0 关闭 */
@@ -1052,7 +1053,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         onAudit: options.onAudit ?? (options.debug ? (e) => console.log('[page-agent-sdk][data audit]', e) : undefined),
         maxSnapshots: options.maxSnapshots,
         onConflict: conflictMgr.set,
-        autoLock: options.autoLock,
+        conflictWatchFields: options.conflictWatchFields,
         vfsStore: (useDraft || !!finalDataConfig?.resources?.length) ? vfsStore : undefined,  // draft 工具 / 受保护资源(opt-in):vfsStore 提供 → createDataOps 装 draft_write/draft_commit + resource_*
         // code-as-data-asset:htmlSubagent writablePaths → pgIdPaths(schema extend 加 __pgId:safeParse 不剥离 + afterWrite 补 __pgId)+ largeTextPaths(主 scope read code 摘要)
         ...(codeAssetPgIdPaths.length ? { pgIdPaths: codeAssetPgIdPaths } : {}),
@@ -1077,12 +1078,17 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // agent 下一次 write(autoLock 拿基线当 effHash)与实时 hash 不匹配,触发「自己跟自己冲突」。
   // wrapToolCall 调用前后 hash 比对,变化则全 scope 基线一次刷新;dataOps 内置工具自管基线跳过。
   const dataOpsManagedNames = new Set(dataOpsTools.map((t) => t.name))
+  // 守卫 hash 与 dataOps 基线口径同源:白名单模式仅监听字段参与前后比对;['*']/未声明走全量
+  const gw = options.conflictWatchFields ?? []
+  const guardWatchKeys: ReadonlySet<string> | undefined = !gw.includes('*') && gw.length ? new Set(gw) : undefined
+  const guardHash = (v: unknown): string => guardWatchKeys ? watchFieldsHash(v, guardWatchKeys) : hashValue(v)
   const baselineGuardMw = dataOpsController
     ? createBaselineGuardMiddleware({
         getBind: () => liveData()?.bind,
         recomputeAll: () => dataOpsController!.recomputeAllBaselines?.(),
         hasBaselines: () => dataOpsController!.hasBaselines?.() ?? false,
         isManaged: (n) => dataOpsManagedNames.has(n),
+        hash: guardHash,
         log: (_type, data) => {
           const logs = core.agent?.debugLogs
           if (!logs) return

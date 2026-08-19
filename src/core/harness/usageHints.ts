@@ -58,7 +58,7 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
         hints.push('  · 规划阶段有轮次预算(maxPlanRevisions,默认 5):勿反复调研/改计划而不执行,规划充分后即开始 write 落地。')
       }
       if (hasDataOps) {
-        hints.push('改主数据前先 get_data({jsonPath}) 读其当前真实值与 hash(返回末尾 hash=xxx),基于真实值改,不要凭记忆。写入(set/edit/delete)时回传 expectedHash=该 hash 启用乐观锁——若主数据在你 get 之后被外部代码/其他 agent/用户手动改过,会触发冲突:集成方若开启人工介入,工具会挂起等用户决定(保留外部/强制覆盖/回退),你应等待工具返回后按结果继续(保留外部→重新 get 再改;强制覆盖→已写入,继续;回退→已回退到历史快照,基于回退值重写);未开启人工介入时返回 VERSION_CONFLICT 不写入,重新 get 拿最新值与 hash 再改。')
+        hints.push('改主数据前先 get_data({jsonPath}) 读其当前真实值(返回末尾 hash=xxx 为乐观锁标识),基于真实值改,不要凭记忆。写入是否被自动校验由集成方 conflictWatchFields 声明决定:若已声明且主数据在你 read 之后被外部改过,会触发冲突——集成方若开启人工介入,工具会挂起等用户决定(保留外部/强制覆盖/回退),你应等待工具返回后按结果继续(保留外部→重新 get 再改;强制覆盖→已写入,继续;回退→已回退到历史快照,基于回退值重写);未开启人工介入时返回 VERSION_CONFLICT 不写入,重新 get 拿最新值再改。')
         hints.push('不确定主数据字段结构时用 describe_data 查看说明。')
         hints.push('修改大对象/数组优先用 edit_data 增量 patch(只发改动部分),避免 set_data 整体重传被 max_tokens 截断导致 JSON 不完整、校验失败。')
         hints.push('修改主数据出错时可用 restore_data 回退最近一次。')

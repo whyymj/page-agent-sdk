@@ -52,7 +52,7 @@ export async function run() {
     )
     const toolResults = []
     const sdk = createChatSdk({
-      ui: false, id: 'e2e-msi-scope', storage: false, llm,
+      ui: false, id: 'e2e-msi-scope', storage: false, llm, conflictWatchFields: ['*'],
       data: { schema: z.object({ title: z.string(), count: z.number() }), bind },
       capabilities: { ...CAPS, vfs: false },
     })

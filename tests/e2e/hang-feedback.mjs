@@ -161,6 +161,27 @@ export async function run() {
     const reply2 = await sdk2.send('生成优惠券组件')
     assert(!reply2.includes('<｜DSML｜') && reply2.includes('好的,我已加载平台 UI 规范'), '✓ 主循环 garbled 重试耗尽 → DSML 剥离 + prose 保留(原:emit error 后仍把原文当 final)')
     sdk2.unmount()
+
+    // 场景三:超调用次数中断 → 可见提示 + observable 事件(修「莫名停了」)
+    const errors3 = []
+    const llm3 = stubModel(
+      { toolCalls: [{ name: 'read', args: { jsonPath: 'title' } }] },
+      { text: '已基于工具结果整理出标题。' },  // wrap-up 正常收口文本
+    )
+    const sdk3 = createChatSdk({
+      ui: false, id: 'e2e-call-limit-note', storage: false, llm: llm3, autoTitle: false,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' }, description: '测试' },
+      maxToolRounds: 1,
+      onEvent: (e) => { if (e.type === 'error') errors3.push(e) },
+    })
+    await sdk3.mount()
+    const reply3 = await sdk3.send('改标题')
+    assert(reply3.includes('已基于工具结果整理出标题'), '✓ 超轮次收口仍返回 wrap-up 综合结果')
+    assert(reply3.includes('工具调用次数已达上限') && reply3.includes('继续'), '✓ 超调用次数中断附可见提示(达上限/可回复继续),不再「莫名停了」')
+    assert(errors3.some((e) => e.code === 'REACT_CALL_LIMIT_EXCEEDED'), '✓ observable error 事件 REACT_CALL_LIMIT_EXCEEDED(集成方 onEvent 可感知中断原因)')
+    assert(sdk3.debugLogs.value.some((l) => l.data?.stage === 'react_call_limit_exceeded'), '✓ debugLogs 留痕 react_call_limit_exceeded')
+    sdk3.unmount()
   }
 
   return { pass: ctx.pass, fail: ctx.fail }

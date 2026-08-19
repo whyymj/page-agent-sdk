@@ -74,7 +74,7 @@ export async function run(ctx: TestCtx) {
 
   // D1 自愈(隔离乐观锁:autoLock:false,模拟 restore/import 后池值漂移;乐观锁下 LLM 需重新 read 同步)
   const bindD: { id: string; token: string; title: string; components: never[] } = { id: 'd1', token: 'orig', title: 't', components: [] }
-  const toolsD = createDataOps({ schema, bind: bindD, resources: [{ path: 'token', mode: 'verbatim' }] }, { vfsStore: createVfs(), autoLock: false })
+  const toolsD = createDataOps({ schema, bind: bindD, resources: [{ path: 'token', mode: 'verbatim' }] }, { vfsStore: createVfs() })
   const tD = byName(toolsD)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const ctrlD = (toolsD as any).controller

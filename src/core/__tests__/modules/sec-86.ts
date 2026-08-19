@@ -101,7 +101,7 @@ export async function run(ctx: TestCtx): Promise<void> {
   {
     const schema = z.object({ title: z.string(), items: z.array(z.string()) })
     const bind: { title: string; items: string[] } = { title: 'orig', items: [] }
-    const tools = createDataOps({ schema, bind }) as any
+    const tools = createDataOps({ schema, bind }, { conflictWatchFields: ['*'] }) as any
     const controller = tools.controller
     const readTool = tools.find((t: any) => t.name === 'read')
     const writeTool = tools.find((t: any) => t.name === 'write')

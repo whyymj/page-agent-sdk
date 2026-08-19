@@ -82,7 +82,7 @@ export { runHostScript } from './tools/hostScript'
 // 通用 JSON 操作纯函数(refactor-module-extraction 从 dataOps 抽离;零依赖、白盒可测,经 ./query subpath 按需引入)
 export {
   UNSAFE_KEYS, isUnsafePath, safeMerge, getByPath, setByPath, deleteByPath,
-  deepClone, maybeParseValue, projectFields, limitDepth, safeStringify, hashValue,
+  deepClone, maybeParseValue, projectFields, limitDepth, safeStringify, hashValue, watchFieldsHash,
   applyPatchToClone, applyPatchToLive, moveByPath, restoreLive, restoreInPlace, diffObjects, findStrippedKeys,
 } from './tools/jsonUtils'
 export type { EditOp } from './tools/jsonUtils'

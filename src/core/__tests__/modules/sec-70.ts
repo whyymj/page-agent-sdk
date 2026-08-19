@@ -14,7 +14,7 @@ function makeOps(bind: Record<string, unknown>) {
     schema: z.object({ title: z.string(), count: z.number().int() }),
     bind,
     description: '测试数据',
-  })
+  }, { conflictWatchFields: ['*'] })
 }
 
 export async function run(ctx: TestCtx): Promise<void> {

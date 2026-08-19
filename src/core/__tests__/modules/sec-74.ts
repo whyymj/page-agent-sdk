@@ -20,7 +20,7 @@ function makeOps(bind: Record<string, unknown>) {
     }),
     bind,
     description: '测试',
-  }, { pgIdPaths: ['components'] } as any)
+  }, { pgIdPaths: ['components'], conflictWatchFields: ['*'] } as any)
 }
 
 export async function run(ctx: TestCtx): Promise<void> {

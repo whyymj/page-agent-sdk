@@ -90,7 +90,7 @@ export { runHostScript } from './tools/hostScript'
 // 通用 JSON 操作纯函数(零依赖、白盒可测)
 export {
   UNSAFE_KEYS, isUnsafePath, safeMerge, getByPath, setByPath, deleteByPath,
-  deepClone, maybeParseValue, projectFields, limitDepth, safeStringify, hashValue,
+  deepClone, maybeParseValue, projectFields, limitDepth, safeStringify, hashValue, watchFieldsHash,
   applyPatchToClone, applyPatchToLive, restoreLive, restoreInPlace, diffObjects, findStrippedKeys,
 } from './tools/jsonUtils'
 export type { EditOp } from './tools/jsonUtils'

@@ -255,7 +255,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     const pageObj: any = { title: '原标题', items: ['a', 'b'] }
     const tools = createDataOps(
       { schema: z.object({ title: z.string(), items: z.array(z.string()) }), bind: pageObj, description: '页面数据' },
-      { autoLock: true },
+      { conflictWatchFields: ['*'] },
     )
     const t = byName(tools)
 
@@ -290,7 +290,7 @@ export async function run(ctx: TestCtx): Promise<void> {
 
     // 自动乐观锁:read 后外部改值,write 触发 VERSION_CONFLICT
     const page3: any = { v: 1 }
-    const tools3 = createDataOps({ schema: z.object({ v: z.number() }), bind: page3, description: 'p3' }, { autoLock: true })
+    const tools3 = createDataOps({ schema: z.object({ v: z.number() }), bind: page3, description: 'p3' }, { conflictWatchFields: ['*'] })
     const t3 = byName(tools3)
     await invoke(t3['read'], { jsonPath: 'v' })  // 记录 hash
     page3.v = 999    // 外部改值(hash 变)
@@ -451,7 +451,7 @@ export async function run(ctx: TestCtx): Promise<void> {
   {
     // 场景:ambient scope A 有过期基线(autoLock 会冲突);带 config scope B 的调用不受 A 污染(token 优先)
     const pageC: any = { count: 1 }
-    const toolsC = createDataOps({ schema: z.object({ count: z.number() }), bind: pageC, description: 'c' })
+    const toolsC = createDataOps({ schema: z.object({ count: z.number() }), bind: pageC, description: 'c' }, { conflictWatchFields: ['*'] })
     const tC = byName(toolsC)
     const ctl = (toolsC as any).controller
     // ① ambient 切到 scope-A 并 read 建基线

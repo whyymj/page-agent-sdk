@@ -26,7 +26,7 @@ function setup(bind: Record<string, unknown>, opts?: { codeField?: string; onWar
     }),
     bind,
     description: '测试',
-  }, { pgIdPaths: ['components'] } as any)
+  }, { pgIdPaths: ['components'], conflictWatchFields: ['*'] } as any)
   const controller = (tools as any).controller
   const vfsStore = createVfs()
   const mw = createCodeAssetMiddleware({
@@ -142,9 +142,9 @@ export async function run(ctx: TestCtx): Promise<void> {
     await mw.wrapToolCall!({ name: 'vfs_edit', args: { path: 'html/c_a.html', oldString: 'x', newString: 'y' }, state: st } as any, mockNext)
     mw.afterAgent!(st)
     assert(bind.components[0].code === '<p>NEW</p>', '✓ commit 回写 data.code(直改 bind)')
-    // 主 agent 后续 write(autoLock 默认开):baseline 已重算 = 当前 → 不冲突
+    // 主 agent 后续 write(['*'] 全字段检测):baseline 已重算 = 当前 → 不冲突
     const r = await invoke(t['write'], { patch: { op: 'set', jsonPath: 'title', value: 'T2' } })
-    assert(!/VERSION_CONFLICT/.test(r) && bind.title === 'T2', '✓ recomputeBaseline:commit 后主 agent write autoLock 不误冲突(主 baseline 已重算)')
+    assert(!/VERSION_CONFLICT/.test(r) && bind.title === 'T2', '✓ recomputeBaseline:commit 后主 agent write 全字段检测不误冲突(主 baseline 已重算)')
   }
 
   // ===== wrapToolCall focus 感知 vfs 白名单:有焦点时跨组件改代码 → PATH_DENIED(补 focus.ts 刻意排除 vfs 的缝隙)=====

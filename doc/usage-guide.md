@@ -187,7 +187,7 @@ createChatSdk({
   /* ===== 身份与隔离 ===== */
   id: 'my-app',                 // agent 实例 id(强烈建议传稳定值;多 agent 共存隔离 + 刷新恢复)
   systemPrompt: '...',          // Agent 身份与业务流程指令(可选:不传用内置默认——JSON 操作助手 + reliableWriteRules;传了则完全覆盖。默认 appendReliableWriteRules:true 自动用 '---' 分隔线追加 reliableWriteRules,设 false 关闭)
-  // ⚠️ 工具用法(read/write/get/set/patch/autoLock/snapshot 等)由 usageHints 中间件按能力开关自动注入,无需在此声明;systemPrompt 只写「业务知识」:身份、可改字段含义、业务流程、技能引用
+  // ⚠️ 工具用法(read/write/get/set/patch/snapshot 等)由 usageHints 中间件按能力开关自动注入,无需在此声明;systemPrompt 只写「业务知识」:身份、可改字段含义、业务流程、技能引用
   shareContext: false,          // true:同 id 的多个实例共享同一 Agent(同页多对话框 = 同一 agent);串行闸 core 级 —— 跨实例 send/switchSession 串行,生命周期收口(unmount/switch/reset)中止共享 core 全部在途流(2.41.0+)
 
   /* ===== 能力注入 ===== */
@@ -309,7 +309,7 @@ write({ value: 180, patch: { op: 'set', jsonPath: 'components.0.price' } })
 write({ patch: { jsonPath: 'oldField' }, del: true })
 ```
 
-`write` 自动:① schema 校验(失败不写)② 存快照(可 `restore_data` 回退)③ 乐观锁(autoLock,用 `read` 返回的 hash 比对整体,冲突触发 `VERSION_CONFLICT` 或人工介入)。
+`write` 自动:① schema 校验(失败不写)② 存快照(可 `restore_data` 回退)③ 乐观锁(3.32 起 opt-in:`conflictWatchFields` 白名单或 `['*']` 全字段;冲突触发 `VERSION_CONFLICT` 或人工介入)。
 
 ### 工具面恒全暴露（14 工具，3.31 起移除 `toolMode`）
 
@@ -391,10 +391,10 @@ const sdk = createChatSdk({
 
 #### 乐观锁(防"基于过期值覆盖")与冲突人工介入
 
-当主数据可能被**外部代码 / 其他 agent / 用户手动**并发修改时,启用乐观锁:Agent `get_data`/`read` 返回值末尾附 `hash=xxx`(整体 bind 的 hash),写入时回传 `expectedHash` 校验。
+当主数据可能被**外部代码 / 其他 agent / 用户手动**并发修改时,启用乐观锁:声明 `conflictWatchFields`(白名单或 `['*']`);`get_data`/`read` 返回值末尾附 `hash=xxx`(整体 bind 的 hash)作乐观锁标识,声明后写入自动比对。
 
 ```ts
-// Agent 工作流(由 LLM 自动执行,集成方无需写;simple 默认 + autoLock 自动)
+// Agent 工作流(由 LLM 自动执行,集成方无需写)
 // 1. read({ jsonPath:'title' }) → "主数据 @ title = old (hash=a1b2)"
 // 2. write({ value:'new', patch:{ op:'set', jsonPath:'title' } })   // 自动用上次 read 的 hash 比对整体
 //    若期间外部改过任一字段 → 整体 hash 不匹配 → 触发冲突(VERSION_CONFLICT),重新 read 再改
@@ -444,11 +444,11 @@ createChatSdk({ /* ... */ conflictPolicy: 'overwrite' })
 
 > **基线守卫(3.29+)**:集成方经 `defineTool` 注册的自定义工具若在工具体内直接改 `bind`(如整体替换组件树的结构化工具),SDK 会在该工具调用后**自动重算乐观锁基线**,agent 下一步正常 write 不会被误判「外部改过」而自冲突。工具窗口**之外**的修改(宿主 watcher / 用户直改)仍按设计触发冲突 —— 那是乐观锁的本职,按 `conflictPolicy` 声明裁决即可。
 
-> 不传 `expectedHash` → 向后兼容直接写(不校验)。独立使用 `createDataOps(props, { onConflict })` 不接 ChatDialog 时,自行处理冲突(返回 `Promise<{action}>`)。
+> 未声明 `conflictWatchFields` → 直接写(不自动校验)。独立使用 `createDataOps(props, { onConflict })` 不接 ChatDialog 时,自行处理冲突(返回 `Promise<{action}>`)。
 
 #### 乐观锁与并发工具(`maxParallelTools > 1`)
 
-`autoLock`(默认 `true`)让 `write` 自动比对乐观锁 hash:它复用 **LLM 最近一次 `read` 返回的整体 bind hash**(内部基线,2.40+ 按 caller scope 隔离 —— 子 agent 的 read/write 用独立基线,不污染主 agent)做整体快照比对,集成方无需手传 `expectedHash`。单工具串行场景下这等价于"基于我自己刚 read 的值写入"。
+**3.32 起自动检测默认不开**(opt-in 翻转:宿主常在 SDK 写路径之外持续改写元数据,全字段检测必然高频误报)。三种启用方式:① `conflictWatchFields: ['style','props',...]`(白名单,任意深度字段名,**位置不敏感** —— 组件增删致 jsonPath 位移不误报;仅监听字段的值变动触发冲突)② `conflictWatchFields: ['*']` 回旧版全字段检测。开启后 `write` 自动复用 **LLM 最近一次 `read` 返回的整体/监听 hash**(内部基线,2.40+ 按 caller scope 隔离 —— 子 agent 的 read/write 用独立基线,不污染主 agent)做快照比对。单工具串行场景下这等价于"基于我自己刚 read 的值写入"。
 
 **并发工具下,`autoLock` 退化为"整体快照语义"。** 当 `maxParallelTools > 1` 时,同一轮的多个 `read` 会**并发写同一基线(主 scope)**,完成顺序不确定,后续 `write` 比对的是"**最后完成的那个 `read` 的整体 hash**"——跨工具维度"我这个 write 用的是我自己那次 read 的 hash 吗"**不可重现**。这不破坏安全边界(仍是整体快照校验,冲突仍能被捕获),但失去了"每个 write 精确对应它自己的 read"的语义。(同 scope 连续**写**不受此影响:每次写成功即刷新基线,agent 自己连续写自己永不互相冲突。)
 
@@ -461,7 +461,7 @@ createChatSdk({ /* ... */ conflictPolicy: 'overwrite' })
 //    精确比对 LLM 自己那次 read 的 hash,绕开共享 lastReadHash 的竞态
 ```
 
-显式 `expectedHash` 优先于 `autoLock` 的共享 hash,跨并发工具可重现、可推理。
+显式 `expectedHash` 优先于自动检测的共享基线 hash,跨并发工具可重现、可推理。
 
 > **hash 算法**:2.16+ 起 `hashValue` 升级为 **cyrb53(53-bit)**,替代旧 djb2(32-bit),显著降低碰撞概率。`expectedHash` 直接取 `read`/`get_data` 返回值里的 `hash` 字段即可,无需集成方自己算。
 

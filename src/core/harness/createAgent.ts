@@ -358,7 +358,7 @@ export function createAgent(options: CreateAgentOptions) {
     maxToolRounds = 1
   }
   if (maxParallelTools > 1) {
-    console.warn(`[page-agent-sdk] maxParallelTools=${maxParallelTools}:并发工具下 dataOps 写工具不互锁(同轮并发两写都在 await handleConflict 让出前取旧基线 → 均通过乐观锁 → 后写覆盖前写,无 VERSION_CONFLICT 回灌);如需精确乐观锁保持 maxParallelTools=1 或写时显式传 expectedHash`)
+    console.warn(`[page-agent-sdk] maxParallelTools=${maxParallelTools}:并发工具下 dataOps 写工具不互锁(同轮并发两写都在 await handleConflict 让出前取旧基线 → 均通过乐观锁 → 后写覆盖前写,无 VERSION_CONFLICT 回灌);并发写不互锁,如需冲突保护保持 maxParallelTools=1 并声明 conflictWatchFields`)
   }
 
   // 模型能力:声明优先 > model 名查表 > 缺省。
@@ -965,10 +965,17 @@ export function createAgent(options: CreateAgentOptions) {
         onEvent({ type: 'done', content: '' })
         return ''
       }
+      // 非 abort 退出 while = maxToolRounds/maxIterations 触顶被强制收口(正常完成在循环内 return)。
+      // 修「莫名停了」痛点:observable 留痕(DebugDrawer/集成方 onEvent 可观测)+ 可见提示附到各收口出口,
+      // 明确告知「调用次数到上限、任务可能未完成、可回复继续」。
+      const limitNote = `\n\n(提示:工具调用次数已达上限(${maxToolRounds} 轮 / ${maxIterations} 次迭代),以上为基于已完成操作的阶段性结果,任务可能未完成。回复「继续」或告诉我下一步重点,即可接着做。)`
+      log('error', { stage: 'react_call_limit_exceeded', rounds, maxToolRounds, iterations, maxIterations })
+      onEvent({ type: 'error', message: `ReAct 循环达到调用上限(rounds=${rounds}/${maxToolRounds},iterations=${iterations}/${maxIterations}),已强制收口,可回复「继续」。`, severity: 'observable', code: 'REACT_CALL_LIMIT_EXCEEDED', context: { rounds, maxToolRounds, iterations, maxIterations } } as any)
       // 自纠耗尽 rounds 预算 → 优先返回最近一次缓存的有效最终答
       if (lastFinalContent != null) {
-        onEvent({ type: 'done', content: lastFinalContent })
-        return lastFinalContent
+        const c = lastFinalContent + limitNote
+        onEvent({ type: 'done', content: c })
+        return c
       }
       // 工具轮耗尽且未综合:末尾是 ToolMessage → 强制收口综合(裸 llm 不绑工具,注入「工具已用尽,直接作答」提示),
       // 保证最终一定有综合输出,而非白费全部工具产出后丢一句「请简化问题」
@@ -1008,14 +1015,14 @@ export function createAgent(options: CreateAgentOptions) {
               ? `${prose}\n\n(注:工具调用次数已达上限,模型最后试图发起的调用未执行,任务可能未完成。)`
               : '我已完成本轮能做的部分操作,但最后的计划未能执行(工具调用次数已达上限)。请重试或继续指示。'
           }
-          onEvent({ type: 'done', content: wrapUpText })
-          return wrapUpText
+          onEvent({ type: 'done', content: wrapUpText + limitNote })
+          return wrapUpText + limitNote
         }
       }
       // 收口也无文本(极端)→ 兜底文案
       const fallback = '我已完成本轮能做的操作,但未能综合出最终结论。请基于上方已完成的工具操作结果继续,或告诉我下一步重点。'
-      onEvent({ type: 'done', content: fallback })
-      return fallback
+      onEvent({ type: 'done', content: fallback + limitNote })
+      return fallback + limitNote
     } finally {
       // afterAgent 必跑(含异常路径):中间件清理/flush 不因模型或中间件抛错被跳过;其自身错误吞掉不影响主流程
       try {

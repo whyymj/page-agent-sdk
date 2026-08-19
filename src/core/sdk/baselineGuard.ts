@@ -33,6 +33,8 @@ export interface BaselineGuardOptions {
   isManaged: (toolName: string) => boolean
   /** 调试留痕(DebugDrawer 可见;type='baseline_guard') */
   log?: (type: string, data: unknown) => void
+  /** hash 入口(与 dataOps 基线/autoLock-watch 口径同源;缺省全量 hashValue) */
+  hash?: (v: unknown) => string
 }
 
 export function createBaselineGuardMiddleware(opts: BaselineGuardOptions): Middleware {
@@ -41,12 +43,13 @@ export function createBaselineGuardMiddleware(opts: BaselineGuardOptions): Middl
     wrapToolCall: async (ctx, next) => {
       if (opts.isManaged(ctx.name)) return next(ctx)
       if (opts.hasBaselines && !opts.hasBaselines()) return next(ctx)
-      const before = hashValue(opts.getBind())
+      const hashFn = opts.hash ?? hashValue
+      const before = hashFn(opts.getBind())
       try {
         return await next(ctx)
       } finally {
         // 抛错路径也比对:自定义工具可能改了一半再抛,基线同样需刷新
-        if (hashValue(opts.getBind()) !== before) {
+        if (hashFn(opts.getBind()) !== before) {
           opts.recomputeAll()
           opts.log?.('baseline_guard', { tool: ctx.name, action: 'recompute_baselines', reason: 'bind_changed_outside_dataops' })
         }

@@ -39,7 +39,7 @@ export async function run() {
         { toolCalls: [{ name: 'write', args: { value: { title: '覆写值' } } }] },
         { text: '已覆盖完成' },
       )
-      const sdk = createChatSdk({ ui: false, id: 'e2e-conflict-overwrite', storage: false, llm, capabilities: CAPS, data: { schema: z.object({ title: z.string() }), bind } })
+      const sdk = createChatSdk({ ui: false, id: 'e2e-conflict-overwrite', storage: false, llm, capabilities: CAPS, conflictWatchFields: ['*'], data: { schema: z.object({ title: z.string() }), bind } })
       await sdk.mount()
       const p = sdk.stream([{ role: 'user', content: '改标题', timestamp: Date.now() }], (e) => { if (e.type === 'tool_result' && e.name === 'read') bind.title = '外部新值' })
       assert(await waitForPending(sdk), 'overwrite 前置:过期写触发冲突挂起')
@@ -58,7 +58,7 @@ export async function run() {
         { toolCalls: [{ name: 'write', args: { value: { title: '不该落地' } } }] },           // 过期写 → 挂起
         { text: '已回退收尾' },
       )
-      const sdk = createChatSdk({ ui: false, id: 'e2e-conflict-restore', storage: false, llm, capabilities: CAPS, data: { schema: z.object({ title: z.string() }), bind } })
+      const sdk = createChatSdk({ ui: false, id: 'e2e-conflict-restore', storage: false, llm, capabilities: CAPS, conflictWatchFields: ['*'], data: { schema: z.object({ title: z.string() }), bind } })
       await sdk.mount()
       let step = 0
       const p = sdk.stream([{ role: 'user', content: '再改', timestamp: Date.now() }], (e) => { if (e.type === 'tool_result' && e.name === 'read') { step++; if (step === 1) bind.title = '外部篡改' } })
@@ -96,7 +96,7 @@ export async function run() {
         { text: '完成' },
       )
       const sdk = createChatSdk({
-        ui: false, id: 'e2e-conflict-policy-ow', storage: false, llm, capabilities: CAPS,
+        ui: false, id: 'e2e-conflict-policy-ow', storage: false, llm, capabilities: CAPS, conflictWatchFields: ['*'],
         conflictPolicy: 'overwrite',
         onEvent: (e) => { if (e.type === 'conflict') events.push(e) },
         data: { schema: z.object({ title: z.string() }), bind },
@@ -119,7 +119,7 @@ export async function run() {
         { text: '完成' },
       )
       const sdk = createChatSdk({
-        ui: false, id: 'e2e-conflict-policy-ke', storage: false, llm, capabilities: CAPS,
+        ui: false, id: 'e2e-conflict-policy-ke', storage: false, llm, capabilities: CAPS, conflictWatchFields: ['*'],
         conflictPolicy: 'keep_external',
         onEvent: (e) => { if (e.type === 'conflict') events.push(e) },
         data: { schema: z.object({ title: z.string() }), bind },
@@ -140,7 +140,7 @@ export async function run() {
         { text: '完成' },
       )
       const sdk = createChatSdk({
-        ui: false, id: 'e2e-conflict-policy-ask', storage: false, llm, capabilities: CAPS,
+        ui: false, id: 'e2e-conflict-policy-ask', storage: false, llm, capabilities: CAPS, conflictWatchFields: ['*'],
         conflictPolicy: 'ask',
         data: { schema: z.object({ title: z.string() }), bind },
       })
@@ -183,7 +183,7 @@ export async function run() {
     )
     const events = []
     const sdk = createChatSdk({
-      ui: false, id: 'e2e-baseline-guard', storage: false, llm, capabilities: CAPS,
+      ui: false, id: 'e2e-baseline-guard', storage: false, llm, capabilities: CAPS, conflictWatchFields: ['*'],
       tools: [add_component],
       onEvent: (e) => { if (e.type === 'conflict') events.push(e) },
       data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string() })) }), bind },
@@ -216,7 +216,7 @@ export async function run() {
       { text: '完成' },
     )
     const sdk = createChatSdk({
-      ui: false, id: 'e2e-baseline-guard-boundary', storage: false, llm, capabilities: CAPS,
+      ui: false, id: 'e2e-baseline-guard-boundary', storage: false, llm, capabilities: CAPS, conflictWatchFields: ['*'],
       tools: [noop_tool],
       data: { schema: z.object({ title: z.string() }), bind },
     })
@@ -236,6 +236,61 @@ export async function run() {
     await p
     assert(bind.title === '人工外部值', '✓ keep_external 收口后人工值保留')
     sdk.unmount()
+  }
+
+  console.log('[e2e:conflict] conflictWatchFields 顶层选项(3.32):默认不检测 / 白名单监听')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    const CAPS = { fetch: false, planning: false, skills: false, summarization: false, memory: false }
+    const schema = z.object({ title: z.string(), props: z.record(z.string(), z.unknown()) })
+    const waitForPending = async (sdk) => {
+      const deadline = Date.now() + 8000
+      while (!sdk.pendingConflict.value && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20))
+      return !!sdk.pendingConflict.value
+    }
+    // 默认(未声明 watch)= 不开自动检测:宿主噪声外部改不挂起
+    {
+      const bind = { title: 'orig', props: { minHeight: 100 } }
+      const llm = stubModel(
+        { toolCalls: [{ name: 'read', args: {} }] },
+        { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'title', value: 'agent值' } } }] },
+        { text: '完成' },
+      )
+      const sdk = createChatSdk({ ui: false, id: 'e2e-conflict-default-off', storage: false, llm, capabilities: CAPS, data: { schema, bind } })
+      await sdk.mount()
+      const p = sdk.stream(
+        [{ role: 'user', content: '改标题', timestamp: Date.now() }],
+        (e) => { if (e.type === 'tool_result' && e.name === 'read') bind.props.minHeight = 999 },
+      )
+      const settled = await Promise.race([p.then(() => true), new Promise((r) => setTimeout(() => r(false), 8000))])
+      assert(settled, '✓ 默认不检测 → 宿主噪声外部改后轮次不挂起(8s 内收口)')
+      assert(bind.title === 'agent值' && sdk.pendingConflict.value === null, '✓ 默认不检测 → write 落地且 pendingConflict 未挂起')
+      sdk.unmount()
+    }
+    // watch 白名单:监听字段真实并发修改 → 仍挂起等人工
+    {
+      const bind = { title: 'orig', props: { minHeight: 100, text: 'a' } }
+      const llm = stubModel(
+        { toolCalls: [{ name: 'read', args: {} }] },
+        { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'title', value: 'agent值' } } }] },
+        { text: '完成' },
+      )
+      const sdk = createChatSdk({
+        ui: false, id: 'e2e-conflict-watch', storage: false, llm, capabilities: CAPS,
+        conflictWatchFields: ['text'],
+        data: { schema, bind },
+      })
+      await sdk.mount()
+      const p = sdk.stream(
+        [{ role: 'user', content: '改标题', timestamp: Date.now() }],
+        (e) => { if (e.type === 'tool_result' && e.name === 'read') bind.props.text = '人工真实改' },
+      )
+      assert(await waitForPending(sdk), '✓ conflictWatchFields → 监听字段真实并发修改挂起冲突')
+      sdk.resolveConflict('keep_external')
+      await p
+      assert(bind.props.text === '人工真实改', '✓ conflictWatchFields → 真实冲突经人工裁决收口(保护链路完整)')
+      sdk.unmount()
+    }
   }
 
   return { pass: ctx.pass, fail: ctx.fail }

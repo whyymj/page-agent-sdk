@@ -106,7 +106,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     const bindA1 = { title: 'orig', count: 1 }
     const vfsA1 = createVfs()
     let conflictCalled = false
-    const opsA1 = createDataOps({ schema, bind: bindA1, description: 'A1' }, {
+    const opsA1 = createDataOps({ schema, bind: bindA1, description: 'A1' }, { conflictWatchFields: ['*'],
       vfsStore: vfsA1 as any,
       onConflict: async () => { conflictCalled = true; return { action: 'keep_external' } },
     })
@@ -122,7 +122,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 场景 2:无 onConflict → VERSION_CONFLICT 错误回灌(不挂起)
     const bindA2 = { title: 'orig', count: 1 }
     const vfsA2 = createVfs()
-    const opsA2 = createDataOps({ schema, bind: bindA2, description: 'A2' }, { vfsStore: vfsA2 as any })
+    const opsA2 = createDataOps({ schema, bind: bindA2, description: 'A2' }, { vfsStore: vfsA2 as any, conflictWatchFields: ['*'] })
     const byNameA2 = Object.fromEntries(opsA2.map((t) => [t.name, t])) as Record<string, any>
     await invoke(byNameA2['draft_write'], { draftId: 'c2', chunk: '{"title":"drafted","count":9}', mode: 'start' })
     await invoke(byNameA2['get_data'], {})
