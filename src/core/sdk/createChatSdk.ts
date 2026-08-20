@@ -29,6 +29,7 @@ import { systemPromptHelpers } from '../presets'
 import { createTodosMiddleware } from '../harness/todos'
 import { createMissionMiddleware } from '../harness/mission'
 import { createIntentGuardMiddleware } from '../harness/intentGuard'
+import { createResumeNoticeMiddleware } from '../harness/resumeNotice'
 import { createFocusMiddleware } from '../harness/focus'
 import { createWorkingMemoryMiddleware } from '../harness/workingMemory'
 import { createSkillsMiddleware, type SkillSpec } from '../harness/skills'
@@ -951,6 +952,12 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const intentGuardMw = createIntentGuardMiddleware((preview) => {
     core.agent?.debugLogs?.value?.push({ timestamp: Date.now(), type: 'middleware', data: { stage: 'intent_guard', preview } })
   })
+  // 会话恢复提示(resume-notice):恢复非空历史(刷新/切会话)后的首轮注入「数据可能已变,先核实再断言已完成」。
+  // 实测事故:生成完成未保存 → 刷新回退,但会话恢复的 todos 全 completed → 用户「重新生成」agent 直接答「完毕」。
+  // markResumed 由 applySnapshot(唯一灌入历史入口)触发;一次性,afterAgent 清除。默认开无开关(同 intentGuard)
+  const resumeNoticeMw = createResumeNoticeMiddleware(() => {
+    core.agent?.debugLogs?.value?.push({ timestamp: Date.now(), type: 'middleware', data: { stage: 'resume_notice' } })
+  })
   // 上下文聚焦(focus-context):指定组件精修,目标/视野/范围三层收敛。getSchema 延迟引用 liveData(适配 setData 运行时替换,同 checkpointMgr.getData 模式)
   // 焦点变更统一 emit focus_change(所有入口:API/agent 工具/dialog chip/reset;闭包引用 emit,运行时已初始化)
   const focusMw = createFocusMiddleware({ getSchema: () => liveData()?.schema, getBind: () => liveData()?.bind, onChange: (focuses) => emit({ type: 'focus_change', focuses }) })
@@ -1540,6 +1547,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     // 按 capabilities 条件装载内置中间件(默认全开;verify 默认关)
     ...(useMission ? [missionMw] : []), // mission 在 todos 前(pin 段在 todos 段前;revive-mission-anchor)
     intentGuardMw, // mission 后:问句意图守卫 pin 段(逐消息定性「先答勿做」;instruction-adherence B,默认开)
+    resumeNoticeMw, // 会话恢复提示:恢复非空历史后首轮注入「数据可能已变,先核实」(applySnapshot 触发,一次性)
     ...(preferencesMw ? [preferencesMw] : []), // mission 后:用户偏好 pin 段(跨会话;afterAgent 收口捕获;opt-in 默认关)
     ...(usePlanning ? [todosMw] : []),
     ...(useSkills
@@ -1747,6 +1755,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       if (snap.messages?.length) {
         // image-input-vision:轻形态恢复 —— 从 vfs 重水化原图 dataUri(直发/重发需要;LRU 已淘汰的图保留轻形态,UI 缩略图降级 + 再发图时诚实报错)
         messages.push(...hydrateImages(snap.messages, (ref) => (ref ? core.vfsStore?.files?.[ref]?.content : undefined) || undefined))
+        // 恢复提示(resume-notice):灌入非空历史 → 标记首轮注入「数据可能已变,先核实再断言已完成」。
+        // 覆盖 init autoResume / session.id / switchSession 三路径(applySnapshot 是唯一灌历史入口)
+        resumeNoticeMw.markResumed()
       }
       if (snap.todos?.length) todosMw.reset(snap.todos)
       // memory:options.memory 优先(非空覆盖),否则用持久化的
@@ -1980,6 +1991,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       missionMw.reset()
       workingMemoryMw.reset()
       focusMw.reset()
+      resumeNoticeMw.reset() // 切会话:清待注入恢复标记(下方 applySnapshot 若灌入历史会重新标记)
       // 偏好本身跨会话保留(不 reset);仅重置消息扫描水位(新会话 messages 从 0 起,须重扫)
       preferencesMw?.resetScanCursor()
       // session-history S1:切会话清 checkpoint 栈,防旧会话快照污染新会话(开 checkpoint 时,否则 restore 会回退到旧会话态)
@@ -2014,6 +2026,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       missionMw.reset()
       workingMemoryMw.reset()
       focusMw.reset()
+      resumeNoticeMw.reset() // 清空会话:新会话无恢复历史,清待注入标记
       preferencesMw?.resetScanCursor() // 偏好跨会话保留;只重置扫描水位(同 switchSession)
       if (checkpointMgr) checkpointMgr.importStack([])
       if (core.agent) core.agent.debugLogs.value = []

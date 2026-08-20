@@ -2,6 +2,14 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.37.0] - 2026-08-20
+
+### Added(会话恢复提示 resume-notice:防「凭历史断言已完成」)
+- **恢复非空历史后首轮注入核实提示**:会话从持久化恢复(init autoResume / `session.id` / `switchSession` 载入,`applySnapshot` 灌入非空 messages 即触发)→ 恢复后首轮 system prompt 注入「你不在场期间数据可能已变(刷新回退到上次保存态/未保存修改丢失);断言『已生成/已完成』前先 read/list 核实;重做类指令先查缺再补齐」pin 段;一次性(`afterAgent` 清除,第二轮起不再干扰);`debugLogs` 留痕 `stage:'resume_notice'`。修 editor 实测:生成完成未保存 → 刷新回退但会话恢复 todos 全 completed → 用户「重新生成」agent 直接答「完毕」不核实。默认开无开关(同 intentGuard),新会话零干扰
+
+### Tests
+- selftest 2575→2588(sec-91:恢复提示生命周期 13 项);e2e 856→864(session-integrity resume-notice 运行时 8 项)
+
 ## [3.36.1] - 2026-08-20
 
 ### Changed

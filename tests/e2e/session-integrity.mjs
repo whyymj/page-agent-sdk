@@ -123,5 +123,39 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:session-integrity] resume-notice:恢复非空历史 → 首轮注入「数据可能已变」提示,第二轮起消失')
+  {
+    // 实测事故场景复刻:会话持久化 + 刷新/切回恢复历史,但数据槽可能已回退 → agent 须先核实再断言已完成。
+    // storage:'memory' 同实例共享后端,switchSession 切走再切回 = applySnapshot 灌入非空历史 = markResumed
+    const llm = stubModel({ text: '第一轮回复' })
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-si-resume', storage: 'memory', llm, autoTitle: false,  // autoTitle 会额外消费 stub 响应并污染 systemPrompts 索引,关闭
+      capabilities: { ...CAPS, vfs: false, subagent: false },
+    })
+    await sdk.mount()
+    await sdk.send('第一轮消息')                      // afterRound 落盘 messages
+    const idA = sdk.sessionId
+    assert(sdk.messages.length >= 2, '前置:第一轮后 messages 非空(user+assistant)')
+
+    await sdk.switchSession()                          // 切新会话(空)→ 无恢复提示
+    assert(!sdk.inspect().systemPrompt.includes('从历史记录恢复'), '✓ 恢复提示边界 → 新会话(无历史)systemPrompt 无提示段')
+
+    await sdk.switchSession(idA)                       // 切回 A → applySnapshot 恢复非空历史 → markResumed
+    assert(sdk.messages.length >= 2, '前置:切回后 messages 已恢复')
+    assert(sdk.inspect().systemPrompt.includes('从历史记录恢复'), '✓ 恢复提示 → 恢复非空历史后 systemPrompt 含提示段')
+
+    await sdk.send('重新生成')                         // 恢复后首轮:提示段进模型输入
+    const firstTurnSys = llm.systemPrompts[1] ?? ''    // [0] 是落盘前第一轮;[1] 是恢复后首轮
+    assert(firstTurnSys.includes('从历史记录恢复') && firstTurnSys.includes('核实'), '✓ 恢复提示 → 恢复后首轮模型输入含提示段(事实+核实纪律)')
+    const noticeLogs = sdk.debugLogs.value.filter((l) => l.data?.stage === 'resume_notice')
+    assert(noticeLogs.length === 1, `✓ 恢复提示 → debugLogs 留痕恰 1 次(实际 ${noticeLogs.length})`)
+
+    assert(!sdk.inspect().systemPrompt.includes('从历史记录恢复'), '✓ 恢复提示 → 首轮结束(afterAgent)后提示段消失(一次性)')
+    await sdk.send('再来一轮')
+    const secondTurnSys = llm.systemPrompts[2] ?? ''
+    assert(!secondTurnSys.includes('从历史记录恢复'), '✓ 恢复提示 → 第二轮模型输入无提示段(不重复干扰)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

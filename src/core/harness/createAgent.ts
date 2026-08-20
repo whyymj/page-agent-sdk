@@ -476,7 +476,7 @@ export function createAgent(options: CreateAgentOptions) {
   /** 系统段 token 预算占比(harden-context-resilience Phase 5):system 段最多占窗口 25%,余 75% 留对话+工具结果+输出 */
   const SYSTEM_BUDGET_RATIO = 0.25
   /** 跨压缩锚定段:系统段超预算时永不 drop(目标/工作记忆丢了 agent 跑偏) */
-  const PIN_SEGMENT_NAMES = new Set(['mission', 'workingMemory', 'intentGuard'])
+  const PIN_SEGMENT_NAMES = new Set(['mission', 'workingMemory', 'intentGuard', 'resumeNotice'])
 
   /** 组装 system prompt:base + 各中间件 augmentPrompt 段。
    *  超系统段预算时按「非 pin 段从大到小 drop」收敛(丢最大段优先 = 丢最少段数;dataHint 巨型 schema 常最大先丢),

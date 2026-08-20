@@ -708,6 +708,8 @@ defineSkill({
 
 **Clear session `resetSession()` (2.41.0+, sync)** — same semantics as the UI "clear conversation": aborts in-flight streams + resolves any pending conflict (as "keep external") + resets messages/vfs/todos/memory/mission/workingMemory/focus/checkpoint/debugLogs + fresh sessionId + emits `session_restored`. **Fully resets in-memory state even when storage is off** (fixed in 2.41.0: previously it early-returned without storage, leaking mission/focus/todos into the new conversation); with storage on it also creates a new persisted session. Use it for a headless "new chat" button.
 
+**Resume notice (on by default)** — when a **non-empty history** is restored from persistence (refresh autoResume / `session.id` / `switchSession`), the **first** turn after restore injects a system-prompt notice: "the host data may have changed while you were away (e.g. a refresh reverted it to the last saved state, unsaved edits lost); verify with read/list before asserting 'already generated/done'". Rationale: the restored dialog/todos are a historical snapshot, but **`bind` is not persisted** — if the integrator resets `bind` to the last saved state on refresh, the history's "done" no longer matches reality, and the agent once answered a "regenerate" request with "done" without checking. The notice is one-shot (cleared when the turn ends), signals only (never blocks tools); logged as `debugLogs stage:'resume_notice'`.
+
 ### 6.7 Robustness
 
 - Auto-retry model calls (network/429/5xx, exponential backoff, `maxRetries` default 2)
