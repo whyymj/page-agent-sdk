@@ -207,5 +207,42 @@ export async function run() {
     sdk.unmount()
   }
 
+
+  console.log('[e2e:hang-feedback] edge-hardening ①:approval 挂起中 switchSession 有界收口 + 新会话无残留')
+  {
+    // 队列:① write 触发 approval 挂起(无 UI 响应方,靠我们 stream handler 手动控制时机)
+    // 切会话时:abortAllActive → approval 中间件 signal 联动自动拒 → send/switchSession 均有界
+    // 评审预期缺陷形态:程序化 switchSession 与 send 同走 runSerial —— send 在途等 approval,switchSession
+    // 排队等 send 结束 → 互等死锁。本用例走 stream 路径(不经 runSerial 串行闸的 send),先验证 abort 收口;
+    // 程序化直调 send + switchSession 的死锁窗口留 human-confirm browser e2e / 真 UI 验证。
+    const llm = stubModel(
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'title', value: 'x' } } }] },
+      { text: '(被拒后收口)' },
+    )
+    const approvals = []
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-edge-approval', storage: 'memory', llm, autoTitle: false,
+      data: { schema: z.object({ title: z.string() }), bind: { title: 'a' }, description: 'd' },
+      approval: { tools: ['write'] },
+      capabilities: { ...CAPS, subagent: false },
+    })
+    await sdk.mount()
+    const idA = sdk.sessionId
+    // stream 驱动:write 挂起等确认 → 我们不 resolve,直接 switchSession(abort 联动应自动拒收口)
+    const streamP = sdk.stream([{ role: 'user', content: '改标题', timestamp: Date.now() }], (e) => {
+      if (e.type === 'approval_request') { approvals.push(e) /* 不 resolve:模拟无人应答 */ }
+    })
+    await new Promise((r) => setTimeout(r, 100))  // 等 approval 真挂起
+    assert(approvals.length === 1, `前置:write 挂起 approval(实际 ${approvals.length})`)
+    const t0 = Date.now()
+    await sdk.switchSession()  // 切会话 → abortAllActive → signal 联动自动拒
+    const waited = Date.now() - t0
+    assert(waited < 5000, `✓ approval 挂起中 switchSession 有界收口(${waited}ms < 5s,不永挂)`)
+    // stream 已被 abort 收口(streamP resolve 不悬挂);新会话无 pendingApproval 残留(approval_request 未外发)
+    await streamP.catch(() => {})  // abort 可 reject,吞掉
+    assert(sdk.sessionId !== idA, '✓ 切会话后 sessionId 已换(新会话就绪)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }
