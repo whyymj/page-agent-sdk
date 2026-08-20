@@ -78,7 +78,7 @@ export type { DataConfig, DataOpsOptions, DataOpsController, DataAuditEntry, Dat
 export type { ResourceProtectSpec } from './tools/resources'
 export type { SkillsController } from './harness/skills'
 // 内置工具集(可独立导出 + 手动注入,配合 capabilities.dataOps/fetch 关闭默认自动装配)
-export { createDataOps, commitSetToBind } from './tools/dataOps'
+export { createDataOps, commitSetToBind, applyPatchesToBind, validateRootValueLocally, validateWriteLocally, type LocalWriteBack, type LocalValidationPlan } from './tools/dataOps'
 export { getTraceMetrics } from './utils/traceMetrics'
 export { jpEval, searchJson, runSandboxedScript } from './tools/dataSlotQuery'
 export type { JpNode, SearchHit, SearchMode, EvalResult } from './tools/dataSlotQuery'
@@ -95,7 +95,7 @@ export {
 } from './tools/jsonUtils'
 export type { EditOp } from './tools/jsonUtils'
 // schema 白名单投影纯函数
-export { getSchemaTopKeys, isPathAllowed, unwrapSchema, getSchemaAtPath, projectBySchemaDeep, projectBySchema, describeSchemaNode, renderSchemaHint, renderSchemaOverview, renderSchemaShallow, formatConstraints } from './tools/schemaUtils'
+export { getSchemaTopKeys, isPathAllowed, unwrapSchema, getSchemaAtPath, projectBySchemaDeep, projectBySchema, describeSchemaNode, renderSchemaHint, renderSchemaOverview, renderSchemaShallow, formatConstraints, validateAtPath, resolveSchemaPath, schemaHasRefinement, arrayMinLength, elementSchemaCandidates, type PathSchemaResolution, type ValidateAtPathResult } from './tools/schemaUtils'
 export type { SchemaNodeDesc } from './tools/schemaUtils'
 // 上下文索引纯函数
 export { STOP_WORDS, tokenize, estimateMessageTokens, estimateRoundTokens, indexSummarize, recallRounds, shouldTriggerCompression, resolvePromptSoftCap, SOFT_CAP_MIN_WINDOW, DEFAULT_PROMPT_SOFT_CAP } from './composables/contextIndex'

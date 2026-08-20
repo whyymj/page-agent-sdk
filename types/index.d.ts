@@ -1508,7 +1508,28 @@ export declare function defineTool(opts: {
 }): any;
 export declare function createDataOps(config: DataConfig, opts?: DataOpsOptions): any[];
 /** 整体 set 写入纯函数:schema 校验 + 快照 + merge/替换 + audit。set_data / write(set) / draft_commit 共用。返回 {ok,hash,data} 或 {ok:false,error} */
-export declare function commitSetToBind(args: { bindRef: unknown; value: unknown; schema: any; allowKeys: string[] | null; snapshots: any[]; maxSnapshots: number; audit: (e: any) => void; dryRun?: boolean; op?: 'set' | 'draft_commit' }): { ok: true; hash: string; data: unknown } | { ok: false; error: string };
+export declare function commitSetToBind(args: { bindRef: unknown; value: unknown; schema: any; allowKeys: string[] | null; snapshots: any[]; maxSnapshots: number; audit: (e: any) => void; dryRun?: boolean; op?: 'set' | 'draft_commit'; snapshotLabel?: string }): { ok: true; hash: string; data: unknown; notices: string[] } | { ok: false; error: string };
+/** path-scoped-validation:增量 patch 逐目标局部校验(全部 apply 后按最终态;兄弟脏数据不株连)。返回写回计划 */
+export interface LocalWriteBack {
+  op: 'set' | 'remove' | 'move' | 'mergeKeys' | 'appendElems';
+  jp: string;
+  value?: unknown;
+  toPath?: string;
+  entries?: [string, unknown][];
+  elems?: unknown[];
+}
+export interface LocalValidationPlan {
+  ok: boolean;
+  error?: string;
+  writeBacks: LocalWriteBack[];
+  notices: string[];
+}
+/** 整体 set 局部校验:只校验 value 出现的顶层 key(缺必填不再拒 —— 契约收窄);per-key strip 检测 + 解析值写回 */
+export declare function validateRootValueLocally(args: { schema: any; allowKeys: string[] | null; value: unknown; bindRef: unknown }): { ok: true; assembly: unknown; wholeParsed: Record<string, unknown> | null; notices: string[] } | { ok: false; error: string; notices: string[] };
+/** 增量 patch 逐目标局部校验纯函数(appendCaptures/moveCaptures 由 apply 循环捕获;valueAt 为位移兜底) */
+export declare function validateWriteLocally(args: { schema: any; bindRef: unknown; clone: unknown; patches: { op?: string; jsonPath?: string; value?: unknown }[]; schemaErrorMode?: 'zod' | 'schema_invalid'; appendCaptures: { jp: string; elems: unknown[] }[]; moveCaptures: { jp: string; toPath: string; elem: unknown }[]; valueAt?: (jp: string) => unknown }): LocalValidationPlan;
+/** 增量 patch 写入纯函数(clone + 局部校验 + 快照 + 外科手术式写回);edit_data / write(edit) / eval 共用 */
+export declare function applyPatchesToBind(args: { bindRef: unknown; patches: { op?: string; jsonPath?: string; value?: unknown }[]; schema: any; allowKeys: string[] | null; snapshots: any[]; maxSnapshots: number; markDataDirty?: () => void; schemaErrorMode?: 'zod' | 'schema_invalid'; snapshotLabel?: string; dryRun?: boolean; internalAfterWrite?: (bind: any, before: any) => void; protectedCtx?: unknown }): { ok: true; applied: { op: string; jp: string; value: unknown }[]; clone: unknown; notices: string[] } | { ok: false; error: string };
 /** 结构化追踪 span(revive-observability-tracing Phase 3) */
 export type SpanType = 'round' | 'model' | 'tool' | 'compression';
 export type SpanStatus = 'ok' | 'error' | 'timeout';
@@ -1569,6 +1590,29 @@ export declare function unwrapSchema(schema: any): any;
 export declare function getSchemaAtPath(schema: any, jsonPath: string): any | null;
 export declare function projectBySchemaDeep(obj: unknown, schema: any | null): unknown;
 export declare function projectBySchema(obj: unknown, allowKeys: string[] | null): unknown;
+// ============ path-scoped-validation(write 校验局部化:union-tolerant 路径解析 + 目标路径局部校验)============
+/** 路径解析结果:schemas=候选集(any-option-accepts)/ open=开放节点(record·any·unknown·passthrough)/ missing=全分支未声明 */
+export type PathSchemaResolution =
+  | { kind: 'schemas'; schemas: any[] }
+  | { kind: 'open' }
+  | { kind: 'missing' };
+/** validateAtPath 结果:ok=true 时 data 为 strip 后可写回的解析值(open 节点 = 原值) */
+export interface ValidateAtPathResult {
+  ok: boolean;
+  data?: unknown;
+  issues?: unknown[];
+  resolution: 'schemas' | 'open' | 'missing';
+}
+/** union-tolerant 路径解析:union 就地展开为各 option(同段在每个 option 内重试);写校验单一解析入口 */
+export declare function resolveSchemaPath(schema: any, jsonPath: string): PathSchemaResolution;
+/** 目标路径局部校验:候选分支任一接受即过(open 放行 / missing 由调用方按 SCHEMA_STRIP 语义拒) */
+export declare function validateAtPath(schema: any, jsonPath: string, value: unknown): ValidateAtPathResult;
+/** schema 是否挂 refine/superRefine(局部校验不执行这类跨节点约束,留痕判据) */
+export declare function schemaHasRefinement(schemaRaw: any): boolean;
+/** 数组 schema 最小长度约束(无则 null;remove 的父容器结构性校验用) */
+export declare function arrayMinLength(schemaRaw: any): number | null;
+/** 候选集中数组元素 schema 候选(append/move 元素校验用) */
+export declare function elementSchemaCandidates(schemas: any[]): any[];
 // ============ schema 约束结构化提取(expose-schema-constraints;供 systemPrompt「可操作数据」段 / read 概览 / schema_data 工具)============
 export interface SchemaNodeDesc {
   type: string;

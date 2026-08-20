@@ -1,5 +1,15 @@
 # 活跃 Changes 优先级索引
 
+> **2026-08-20 立项 7 项(测试用例集反思驱动,规划完成未实施)→ 同日三方怀疑论评审回改完成**(数据层/harness 门禁/editor 宿主三评审员逐条对照代码核提案,阻断项 13 条全部回改进提案与 tasks;各 change 头部「已过怀疑论评审回改」标注):`docs/AI助手测试用例.md`(editor 仓库,95 条)反思「当前系统能否完美应对」→ 机制层(数据不坏)~90% 扎实,纪律层(确认/保存/不谎报)与质量层存在缺口,逐项立项:
+> 1. **P0 [`2026-08-20-path-scoped-validation`](./2026-08-20-path-scoped-validation/)**:write 校验整对象 → **path 级局部**,拔「兄弟节点株连」架构根因(script:"" 事故家族)。评审回改:**写回/strip 语义补设计**(防 fix-silent-strip、fix-write-safety-bypass 两 P0 回归)+ **append 只校验新增元素**(防株连复刻)+ **union-tolerant 处理**(hits[0] 对校验用途语义不足)+ 波及面补 eval_script/draft_commit
+> 2. **P1 [`2026-08-20-imperative-zero-tool-gate`](./2026-08-20-imperative-zero-tool-gate/)**:操作祈使句 + 本轮零写工具 + 纯文本非问句收尾 → 回灌核实(**含事实清单 fact-sheet**:工具计数/写入路径/todos 完成度,机制供给事实)+ 防谎报完成。评审回改:**子 agent 装配期不装 + 委派工具计等效写**(否则 editor 主场景必误伤)+ intentGuard 命中跳过 + writeCapable 判定
+> 3. **P1 [`2026-08-20-save-and-plan-gates`](./2026-08-20-save-and-plan-gates/)**:save_page 挂 approval(editor 一行;UI 路径无限等待是预期)+ RHC 确认留痕(**结构化 lastPlanConfirmation:仅带 options 的方案确认记录,随 session snapshot 持久化** —— 三 change 公共接口,单组件删除确认不写入防豁免被烧)+ 方案征询明示「不可完全机制化」拆已有防线
+> 4. **P1 [`2026-08-20-atomic-tree-add`](./2026-08-20-atomic-tree-add/)**(editor):addComponentTree 两段式 —— 预校验零副作用 + 运行时失败反向补偿(删顶层 addedIds 即可),修「半棵树落地」。评审回改:现状描述纠正(直接 push 非原生事件流)、「90% 前置拦截」降格(元数据缺失残余窗口明示)、运行时失败用例改桩注入、补偿触发条件定义
+> 5. **P1 [`2026-08-20-bulk-change-guard`](./2026-08-20-bulk-change-guard/)**:变更规模超阈 → approval;注入缓解非根治。**评审判 ❌ 后回炉重设计**:量纲改「现有组件节点数」(op 条数误拦正常微调)/ headless 语义重定(未配 approval → no-op,挂起自带超时,stream 路径原无兜底会挂死)/ 默认关(editor 显式开)/ 豁免收窄(依赖 3c 结构化留痕)
+> 6. **P1 [`2026-08-20-output-quality-config`](./2026-08-20-output-quality-config/)**(editor,**阻塞用户输入**):exemplars 范例内容(**拆双 skill + ≤30KB 体积预算,超 offload 阈值 few-shot 静默失效**)+ ai-llm.local.js 思考模型名(**baseUrl 引用式同源代理**)+ 新旧配置真 LLM 对比验收(各 ≥3-5 次、每跑新会话、范例 load 率一等指标)。**硬前置:editor dev-only 暴露 window.__sdk**(不补验收跑不起来)
+> 7. **P2 [`2026-08-20-edge-hardening`](./2026-08-20-edge-hardening/)**:打包 4 小项 —— approval 挂起收口测试(D-08,**评审已替核机制齐全并挖出 runSerial 互等死锁窗口,列为预期缺陷形态**)/ 批量删除整批拒(C-08,现状已核实=跳过坏的删好的)/ 模糊指代纪律(B-01)/ 防套取提示(H-02,**zh/en 双语 + 完整原句断言**)
+> 实施序建议:1 → 3(留痕)→ 5 → 2 → 4/7 并行 → 6(Phase 0 window.__sdk 无阻塞可先行)。
+
 > **2026-08-20 发布 3.36.0**(`output-quality-uplift` change 实施归档;editor_fangzhou「生成的页面太简单,子 agent 思考深度能否放宽」驱动):**生成质量提升** —— ① **`createHtmlSubagent({ llm })`** 子 agent 独立模型(主保持轻量编排、代码生成换强模型;`configToSubOpts` 既有链路);② **思考深度锁定 `thinkingMode:'simple'|'deep'`**(subagent-thinking-mode-lock 落地:子级 + 顶层 `subagent.thinkingMode` 全局缺省;`applyThinkingMode` 纯函数改写 openai `extraBody.thinking` / anthropic `LLMConfig.thinking`(budget 缺省 min(maxTokens??4096,8000),thinking 开 temperature 强制 1);实例路径 warn+observable no-op;`inspect().subagent.subagents[].thinkingApplied` 反射 applied/inherited/instance-noop);③ **完结门禁陈旧 todos 豁免**(循环条件加 rounds>0,修持久化遗留 todos 在纯问答轮误报)。editor 侧:质量标准 prompt + htmlSubagent 配置管线 + page-exemplars skill 骨架(**范例内容阻塞待用户挑专题**)。selftest 2560→2573 / e2e 843→856。见 [`archive/2026-08-20-output-quality-uplift/`](./archive/2026-08-20-output-quality-uplift/)。
 
 > **2026-08-19 发布 3.35.0**(`instruction-adherence` change 实施归档;editor_fangzhou 真 LLM 实测「莫名中断 + 注意力漂移」两类失效驱动):**指令执行力增强** —— ① **完结门禁**(默认开零配置):todos 有未完成项却欲纯文本收尾 → 回灌「双出口」反馈(已完成→update_todo 标记 / 未完成→继续执行)续跑,预算 ≤2,挂循环条件层(transitional 后;beforeReturn 因 maxVerifyAttempts 默认 0 不执行被否决 D1),豁免问号收尾/空 todos;② **问句意图守卫**(默认开零配置):正则三档启发式(句尾问号 / 疑问词+吗呢 / 查询词「是什么|是啥|怎么用|有哪些」)逐消息定性,命中注入「先答勿做」pin 段(`PIN_SEGMENT_NAMES` 白名单保跨压缩/预算裁剪存活;只递信号不阻断工具,文案带逃生门)。同批:**MCP 连接重试 3 次**(递增退避吸收上游瞬时 502)+ **逐 server 渐进注入**(修 allSettled 栅障:坏 server 重试不再拖累好 server 工具可用性;mcp F4 时序适配)。selftest 2531→2560 / e2e 825→843 / browser 101。见 [`archive/2026-08-19-instruction-adherence/`](./archive/2026-08-19-instruction-adherence/)。
@@ -68,7 +78,7 @@
 
 ## 进行中
 
-_(活跃:`2026-08-18-subagent-thinking-mode-lock`(核心已随 output-quality-uplift 落地归档,剩余 DebugDrawer 可视化残项见 deferred)+ `2026-08-18-image-input-vision`(余残项 deferred)。`output-quality-uplift` 已于 2026-08-20 随 3.36.0 发布归档;`instruction-adherence` 已于 2026-08-19 随 3.35.0 发布归档)_
+_(活跃:**2026-08-20 立项 7 项测试用例反思驱动**(path-scoped-validation P0 / imperative-zero-tool-gate / save-and-plan-gates / atomic-tree-add / bulk-change-guard / output-quality-config / edge-hardening,均规划完成未实施;实施序见顶部条目)+ `2026-08-18-subagent-thinking-mode-lock`(核心已随 output-quality-uplift 落地归档,剩余 DebugDrawer 可视化残项见 deferred)+ `2026-08-18-image-input-vision`(余残项 deferred)。`output-quality-uplift` 已于 2026-08-20 随 3.36.0 发布归档;`instruction-adherence` 已于 2026-08-19 随 3.35.0 发布归档;`resumeNotice` 已于 2026-08-20 随 3.37.0 发布(未立 change,反思已并入本轮 7 项规划))_
 
 _(write-path-cost-reduction 已于 2026-08-17 实施完成随 3.25.1 发布归档:bench 1MB 单写 median -12%/-19%,A+B 两段全保留,冲突检查 hash 实时性不变量固化)_
 

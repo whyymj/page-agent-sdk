@@ -242,7 +242,7 @@ createChatSdk({
 
 ### 6.1 data ops (single main object — let the Agent edit your JSON)
 
-Declare `data`; the Agent reads/writes via tools, validated by schema:
+Declare `data`; the Agent reads/writes via tools, validated by schema (path-scoped: only the written subtree is validated — a single write is never blocked by legacy dirty data on sibling nodes; whole-object `set` only validates top-level keys present in `value` (merge semantics, absent keys preserved); cross-node refinements are not enforced at write time — use `capabilities.verify` for global checks):
 
 - **`read`** / **`write`** (2.2+, recommended): high-level entry points merging list/describe/get and set/edit/delete + auto optimistic lock + auto snapshot — lowest LLM cognitive load
 - `describe_data` / `list_data_snapshots` / `get_data` (hidden in `simple` mode, merged into `read`)

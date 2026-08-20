@@ -1083,7 +1083,24 @@ export declare function defineTool(opts: {
 }): any;
 export declare function createDataOps(config: DataConfig, opts?: DataOpsOptions): any[];
 /** 整体 set 写入纯函数:schema 校验 + 快照 + merge/替换 + audit。set_data / write(set) / draft_commit 共用。返回 {ok,hash,data} 或 {ok:false,error} */
-export declare function commitSetToBind(args: { bindRef: unknown; value: unknown; schema: any; allowKeys: string[] | null; snapshots: any[]; maxSnapshots: number; audit: (e: any) => void; dryRun?: boolean; op?: 'set' | 'draft_commit' }): { ok: true; hash: string; data: unknown } | { ok: false; error: string };
+export declare function commitSetToBind(args: { bindRef: unknown; value: unknown; schema: any; allowKeys: string[] | null; snapshots: any[]; maxSnapshots: number; audit: (e: any) => void; dryRun?: boolean; op?: 'set' | 'draft_commit'; snapshotLabel?: string }): { ok: true; hash: string; data: unknown; notices: string[] } | { ok: false; error: string };
+export interface LocalWriteBack {
+  op: 'set' | 'remove' | 'move' | 'mergeKeys' | 'appendElems';
+  jp: string;
+  value?: unknown;
+  toPath?: string;
+  entries?: [string, unknown][];
+  elems?: unknown[];
+}
+export interface LocalValidationPlan {
+  ok: boolean;
+  error?: string;
+  writeBacks: LocalWriteBack[];
+  notices: string[];
+}
+export declare function validateRootValueLocally(args: { schema: any; allowKeys: string[] | null; value: unknown; bindRef: unknown }): { ok: true; assembly: unknown; wholeParsed: Record<string, unknown> | null; notices: string[] } | { ok: false; error: string; notices: string[] };
+export declare function validateWriteLocally(args: { schema: any; bindRef: unknown; clone: unknown; patches: { op?: string; jsonPath?: string; value?: unknown }[]; schemaErrorMode?: 'zod' | 'schema_invalid'; appendCaptures: { jp: string; elems: unknown[] }[]; moveCaptures: { jp: string; toPath: string; elem: unknown }[]; valueAt?: (jp: string) => unknown }): LocalValidationPlan;
+export declare function applyPatchesToBind(args: { bindRef: unknown; patches: { op?: string; jsonPath?: string; value?: unknown }[]; schema: any; allowKeys: string[] | null; snapshots: any[]; maxSnapshots: number; markDataDirty?: () => void; schemaErrorMode?: 'zod' | 'schema_invalid'; snapshotLabel?: string; dryRun?: boolean; internalAfterWrite?: (bind: any, before: any) => void; protectedCtx?: unknown }): { ok: true; applied: { op: string; jp: string; value: unknown }[]; clone: unknown; notices: string[] } | { ok: false; error: string };
 /** 结构化追踪 span(revive-observability-tracing Phase 3) */
 export type SpanType = 'round' | 'model' | 'tool' | 'compression';
 export type SpanStatus = 'ok' | 'error' | 'timeout';
@@ -1142,6 +1159,22 @@ export declare function unwrapSchema(schema: any): any;
 export declare function getSchemaAtPath(schema: any, jsonPath: string): any | null;
 export declare function projectBySchemaDeep(obj: unknown, schema: any | null): unknown;
 export declare function projectBySchema(obj: unknown, allowKeys: string[] | null): unknown;
+// ============ path-scoped-validation(write 校验局部化:union-tolerant 路径解析 + 目标路径局部校验)============
+export type PathSchemaResolution =
+  | { kind: 'schemas'; schemas: any[] }
+  | { kind: 'open' }
+  | { kind: 'missing' };
+export interface ValidateAtPathResult {
+  ok: boolean;
+  data?: unknown;
+  issues?: unknown[];
+  resolution: 'schemas' | 'open' | 'missing';
+}
+export declare function resolveSchemaPath(schema: any, jsonPath: string): PathSchemaResolution;
+export declare function validateAtPath(schema: any, jsonPath: string, value: unknown): ValidateAtPathResult;
+export declare function schemaHasRefinement(schemaRaw: any): boolean;
+export declare function arrayMinLength(schemaRaw: any): number | null;
+export declare function elementSchemaCandidates(schemas: any[]): any[];
 // ============ schema 约束结构化提取(expose-schema-constraints;供 systemPrompt「可操作数据」段 / read 概览 / schema_data 工具)============
 export interface SchemaNodeDesc {
   type: string;

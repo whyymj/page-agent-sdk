@@ -137,9 +137,9 @@ export async function run(ctx: TestCtx): Promise<void> {
 
     // edit 非对象(叶子 theme):NOT_OBJECT + hint 指向 set
     r = await invoke(t['edit_data'], { op: 'set', jsonPath: 'theme.x', value: '1' })
-    // theme 是叶子字符串,edit jsonPath 'theme.x' 在叶子下设子属性 → 整体 schema 校验会失败(因 theme 应为 string)
-    // 实际:edit 在 clone 上 setByPath('theme.x'),theme 变成 {x:'1'} 不符 schema → SCHEMA_INVALID
-    assert(/SCHEMA_INVALID|NOT_OBJECT/.test(r), 'edit 在叶子上设子属性 → schema 失败(叶子不可有子属性)')
+    // theme 是叶子字符串,edit jsonPath 'theme.x' 在叶子下设子属性 → path-scoped-validation 下
+    // 'theme.x' 路径 schema 不可解析(叶子无子路径)→ 键未声明语义 → SCHEMA_STRIP 拒(叶子不可有子属性,语义等价)
+    assert(/SCHEMA_INVALID|SCHEMA_STRIP|NOT_OBJECT/.test(r), 'edit 在叶子上设子属性 → schema 失败(叶子不可有子属性)')
 
     // edit 不安全路径:PATH_UNSAFE
     r = await invoke(t['edit_data'], { op: 'set', jsonPath: 'cfg.__proto__.x', value: '1' })

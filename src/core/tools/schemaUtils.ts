@@ -119,6 +119,136 @@ export function getSchemaAtPath(schema: ZodType, jsonPath: string): ZodType | nu
   return s ?? null
 }
 
+// ============ path-scoped-validation:校验侧路径解析(union-tolerant)============
+// getSchemaAtPath 的 union 分支取 hits[0](提示词描述用途够用);**校验**用途需要 any-option-accepts 语义
+// (多 option 声明同名字段形状不同时,首个命中分支可能误拒/误放),故校验路径走下面的分支解析。
+
+/** union 判定(严格:排除 ZodEnum —— 它有 .options 但装的是字面量值而非 schema,误判会穿透出字符串"schema") */
+function isUnionLike(s: any): boolean {
+  if (s._def?.type === 'union' || s._def?.type === 'discriminatedUnion') return true
+  return Array.isArray(s.options) && s.options.length > 0
+    && typeof s.options[0] === 'object' && (s.options[0] as any)?._def != null
+}
+
+/** 路径解析结果:候选 schema 集(any-option-accepts)/ 开放节点(record·any·unknown)/ 全分支未声明 */
+export type PathSchemaResolution =
+  | { kind: 'schemas'; schemas: ZodType[] }
+  | { kind: 'open' }
+  | { kind: 'missing' }
+
+/** schema 节点是否 passthrough(zod 4:catchall 为 ZodType 且非 z.never);passthrough 对象接受未声明键 */
+function isPassthroughObject(s: any): boolean {
+  if (!s || !s.shape) return false
+  const catchall = s._def?.catchall ?? s._def?.catchAll
+  if (!catchall || !catchall._def) return false
+  // z.strictObject 的 catchall 是 z.never(_def.type 'never');普通 object 缺省也是 never(zod4 默认 strip? 实测默认无 catchall)
+  return catchall._def.type !== 'never'
+}
+
+/**
+ * union-tolerant 路径解析(path-scoped-validation):沿 jsonPath 分支遍历,union 就地展开为各 option
+ * (同段在每个 option 内重试,不被吞段)。写校验的单一解析入口:
+ * - 任一分支落到 z.any()/z.unknown() 或 **passthrough 对象** → open(放行 + 留痕,宁漏勿错杀;
+ *   passthrough 声明「未声明键可存在」,对未声明键标 missing 会回归 sec-22/sec-23 既定行为)
+ * - 全部分支都无法声明该段(字段不在任何 option/shape)→ missing(键不在 schema 声明内)
+ * - 其余 → 存活分支的候选 schema 集(含末端本身是 union 的情形,交 safeParse 做任一命中)
+ */
+export function resolveSchemaPath(schema: ZodType, jsonPath: string): PathSchemaResolution {
+  const expandUnions = (list: any[]): any[] => {
+    const out: any[] = []
+    const queue = [...list]
+    while (queue.length) {
+      const s = unwrapSchema(queue.shift())
+      if (!s) continue
+      if (isUnionLike(s)) { queue.push(...(s.options ?? [])); continue }
+      out.push(s)
+    }
+    return out
+  }
+  if (!jsonPath) return { kind: 'schemas', schemas: [schema] }
+  let current: any[] = [schema]
+  for (const seg of jsonPath.split('.')) {
+    const next: any[] = []
+    let sawOpen = false
+    for (const s of expandUnions(current)) {
+      if (s._def?.type === 'any' || s._def?.type === 'unknown') { sawOpen = true; continue }
+      if (s.shape && typeof s.shape === 'object') {
+        const shape = typeof s.shape === 'function' ? s.shape() : s.shape
+        if (seg in shape) next.push(shape[seg])
+        else if (isPassthroughObject(s)) sawOpen = true  // passthrough:未声明键走 catchall(开放)
+      } else if (s._def?.type === 'array' || s.constructor?.name === 'ZodArray') {
+        if (/^\d+$/.test(seg)) next.push(s.element)
+      } else if (s._def?.type === 'record') {
+        next.push(s._def.valueType)
+      }
+      // 其余(叶子 schema:enum/literal/string/number…)无子路径 → 该分支死
+    }
+    if (sawOpen) return { kind: 'open' }
+    if (!next.length) return { kind: 'missing' }
+    current = next
+  }
+  return { kind: 'schemas', schemas: current.filter(Boolean) }
+}
+
+/** validateAtPath 结果:ok=true 时 data 为 strip 后可写回的解析值(open 节点 = 原值) */
+export interface ValidateAtPathResult {
+  ok: boolean
+  data?: unknown
+  /** 聚合各候选分支的 zod issues(ok=false 且非 missing 时) */
+  issues?: unknown[]
+  /** 解析分类(schemas/open/missing;open=放行留痕,missing=键未声明) */
+  resolution: 'schemas' | 'open' | 'missing'
+}
+
+/**
+ * 目标路径局部校验(path-scoped-validation 核心):取 path 处 schema → safeParse(新值)。
+ * union-tolerant:多个候选分支任一接受即过(任一 option 命中),全拒才拒(issues 聚合);
+ * 开放节点(record/any/unknown)→ 原值放行;全分支未声明 → missing(调用方按 SCHEMA_STRIP 语义拒)。
+ */
+export function validateAtPath(schema: ZodType, jsonPath: string, value: unknown): ValidateAtPathResult {
+  const res = resolveSchemaPath(schema, jsonPath)
+  if (res.kind === 'open') return { ok: true, data: value, resolution: 'open' }
+  if (res.kind === 'missing') return { ok: false, resolution: 'missing', issues: [] }
+  const allIssues: unknown[] = []
+  for (const s of res.schemas) {
+    const r = (s as ZodType).safeParse(value)
+    if (r.success) return { ok: true, data: r.data, resolution: 'schemas' }
+    allIssues.push(...(r.error?.issues ?? []))
+  }
+  return { ok: false, issues: allIssues, resolution: 'schemas' }
+}
+
+/** schema 自身是否挂 refine/superRefine(zod 4:checks 中 check==='custom');局部校验不执行这类跨节点约束 → 留痕判据 */
+export function schemaHasRefinement(schemaRaw: any): boolean {
+  const s = unwrapSchema(schemaRaw)
+  const checks = s?._def?.checks
+  if (!Array.isArray(checks)) return false
+  return checks.some((c: any) => c?._zod?.def?.check === 'custom')
+}
+
+/** 数组 schema 的最小长度约束(无则 null;remove 的父容器结构性校验用) */
+export function arrayMinLength(schemaRaw: any): number | null {
+  const s = unwrapSchema(schemaRaw)
+  const checks = s?._def?.checks
+  if (!Array.isArray(checks)) return null
+  let min: number | null = null
+  for (const c of checks) {
+    const d = c?._zod?.def
+    if (d?.check === 'min_length' && typeof d.minimum === 'number') min = Math.max(min ?? 0, d.minimum)
+  }
+  return min
+}
+
+/** 从候选 schema 集取数组元素 schema 候选(append/move 的元素校验用;非数组候选跳过) */
+export function elementSchemaCandidates(schemas: ZodType[]): ZodType[] {
+  const out: ZodType[] = []
+  for (const s0 of schemas) {
+    const s = unwrapSchema(s0)
+    if ((s?._def?.type === 'array' || s?.constructor?.name === 'ZodArray') && s.element) out.push(s.element)
+  }
+  return out
+}
+
 /** zod schema 是否为 string 类型(解包 optional/lazy 后判 _def.type / constructor name) */
 function isStringSchema(s: any): boolean {
   const u = unwrapSchema(s)

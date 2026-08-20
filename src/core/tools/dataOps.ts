@@ -21,10 +21,14 @@ import { toolError, zodError, jsonParseError, formatZodIssues } from './toolErro
 import {
   isUnsafePath, safeMerge, getByPath, setByPath, deleteByPath, deepClone, maybeParseValue,
   projectFields, limitDepth, safeStringify, hashValue, watchFieldsHash,
-  applyPatchToClone, restoreLive, restoreInPlace, diffObjects, findStrippedKeys,
+  applyPatchToClone, restoreLive, restoreInPlace, diffObjects, findStrippedKeys, moveByPath,
+  UNSAFE_KEYS,
   type EditOp,
 } from './jsonUtils'
-import { getSchemaTopKeys, isPathAllowed, getSchemaAtPath, projectBySchemaDeep, describeSchemaNode, extendSchemaWithPgId } from './schemaUtils'
+import {
+  getSchemaTopKeys, isPathAllowed, getSchemaAtPath, projectBySchemaDeep, describeSchemaNode, extendSchemaWithPgId,
+  validateAtPath, resolveSchemaPath, schemaHasRefinement, arrayMinLength, elementSchemaCandidates,
+} from './schemaUtils'
 import type { VfsStore } from '../backends/vfs'
 import type { ResourceProtectSpec, ProtectedCtx } from './resources'
 import { ResourceStore, renderReadPlaceholders, enforceSet, enforcePatches, matchProtectedEither, normalizePath, deepEqual } from './resources'
@@ -145,9 +149,288 @@ export interface DataOpsController {
 }
 
 /**
+ * 整体 set 局部校验(path-scoped-validation):只校验 value 中出现的顶层 key(merge 语义下未出现的 key 不过堂,
+ * 缺必填不再拒 —— 契约收窄,见 change path-scoped-validation);每个出现的 key 深校验 agent 供給的子树 +
+ * per-key strip 检测(新增未声明键照拒,fix-silent-strip 防线平移)。返回各 key 的 zod 解析值(strip 语义保留,
+ * 防未声明嵌套键/__proto__ own 键落 bind —— fix-write-safety-bypass P0-1 防线平移)。
+ * 非 ZodObject schema(allowKeys null,如数组根)→ 整对象校验(value 全量 agent 供給,整校验即局部)。
+ * commitSetToBind / eval_script transform(整体替换)共用。纯函数可单测。
+ */
+export function validateRootValueLocally(args: {
+  schema: ZodType
+  allowKeys: string[] | null
+  value: unknown
+  bindRef: unknown
+}): { ok: true; assembly: unknown; wholeParsed: Record<string, unknown> | null; notices: string[] } | { ok: false; error: string; notices: string[] } {
+  const { schema, allowKeys, value, bindRef } = args
+  const notices: string[] = []
+  if (allowKeys) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      return { ok: false, error: zodError('', [{ path: [], code: 'invalid_type', message: `整体 set 需为 JSON 对象(当前为 ${Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value})`, expected: 'object' }]), notices }
+    }
+    const beforeObj = (bindRef && typeof bindRef === 'object' && !Array.isArray(bindRef) ? bindRef : {}) as Record<string, unknown>
+    const src = value as Record<string, unknown>
+    const parsedKeys: Record<string, unknown> = {}
+    for (const k of Object.keys(src)) {
+      if (k.startsWith('__pg')) continue  // 框架内部字段:静默丢弃(与旧整对象 parse strip 行为一致)
+      const v = src[k]
+      const vr = validateAtPath(schema, k, v)
+      if (!vr.ok) {
+        if (vr.resolution === 'missing') {
+          // 键不在 schema 声明:bind 已有 → 宿主自管字段,跳过保留原值(与旧 strip+safeMerge 行为一致);
+          // bind 没有 → 本次新增未声明键 → 拒(fix-silent-strip)
+          if (k in beforeObj) continue
+          return { ok: false, error: toolError({ code: 'SCHEMA_STRIP', message: `字段 ${k} 不在 schema 声明内,写入被拒绝(防静默丢失)`, hint: '该数据结构不支持这些字段;请只用 schema 声明的字段,或在 data.schema 中声明后重试', path: k, details: { stripped: [k] } }), notices }
+        }
+        return { ok: false, error: zodError(k, vr.issues ?? []), notices }
+      }
+      if (vr.resolution === 'open') notices.push(`${k}=开放节点放行`)
+      // per-key strip 检测(值内新增的未声明嵌套键)
+      const stripped = findStrippedKeys(beforeObj[k], v, vr.data, k)
+      if (stripped.length) {
+        return { ok: false, error: toolError({ code: 'SCHEMA_STRIP', message: `字段 ${stripped.join(', ')} 不在 schema 声明内,写入被拒绝(防静默丢失)`, hint: '该数据结构不支持这些字段;请只用 schema 声明的字段,或在 data.schema 中声明后重试', path: stripped[0], details: { stripped } }), notices }
+      }
+      parsedKeys[k] = vr.data
+    }
+    if (schemaHasRefinement(schema)) notices.push('根级 refine/superRefine 不再在 write 时执行(走 capabilities.verify)')
+    return { ok: true, assembly: parsedKeys, wholeParsed: null, notices }
+  }
+  // 非 ZodObject schema:整对象校验(退路;value 全量为 agent 供給,整校验即局部)
+  const res = schema.safeParse(value)
+  if (!res.success) return { ok: false, error: zodError('', res.error.issues), notices }
+  const stripped = findStrippedKeys(bindRef, value, res.data)
+  if (stripped.length) {
+    return { ok: false, error: toolError({ code: 'SCHEMA_STRIP', message: `字段 ${stripped.join(', ')} 不在 schema 声明内,写入被拒绝(防静默丢失)`, hint: '该数据结构不支持这些字段;请只用 schema 声明的字段,或在 data.schema 中声明后重试', path: stripped[0], details: { stripped } }), notices }
+  }
+  return { ok: true, assembly: res.data, wholeParsed: res.data as Record<string, unknown>, notices }
+}
+
+/**
+ * 增量 patch 局部校验(path-scoped-validation 核心):全部 patch apply 到 clone 后,按**最终态**逐目标校验 ——
+ * 只校验 agent 写入的内容(set 的目标值 / merge 的目标键终值 / append 的新元素 / move 的元素),兄弟脏数据不再株连
+ * (script:"" 事故根因);任一目标失败 → 整批不写(原子语义不变)。strip/原型污染防线平移到 per-path
+ * (写回值 = 局部 parse 结果,未声明嵌套键/__proto__ own 键不落 bind)。
+ * append/move 的元素引用在 apply 循环捕获(后续 patch 可能在同一 clone 内继续改这些对象,校验取最终态)。
+ * 返回逐目标写回计划(op 按原 patch 序重放到 live bind)。纯函数,applyPatchesToBind 内联消费 + selftest 直测。
+ */
+export interface LocalWriteBack {
+  op: 'set' | 'remove' | 'move' | 'mergeKeys' | 'appendElems'
+  jp: string
+  value?: unknown
+  toPath?: string
+  entries?: [string, unknown][]
+  elems?: unknown[]
+}
+
+export interface LocalValidationPlan {
+  ok: boolean
+  error?: string
+  /** 写回计划:按 patch 原序重放到 live bind(值 = 局部 parse 结果) */
+  writeBacks: LocalWriteBack[]
+  notices: string[]
+}
+
+export function validateWriteLocally(args: {
+  schema: ZodType
+  bindRef: unknown
+  clone: unknown
+  patches: { op?: EditOp; jsonPath?: string; value?: unknown }[]
+  /** schema 校验失败错误模式(与 applyPatchesToBind 的 schemaErrorMode 同参):'zod'(zodError)/'schema_invalid'(toolError) */
+  schemaErrorMode?: 'zod' | 'schema_invalid'
+  /** append 元素引用(apply 循环捕获,与 patches 序对齐;每项 = {jp, elems}) */
+  appendCaptures: { jp: string; elems: unknown[] }[]
+  /** move 元素引用(apply 循环捕获;每项 = {jp, toPath, elem}) */
+  moveCaptures: { jp: string; toPath: string; elem: unknown }[]
+  /**
+   * 目标取值兜底(可选):后续 patch(remove/位移)使早先 set/merge 的 jsonPath 在最终 clone 上取不到值时,
+   * 用此回调回退取「该 patch 应用后的快照值」。缺省 = 直接 getByPath(clone, jp)。
+   * 同批次「set X + remove 让 X 位移」是合法模式(e2e ⑧:末尾 set 容器 + remove 原位,remove splice 前移后
+   * 旧路径 undefined)—— 位移后旧路径取空不代表写入内容坏,按快照值校验。快照由 apply 循环逐 patch 捕获。
+   */
+  valueAt?: (jp: string) => unknown
+}): LocalValidationPlan {
+  const { schema, bindRef, clone, patches, schemaErrorMode = 'zod', appendCaptures, moveCaptures } = args
+  const notices: string[] = []
+  const valueAt = (jp: string): unknown => {
+    const v = getByPath(clone, jp)
+    return v === undefined ? args.valueAt?.(jp) : v
+  }
+  const mkError = (jp: string, issues: unknown[]): string =>
+    schemaErrorMode === 'schema_invalid'
+      ? toolError({ code: 'SCHEMA_INVALID', message: `patches 应用后局部校验失败 @ "${jp}",未写入`, hint: '确认该路径的值符合 schema;兄弟节点的既有数据不影响本次写入', details: formatZodIssues(issues) })
+      : zodError(jp, issues)
+  const stripError = (stripped: string[]): string =>
+    toolError({ code: 'SCHEMA_STRIP', message: `字段 ${stripped.join(', ')} 不在 schema 声明内,写入被拒绝(防静默丢失)`, hint: '该数据结构不支持这些字段;请只用 schema 声明的字段,或在 data.schema 中声明后重试', path: stripped[0], details: { stripped } })
+  const writeBacks: LocalWriteBack[] = []
+  if (schemaHasRefinement(schema)) notices.push('根级 refine/superRefine 不再在 write 时执行(走 capabilities.verify)')
+  let appendIdx = 0
+  let moveIdx = 0
+  for (const p of patches) {
+    const op: EditOp = p.op ?? 'set'
+    const jp = p.jsonPath || ''
+    if (op === 'remove') {
+      // remove:只校验父容器结构性约束(数组 min length);无约束 → 直接过(不做全量校验,防株连)
+      const dot = jp.lastIndexOf('.')
+      if (dot > 0 && /^\d+$/.test(jp.slice(dot + 1))) {
+        const parentPath = jp.slice(0, dot)
+        const pres = resolveSchemaPath(schema, parentPath)
+        if (pres.kind === 'schemas') {
+          const finalParent = getByPath(clone, parentPath)
+          if (Array.isArray(finalParent)) {
+            for (const cand of pres.schemas) {
+              const min = arrayMinLength(cand)
+              if (min !== null && finalParent.length < min) {
+                return { ok: false, error: mkError(parentPath, [{ path: [parentPath], code: 'too_small', message: `删除后数组长度 ${finalParent.length} 低于 schema 最小约束 ${min}`, expected: `>=${min}` }]), writeBacks: [], notices }
+              }
+            }
+          }
+        }
+      }
+      writeBacks.push({ op: 'remove', jp })
+      continue
+    }
+    if (op === 'move') {
+      // move:元素本身是既有数据(无 strip 风险),只校验它满足目标容器的元素 schema(跨容器类型安全)
+      const cap = moveCaptures[moveIdx++]
+      if (cap && cap.elem !== undefined) {
+        // 目标容器:toPath 末段为数字下标 → 取其父;否则 toPath 即数组本身
+        const dDot = cap.toPath.lastIndexOf('.')
+        const destPath = dDot > 0 && /^\d+$/.test(cap.toPath.slice(dDot + 1)) ? cap.toPath.slice(0, dDot) : cap.toPath
+        const dres = resolveSchemaPath(schema, destPath)
+        if (dres.kind === 'schemas') {
+          const elemSchemas = elementSchemaCandidates(dres.schemas)
+          if (elemSchemas.length) {
+            const allIssues: unknown[] = []
+            let passed = false
+            for (const es of elemSchemas) {
+              const r = es.safeParse(cap.elem)
+              if (r.success) { passed = true; break }
+              allIssues.push(...(r.error?.issues ?? []))
+            }
+            if (!passed) return { ok: false, error: mkError(cap.toPath, allIssues), writeBacks: [], notices }
+          }
+        }
+        // open / missing(目标为 schema 未声明的开放结构)→ 放行(元素是既有数据,无 strip 面)
+        else if (dres.kind === 'open') notices.push(`${destPath}=开放节点放行`)
+      }
+      writeBacks.push({ op: 'move', jp, toPath: String(p.value) })
+      continue
+    }
+    if (op === 'append') {
+      // append:只校验新增元素(逐个对元素 schema,any-option-accepts);既有兄弟元素不过堂(防株连复刻)
+      const cap = appendCaptures[appendIdx++]
+      const elems = cap?.elems ?? []
+      if (!elems.length) { writeBacks.push({ op: 'appendElems', jp, elems: [] }); continue }
+      const tres = resolveSchemaPath(schema, jp)
+      if (tres.kind === 'missing') {
+        return { ok: false, error: stripError([jp || '(根)']), writeBacks: [], notices }
+      }
+      if (tres.kind === 'open') {
+        notices.push(`${jp || '(根)'}=开放节点放行`)
+        writeBacks.push({ op: 'appendElems', jp, elems })
+        continue
+      }
+      const elemSchemas = elementSchemaCandidates(tres.schemas)
+      if (!elemSchemas.length) {
+        // 目标 schema 声明非数组但运行时是数组(schema 与数据形态脱节)→ 无法校验,放行留痕(宁漏勿错杀)
+        notices.push(`${jp || '(根)'}:目标非 schema 声明数组,元素未校验放行`)
+        writeBacks.push({ op: 'appendElems', jp, elems })
+        continue
+      }
+      const parsedElems: unknown[] = []
+      for (let ei = 0; ei < elems.length; ei++) {
+        const allIssues: unknown[] = []
+        let parsed: unknown
+        let passed = false
+        for (const es of elemSchemas) {
+          const r = es.safeParse(elems[ei])
+          if (r.success) { passed = true; parsed = r.data; break }
+          allIssues.push(...(r.error?.issues ?? []))
+        }
+        if (!passed) return { ok: false, error: mkError(`${jp || '(根)'}[新增元素${ei}]`, allIssues), writeBacks: [], notices }
+        const stripped = findStrippedKeys(undefined, elems[ei], parsed, jp ? `${jp}.${ei}` : String(ei))
+        if (stripped.length) return { ok: false, error: stripError(stripped), writeBacks: [], notices }
+        parsedElems.push(parsed)
+      }
+      writeBacks.push({ op: 'appendElems', jp, elems: parsedElems })
+      continue
+    }
+    if (op === 'merge') {
+      // merge:逐键校验目标键的**最终值**(既有内容 + 合并项;键级残留株连面已收敛到该键子树,editor 开放 props 无此面)
+      let mVal = p.value
+      if (typeof mVal === 'string') {
+        const mp = maybeParseValue(mVal)
+        if (mp.parseError) return { ok: false, error: jsonParseError(`patches merge`, mVal, mp.parseError), writeBacks: [], notices }
+        mVal = mp.parsed
+      }
+      if (mVal === null || typeof mVal !== 'object' || Array.isArray(mVal)) {
+        return { ok: false, error: toolError({ code: 'PATCH_FAILED', message: `merge 的 value 需为对象`, hint: 'merge 合并对象键;整体替换用 set' }), writeBacks: [], notices }
+      }
+      const entries: [string, unknown][] = []
+      for (const k of Object.keys(mVal as Record<string, unknown>)) {
+        if (k.startsWith('__pg')) continue
+        if (UNSAFE_KEYS.has(k)) continue  // __proto__/constructor/prototype 键:跳过写回(防原型污染;旧 safeMerge 同款跳过)
+        const keyPath = jp ? `${jp}.${k}` : k
+        const finalVal = valueAt(keyPath)
+        const vr = validateAtPath(schema, keyPath, finalVal)
+        if (!vr.ok) {
+          if (vr.resolution === 'missing') {
+            const beforeHas = getByPath(bindRef, keyPath) !== undefined
+            if (!beforeHas) return { ok: false, error: stripError([keyPath]), writeBacks: [], notices }
+            entries.push([k, finalVal])  // 宿主自管字段:保留原值语义(写回最终值,不 strip)
+            continue
+          }
+          return { ok: false, error: mkError(keyPath, vr.issues ?? []), writeBacks: [], notices }
+        }
+        if (vr.resolution === 'open') notices.push(`${keyPath}=开放节点放行`)
+        const beforeVal = getByPath(bindRef, keyPath)
+        const stripped = findStrippedKeys(beforeVal, finalVal, vr.data, keyPath)
+        if (stripped.length) return { ok: false, error: stripError(stripped), writeBacks: [], notices }
+        entries.push([k, vr.data])
+      }
+      writeBacks.push({ op: 'mergeKeys', jp, entries })
+      continue
+    }
+    // set:校验目标路径的最终值(全量 agent 供給 → 深校验)+ 父数组稀疏空洞防御
+    const afterVal = valueAt(jp)
+    // 稀疏空洞防御(sec-23 语义保持):set 越界数组索引经 setByPath 产生空洞,整对象校验原可拦截;
+    // 局部化后由「父数组完整性」显式检查承接(数字末段 → 父数组不得含空洞)
+    const dot = jp.lastIndexOf('.')
+    if (dot > 0 && /^\d+$/.test(jp.slice(dot + 1))) {
+      const parentPath = jp.slice(0, dot)
+      const parentArr = getByPath(clone, parentPath)
+      if (Array.isArray(parentArr)) {
+        for (let i = 0; i < parentArr.length; i++) {
+          if (!(i in parentArr)) {
+            return { ok: false, error: toolError({ code: 'PATCH_FAILED', message: `set @ "${jp}" 越界数组索引产生稀疏空洞(父数组长度 ${parentArr.length})`, hint: '数组索引须连续(≤ 当前长度);追加请用 op:"append"' }), writeBacks: [], notices }
+          }
+        }
+      }
+    }
+    const vr = validateAtPath(schema, jp, afterVal)
+    if (!vr.ok) {
+      if (vr.resolution === 'missing') {
+        const beforeHas = getByPath(bindRef, jp) !== undefined
+        if (!beforeHas) return { ok: false, error: stripError([jp]), writeBacks: [], notices }
+        writeBacks.push({ op: 'set', jp, value: afterVal })  // 宿主自管路径:写回原值(不 strip)
+        continue
+      }
+      return { ok: false, error: mkError(jp, vr.issues ?? []), writeBacks: [], notices }
+    }
+    if (vr.resolution === 'open') notices.push(`${jp || '(根)'}=开放节点放行`)
+    const beforeVal = getByPath(bindRef, jp)
+    const stripped = findStrippedKeys(beforeVal, afterVal, vr.data, jp)
+    if (stripped.length) return { ok: false, error: stripError(stripped), writeBacks: [], notices }
+    writeBacks.push({ op: 'set', jp, value: vr.data })
+  }
+  return { ok: true, writeBacks, notices }
+}
+
+/**
  * 整体 set 写入纯函数:schema 校验 + 快照 + merge/替换 + audit。set_data / write(set) / draft_commit 共用。
  * 调用方负责:maybeParseValue(前,字符串→对象)+ handleConflict(前,乐观锁)+ setBaseline(后)+ 成功/dryRun message 构造。
  * 在 bindRef 就地写(经校验,失败不写不入快照)。返回 {ok,hash,data}(dryRun 不写 hash='')或 {ok:false,error}。
+ * path-scoped-validation:校验经 validateRootValueLocally(只校验 value 出现的顶层 key;缺必填不再拒)。
  */
 export function commitSetToBind(args: {
   bindRef: unknown
@@ -168,8 +451,10 @@ export function commitSetToBind(args: {
   protectedCtx?: ProtectedCtx
   /** 写后 hash 计算入口(与基线/冲突比对同源;缺省全量 hashValue)。watch 模式传 hashBind */
   hashFn?: () => string
-}): { ok: true; hash: string; data: unknown } | { ok: false; error: string } {
-  const { bindRef, schema, allowKeys, snapshots, maxSnapshots, audit, dryRun, op = 'set', protectedCtx } = args
+  /** eval_script transform(整体替换)等场景的快照标签(缺省无) */
+  snapshotLabel?: string
+}): { ok: true; hash: string; data: unknown; notices: string[] } | { ok: false; error: string } {
+  const { bindRef, schema, allowKeys, snapshots, maxSnapshots, audit, dryRun, op = 'set', protectedCtx, snapshotLabel } = args
   let value = args.value
   // B __pgId:写前深快照(仅配 internalAfterWrite 的 codeAsset 场景捕获,零成本开关)
   const beforeBind = args.internalAfterWrite ? deepClone(bindRef) : null
@@ -179,43 +464,42 @@ export function commitSetToBind(args: {
     if (!er.ok) return { ok: false, error: er.error }
     value = er.value
   }
-  const res = schema.safeParse(value)
-  if (!res.success) return { ok: false, error: zodError('', res.error.issues) }
-  // fix-silent-strip:set 值中新增的键被 zod strip 静默剥离 → 显式拒绝(merge 语义下未声明键不落 bind,假成功)
-  const stripped = findStrippedKeys(bindRef, value, res.data)
-  if (stripped.length) {
-    return { ok: false, error: toolError({ code: 'SCHEMA_STRIP', message: `字段 ${stripped.join(', ')} 不在 schema 声明内,写入被拒绝(防静默丢失)`, hint: '该数据结构不支持这些字段;请只用 schema 声明的字段,或在 data.schema 中声明后重试', path: stripped[0], details: { stripped } }) }
-  }
-  if (dryRun) return { ok: true, hash: '', data: res.data }
+  // path-scoped-validation:整体 set 只校验 value 出现的顶层 key(merge 语义;缺必填不再拒 —— 契约收窄);
+  // per-key strip 检测(新增未声明键照拒)+ per-key 解析值写回(strip/原型污染防线平移)
+  const vr = validateRootValueLocally({ schema, allowKeys, value, bindRef })
+  if (!vr.ok) return { ok: false, error: vr.error }
+  const writeData = vr.assembly
+  if (dryRun) return { ok: true, hash: '', data: writeData, notices: vr.notices }
   if (bindRef === null || typeof bindRef !== 'object') {
     return { ok: false, error: toolError({ code: 'LEAF_BIND', message: `主数据 bind 为原始类型(${bindRef === null ? 'null' : typeof bindRef}),无法就地替换外部持有的值引用`, hint: '主数据 bind 必须为对象/数组;叶子值请用对象包裹(如 {value:"x"})或集成方通过 sdk.setData 替换 bind' }) }
   }
   // pushSnapshot 内联(纯函数不依赖 createDataOps 闭包的 pushSnapshot)
   const before = deepClone(bindRef)
   const id = snapshots.length ? snapshots[snapshots.length - 1].id + 1 : 1
-  snapshots.push({ id, ts: Date.now(), op, value: before })
+  snapshots.push({ id, ts: Date.now(), op, value: before, ...(snapshotLabel ? { label: snapshotLabel } : {}) })
   while (snapshots.length > maxSnapshots) snapshots.shift()
-  if (res.data !== null && typeof res.data === 'object') {
-    if (allowKeys) {
-      // 白名单模式(schema 是 ZodObject 子集):merge 语义,只更新 schema 声明字段,隐藏字段保留不动(防误删)
-      safeMerge(bindRef as Record<string, any>, res.data)
+  if (writeData !== null && typeof writeData === 'object') {
+    if (vr.wholeParsed) {
+      restoreInPlace(bindRef as Record<string, unknown> | unknown[], writeData)
     } else {
-      restoreInPlace(bindRef as Record<string, unknown> | unknown[], res.data)
+      // 白名单模式(schema 是 ZodObject 子集):merge 语义,只更新 schema 声明字段,隐藏字段保留不动(防误删)
+      safeMerge(bindRef as Record<string, any>, writeData)
     }
   }
-  audit({ op, value: res.data, timestamp: Date.now() })
+  audit({ op, value: writeData, timestamp: Date.now() })
   args.onWrite?.()  // 真正写入后通知(checkpoint 脏标记;dryRun 在上方早 return 不会触发)
   args.internalAfterWrite?.(bindRef, beforeBind)  // B __pgId 补齐(成功路径,before 用于按位置回填原 id)
-  return { ok: true, hash: args.hashFn ? args.hashFn() : hashValue(bindRef), data: res.data }
+  return { ok: true, hash: args.hashFn ? args.hashFn() : hashValue(bindRef), data: writeData, notices: vr.notices }
 }
 
 /**
  * 增量 patch 写入纯函数(p2-refactor 子项 3 装饰器):clone + 逐 patch 校验(isUnsafePath/isPathAllowed/maybeParseValue)
- * + applyPatchToClone + 整体 schema 校验 + (dryRun 预检) + snapshot + 从 res.data 整体写回 + markDataDirty。
+ * + applyPatchToClone + **逐目标局部校验**(path-scoped-validation:validateWriteLocally,只校验写入内容,兄弟脏数据不株连)
+ * + (dryRun 预检) + snapshot + 外科手术式写回(局部 parse 值按 patch 序重放)+ markDataDirty。
  * edit_data / write(edit) / eval-patches / eval-subtree 共用 —— 消除四处 clone+循环+校验+snapshot+applyLive 重复
  * (乐观锁×dryRun 组合的 bug 高发区,单一真相源防不一致)。
  * 调用方负责:bindRef 类型守卫(NOT_OBJECT/LEAF_BIND,错误码各异)+ audit(detail/value 差异)+ setBaseline + 成功 message。
- * 返回 {ok,applied,clone}(dryRun 返回 clone 供预览,不落盘/不入快照) 或 {ok:false,error}。
+ * 返回 {ok,applied,clone,notices}(dryRun 返回 clone 供预览,不落盘/不入快照) 或 {ok:false,error}。
  */
 export function applyPatchesToBind(args: {
   bindRef: unknown
@@ -236,11 +520,21 @@ export function applyPatchesToBind(args: {
   internalAfterWrite?: (bind: any, before: any) => void
   /** 受保护资源强制层;undefined 或空 → no-op。在 patch 应用后、schema 校验前调用 */
   protectedCtx?: ProtectedCtx
-}): { ok: true; applied: { op: EditOp; jp: string; value: unknown }[]; clone: unknown } | { ok: false; error: string } {
+}): { ok: true; applied: { op: EditOp; jp: string; value: unknown }[]; clone: unknown; notices: string[] } | { ok: false; error: string } {
   const { bindRef, patches, schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode = 'zod', snapshotLabel, dryRun, protectedCtx } = args
   const beforeBind = args.internalAfterWrite ? deepClone(bindRef) : null  // B __pgId 写前快照
   const clone = deepClone(bindRef)
   const applied: { op: EditOp; jp: string; value: unknown }[] = []
+  // path-scoped-validation:append 追加元素 / move 移动元素的引用捕获(校验「新增/移动内容」用;
+  // 引用在 clone 内,后续 patch 若继续改这些对象,校验时取到的即最终态)
+  const appendCaptures: { jp: string; elems: unknown[] }[] = []
+  const moveCaptures: { jp: string; toPath: string; elem: unknown }[] = []
+  // 逐 patch 应用后目标路径快照(set/merge 校验取值兜底:同批后续 remove/位移使旧 jsonPath 在最终 clone 上
+  // 取不到值时回退用;浅捕获按需 —— 仅记录路径与该刻值,校验只读不 mutate)
+  const patchSnapshots: { jp: string; val: unknown }[] = []
+  const snapshotAfter = (op: EditOp, jp: string) => {
+    if (op === 'set' || op === 'merge') patchSnapshots.push({ jp, val: getByPath(clone, jp) })
+  }
   for (let i = 0; i < patches.length; i++) {
     const p = patches[i]
     const jp = p.jsonPath || ''
@@ -260,8 +554,11 @@ export function applyPatchesToBind(args: {
         return { ok: false, error: toolError({ code: 'PATH_DENIED', message: `patches[${i}] move 目标 "${pVal}" 不在 schema 声明字段内`, hint: 'move 的 value(目标路径)也须在 schema 声明字段内' }) }
       }
     }
+    if (op === 'append') appendCaptures.push({ jp, elems: Array.isArray(pVal) ? [...(pVal as unknown[])] : [pVal] })
+    if (op === 'move') moveCaptures.push({ jp, toPath: String(pVal), elem: getByPath(clone, jp) })
     const patchErr = applyPatchToClone(clone, op, jp, pVal)
     if (patchErr) return { ok: false, error: toolError({ code: 'PATCH_FAILED', message: `patches[${i}]: ${patchErr}`, hint: '检查 op 与目标类型:merge 需对象,append 需数组' }) }
+    snapshotAfter(op, jp)
     applied.push({ op, jp, value: pVal })
   }
   // 强制层(§7c F1):逐 patch C3 remove 检查 + normalizeAndCheck 比对(clone vs bind),先于 schema 校验
@@ -269,38 +566,42 @@ export function applyPatchesToBind(args: {
     const er = enforcePatches({ patches, clone, ctx: protectedCtx })
     if (!er.ok) return { ok: false, error: er.error }
   }
-  const res = schema.safeParse(clone)
-  if (!res.success) {
-    return { ok: false, error: schemaErrorMode === 'schema_invalid'
-      ? toolError({ code: 'SCHEMA_INVALID', message: `patches 应用后整体校验失败,未写入`, hint: '确认 patches 合并后整体仍符合 schema', details: formatZodIssues(res.error.issues) })
-      : zodError('', res.error.issues) }
-  }
-  // fix-silent-strip:patch 新增的键被 zod strip 静默剥离 → 不再假成功,显式拒绝(agent 据此告知用户「不支持该字段」)
-  // 典型:discriminatedUnion 下 isPathAllowed 降级开放(如 components.N.style),safeParse strip 后写回不含该键
-  const stripped = findStrippedKeys(bindRef, clone, res.data)
-  if (stripped.length) {
-    return { ok: false, error: toolError({ code: 'SCHEMA_STRIP', message: `字段 ${stripped.join(', ')} 不在 schema 声明内,写入被拒绝(防静默丢失)`, hint: '该数据结构不支持这些字段;请只用 schema 声明的字段,或在 data.schema 中声明后重试', path: stripped[0], details: { stripped } }) }
-  }
-  if (dryRun) return { ok: true, applied, clone }
+  // path-scoped-validation:全部 apply 后按最终态逐目标局部校验(替代整对象 safeParse)——
+  // 只校验 agent 写入的内容(set 目标值/merge 键终值/append 新元素/move 元素),兄弟脏数据不再株连(script:"" 事故根因);
+  // strip/原型污染防线平移到 per-path(写回值 = 局部 parse 结果,未声明嵌套键不落 bind,fix-write-safety-bypass P0-1);
+  // 任一目标失败 → 整批不写(原子语义不变)。稀疏空洞防御(sec-23)由 set 目标的父数组完整性检查承接。
+  const plan = validateWriteLocally({ schema, bindRef, clone, patches, schemaErrorMode, appendCaptures, moveCaptures, valueAt: (jp) => patchSnapshots.find((s) => s.jp === jp)?.val })
+  if (!plan.ok) return { ok: false, error: plan.error! }
+  if (dryRun) return { ok: true, applied, clone, notices: plan.notices }
   // pushSnapshot(内联,与 commitSetToBind 一致:记录改前 bindRef)+ 写回 bind + markDataDirty
   // write-path-cost-reduction B 段:codeAsset 模式(beforeBind 已深拷贝改前态)直接复用为快照值,省一次全量深拷贝;
   // 此刻 bindRef 仍是改前态(写回在 push 之后),两者等价。快照条目按不可变值对待(restore 消费方防御性深拷贝)。
   const id = snapshots.length ? snapshots[snapshots.length - 1].id + 1 : 1
   snapshots.push({ id, ts: Date.now(), op: 'edit', value: beforeBind ?? deepClone(bindRef), ...(snapshotLabel ? { label: snapshotLabel } : {}) })
   while (snapshots.length > maxSnapshots) snapshots.shift()
-  // fix-write-safety-bypass(P0-1):写 live 从 res.data(schema 解析值,已 strip 未声明键 / 值内嵌 __proto__ own 键)整体写回,
-  // 与 commitSetToBind 单一真相源。旧实现 `for (a) applyPatchToLive(bindRef, a.op, a.jp, a.value)` 用原始 a.value,
-  // 未走 zod strip → 已声明路径值内的未声明嵌套键 / __proto__ own 键落 bind(set 干净、edit 脏)。
-  // res.data 是所有 patch 应用 + zod strip 后的最终态,直接写回覆盖 set/merge/append 全 op;
-  // remove 须显式 deleteByPath(safeMerge 浅合并不删 key,避免 remove 被整体 merge 丢失)。
-  for (const a of applied) if (a.op === 'remove') deleteByPath(bindRef, a.jp)
-  if (res.data !== null && typeof res.data === 'object') {
-    if (allowKeys) safeMerge(bindRef as Record<string, any>, res.data)
-    else restoreInPlace(bindRef as Record<string, unknown> | unknown[], res.data)
+  // 外科手术式写回(path-scoped-validation):按 patch 原序把「局部 parse 后的值」重放到 live bind ——
+  // 只动写目标路径,未触达子树原样保留(旧实现整对象 res.data 整体 merge 会把全树 strip 一遍,未触达组件的
+  // 未声明字段如 __pgNotes 会被剥;per-path 写回天然保住)。remove 显式 deleteByPath(merge 不删 key 语义)。
+  for (const wb of plan.writeBacks) {
+    if (wb.op === 'remove') {
+      deleteByPath(bindRef, wb.jp)
+    } else if (wb.op === 'set') {
+      setByPath(bindRef, wb.jp, wb.value)
+    } else if (wb.op === 'move') {
+      moveByPath(bindRef, wb.jp, wb.toPath)  // live 兜底:clone 路径已校验过,失败静默(与 applyPatchToLive 同语义)
+    } else if (wb.op === 'mergeKeys') {
+      const target = wb.jp ? getByPath(bindRef, wb.jp) : bindRef
+      if (target && typeof target === 'object' && !Array.isArray(target)) {
+        for (const [k, v] of wb.entries ?? []) (target as Record<string, unknown>)[k] = v
+      }
+    } else if (wb.op === 'appendElems') {
+      const arr = wb.jp ? getByPath(bindRef, wb.jp) : bindRef
+      if (Array.isArray(arr) && wb.elems?.length) arr.push(...(wb.elems as unknown[]))
+    }
   }
   args.internalAfterWrite?.(bindRef, beforeBind)  // B __pgId 补齐(成功路径,before 用于按位置回填原 id)
   markDataDirty?.()
-  return { ok: true, applied, clone }
+  return { ok: true, applied, clone, notices: plan.notices }
 }
 
 /** 基于单主对象配置构建数据操作工具集 */
@@ -914,7 +1215,8 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           setBaseline(hashBind(), scope)
           return `已通过脚本 transform(patches) 更新主数据(${r.applied.length} 个 patch,耗时 ${res.elapsedMs}ms)。当前值: ${safeStringify(bindRef, 600)}`
         }
-        // 整体替换模式:脚本返回完整新值
+        // 整体替换模式:脚本返回完整新值 —— 走 validateRootValueLocally(path-scoped-validation:
+        // 只校验出现的顶层 key,缺必填不再拒;strip/原型污染防线平移到 per-key;错误码 SCHEMA_INVALID 保持)
         let evalResult: unknown = result
         // 强制层(§7c F1):eval transform 整体替换是独立落地路径(不走 commitSetToBind),单独调 enforceSet
         if (protectedCtx) {
@@ -922,19 +1224,19 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           if (!er.ok) return er.error
           evalResult = er.value
         }
-        const chk = schema.safeParse(evalResult)
-        if (!chk.success) return toolError({ code: 'SCHEMA_INVALID', message: `脚本返回值校验失败,未写入(transform 模式要求返回主数据的完整新值且符合 schema)`, hint: `确认脚本 return 了完整新值(非部分);或返回 {patches:[...]} 走增量模式;按 describe_data() 查看格式`, details: formatZodIssues(chk.error.issues) })
         if (bindRef === null || typeof bindRef !== 'object') {
           return toolError({ code: 'LEAF_BIND', message: `主数据 bind 为原始类型(${bindRef === null ? 'null' : typeof bindRef}),eval transform 无法就地替换外部持有的值引用`, hint: '主数据 bind 必须为对象/数组;叶子值请用对象包裹或集成方通过 sdk.setData 替换 bind' })
         }
+        const vr = validateRootValueLocally({ schema, allowKeys, value: evalResult, bindRef })
+        if (!vr.ok) {
+          return toolError({ code: 'SCHEMA_INVALID', message: `脚本返回值校验失败,未写入(transform 模式要求返回主数据的完整新值或顶层 key 子集)`, hint: `确认脚本 return 了完整新值(非部分);或返回 {patches:[...]} 走增量模式;按 describe_data() 查看格式`, details: (vr.error.match(/"details":\s*(\[[^\]]*\])/)?.[1] ?? '') || vr.error })
+        }
         pushSnapshot('edit', 'eval_transform')
-        if (chk.data !== null && typeof chk.data === 'object') {
-          if (allowKeys) {
-            // 白名单模式:merge 语义,只更新 schema 声明字段,隐藏字段保留不动
-            safeMerge(bindRef as Record<string, any>, chk.data)
-          } else {
-            restoreInPlace(bindRef as Record<string, unknown> | unknown[], chk.data)
-          }
+        if (vr.wholeParsed) {
+          restoreInPlace(bindRef as Record<string, unknown> | unknown[], vr.assembly)
+        } else if (vr.assembly !== null && typeof vr.assembly === 'object') {
+          // 白名单模式:merge 语义,只更新出现的顶层 key,隐藏字段保留不动
+          safeMerge(bindRef as Record<string, any>, vr.assembly)
         }
         markDataDirty()
         audit({ op: 'edit', detail: 'eval_transform', timestamp: Date.now() })

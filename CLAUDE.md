@@ -30,7 +30,7 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2588 项断言)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2609 项断言)
 npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,864 项;tests/e2e/<module>.mjs 按模块拆分)
 npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,102 项;tests/browser/<demo>.spec.ts)
 ```
@@ -72,7 +72,7 @@ skills/                         # 分发给使用者的 Agent Skill(入 npm 包 
 
 ### 数据槽操作(详见 architecture.md §④⑭)
 - **零桥接**:工具直接读写 `bind`(reactive);改数据必经写工具(范围 + schema 校验 + 自动快照 + 自动乐观锁)
-- **schema 白名单**(ZodObject):顶层 key 白名单;读统一 `projectBySchemaDeep` 深投影(未声明不泄露);写 `isPathAllowed` 逐段校验;整体 set = merge 语义(未声明保留防误删)
+- **schema 白名单**(ZodObject):顶层 key 白名单;读统一 `projectBySchemaDeep` 深投影(未声明不泄露);写 `isPathAllowed` 逐段校验;整体 set = merge 语义(未声明保留防误删);**path 级局部校验(path-scoped-validation)**:write 只校验被写子树(union-tolerant 任一 option 命中即过 / append 只校验新增元素 / remove 只查父容器结构约束),兄弟节点脏数据不株连(script:"" 事故根因);写回 = 逐 patch 外科手术式(局部 parse 值重放,未触达子树原样保留);strip/原型污染防线 per-path 平移(声明节点未声明键照拒,开放节点 record/any/unknown/passthrough 放行留痕);根级 refine 不在 write 时执行(notices 留痕,全局约束走 verify);`write del` 意图无校验(现状锁定)
 - **乐观锁契约**(3.32 opt-in 翻转):`get_data`/`read` 附 `hash=xxx`(乐观锁标识);**自动检测默认不开** —— `conflictWatchFields`(白名单,任意深度字段名,位置不敏感)声明后仅监听字段值变动触发冲突;`['*']` 通配 = 旧版全字段检测(editor_fangzhou 实测宿主每秒回写 minHeight 类元数据噪声驱动翻转;autoLock 已废弃);hash 不匹配 → 挂起 `sdk.pendingConflict` → `resolveConflict('keep_external'|'overwrite'|'restore')`;**per-scope 基线**(子不污染主);**同 scope 连续写永不互相冲突**;**conflictPolicy**(3.29,默认 `'ask'` 挂起等人工 / `'overwrite'` agent 强制覆盖不挂起 / `'keep_external'` 自动保留外部):宿主与 agent 争同一份数据、无人值守场景声明 overwrite 防流程永挂;自动裁决仍外发 conflict 事件(`autoResolved` 标记)
 - **高层 read/write**:`read` 多路径/裁剪/分页;`write` 四意图(set/patch/**patches 原子任一失败回滚**/del;patch op 枚举 set/remove/merge/append/**move**(value=目标路径字符串,数组元素同数组重排/跨数组移动一步原子))+ `dryRun`;快照 per-path 栈 + `restore_data` + `history_data`;`eval_script` Worker 沙箱;`draft_*` opt-in(大 JSON 建议 maxToolRounds 20-30)。**写路径成本收敛(3.25.1)**:同调用 hash 单算(`commitBaseline`,基线+消息复用)+ codeAsset 改前态单拷贝(beforeBind 复用为快照条目,restore 防御性深拷贝兜底),1MB 单写 median -12~-22%;**不变量:冲突检查 hash 恒实时计算,禁跨调用缓存**(人工直改 reactive bind 不经 SDK 写路径,脏标记失明 → keep_external 失效)
 - **工具面恒全暴露**(3.31 移除 `toolMode`/`interceptors`):`createDataOps` 直出 14 工具,无呈现模式筛选;usageHints 无档位,提示词只随能力开关变化;受保护资源 freeze/verbatim(占位符只在读写边界替换,bind 恒持原值);**vfs 四池** LRU + 大结果外存
@@ -133,7 +133,7 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test    # tsx 跑 src/core/__tests__/selftest.ts,2588 项断言
+npm test    # tsx 跑 src/core/__tests__/selftest.ts,2609 项断言
 ```
 按模块拆分:`src/core/__tests__/modules/sec-NN.ts`(54+ 个模块)各导出 `run(ctx)`,runner 汇总;共享 `TestCtx` 在 `modules/_ctx.ts`。tsx 跑源码(不经构建),触不到 createChatSdk 顶层 API 作用域。**改任何核心模块后必跑**。
 
@@ -178,7 +178,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2588/864/102)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2609/864/102)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判)→ `npm run test:size` → `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证

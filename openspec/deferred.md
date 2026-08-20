@@ -424,6 +424,10 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 
 **来源**:用户问询「代码组件移动到另一层级数组(如 `container.children`)能否无损」核实结论。`write` op `move` 结构搬运本身无损(节点含 `__pgId`/`__pgNotes` 整体随行,findStrippedKeys 对 move 位移有深度相等匹配防误判),但 `codeAssetMiddleware.forEachCodeItem`(src/core/sdk/codeAssetMiddleware.ts:112-128)**只扫 writablePaths 数组的直接元素,不递归嵌套数组** —— 代码组件一旦移进嵌套容器(如 `components.N.props.children`):checkout/afterAgent commit/组件代码文件地图/焦点守卫(`focusPathsToPgIds` 同遍历口径)全部「看不见」该组件 → 后续 `use_html` 委派无法同步其 vfs 工作副本(data.code 停在移动前内容,vfs 编辑回流不到新位置)。组件锁 `collectComponentNames` 同源,锁目标集也漏。**重启触发**:集成方(editor_fangzhou 类)实际出现「把 custom 组件拖进容器 children」需求或事故。修法候选:`forEachCodeItem` 改按 schema 深遍历(z.lazy 递归路径展开)或 writablePaths 支持多路径声明(`['components', 'components.*.props.children']` 通配);同步修 `focusPathsToPgIds`/`collectComponentNames`/文件地图同口径。
 
+### [2026-08-20] restore_data 快照整对象校验株连(与 path-scoped-validation 同根因)— ⏸ 暂缓
+
+**来源**:path-scoped-validation(path-scoped-validation change 实施期登记)。`restore_data` 的 `SNAPSHOT_SCHEMA_INVALID`(dataOps.ts restoreData 工具)对快照值做**当前 schema 的整对象校验** —— editor 若回退含 `script:""` 脏数据的历史快照会与 write 路径同样株连挂死。本 change 只动了写路径(set/patches/merge/append/move/eval/draft),快照回退路径未动(非目标明示)。**重启触发**:editor 实测回退失败案例出现。修法:快照是「历史既有数据」(非 agent 本次写入),回退校验可直接放开或降级 warning 留痕 —— 与写路径「只校验写入内容」哲学一致。
+
 ## 维护约定
 
 - 暂缓项**不进** `project.md`「进行中的 change」(避免占心智);本文件是唯一索引。

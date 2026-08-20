@@ -279,7 +279,7 @@ Agent 自主调用这些内置工具(无需你写):
 | `snapshot_data` / `list_data_snapshots` / `restore_data` | 快照 / 回退 |
 
 **要点**:
-- **schema 校验**:`set`/`edit`/`write` 不合法值会被拦截(不写入),返回结构化错误给 Agent 自纠。
+- **schema 校验(path 级局部)**:`set`/`edit`/`write` 校验**被写子树**的结构合法性(不是全量数据)—— 单点写入不会被其他节点的历史脏数据拦死;被写值不合法才拦截,返回只含写入路径的结构化错误给 Agent 自纠。整体 set 只校验 value 中出现的顶层 key(merge 语义,缺省字段保留);根级 refine/superRefine 等跨节点约束不在写时执行(需要全局校验用 `capabilities.verify`)。
 - **快照回退**:每次 `set`/`edit`/`delete` 前自动存快照,`restore_data` 一键回退。
   - 自动快照:写操作前自动入栈(默认 20,FIFO 丢最旧)
   - 手动检查点:`snapshot_data(label?)` 命名快照

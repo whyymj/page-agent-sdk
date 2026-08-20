@@ -2,6 +2,25 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [Unreleased]
+
+### Changed(write 校验局部化 path-scoped-validation:拔「兄弟节点株连」架构根因)
+
+> ⚠️ **校验语义收窄,依赖全局校验的集成方需迁移**:schema 校验从「全局结构一致」收窄为「**被写子树结构合法**」—— 单点写入不再被其他节点的历史脏数据拦死(editor 实测 script:"" 事故:改 A 被兄弟 B 的脏数据株连,agent 被迫批量改数据迁就 schema)。
+
+- **write/patches/merge/append/move 逐目标局部校验**:全部 patch apply 到 clone 后按最终态,只校验 agent 写入的内容(set 目标值 / merge 键终值 / **append 只校验新增元素** / move 移动元素),兄弟节点既有数据不再过堂;任一目标失败整批回滚语义不变;错误 details 只含写入路径(「就我的写入,就这些错」)
+- **append 反株连**:向含脏兄弟的容器追加新元素不再被拦(株连换个马甲复刻的坑已堵)
+- **remove 只校验父容器结构约束**(数组 min length);`write del` 意图维持无校验现状
+- **union-tolerant 路径解析**(`resolveSchemaPath`/`validateAtPath` 新导出):union 就地展开为各 option,任一 option 接受即过(修 `getSchemaAtPath` hits[0] 取首分支对校验用途的误拒)
+- **写回改外科手术式**:按 patch 原序把「局部 parse 后的值」重放到 live bind —— 只动写目标路径(旧实现整对象 merge 会把全树 strip 一遍,未触达组件的宿主自管字段如 `__pgNotes` 被剥);strip/原型污染防线平移到 per-path(fix-silent-strip / fix-write-safety-bypass 两 P0 防线等价保留:声明节点未声明新键照拒 `SCHEMA_STRIP`;开放节点 record/any/unknown/passthrough 放行留痕)
+- **整体 set 只校验 value 出现的顶层 key**(merge 语义下缺必填不再拒、未出现字段保留防误删);patches 内后条修复前条的合法模式按最终态放行;同批次「set + remove 位移」按逐 patch 快照兜底取值
+- **根级 refine/superRefine 不再在 write 时执行**(跨节点约束超局部校验范围;返回 `notices` 留痕,全局约束需求走 `capabilities.verify` 或宿主 watch)
+- 波及面:`eval_script` transform(整体替换/子树/patches 三模式)与 `draft_commit` 同步走局部校验
+- 新导出:`validateAtPath` / `resolveSchemaPath` / `schemaHasRefinement` / `arrayMinLength` / `elementSchemaCandidates` / `PathSchemaResolution` / `ValidateAtPathResult`(schemaUtils)+ `applyPatchesToBind` / `validateRootValueLocally` / `validateWriteLocally` / `LocalWriteBack` / `LocalValidationPlan`(dataOps);主包与 headless 子集同步
+
+### Tests
+- selftest 2588→2609(sec-92:局部校验 20 项 —— 事故复刻反株连/append 反株连/remove 结构约束/strip 联动/union 歧义/整体 set 契约/patches 原子性/防原型污染);sec-01「缺必填拒」与 sec-02「叶子设子属性」两断言按新契约改写
+
 ## [3.37.0] - 2026-08-20
 
 ### Added(会话恢复提示 resume-notice:防「凭历史断言已完成」)

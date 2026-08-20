@@ -64,9 +64,12 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(t['set_data'], { value: '{ "theme": "red", "count": 1 }' })
     assert(/SCHEMA_INVALID/.test(r) && appObj.theme === 'dark', 'set_data 非法值被 schema 校验拦截(不写入,返回结构化错误码)')
 
-    // set_data 缺字段被校验拦截
+    // set_data 缺字段:path-scoped-validation 契约收窄 —— merge 语义下未出现的 key 不过堂(缺必填不再拒),
+    // 未出现字段保留原值(防误删);深度缺字段(出现的 key 值内缺必填)仍被局部校验拒
     r = await invoke(t['set_data'], { value: '{ "theme": "dark" }' })
-    assert(/SCHEMA_INVALID/.test(r), 'set_data 缺必填字段被校验拦截')
+    assert(appObj.theme === 'dark' && appObj.count === 3, '✓ set 缺必填顶层 key → merge 语义放行且未出现字段保留(path-scoped 契约)')
+    r = await invoke(t['set_data'], { value: '{ "theme": "red" }' })
+    assert(/SCHEMA_INVALID/.test(r) && appObj.theme === 'dark', '✓ set 出现的 key 非法 → 局部校验仍拒')
 
     // get_data 读整个主数据
     r = await invoke(t['get_data'], {})
