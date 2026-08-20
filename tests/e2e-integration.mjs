@@ -31,6 +31,7 @@ import { run as runMcp } from './e2e/mcp.mjs'
 import { run as runPreferences } from './e2e/preferences.mjs'
 import { run as runDiagnostics } from './e2e/diagnostics.mjs'
 import { run as runInstructionAdherence } from './e2e/instruction-adherence.mjs'
+import { run as runThinkingMode } from './e2e/thinking-mode.mjs'
 
 const modules = [
   ['systemprompt', runSystemprompt],
@@ -63,6 +64,7 @@ const modules = [
   ['preferences', runPreferences],
   ['diagnostics', runDiagnostics],
   ['instruction-adherence', runInstructionAdherence],
+  ['thinking-mode', runThinkingMode],
 ]
 
 let totalPass = 0, totalFail = 0

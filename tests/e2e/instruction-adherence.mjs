@@ -79,6 +79,26 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:instruction-adherence] 完结门禁陈旧 todos 豁免 → 本轮零工具(纯问答)不触发')
+  {
+    // 第 1 轮:write_todos 留未完成项 + 问号收尾豁免(todos 滞留未完成,模拟持久化残留)
+    // 第 2 轮:无关问候纯文本回答,零工具调用 → rounds===0 → 门禁不得拿陈旧 todos 发难
+    const llm = stubModel(
+      { toolCalls: [{ name: 'write_todos', args: { todos: [{ content: '旧任务', status: 'pending' }] } }] },
+      { text: '方案 A 和方案 B,你想保留哪个?' },   // 问号豁免,todos 滞留
+      { text: '你好,有什么可以帮你?' },             // 第 2 轮纯文本 → 门禁必须沉默
+    )
+    const sdk = createChatSdk({ ui: false, id: 'e2e-gate-stale', storage: false, llm, capabilities: CAPS })
+    await sdk.mount()
+    await sdk.send('帮我改配色')
+    const callsAfterTurn1 = llm.calls
+    const reply2 = await sdk.send('你好')
+    assert(reply2 === '你好,有什么可以帮你?', '✓ 陈旧 todos 豁免 → 纯问答轮正常收口')
+    assert(llm.calls === callsAfterTurn1 + 1, `✓ 陈旧 todos 豁免 → 本轮零工具门禁不触发,无回灌(本轮恰 1 次调用;实际 ${llm.calls - callsAfterTurn1})`)
+    assert(!sdk.debugLogs.value.some((l) => l.data?.stage === 'completion_gate'), '✓ 陈旧 todos 豁免 → 全程无 completion_gate 留痕')
+    sdk.unmount()
+  }
+
   console.log('[e2e:instruction-adherence] 问句守卫 → 问句消息注入「先答勿做」pin 段')
   {
     const llm = stubModel({ text: '这是横幅组件(banner),用于活动页顶部展示。' })

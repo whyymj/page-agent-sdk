@@ -20,7 +20,7 @@
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
 import type { StructuredToolInterface } from '@langchain/core/tools'
-import type { SubagentConfig } from '../harness/subagent'
+import type { SubagentConfig, SubagentLlmConfig } from '../harness/subagent'
 import type { SkillSpec } from '../harness/skills'
 import type { Middleware } from '../harness/middleware'
 import type { SummarizationOptions } from '../harness/summarization'
@@ -54,6 +54,18 @@ export interface CreateHtmlSubagentOptions {
   maxToolRounds?: number
   /** 子 agent 温度(代码生成建议低温);默认 0.4 */
   temperature?: number
+  /**
+   * 子 agent 独立 LLM(output-quality-uplift:主 agent 保持轻量模型编排,代码生成换强模型)。
+   * 缺省继承主 llm。SubagentLlmConfig 形态(apiKey/baseUrl/model/provider/extraBody…)。
+   * 注:与 `thinkingMode` 组合时,实例形态(BaseChatModel)不支持锁定(warn + no-op)
+   */
+  llm?: SubagentLlmConfig
+  /**
+   * 思考深度锁定(subagent-thinking-mode-lock):'deep' 注入思考参数(代码生成质量优先)/
+   * 'simple' 剥思考参数(省 token 加速);缺省继承主 LLM 的思考配置。
+   * 仅 llm 为配置形态生效;需模型支持思考(deepseek thinking 版/claude 等,flash 类无效)
+   */
+  thinkingMode?: 'simple' | 'deep'
   /** 默认装内置 html 生成规范 skill;集成方可追加或替换 */
   skills?: SkillSpec[]
   /** 额外工具(直接进子 agent 工具池) */
@@ -305,6 +317,7 @@ export function createHtmlSubagent(options: CreateHtmlSubagentOptions = {}): Sub
     writablePaths, codeVfsPrefix = 'html/', id = 'html', description, planning = true,
     summarization = true, maxToolRounds = 12, temperature = 0.4, skills, extraTools,
     formatCheck = true, codeField = 'code', orchestratorPrompt = true, craftNotes = true,
+    llm, thinkingMode,
   } = options
   if (writablePaths !== undefined && !Array.isArray(writablePaths)) {
     throw new Error('[page-agent-sdk][createHtmlSubagent] writablePaths 须为字符串数组(代码组件 data 区,如 ["components"])/ 省略以从 schema 自动推断')
@@ -328,6 +341,9 @@ export function createHtmlSubagent(options: CreateHtmlSubagentOptions = {}): Sub
     id,
     description: description ?? `生成/修改纯代码组件(代码作为 data 资产,代码字段 ${codeField} 随 data 持久化;vfs 作工作副本;能规划(write_todos)+ 执行)。需写代码组件或灵活定制时委派`,
     systemPrompt: htmlSystemPrompt(codeVfsPrefix, codeField, root),
+    // 独立 LLM / 思考深度锁定(output-quality-uplift / subagent-thinking-mode-lock;configToSubOpts 透传,缺省继承主)
+    ...(llm ? { llm } : {}),
+    ...(thinkingMode ? { thinkingMode } : {}),
     writablePaths: writablePaths ?? [],                      // 写 data(代码字段 + 元信息,path guard);空=装配期推断回填
     allowedTools: ['vfs_write', 'vfs_edit', 'vfs_rm', 'vfs_grep', 'vfs_read'],  // 代码工作副本 写/改/删/搜/读
     middleware: middleware.length ? middleware : undefined,  // 装 todos 规划 + 格式校验链(架构扩展)

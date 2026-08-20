@@ -617,6 +617,8 @@ export interface SubagentConfig {
   /** 一句话说明(进主 systemPrompt 索引 + 作委派工具描述) */
   description: string;
   llm?: LLMConfig | ChatModelLike;
+  /** 思考深度锁定:'simple' 剥思考参数 / 'deep' 注入;缺省继承。仅 llm 为配置形态生效,预构造实例路径 no-op */
+  thinkingMode?: 'simple' | 'deep';
   systemPrompt?: string;
   tools?: any[];
   skills?: SkillSpec[];
@@ -817,6 +819,8 @@ export interface LLMConfig {
   extraBody?: Record<string, any>;
   /** 透传 ChatOpenAI configuration 的额外字段(如 headers/timeout/customFetch),与 baseUrl 合并 */
   extraConfig?: Record<string, any>;
+  /** Anthropic extended thinking(仅 provider:'anthropic');通常由 thinkingMode:'deep' 自动注入,开启时 temperature 被 API 强制为 1 */
+  thinking?: { type: 'enabled'; budget_tokens: number };
   /** Anthropic prompt caching(仅 provider:'anthropic' 生效):`true` = ephemeral 5m / `'1h'` = 长 TTL。
    *  langchain 顶层 cache_control 自动在最后一个可缓存块打断点并随对话增长推进 —— ReAct 多轮前缀
    *  (system+tools+历史)命中缓存,input 价格降至 ~1/10;效果观测看 usage 事件的 cache_read_input_tokens */
@@ -1192,7 +1196,7 @@ export interface ChatSdkOptions {
   images?: ImagesConfig;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
   capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; tracing?: boolean; todoDeps?: boolean; automation?: boolean; workingMemory?: boolean; focus?: boolean; skillHostScript?: boolean; contextInspector?: boolean; agentCompression?: boolean; preferences?: boolean };
-  subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number; timeoutMs?: number };
+  subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number; timeoutMs?: number; thinkingMode?: 'simple' | 'deep' };
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[];
   /** 自检:agent 返回前跑 check,不通过则 feedback 回灌自纠(默认关闭)。传 check/maxAttempts/adversarial 任一即自动开启(无需再配 capabilities.verify:true;显式 false 或 enabled:false 可关)。check 省略时默认 createWriteBackCheck 写后读回验证 */
@@ -1987,6 +1991,10 @@ export interface CreateHtmlSubagentOptions {
    * false 关闭(零沉淀零注入)
    */
   craftNotes?: boolean;
+  /** 子 agent 独立 LLM(缺省继承主;主保持轻量模型编排、代码生成换强模型)。实例形态不支持 thinkingMode 锁定 */
+  llm?: LLMConfig;
+  /** 思考深度锁定:'deep' 注入思考参数(代码生成质量优先)/ 'simple' 剥除;需模型支持思考(flash 类无效) */
+  thinkingMode?: 'simple' | 'deep';
   [k: string]: any;
 }
 export declare function createRagSubagent(options: CreateRagSubagentOptions): SubagentConfig;

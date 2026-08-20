@@ -2,6 +2,18 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.36.0] - 2026-08-20
+
+### Added(生成质量提升 output-quality-uplift:子 agent 模型/思考分层)
+- **`createHtmlSubagent({ llm })`**:子 agent 独立 LLM(SubagentLlmConfig 形态)—— 主 agent 保持轻量模型编排,代码生成换强模型;缺省继承主(零变化)
+- **思考深度锁定 `thinkingMode: 'simple' | 'deep'`**(subagent-thinking-mode-lock 落地):子 agent 级(`SubagentConfig.thinkingMode` / `createHtmlSubagent({ thinkingMode })`)+ 顶层 `subagent.thinkingMode` 全局缺省,显式优先。LLMConfig 构造路径经 `applyThinkingMode` 纯函数改写:OpenAI 兼容 `extraBody.thinking`(deep 注入 / simple 剥除,不 mutate 原 config)/ Anthropic 扩展 `LLMConfig.thinking`(budget_tokens 缺省 `min(maxTokens ?? 4096, 8000)`;thinking 开启时 temperature 按 API 要求强制 1);预构造实例路径 warn + observable no-op(物理不可改);`inspect().subagent.subagents` 反射 `thinkingApplied(applied/inherited/instance-noop)`
+
+### Fixed
+- **完结门禁陈旧 todos 误报**:循环条件加 `rounds > 0`——本轮零工具调用(纯问答轮)不触发门禁,修上一轮持久化遗留的未完成 todos 在新话题纯文本回复时被回灌发难
+
+### Tests
+- selftest 2560→2573(sec-90:applyThinkingMode 13 项);e2e 843→856(thinking-mode 模块 10 项 + 门禁豁免 3 项)
+
 ## [3.35.0] - 2026-08-19
 
 ### Added(指令执行力增强 instruction-adherence:防莫名中断 + 防注意力漂移)

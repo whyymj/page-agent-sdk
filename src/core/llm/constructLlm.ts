@@ -22,6 +22,44 @@ export interface ConstructOpts {
   maxTokens?: number
 }
 
+/** 思考深度锁定模式(subagent-thinking-mode-lock):simple=剥思考参数 / deep=注入思考参数 */
+export type ThinkingMode = 'simple' | 'deep'
+
+/**
+ * 思考深度改写(subagent-thinking-mode-lock 核心纯函数,可单测):
+ * 按 provider 把 thinkingMode 落到 LLM 配置上,**不 mutate 原 config**(深拷贝 extraBody)。
+ *  - OpenAI 兼容(deepseek 等):`extraBody.thinking` 键 —— simple 剥除 / deep 注入 `{type:'enabled'}`(保留已有子键如 budget)
+ *  - Anthropic:顶层 `thinking` 字段(ChatAnthropic 构造参数)—— simple 剥除 / deep 注入
+ *    `{type:'enabled', budget_tokens}`(显式已配不覆盖;缺省 budget = min(maxTokens ?? 4096, 8000))
+ *  - mode 未设 → 原样返回(同引用,零开销)
+ * 与 createChatSdk 的 LLMConfig / harness 的 SubagentLlmConfig 结构兼容(鸭子类型,不 import 防环)。
+ */
+export function applyThinkingMode<C extends { provider?: string; maxTokens?: number; extraBody?: Record<string, unknown>; thinking?: { type: 'enabled'; budget_tokens?: number } }>(
+  cfg: C,
+  mode?: ThinkingMode,
+): C {
+  if (!mode) return cfg
+  if (mode === 'simple') {
+    const hasOpenAiThinking = cfg.extraBody && 'thinking' in cfg.extraBody
+    if (!hasOpenAiThinking && !cfg.thinking) return cfg // 无思考参数可剥,原样
+    const { thinking: _omit, ...restCfg } = cfg
+    const next = restCfg as C
+    if (hasOpenAiThinking) {
+      const { thinking: _drop, ...restBody } = cfg.extraBody!
+      next.extraBody = restBody
+    }
+    return next
+  }
+  // deep
+  if (cfg.provider === 'anthropic') {
+    if (cfg.thinking?.type === 'enabled' && cfg.thinking.budget_tokens) return cfg // 已显式配,不覆盖
+    const budget = cfg.thinking?.budget_tokens ?? Math.min(cfg.maxTokens ?? 4096, 8000)
+    return { ...cfg, thinking: { type: 'enabled', budget_tokens: budget } }
+  }
+  const cur = (cfg.extraBody?.thinking ?? {}) as Record<string, unknown>
+  return { ...cfg, extraBody: { ...(cfg.extraBody ?? {}), thinking: { ...cur, type: 'enabled' } } }
+}
+
 /**
  * 默认 fetch 包装:剥离 openai SDK 自动附加的 `x-stainless-*` 遥测头。
  * 这些头是纯遥测(无功能影响),但严格 CORS 的 OpenAI 兼容代理(如企业网关)白名单常不含它们
@@ -79,8 +117,9 @@ export function constructOpenLlmSync(cfg: LLMConfig, opts: ConstructOpts = {}): 
  * 缺省 provider → openai(向后兼容)。
  *
  * Anthropic 注:`extraBody`(OpenAI modelKwargs 语义,如 DeepSeek thinking)不通用 ——
- * Claude extended thinking 走 ChatAnthropic 的 `thinking` 字段(非请求 body 额外参数),
- * 故 extraBody 不透传;集成方需 thinking 时用预构造 ChatAnthropic 实例(`llm: new ChatAnthropic({ thinking: {...} })`)。
+ * Claude extended thinking 走 ChatAnthropic 的 `thinking` 字段(非请求 body 额外参数);
+ * `cfg.thinking` 由 applyThinkingMode(thinkingMode:'deep')或集成方显式配置注入。
+ * **thinking 开启时 temperature 强制 1**(Anthropic API 硬约束,低温报错)。
  */
 export async function constructLlmFromConfig(cfg: LLMConfig, opts: ConstructOpts = {}): Promise<BaseChatModel> {
   const provider = cfg.provider ?? 'openai'
@@ -91,11 +130,14 @@ export async function constructLlmFromConfig(cfg: LLMConfig, opts: ConstructOpts
   return new ChatAnthropic({
     apiKey: cfg.apiKey,
     model: cfg.model,
-    temperature: opts.temperature ?? cfg.temperature,
+    // extended thinking 开启 → API 要求 temperature=1(显式低温会 400);未开思考维持原覆盖链
+    temperature: cfg.thinking ? 1 : (opts.temperature ?? cfg.temperature),
     maxTokens: opts.maxTokens ?? cfg.maxTokens,
     // anthropicApiUrl = baseUrl(Anthropic SDK 的 baseURL 别名);clientOptions 透传 extraConfig(fetch/headers 等)
     ...(cfg.baseUrl ? { anthropicApiUrl: normalizeBaseUrl(cfg.baseUrl) } : {}),
     ...(cfg.extraConfig ? { clientOptions: cfg.extraConfig } : {}),
+    // extended thinking(subagent-thinking-mode-lock):ChatAnthropic 构造参数 thinking 字段
+    ...(cfg.thinking ? { thinking: cfg.thinking } : {}),
     // prompt caching:走 invocationKwargs 透传顶层 cache_control(服务端自动在最后一个可缓存块打断点并随对话推进,
     // ReAct 多轮前缀命中 input 价格 ~1/10)。机制(rv-recent F3 勘误,已验 @langchain/anthropic@1.5.4 dist):
     // ① 构造器顶层 cache_control 字段不进请求体(invocationParams 只消费调用时 options.cache_control);

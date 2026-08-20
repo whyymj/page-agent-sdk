@@ -1,5 +1,7 @@
 # Proposal: instruction-adherence(指令执行力增强:完结门禁 + 问句意图守卫)
 
+> ✅ 已实施,随 **3.35.0** 发布(2026-08-19)。同批:MCP 连接重试 3 次 + 逐 server 渐进注入(allSettled 栅障修)。selftest 2531→2560 / e2e 825→843。真 LLM 复验待做(tasks Phase 4)。
+
 ## Why(用户诉求,2026-08-19)
 
 「如何能增强指令执行力?不再发生莫名中断,或注意力漂移。」

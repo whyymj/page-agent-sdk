@@ -905,9 +905,11 @@ export function createAgent(options: CreateAgentOptions) {
             // 完结门禁(instruction-adherence A):todos 有未完成项却以纯文本收尾 → 回灌「双出口」反馈(已完成→update_todo 标记 / 未完成→继续)续跑。
             // 同 transitional 模式:pendingFormatRetry 绕过 rounds 预算(补完任务不是新工具轮;maxIterations 总闸兜底)。
             // 预算 2:「忘标 completed」一次回灌即收敛;两次仍收口 = 模型异常 → 放行强收防死循环烧 token。
+            // rounds > 0 前置(修跨轮陈旧 todos 误报):todos 随会话持久化,上一轮遗留的未完成清单不该在
+            // 本轮纯问答轮(零工具调用)发难 ——「计划了没做完」必然发生在工具轮之后,与 transitional 的 rounds 分支同款模式。
             // 位置在 transitional 之后(先治「光说不做」再治「做了一半」)、beforeReturn 之前(verify 是写后回查 opt-in,语义无关)。
             // 豁免问句收尾/空 todos 在 detectIncompleteFinish 内(宁漏勿误);子 agent 无 planning 工具 todos 恒空,天然不触发。
-            if (!garbled && gateRetries < maxGateRetries && detectIncompleteFinish(state.todos, response.content)) {
+            if (!garbled && rounds > 0 && gateRetries < maxGateRetries && detectIncompleteFinish(state.todos, response.content)) {
               gateRetries += 1
               pendingFormatRetry = true
               log('middleware', { stage: 'completion_gate', attempt: gateRetries, pending: state.todos.filter((t) => t.status !== 'completed').map((t) => t.id), content: response.content.slice(0, 160) })

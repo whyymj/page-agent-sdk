@@ -28,7 +28,7 @@ import { createSummarizationMiddleware, type SummarizationOptions } from './summ
 import type { Focus, VfsFile } from './state'
 import type { ZodType } from 'zod'
 import { normalizeUsage } from '../utils/contentParts'
-import { constructLlmFromConfig } from '../llm/constructLlm'
+import { constructLlmFromConfig, applyThinkingMode } from '../llm/constructLlm'
 import type { ComponentLock, ResolveComponentsResult } from '../sdk/componentLock'
 
 /** 子 agent 转发到主 UI 的进度(tool_call/tool_result 工具级 + reasoning 思考过程增量;text 不转发:是生成内容,经 vfs/data 落地,不进进度) */
@@ -48,6 +48,9 @@ export interface SubagentLlmConfig {
   extraBody?: Record<string, any>
   /** Anthropic prompt caching(同主 LLM cacheControl;provider:'anthropic' 时经 constructLlmFromConfig 透传生效) */
   cacheControl?: boolean | '5m' | '1h'
+  /** Anthropic extended thinking(provider:'anthropic';经 constructLlmFromConfig 注入 ChatAnthropic)。
+   *  通常不手配 —— 用 `thinkingMode:'deep'` 由 applyThinkingMode 自动注入(含 budget_tokens 缺省值) */
+  thinking?: { type: 'enabled'; budget_tokens: number }
 }
 
 // ===== 子 agent 观察层(active/history 状态;纯观察,不改子 agent 生命周期/事件链)=====
@@ -176,6 +179,8 @@ export interface SubagentOptions {
   timeoutMs?: number
   /** beforeReturn 自纠上限(默认 0 = 关闭);>0 时子 agent 返回前跑中间件 beforeReturn 钩子(如 verify 格式门禁),feedback 回灌自纠,达上限强制 return 防死循环 */
   maxVerifyAttempts?: number
+  /** 思考深度锁定(subagent-thinking-mode-lock;configToSubOpts 透传 SubagentConfig.thinkingMode ?? 顶层缺省)。仅 LLMConfig 构造路径生效;实例路径 warn + no-op */
+  thinkingMode?: 'simple' | 'deep'
 }
 
 /** 判定 llm 是模型实例(BaseChatModel)还是配置对象(SubagentLlmConfig) */
@@ -404,15 +409,22 @@ async function runSubagent(
   const usageMw: Middleware | undefined = opts.onUsage
     ? { name: 'sub-usage', afterModel: (res) => { const u = normalizeUsage(res.message); if (u) opts.onUsage!(u) } }
     : undefined
+  // thinking-mode-lock:LLMConfig 路径构造前改写思考参数(applyThinkingMode 纯函数,不 mutate 原 config;mode 未设零变化)。
+  // 实例路径(预构造 BaseChatModel):思考配置钉死构造期,运行时不可改 → warn + observable no-op(集成方需改用 SubagentLlmConfig)
+  if (isChatModel(opts.llm) && opts.thinkingMode) {
+    console.warn('[page-agent-sdk][subagent] thinkingMode 需子 agent 经 LLMConfig 构造方能生效;当前复用预构造实例,已忽略(如需锁定请改用 SubagentLlmConfig 配置 llm)')
+    onLog?.({ timestamp: Date.now(), type: 'middleware', data: { stage: 'subagent_thinking_mode_noop', mode: opts.thinkingMode } })
+  }
+  const effLlm = !isChatModel(opts.llm) ? applyThinkingMode(opts.llm, opts.thinkingMode) : opts.llm
   // provider 透传(fix:主 llm 传 LLMConfig + provider:'anthropic' 时,散字段重建曾丢 provider →
   // 子 agent 被按 OpenAI 协议构造,请求打到 {baseUrl}/chat/completions 404 秒败)。
   // anthropic 走 constructLlmFromConfig 动态构造(runSubagent 是 async,可承载动态 import);
   // openai 路径维持同步散字段构造(向后兼容)
   let resolvedSubLlm: BaseChatModel | undefined
-  if (!isChatModel(opts.llm) && opts.llm.provider === 'anthropic') {
+  if (!isChatModel(effLlm) && effLlm.provider === 'anthropic') {
     resolvedSubLlm = await constructLlmFromConfig(
-      { ...opts.llm, model: task.model ?? opts.llm.model },
-      { temperature: opts.temperature ?? opts.llm.temperature, maxTokens: opts.maxTokens ?? opts.llm.maxTokens },
+      { ...effLlm, model: task.model ?? effLlm.model },
+      { temperature: opts.temperature ?? effLlm.temperature, maxTokens: opts.maxTokens ?? effLlm.maxTokens },
     )
   }
   const child = createAgent({
@@ -421,18 +433,18 @@ async function runSubagent(
     maxOutputTokens: subCaps.maxOutputTokens,
     // provider 抽离:llm 实例则注入(温度/maxTokens 已在实例上定,忽略 opts.temperature/maxTokens),否则按配置构造(子 agent 配置优先于主 llm)
     // extraConfig/extraBody 一并透传(真 LLM 抓包实测:散字段重构造曾丢它们 → 集成方的 headers/fetch/thinking 配置在子 agent 失效)
-    ...(isChatModel(opts.llm)
-      ? { llm: opts.llm }
+    ...(isChatModel(effLlm)
+      ? { llm: effLlm }
       : resolvedSubLlm
         ? { llm: resolvedSubLlm }
         : {
-            apiKey: opts.llm.apiKey,
-            baseUrl: opts.llm.baseUrl,
-            model: task.model ?? opts.llm.model,
-            temperature: opts.temperature ?? opts.llm.temperature,
-            maxTokens: opts.maxTokens ?? opts.llm.maxTokens,
-            ...(opts.llm.extraConfig ? { extraConfig: opts.llm.extraConfig } : {}),
-            ...(opts.llm.extraBody ? { extraBody: opts.llm.extraBody } : {}),
+            apiKey: effLlm.apiKey,
+            baseUrl: effLlm.baseUrl,
+            model: task.model ?? effLlm.model,
+            temperature: opts.temperature ?? effLlm.temperature,
+            maxTokens: opts.maxTokens ?? effLlm.maxTokens,
+            ...(effLlm.extraConfig ? { extraConfig: effLlm.extraConfig } : {}),
+            ...(effLlm.extraBody ? { extraBody: effLlm.extraBody } : {}),
           }),
     // 身份优先级:运行时 role(spawn 参数)> 配置默认 systemPrompt > 兜底
     systemPrompt:
@@ -650,6 +662,13 @@ export interface SubagentConfig {
   description: string
   /** 子 agent 独立 llm(缺省继承主) */
   llm?: SubagentLlmConfig | BaseChatModel
+  /**
+   * 思考深度锁定(subagent-thinking-mode-lock):强行覆盖继承的思考配置。
+   *  - `'simple'`:剥思考参数(关深思考,省 token/加速;deepseek 剥 extraBody.thinking / anthropic 不注入 thinking)
+   *  - `'deep'`:注入思考参数(deepseek extraBody.thinking={type:'enabled'} / anthropic thinking+budget_tokens 缺省)
+   *  - 未设 = 完全继承现状(零回归);仅 LLMConfig 构造路径生效,预构造 BaseChatModel 实例路径 warn + no-op(实例思考配置钉死构造期)
+   */
+  thinkingMode?: 'simple' | 'deep'
   /** 子 agent 身份(缺省继承主 / 兜底) */
   systemPrompt?: string
   /** 子 agent 专属工具(独立于主工具池,直接进子工具池) */
@@ -680,6 +699,8 @@ export interface SubagentConfig {
 export interface SubagentsMiddlewareOptions {
   /** 主 agent 的 llm(子 agent 缺省继承) */
   llm: SubagentLlmConfig | BaseChatModel
+  /** 全局思考深度缺省(subagent-thinking-mode-lock:顶层 `subagent.thinkingMode` 透传;子 agent 显式 config.thinkingMode 优先) */
+  thinkingModeDefault?: 'simple' | 'deep'
   /** 主 agent 全部工具(子 agent 按只读白名单筛)。支持 getter(P1-4:动态工具对子 agent 可见) */
   allTools: StructuredToolInterface[] | (() => StructuredToolInterface[])
   /** 读主 agent 全部焦点(multi-focus:预声明子 agent 同样继承主焦点) */
@@ -719,8 +740,10 @@ const TOOL_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 /** SubagentConfig → runSubagent 的 opts(继承主缺省 + 展开专属 tools 为 extraTools) */
 function configToSubOpts(config: SubagentConfig, main: SubagentsMiddlewareOptions): SubagentOptions {
   const extra = config.tools ?? []
+  const thinkingMode = config.thinkingMode ?? main.thinkingModeDefault  // 显式优先,顶层缺省兜底(subagent-thinking-mode-lock)
   return {
     llm: config.llm ?? main.llm,
+    ...(thinkingMode ? { thinkingMode } : {}),
     allTools: main.allTools,
     systemPrompt: config.systemPrompt,
     temperature: config.temperature,

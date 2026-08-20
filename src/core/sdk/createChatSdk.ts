@@ -111,6 +111,9 @@ export interface LLMConfig {
   extraBody?: Record<string, any>
   /** 透传 ChatOpenAI configuration 的额外字段(如 headers/timeout/customFetch),与 baseUrl 合并 */
   extraConfig?: Record<string, any>
+  /** Anthropic extended thinking(仅 provider:'anthropic';经 constructLlmFromConfig 注入 ChatAnthropic 构造参数)。
+   *  通常不手配 —— 子 agent 用 `thinkingMode:'deep'` 由 applyThinkingMode 自动注入(含 budget_tokens 缺省);开启时 temperature 被 API 强制为 1 */
+  thinking?: { type: 'enabled'; budget_tokens: number }
   /**
    * Anthropic prompt caching(仅 provider:'anthropic' 生效,openai 端点自动缓存不受此控制):
    * `true` = ephemeral 5m / `'1h'` = 长 TTL。langchain 顶层 cache_control 自动在「最后一个可缓存块」打
@@ -285,7 +288,7 @@ export interface ChatSdkOptions {
     preferences?: boolean      // 跨会话用户偏好记忆(默认 false;opt-in,自动写用户浏览器,行为敏感默认关;捕获→持久化→pin 段注入)
   }
   /** 子 agent 委派(spawn_agent/spawn_agents);默认开启,{ enabled: false } 关闭 */
-  subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | BaseChatModel; maxDepth?: number; maxParallel?: number; timeoutMs?: number }
+  subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | BaseChatModel; maxDepth?: number; maxParallel?: number; timeoutMs?: number; thinkingMode?: 'simple' | 'deep' }
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[]
   /** 自检:agent 返回前跑 check,不通过则 feedback 回灌自纠(默认关闭)。传 check/maxAttempts/adversarial 任一即自动开启(无需再配 capabilities.verify:true;显式 false 或 verify.enabled:false 可关);check 可省略,默认用 createWriteBackCheck */
@@ -1298,6 +1301,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           skills: subOpts?.skills,
           maxDepth: subOpts?.maxDepth,
           maxParallel: subOpts?.maxParallel,
+          // 思考深度锁定(subagent-thinking-mode-lock):顶层 subagent.thinkingMode 全局缺省,spawn 路径同样生效
+          thinkingMode: subOpts?.thinkingMode,
           debug: options.debug,
           // focus-auto-switch:子 agent 继承主焦点(focusMw/liveData 在该闭包可见)
           getFocuses: () => focusMw.getFocuses(),
@@ -1358,10 +1363,19 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       })
     : undefined
   const subagentsMw = useSubagent && subagentsForAssemble !== undefined
-    ? createSubagentsMiddleware(subagentsForAssemble, { llm: options.llm, allTools: () => core.agent?.allTools ?? allTools, debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null, getBind: () => liveData()?.bind, tracker: subagentTracker, guardMiddleware: childGuards.length ? childGuards : undefined, getVfsFiles: useVfs ? () => vfsStore.files : undefined, enterDataScope: dataOpsController?.enterScope ? (id) => dataOpsController.enterScope!(id) : undefined, exitDataScope: dataOpsController?.exitScope ? (id) => dataOpsController.exitScope!(id) : undefined, onUsage: (u) => { usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0); usage.completion_tokens = (usage.completion_tokens ?? 0) + (u.completion_tokens ?? 0); usage.total_tokens = (usage.total_tokens ?? 0) + (u.total_tokens ?? 0) }, timeoutMs: options.subagent?.timeoutMs,
+    ? createSubagentsMiddleware(subagentsForAssemble, { llm: options.llm, thinkingModeDefault: options.subagent?.thinkingMode, allTools: () => core.agent?.allTools ?? allTools, debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null, getBind: () => liveData()?.bind, tracker: subagentTracker, guardMiddleware: childGuards.length ? childGuards : undefined, getVfsFiles: useVfs ? () => vfsStore.files : undefined, enterDataScope: dataOpsController?.enterScope ? (id) => dataOpsController.enterScope!(id) : undefined, exitDataScope: dataOpsController?.exitScope ? (id) => dataOpsController.exitScope!(id) : undefined, onUsage: (u) => { usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0); usage.completion_tokens = (usage.completion_tokens ?? 0) + (u.completion_tokens ?? 0); usage.total_tokens = (usage.total_tokens ?? 0) + (u.total_tokens ?? 0) }, timeoutMs: options.subagent?.timeoutMs,
       ...(componentLock ? { componentLock, resolveComponents: (args: { components?: string[]; task: string }) => resolveTargetComponents(args, collectComponentNames(liveData()?.bind, codeAssetPgIdPaths)) } : {}) })
     : undefined
   const subagentsController = subagentsMw ? (subagentsMw as any).controller as import('../harness/subagent').SubagentsController : null
+
+  /** 思考深度锁定反射(subagent-thinking-mode-lock):thinkingMode 解析(显式 > 顶层缺省)+ 实际生效状态。
+   *  getInfo(AgentInfo.subagents)与 inspect().subagent.subagents 同源共用。
+   *  'applied' = LLMConfig 构造路径可锁定;'inherited' = 未设继承现状;'instance-noop' = 预构造实例物理不可改 */
+  const reflectSubagentThinking = (s: SubagentConfig) => {
+    const tm = s.thinkingMode ?? options.subagent?.thinkingMode
+    const thinkingApplied = tm ? (isChatModel(s.llm ?? options.llm) ? 'instance-noop' : 'applied') : 'inherited'
+    return { ...s, ...(tm ? { thinkingMode: tm } : {}), thinkingApplied }
+  }
 
   // 对抗子 agent 的只读工具(白名单筛选,让其能实证读回数据检查而非臆测;dataOps 关闭则不含数据工具)
   const READONLY_FOR_ADVERSARIAL = ['get_data', 'describe_data', 'read', 'fetch_document']
@@ -1391,7 +1405,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       ...caps,
       humanConfirm: useHumanConfirm,
       // 预声明子 agent(供"规划-反思-执行"路由提示;只取 id/description/temperature 轻量字段)
-      subagents: effectiveSubagents?.map((s) => ({ id: s.id, description: s.description, temperature: s.temperature })),
+      subagents: effectiveSubagents?.map(reflectSubagentThinking),
     },
     useDataOps && !!finalDataConfig,
     // C1 自感知预算:softCap 解析结果(token 维度触发;装配期一次,阈值近似够用)
@@ -2226,8 +2240,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           maxDepth: options.subagent?.maxDepth ?? 1,
           maxParallel: options.subagent?.maxParallel ?? 4,
           allowedTools: options.subagent?.allowedTools ?? [],
-          // 预声明子 agent 列表(动态:反映 setSubagents/addSubagent/removeSubagent 后的最新)
-          subagents: subagentsController?.get() ?? [],
+          // 预声明子 agent 列表(动态:反映 setSubagents/addSubagent/removeSubagent 后的最新;含 thinkingMode/thinkingApplied 反射)
+          subagents: (subagentsController?.get() ?? []).map(reflectSubagentThinking),
           // 观察层:运行中(active)+ 历史(history LRU≤20)委派状态(会话级,实时反映)
           active: subagentTracker?.getActive() ?? [],
           history: subagentTracker?.getHistory() ?? [],
