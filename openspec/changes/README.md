@@ -1,6 +1,6 @@
 # 活跃 Changes 优先级索引
 
-> **2026-08-20 立项 `output-quality-uplift`(部分实施中)**:生成质量提升(editor_fangzhou「主/子生成都太简单」驱动)—— ① `createHtmlSubagent` 加 `llm` 透传(子 agent 独立强模型;链路已有 `config.llm ?? main.llm`);② 实施 `subagent-thinking-mode-lock`(thinkingMode simple/deep,LLMConfig 路径改写 extraBody.thinking/anthropic thinking;本批裁剪 DebugDrawer UI);③ editor 质量标准 prompt + htmlSubagent 配置管线 + page-exemplars skill 骨架(范例内容阻塞待用户)。同批先行修正:**完结门禁陈旧 todos 豁免**(循环条件加 rounds>0,修持久化遗留 todos 在纯问答轮误报;e2e 843→846)。见 [`2026-08-20-output-quality-uplift/`](./2026-08-20-output-quality-uplift/)。
+> **2026-08-20 发布 3.36.0**(`output-quality-uplift` change 实施归档;editor_fangzhou「生成的页面太简单,子 agent 思考深度能否放宽」驱动):**生成质量提升** —— ① **`createHtmlSubagent({ llm })`** 子 agent 独立模型(主保持轻量编排、代码生成换强模型;`configToSubOpts` 既有链路);② **思考深度锁定 `thinkingMode:'simple'|'deep'`**(subagent-thinking-mode-lock 落地:子级 + 顶层 `subagent.thinkingMode` 全局缺省;`applyThinkingMode` 纯函数改写 openai `extraBody.thinking` / anthropic `LLMConfig.thinking`(budget 缺省 min(maxTokens??4096,8000),thinking 开 temperature 强制 1);实例路径 warn+observable no-op;`inspect().subagent.subagents[].thinkingApplied` 反射 applied/inherited/instance-noop);③ **完结门禁陈旧 todos 豁免**(循环条件加 rounds>0,修持久化遗留 todos 在纯问答轮误报)。editor 侧:质量标准 prompt + htmlSubagent 配置管线 + page-exemplars skill 骨架(**范例内容阻塞待用户挑专题**)。selftest 2560→2573 / e2e 843→856。见 [`archive/2026-08-20-output-quality-uplift/`](./archive/2026-08-20-output-quality-uplift/)。
 
 > **2026-08-19 发布 3.35.0**(`instruction-adherence` change 实施归档;editor_fangzhou 真 LLM 实测「莫名中断 + 注意力漂移」两类失效驱动):**指令执行力增强** —— ① **完结门禁**(默认开零配置):todos 有未完成项却欲纯文本收尾 → 回灌「双出口」反馈(已完成→update_todo 标记 / 未完成→继续执行)续跑,预算 ≤2,挂循环条件层(transitional 后;beforeReturn 因 maxVerifyAttempts 默认 0 不执行被否决 D1),豁免问号收尾/空 todos;② **问句意图守卫**(默认开零配置):正则三档启发式(句尾问号 / 疑问词+吗呢 / 查询词「是什么|是啥|怎么用|有哪些」)逐消息定性,命中注入「先答勿做」pin 段(`PIN_SEGMENT_NAMES` 白名单保跨压缩/预算裁剪存活;只递信号不阻断工具,文案带逃生门)。同批:**MCP 连接重试 3 次**(递增退避吸收上游瞬时 502)+ **逐 server 渐进注入**(修 allSettled 栅障:坏 server 重试不再拖累好 server 工具可用性;mcp F4 时序适配)。selftest 2531→2560 / e2e 825→843 / browser 101。见 [`archive/2026-08-19-instruction-adherence/`](./archive/2026-08-19-instruction-adherence/)。
 
@@ -68,7 +68,7 @@
 
 ## 进行中
 
-_(活跃:`2026-08-20-output-quality-uplift`(实施中)+ `2026-08-18-subagent-thinking-mode-lock`(其核心将由 output-quality-uplift 批落地)+ `2026-08-18-image-input-vision`(余残项 deferred)。`instruction-adherence` 已于 2026-08-19 随 3.35.0 发布归档)_
+_(活跃:`2026-08-18-subagent-thinking-mode-lock`(核心已随 output-quality-uplift 落地归档,剩余 DebugDrawer 可视化残项见 deferred)+ `2026-08-18-image-input-vision`(余残项 deferred)。`output-quality-uplift` 已于 2026-08-20 随 3.36.0 发布归档;`instruction-adherence` 已于 2026-08-19 随 3.35.0 发布归档)_
 
 _(write-path-cost-reduction 已于 2026-08-17 实施完成随 3.25.1 发布归档:bench 1MB 单写 median -12%/-19%,A+B 两段全保留,冲突检查 hash 实时性不变量固化)_
 

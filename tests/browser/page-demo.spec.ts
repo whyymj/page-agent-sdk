@@ -331,6 +331,25 @@ test.describe('page-demo: read → write → read', () => {
   })
 
   /**
+   * 💾 下载诊断报告(原「📋 复制到剪贴板」改为下载 JSON 文件 —— 大日志 clipboard 易截断/静默失败):
+   * 点击 → 浏览器 download 事件,suggestedFilename 匹配 page-agent-diagnostics-<时间戳>.json。
+   */
+  test('DebugDrawer:💾 下载诊断报告为 JSON 文件', async ({ page }) => {
+    test.setTimeout(150_000)
+    await mockLlm(page, [{ text: '完成。' }])
+    await fillInput(page, '你好')
+    await clickSend(page)
+    await waitForAgentIdle(page, 120_000)
+    await page.click('.more-btn')
+    await page.click('.more-item[title="日志 / 执行流程 / Agent 信息"]')
+    await expect(page.locator('.debug-drawer')).toBeVisible({ timeout: 5000 })
+    const dlPromise = page.waitForEvent('download')
+    await page.click('.debug-drawer .hd-btn[title*="下载诊断报告"]')
+    const dl = await dlPromise
+    expect(dl.suggestedFilename()).toMatch(/^page-agent-diagnostics-.+\.json$/)
+  })
+
+  /**
    * 内置深色主题(dialog.theme:'dark',方舟专题设计稿色板):
    * 断言根节点挂 cs-theme-dark + 背景基色 #222 + 用户气泡/输入框经 --cs-* 变量生效。
    * 边界:不传 theme 的 demo(其余 spec)仍为默认浅色(.chat-dialog 无该类)。

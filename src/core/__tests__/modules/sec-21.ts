@@ -319,6 +319,14 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(tPV['write'], { value: '顶层', patch: { op: 'set', jsonPath: 'title', value: 'patch优先' } })
     assert(pagePV.title === 'patch优先', '治本: patch.value 与顶层 value 都传时 → patch.value 优先')
 
+    // 空字符串 value 合法(editor 实测修:'' 曾误判 MISSING_VALUE 且 hint 误导用 remove —— remove 是删键,「置空」≠「删键」)
+    // (须在下方 del 用例前跑:del 删 items 后 bind 不再满足 schema,后续整对象校验会挂)
+    r = await invoke(tPV['write'], { patch: { op: 'set', jsonPath: 'title', value: '' } })
+    assert(pagePV.title === '', "M1: write set value:'' → 空字符串合法落地(原误判 MISSING_VALUE)")
+    // move 的 value 是目标路径,空串仍拒(防空目标路径滑过白名单)
+    r = await invoke(tPV['write'], { patches: [{ op: 'move', jsonPath: 'items.0', value: '' }] })
+    assert(/MISSING_VALUE/.test(r), "M1 边界: write move value:''(目标路径空)→ 仍拒 MISSING_VALUE")
+
     // M1: write del 模式可不传 op(原 bug:patch.op 必填 + description 删除示例不带 op → LLM 照描述写 SCHEMA_INVALID 浪费一轮重试)
     r = await invoke(tPV['write'], { patch: { jsonPath: 'items' }, del: true })
     assert(/已删除/.test(r), 'M1: write del 不传 op → 通过(del 分支不读 op;原 bug:op 必填致 zod 校验失败)')

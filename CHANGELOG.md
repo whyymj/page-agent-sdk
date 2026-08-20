@@ -2,6 +2,17 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.36.1] - 2026-08-20
+
+### Changed
+- DebugDrawer 诊断报告按钮「📋 复制到剪贴板」→「💾 下载 JSON 文件」(`page-agent-diagnostics-<时间戳>.json`):大体积日志 clipboard 常被截断/静默失败,文件交付更可靠
+
+### Fixed
+- **write patches 空字符串 value 误拒**:`op:'set'` 且 `value:''` 曾被误判 `MISSING_VALUE` 且 hint 误导用 remove(remove 是删键,「置空」≠「删键」);现仅 `value` 缺失或 `move` 操作目标路径为空串时拒绝(editor 实测:清空 script/文案写 `''` 被拦)
+
+### Tests
+- selftest 2573→2575(sec-21:空字符串 value 合法落地 + move 空串目标路径仍拒);browser 101→102(下载诊断报告用例)
+
 ## [3.36.0] - 2026-08-20
 
 ### Added(生成质量提升 output-quality-uplift:子 agent 模型/思考分层)

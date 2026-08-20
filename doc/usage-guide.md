@@ -1274,7 +1274,7 @@ createChatSdk({
 
 ### 6.13c 诊断报告导出 `exportDiagnostics`(调试排查,3.29+)
 
-用户报「agent 行为不对」时,最难的是拿到现场:完整日志 + 消息 + 上下文快照。**`sdk.exportDiagnostics()`** 一键聚合当前会话诊断快照为 JSON 字符串,用户复制全文发维护者即可排查(内置 UI 的 DebugDrawer 头部有 📋 按钮直接复制):
+用户报「agent 行为不对」时,最难的是拿到现场:完整日志 + 消息 + 上下文快照。**`sdk.exportDiagnostics()`** 一键聚合当前会话诊断快照为 JSON 字符串,用户复制全文发维护者即可排查(内置 UI 的 DebugDrawer 头部有 💾 按钮直接下载 JSON 文件(原复制改下载,大日志 clipboard 易截断)):
 
 ```ts
 const text = sdk.exportDiagnostics()  // JSON 字符串,可直接复制/上传

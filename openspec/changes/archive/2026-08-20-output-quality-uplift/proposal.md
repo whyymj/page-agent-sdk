@@ -1,5 +1,7 @@
 # Proposal: output-quality-uplift(生成质量提升:子 agent 模型/思考分层 + 质量标准 + 范例)
 
+> ✅ 已实施,随 **3.36.0** 发布(2026-08-20)。SDK:子 agent 独立 llm + thinkingMode 锁定;完结门禁陈旧 todos 豁免(rounds>0)。editor_fangzhou:质量标准 prompt + htmlSubagent 配置管线 + page-exemplars skill 骨架(范例内容阻塞,待用户挑专题)。selftest 2560→2573 / e2e 843→856。Phase 5(范例填充/thinking 模型名/真 LLM 对比)依赖用户,见 tasks.md。
+
 ## Why(用户诉求,2026-08-20)
 
 「editor_fangzhou 生成的页面,无论主 agent 生成 JSON 还是子 agent 纯代码页面都太简单。子 agent 的思考深度能否适当放宽,而不是从快从简?」

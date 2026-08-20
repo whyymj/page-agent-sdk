@@ -934,7 +934,7 @@ createChatSdk({
 
 ### 6.13c Diagnostics report export `exportDiagnostics` (debugging / troubleshooting, 3.29+)
 
-When a user reports "the agent misbehaved", the hardest part is capturing the scene: full logs + messages + context snapshot. **`sdk.exportDiagnostics()`** aggregates the current session's diagnostics snapshot into one JSON string — the user copies the whole text and sends it to the maintainer (the built-in DebugDrawer header has a 📋 button that copies it directly):
+When a user reports "the agent misbehaved", the hardest part is capturing the scene: full logs + messages + context snapshot. **`sdk.exportDiagnostics()`** aggregates the current session's diagnostics snapshot into one JSON string — the user downloads the file and sends it to the maintainer (the built-in DebugDrawer header has a 💾 button that downloads it as a JSON file; switched from clipboard copy since large logs are often truncated by the clipboard):
 
 ```ts
 const text = sdk.exportDiagnostics()  // JSON string, ready to copy/upload

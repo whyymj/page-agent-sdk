@@ -51,7 +51,7 @@ const props = withDefaults(defineProps<{
   onClear?: () => void
   /** 获取 agent 详细信息(debug 窗口「Agent 信息」tab) */
   getInfo?: () => AgentInfo
-  /** 导出诊断报告 JSON(DebugDrawer「复制诊断报告」按钮;sdk.exportDiagnostics 透传) */
+  /** 导出诊断报告 JSON(DebugDrawer「下载诊断报告」按钮;sdk.exportDiagnostics 透传) */
   exportDiagnostics?: () => string
   /** 清空调试日志(DebugDrawer 🗑️ 按钮;须清「源」debugLogs —— mountChatDialog 自动接线,直接复用组件自行接) */
   clearDebugLogs?: () => void

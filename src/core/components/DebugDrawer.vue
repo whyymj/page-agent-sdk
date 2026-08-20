@@ -79,10 +79,11 @@ async function copyJson(text: string, key: string) {
   setTimeout(() => { if (copiedKey.value === key) copiedKey.value = '' }, 1200)
 }
 /**
- * 复制诊断报告(完整日志文件,一键交给维护者排查):
- * 优先 sdk.exportDiagnostics 透传(含 messages/usage/conflict 全量);独立复用(headless 纯 props)降级本地聚合 logs+getInfo()
+ * 下载诊断报告 JSON 文件(完整日志,一键交给维护者排查):
+ * 优先 sdk.exportDiagnostics 透传(含 messages/usage/conflict 全量);独立复用(headless 纯 props)降级本地聚合 logs+getInfo()。
+ * (原「复制到剪贴板」改为下载:大体积日志 clipboard 常被截断/静默失败,文件交付更可靠)
  */
-async function copyReport() {
+function downloadReport() {
   let text = ''
   try {
     text = props.exportDiagnostics
@@ -93,7 +94,15 @@ async function copyReport() {
         }))
   } catch { text = '' }
   if (!text) return
-  await copyJson(text, 'report')
+  const blob = new Blob([text], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `page-agent-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+  copiedKey.value = 'report'
+  setTimeout(() => { if (copiedKey.value === 'report') copiedKey.value = '' }, 1200)
 }
 const m = computed(() => props.messages)
 
@@ -444,7 +453,7 @@ function flowNodeDetail(lg: DebugLog): string {
               <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'info' }" @click="switchTab('info')">🧬 {{ m.debugTabInfo }}</button>
             </div>
             <div class="header-actions">
-              <button class="hd-btn" :title="m.debugCopyReport" @click="copyReport">{{ copiedKey === 'report' ? '✓' : '📋' }}</button>
+              <button class="hd-btn" :title="m.debugCopyReport" @click="downloadReport">{{ copiedKey === 'report' ? '✓' : '💾' }}</button>
               <button v-if="tab === 'logs'" class="hd-btn" :title="m.debugClearLogs" @click="clearLogs">🗑️</button>
               <button class="hd-btn" :title="m.close" @click="close">✕</button>
             </div>

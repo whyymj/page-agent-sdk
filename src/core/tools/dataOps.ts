@@ -249,7 +249,9 @@ export function applyPatchesToBind(args: {
     const op: EditOp = p.op ?? 'set'
     let pVal: unknown
     if (op !== 'remove') {
-      if (p.value === undefined || p.value === '') return { ok: false, error: toolError({ code: 'MISSING_VALUE', message: `patches[${i}] ${op} 操作需要 value`, hint: `op 为 ${op} 时 value 必填;删除请用 op:'remove'` }) }
+      // value 缺失才拒;空字符串 '' 是合法数据值(editor 实测:script/文案清空写 ''曾被误判 MISSING_VALUE,
+      // 且 hint 引导去用 remove —— 但 remove 是删键,与「置空字符串」语义不同,误导)。move 的 value 是目标路径,''仍拒
+      if (p.value === undefined || (p.value === '' && op === 'move')) return { ok: false, error: toolError({ code: 'MISSING_VALUE', message: `patches[${i}] ${op} 操作需要 value`, hint: `op 为 ${op} 时 value 必填;删除请用 op:'remove'` }) }
       const pr = maybeParseValue(p.value)
       if (pr.parseError) return { ok: false, error: jsonParseError(`patches[${i}]`, p.value, pr.parseError) }
       pVal = pr.parsed
