@@ -1,7 +1,7 @@
 // instruction-adherence e2e:完结门禁 + 问句意图守卫(stub model 驱动真 ReAct)
 //  - 完结门禁:todos 有未完成项却纯文本收尾 → 回灌「双出口」反馈续跑(≤2 次);问句收尾豁免;无 todos 不触发
 //  - 问句意图守卫:问句消息 → system 注入「先答勿做」pin 段 + debugLogs 留痕;祈使句不注入
-import { setupEnv, createAssert, createChatSdk } from './_helpers.mjs'
+import { setupEnv, createAssert, createChatSdk, z } from './_helpers.mjs'
 import { stubModel } from './_stub-model.mjs'
 
 // planning 保留(write_todos/update_todo 需要);其余能力关闭隔离变量
@@ -121,6 +121,89 @@ export async function run() {
     const sys = llm.systemPrompts[0] || ''
     assert(!sys.includes('本轮消息为咨询'), '✓ 问句守卫 e2e 边界 → 祈使句不注入守卫段(不误伤操作)')
     assert(!sdk.debugLogs.value.some((l) => l.data?.stage === 'intent_guard'), '✓ 问句守卫 e2e 边界 → 无 intent_guard 留痕')
+    sdk.unmount()
+  }
+
+
+  console.log('[e2e:instruction-adherence] zero-tool-gate → 操作指令零工具谎报收尾被回灌(事实清单对账)')
+  {
+    // 队列:① 零工具纯文本谎报「已完成」(无 todos —— 完结门禁盲区)→ zero-tool-gate 回灌(含事实清单)
+    //       ② 模型继续执行 write ③ 真实收口(含位置说明)
+    const llm = stubModel(
+      { text: '已全部修改完成!' },   // 零工具谎报 → 拦
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.0.title', value: '已改' } } }] },
+      { text: '已修改 components.0 的标题,写入路径 components.0.title。' },
+    )
+    const sdk = createChatSdk({ ui: false, id: 'e2e-ztg-lie', storage: false, llm, capabilities: CAPS, data: { schema: z.object({ components: z.array(z.object({ title: z.string().optional() })) }), bind: { components: [{ title: 'a' }] }, description: 'd' } })
+    await sdk.mount()
+    const reply = await sdk.send('把标题改成已改')
+    assert(reply.includes('components.0'), '✓ zero-tool-gate → 谎报被回灌,续跑后真实收口(含位置说明)')
+    assert(llm.calls === 3, `✓ zero-tool-gate → 模型被调 3 次(无门禁 2 次;实际 ${llm.calls})`)
+    const gateLogs = sdk.debugLogs.value.filter((l) => l.data?.stage === 'zero_tool_gate')
+    assert(gateLogs.length === 1, `✓ zero-tool-gate → debugLogs 留痕恰 1 次(实际 ${gateLogs.length})`)
+    assert(String(gateLogs[0]?.data?.factSheet).includes('write×0'), '✓ zero-tool-gate → 事实清单含 write×0 对账事实')
+    assert(String(gateLogs[0]?.data?.factSheet).includes('成功写入路径:无'), '✓ zero-tool-gate → 事实清单含「成功写入路径:无」')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:instruction-adherence] zero-tool-gate 豁免 → 问句/写过/委派过/位置说明不拦')
+  {
+    // ① 问句消息不拦(「这个功能怎么用?」纯文本答 = 正常)
+    {
+      const llm = stubModel({ text: '这个功能用于…' })
+      const sdk = createChatSdk({ ui: false, id: 'e2e-ztg-q', storage: false, llm, capabilities: CAPS })
+      await sdk.mount()
+      await sdk.send('这个功能怎么用?')
+      assert(sdk.debugLogs.value.filter((l) => l.data?.stage === 'zero_tool_gate').length === 0, '✓ 豁免 → 问句消息零工具纯文本答不拦')
+      sdk.unmount()
+    }
+    // ② 只读消息(非操作祈使)不拦
+    {
+      const llm = stubModel({ text: '当前有 3 个组件。' })
+      const sdk = createChatSdk({ ui: false, id: 'e2e-ztg-ro', storage: false, llm, capabilities: CAPS })
+      await sdk.mount()
+      await sdk.send('看看现在有几个组件')
+      assert(sdk.debugLogs.value.filter((l) => l.data?.stage === 'zero_tool_gate').length === 0, '✓ 豁免 → 只读动词消息不拦')
+      sdk.unmount()
+    }
+    // ③ 本轮有写工具不拦(写过就是做过)
+    {
+      const llm = stubModel(
+        { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'title', value: 'x' } } }] },
+        { text: '已改好。' },
+      )
+      const sdk = createChatSdk({ ui: false, id: 'e2e-ztg-wrote', storage: false, llm, capabilities: CAPS, data: { schema: z.object({ title: z.string() }), bind: { title: 'a' }, description: 'd' } })
+      await sdk.mount()
+      await sdk.send('把标题改成x')
+      assert(sdk.debugLogs.value.filter((l) => l.data?.stage === 'zero_tool_gate').length === 0, '✓ 豁免 → 本轮有 write 不拦')
+      sdk.unmount()
+    }
+    // ④ 收口文本已含位置说明(出口①机械化)→ 不二次回灌
+    {
+      const llm = stubModel({ text: '此前已修改 components.2 的标题(上一轮已写入),无需再改。' })
+      const sdk = createChatSdk({ ui: false, id: 'e2e-ztg-loc', storage: false, llm, capabilities: CAPS })
+      await sdk.mount()
+      await sdk.send('再把标题改一下')
+      assert(sdk.debugLogs.value.filter((l) => l.data?.stage === 'zero_tool_gate').length === 0, '✓ 豁免 → 收口含位置说明不二次回灌(出口①)')
+      sdk.unmount()
+    }
+  }
+
+  console.log('[e2e:instruction-adherence] zero-tool-gate 预算 → 连续谎报 ≤2 次后放行 + observable 留痕')
+  {
+    const llm = stubModel(
+      { text: '已完成!' },
+      { text: '真的完成了!' },
+      { text: '确实完成了!' },
+    )
+    const sdk = createChatSdk({ ui: false, id: 'e2e-ztg-budget', storage: false, llm, capabilities: CAPS })
+    await sdk.mount()
+    const errs = []
+    sdk.hook((e) => { if (e.type === 'error' && e.code === 'ZERO_TOOL_GATE_EXHAUSTED') errs.push(e) })
+    const reply = await sdk.send('把标题改成x')
+    assert(llm.calls === 3, `✓ 预算 → 回灌 2 次后第 3 次放行(模型被调 3 次;实际 ${llm.calls})`)
+    assert(errs.length === 1, `✓ 预算 → ZERO_TOOL_GATE_EXHAUSTED observable 恰 1 次(实际 ${errs.length})`)
+    assert(reply.includes('确实完成'), '✓ 预算 → 放行返回最终文本(不静默吞)')
     sdk.unmount()
   }
 

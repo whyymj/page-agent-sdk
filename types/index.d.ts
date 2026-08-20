@@ -981,6 +981,32 @@ export interface PlanConfirmationRecord {
 }
 export declare function createHumanConfirmMiddleware(onResolved?: (record: PlanConfirmationRecord) => void): any;
 export declare const HUMAN_CONFIRM_TOOL_NAME: string;
+/** 大批量变更门禁(bulk-change-guard):量纲 = 现有组件节点数;默认关,须配 approval 才装配 */
+export interface BulkGuardOptions {
+  threshold?: number;
+  timeoutMs?: number;
+  mode?: 'confirm' | 'observe';
+}
+export interface WriteScaleResult {
+  count: number;
+  scopes: string[];
+  kind: 'patches' | 'del' | 'subtree-set' | 'whole-set' | 'other';
+}
+/** 度量单次写调用触达的现有组件节点数(纯函数:同组件多 patch=1;新增路径不计) */
+export declare function measureWriteScale(args: unknown, getBind: () => unknown): WriteScaleResult;
+/** 中间件工厂参数(getBind/tools/getPlanConfirmation/onEvent;挂起经 ctx.emit approval_request) */
+export interface BulkGuardMiddlewareOptions extends BulkGuardOptions {
+  getBind: () => unknown;
+  tools?: unknown[];
+  getPlanConfirmation?: () => { at: number; summary: string } | undefined;
+  onEvent?: (info: { stage: 'bulk_guard'; decision: 'confirm' | 'observe' | 'exempt-plan' | 'exempt-once' | 'pass' | 'timeout' | 'rejected'; kind: string; count: number }) => void;
+}
+/** 会话级豁免态(每形态确认过一次本会话放行;reset 钩子接 switch/resetSession) */
+export interface BulkGuardState {
+  confirmedKinds: Set<string>;
+  reset(): void;
+}
+export declare function createBulkGuardMiddleware(opts: BulkGuardMiddlewareOptions): any;
 export interface CheckpointMeta {
   id: number;
   label?: string;
@@ -1206,7 +1232,7 @@ export interface ChatSdkOptions {
   /** 图片输入配置组(image-input-vision):images.upload 上传换 URL(集成方 OSS)/ images.describe 绑定识图转述(集成方识图子 agent / 自有 vision API,非多模态主模型时转述注入) */
   images?: ImagesConfig;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
-  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; tracing?: boolean; todoDeps?: boolean; automation?: boolean; workingMemory?: boolean; focus?: boolean; skillHostScript?: boolean; contextInspector?: boolean; agentCompression?: boolean; preferences?: boolean };
+  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; tracing?: boolean; todoDeps?: boolean; automation?: boolean; workingMemory?: boolean; focus?: boolean; skillHostScript?: boolean; contextInspector?: boolean; agentCompression?: boolean; preferences?: boolean; bulkGuard?: boolean };
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number; timeoutMs?: number; thinkingMode?: 'simple' | 'deep' };
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[];
@@ -1214,6 +1240,8 @@ export interface ChatSdkOptions {
   verify?: { enabled?: boolean; check?: VerifyCheck; maxAttempts?: number; adversarial?: boolean };
   /** 人工确认:工具调用前弹确认框,用户「允许/拒绝」后才执行(默认关闭,不传 = 不装) */
   approval?: ApprovalOptions;
+  /** 大批量变更门禁(默认关;capabilities.bulkGuard:true 开启,须同时配置 approval 否则 no-op)。量纲 = 现有组件节点数(同组件多 patch 不拦,新增内容不计);超阈挂 approval(自带 timeoutMs 超时自动拒);mode:'observe' 无人值守只留痕 */
+  bulkGuard?: { threshold?: number; timeoutMs?: number; mode?: 'confirm' | 'observe' };
   /** 主动征询(默认开启):装载 request_human_confirmation 工具,LLM 在不确定/多方案/高风险时主动征询;false 关闭(types-alignment 补漏) */
   humanConfirm?: boolean;
   /** 会话级 checkpoint 回滚(回到上次正常时)。默认关闭;传 true 或 { maxCheckpoints?, auto? } 开启 */

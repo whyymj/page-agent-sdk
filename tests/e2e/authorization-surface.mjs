@@ -131,5 +131,101 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:authorization-surface] bulk-change-guard 装配与门禁(默认关 / 未配 approval no-op / 超阈挂确认 / 量纲反例)')
+  {
+    const bind = { components: [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }] }
+    const fivePatch = [0, 1, 2, 3, 4].map((i) => ({ op: 'set', jsonPath: `components.${i}.title`, value: `t${i}` }))
+
+    // ① 默认关:未声明 bulkGuard → inspect 反射 enabled:false + 超阈写不挂确认
+    {
+      const llm = stubModel(
+        { toolCalls: [{ name: 'write', args: { patches: fivePatch } }] },
+        { text: 'done' },
+      )
+      const sdk = createChatSdk({
+        ui: false, id: 'e2e-bulk-off', storage: false, llm, autoTitle: false,
+        data: { schema: z.object({ components: z.array(z.object({ id: z.number(), title: z.string().optional() })) }), bind, description: 'd' },
+        capabilities: { ...CAPS, vfs: false, subagent: false },
+      })
+      await sdk.mount()
+      assert(sdk.inspect().bulkGuard?.enabled === false, '✓ 装配 → 默认关(inspect 反射 enabled:false)')
+      await sdk.stream([{ role: 'user', content: '批量改', timestamp: Date.now() }], () => {})
+      assert(bind.components.every((c) => c.title?.startsWith('t')), '✓ 默认关 → 超阈写不拦直接落地(零回归)')
+      sdk.unmount()
+    }
+
+    // ② 请求 bulkGuard 但未配 approval → no-op + info 留痕(console.info)
+    {
+      const llm = stubModel({ text: 'ok' })
+      const sdk = createChatSdk({
+        ui: false, id: 'e2e-bulk-noapproval', storage: false, llm, autoTitle: false,
+        data: { schema: z.object({}), bind, description: 'd' },
+        capabilities: { ...CAPS, bulkGuard: true, vfs: false, subagent: false },
+      })
+      await sdk.mount()
+      assert(sdk.inspect().bulkGuard?.enabled === false, '✓ 装配规则 → 未配 approval 门禁 no-op(防 headless 挂死)')
+      sdk.unmount()
+    }
+
+    // ③ 装配 + 超阈 → 挂 approval;确认放行;同形态二次直接放行(会话豁免)
+    {
+      const bind3 = { components: [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }] }
+      const llm = stubModel(
+        { toolCalls: [{ name: 'write', args: { patches: fivePatch } }] },   // 第一次超阈(挂起 → 确认)
+        { text: '已完成批量修改' },
+        { toolCalls: [{ name: 'write', args: { patches: fivePatch.map((p, i) => ({ ...p, value: `u${i}` })) } }] },  // 二次(会话豁免直接过)
+        { text: '再次完成' },
+      )
+      const sdk = createChatSdk({
+        ui: false, id: 'e2e-bulk-on', storage: false, llm, autoTitle: false,
+        data: { schema: z.object({ components: z.array(z.object({ id: z.number(), title: z.string().optional() })) }), bind: bind3, description: 'd' },
+        capabilities: { ...CAPS, bulkGuard: true, vfs: false, subagent: false },
+        approval: { tools: [], confirm: () => false },   // 只满足装配条件(approval 存在);confirm 恒 false = 白名单不含任何工具(避免 approvalMw 与 bulkGuard 对 write 双重挂起)
+      })
+      await sdk.mount()
+      assert(sdk.inspect().bulkGuard?.enabled === true, '✓ 装配 → bulkGuard + approval 齐备时 enabled:true')
+      let approved = 0
+      await sdk.stream([{ role: 'user', content: '批量改标题', timestamp: Date.now() }], (e) => {
+        if (e.type === 'approval_request') { approved++; e.resolve(true) }
+      })
+      assert(approved === 1, `✓ 门禁 → 超阈(5 组件)挂 approval 恰 1 次(实际 ${approved})`)
+      assert(bind3.components.every((c) => c.title?.startsWith('t')), '✓ 门禁 → 确认后写入落地')
+      assert(sdk.inspect().bulkGuard?.confirmedKinds?.includes('patches'), '✓ 门禁 → inspect 反射会话豁免形态集')
+      // 二次同形态:豁免直接放行(approved 不再增加)
+      await sdk.stream([{ role: 'user', content: '再批量改一次', timestamp: Date.now() }], (e) => {
+        if (e.type === 'approval_request') { approved++; e.resolve(true) }
+      })
+      assert(approved === 1, '✓ 会话豁免 → 同形态二次直接放行(不再弹)')
+      assert(bind3.components.every((c) => c.title?.startsWith('u')), '✓ 会话豁免 → 二次写入落地')
+      const logs = sdk.debugLogs.value.filter((l) => l.data?.stage === 'bulk_guard')
+      assert(logs.some((l) => l.data.decision === 'confirm'), '✓ 留痕 → debugLogs bulk_guard confirm')
+      assert(logs.some((l) => l.data.decision === 'exempt-once'), '✓ 留痕 → debugLogs bulk_guard exempt-once')
+      sdk.unmount()
+    }
+
+    // ④ 量纲反例:同组件多 patch(8 条全落 components.0)→ 不挂确认直接过
+    {
+      const bind4 = { components: [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }] }
+      const llm = stubModel(
+        { toolCalls: [{ name: 'write', args: { patches: Array.from({ length: 8 }, (_, i) => ({ op: 'set', jsonPath: `components.0.props.k${i}`, value: i })) } }] },
+        { text: '微调完成' },
+      )
+      const sdk = createChatSdk({
+        ui: false, id: 'e2e-bulk-dim', storage: false, llm, autoTitle: false,
+        data: { schema: z.object({ components: z.array(z.object({ id: z.number(), props: z.record(z.string(), z.unknown()).optional() })) }), bind: bind4, description: 'd' },
+        capabilities: { ...CAPS, bulkGuard: true, vfs: false, subagent: false },
+        approval: { confirm: () => false },   // 只满足装配条件;confirm 恒 false(白名单不含工具)防 approvalMw 双重挂起
+      })
+      await sdk.mount()
+      let asked = 0
+      await sdk.stream([{ role: 'user', content: '微调组件1', timestamp: Date.now() }], (e) => {
+        if (e.type === 'approval_request') { asked++; e.resolve(true) }
+      })
+      assert(asked === 0, `✓ 量纲 → 同组件 8 条 patch(1 个组件)不拦(实际挂起 ${asked} 次)`)
+      assert(Object.keys(bind4.components[0].props ?? {}).length === 8, '✓ 量纲 → 微调直接落地')
+      sdk.unmount()
+    }
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

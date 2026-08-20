@@ -94,6 +94,8 @@ export interface HarnessState {
   lastCompression?: CompressionStats
   /** beforeReturn 自纠计数(createAgent 维护);达 maxVerifyAttempts 强制 return,防死循环 */
   verifyAttempts: number
+  /** 子 agent 标记(spawn/use 委派建的子循环置 true;imperative-zero-tool-gate 等主栈门禁据此豁免 —— 子 agent 纯文本收口是正常形态) */
+  __pgIsSubagent?: boolean
   /** 会话级任务目标锚点(mission 中间件维护;经 augmentPrompt 每轮注入 system,天然跨压缩保留) */
   mission?: Mission
   /** 跨压缩工作记忆(workingMemory 中间件;经 augmentPrompt 每轮注入 system,天然跨压缩保留) */

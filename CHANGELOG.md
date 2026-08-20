@@ -4,6 +4,27 @@
 
 ## [Unreleased]
 
+### Added(imperative-zero-tool-gate 操作指令零工具收尾门禁:防「谎报完成」+ 事实清单对账)
+
+- **三要素 AND 门禁**(挂 createAgent 回灌链,完结门禁之后):操作祈使句(动词白名单 + 首子句 16 字窗口锚定 + 只读动词反例优先 + 问句/免操作词豁免)+ 本轮零「等效写」(`writeCapable` 标注口径 + **委派工具 use_*/spawn 计等效写** —— editor「改代码组件」走 use_html 委派是主场景)+ 纯文本非问句收尾 → 回灌「事实清单 + 三出口」(说明改动位置对账 / 继续执行 / 如实说明)
+- **事实清单 fact-sheet(D5)**:harness 从本轮 state 本地计算对账单(`本轮事实:工具调用 read×2, write×0;成功写入路径:无;失败/回灌 0;todos:1/3 完成`)嵌入回灌 —— 机制供给事实,agent 对着记录复述,与清单不符无处嘴硬;零 LLM 调用,只在门禁触发时随回灌注入(成本与嫌疑挂钩)
+- **出口①机械化(D2b)**:回灌后收口文本含 jsonPath/组件 id 模式 → 视为「已说明位置」不二次回灌(防合法场景恒烧满预算)
+- **预算 ≤2** 超限放行 + emit observable `ZERO_TOOL_GATE_EXHAUSTED`(对齐 garbled 耗尽模式 —— 谎报放行是最该让集成方感知的时刻)
+- **豁免**:问句消息/只读动词(看看/查/确认/总结/对比…)/免操作词(不用改/只是问)/本轮写过或委派过/收口含位置说明/**子 agent 不装**(`CreateAgentOptions.__pgIsSubagent` 标记,子纯文本收口是正常形态)
+- debugLogs 留痕 `stage:'zero_tool_gate'`(attempt/factSheet/content);与 resumeNotice 双保险(恢复后谎报由 resumeNotice pin 段先提示,本门禁兜住零写收尾)
+- **修复两类实测误伤**:问句收尾豁免(「做好了吗」含操作动词但是状态询问);事实清单对「是写工具却零调用」强制补 `write×0`(滤零计数会弱化对账)
+
+### Added(bulk-change-guard 大批量变更门禁:注入/跑偏的最后防线,缓解非根治)
+
+- **`capabilities.bulkGuard` + `bulkGuard` 配置组**(默认关,须同时配置 approval 才装配 —— 未配 approval 整体 no-op + info 留痕,防 headless 挂死;「无响应方检测」机制不存在,不做免费假设)
+- **量纲 = 现有组件节点数**(评审核心修正):单次写触达的 distinct 组件级路径首段数 —— 同组件 8 条 patch = 1 不拦(正常微调),散落 5 个组件 = 5 拦;新增内容不计破坏面(append/set 到不存在路径);深路径截到组件粒度;整体 set 按现有组件总数计。`writeCapable` 标注判定写工具(单一真相源,不硬编码名单)
+- **超阈挂 approval 确认**(阈值默认 4):经 `ctx.emit approval_request`(与 approval/humanConfirm 同通道,UI ApprovalBar/集成方 handler 可见);确认放行执行真实工具,拒绝回灌 `BULK_CHANGE_REJECTED`(含「分批破坏 patches 原子性,建议 dryRun/快照先行」提示)
+- **挂起自带 `timeoutMs`**(默认 30s 超时自动拒)—— 不依赖 send/batch 的 approvalWatch(`sdk.stream` 路径无任何兜底);abort 联动自动拒
+- **`mode:'observe'` 无人值守档**:超阈只留 observable 不挂起(类比 conflictPolicy overwrite 防永挂)
+- **豁免**:`lastPlanConfirmation` 方案确认留痕存在 → 豁免(3c 公共接口消费);本会话同写形态确认过一次 → 该形态直接放行(防反复弹窗);`switchSession`/`resetSession` 重置豁免态;`dryRun` 不拦
+- **装载点**:componentWriteGuard 之内(批量写命中在途锁组件先收机制拒,不劳用户确认后才拒);只装主栈;`inspect().bulkGuard` 反射(enabled/threshold/mode/confirmedKinds);debugLogs 留痕 `stage:'bulk_guard'`(decision: pass/confirm/observe/exempt-plan/exempt-once/timeout/rejected);新导出 `measureWriteScale`/`createBulkGuardMiddleware`/`BulkGuardOptions` 等纯函数与类型(主 + headless)
+- **明示边界**:注入不可根治(授权范围内恶意与正常原理不可分),门禁提高攻击成本(需用户点确认),不承诺防住「诱导用户点确认」的社会工程面(H-01 残留风险 deferred)
+
 ### Added(方案确认留痕 save-and-plan-gates 3c:RHC 方案点选机制化供给「已确认」事实)
 
 - **`lastPlanConfirmation` 方案确认留痕**:`request_human_confirmation` 带 options 的方案被用户点选 → core 记录 `{at, summary, choice, viaOptions:true}`(时间戳 + question 摘要 + 所选方案)。口径过滤:仅方案确认记录 —— 允许/拒绝/无 options 征询不写入(防单组件删除确认烧掉批量门禁豁免,为 bulk-change-guard 预留公共接口)。回调抛错吞掉不影响确认流程
@@ -26,7 +47,7 @@
 - 新导出:`validateAtPath` / `resolveSchemaPath` / `schemaHasRefinement` / `arrayMinLength` / `elementSchemaCandidates` / `PathSchemaResolution` / `ValidateAtPathResult`(schemaUtils)+ `applyPatchesToBind` / `validateRootValueLocally` / `validateWriteLocally` / `LocalWriteBack` / `LocalValidationPlan`(dataOps);主包与 headless 子集同步
 
 ### Tests
-- selftest 2588→2618(sec-92:局部校验 20 项;sec-93:方案确认留痕口径 9 项);e2e 856→874(session-integrity plan-confirmation 生命周期 + 口径过滤 11 项);sec-01「缺必填拒」与 sec-02「叶子设子属性」两断言按新契约改写
+- selftest 2588→2685(sec-92:局部校验 20 项;sec-93:方案确认留痕口径 9 项;sec-94:bulk-guard 量纲/豁免/降级 26 项;sec-95:zero-tool-gate 纯函数 31 项);e2e 856→899(session-integrity plan-confirmation 11 项 + authorization-surface bulk-guard 装配/量纲 16 项 + instruction-adherence zero-tool-gate 谎报回灌/豁免/预算 12 项);sec-01「缺必填拒」与 sec-02「叶子设子属性」两断言按新契约改写
 
 ## [3.37.0] - 2026-08-20
 

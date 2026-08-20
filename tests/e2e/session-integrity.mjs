@@ -127,7 +127,8 @@ export async function run() {
   {
     // 实测事故场景复刻:会话持久化 + 刷新/切回恢复历史,但数据槽可能已回退 → agent 须先核实再断言已完成。
     // storage:'memory' 同实例共享后端,switchSession 切走再切回 = applySnapshot 灌入非空历史 = markResumed
-    const llm = stubModel({ text: '第一轮回复' })
+    // 注:恢复后 send('重新生成') 的 stub 回复带位置说明 —— 免被 zero-tool-gate(防谎报门禁)回灌干扰本轮断言(该用例测 resumeNotice 不测谎报)
+    const llm = stubModel({ text: '第一轮回复' }, { text: '已核实:页面组件与历史记录一致(components.0 仍在)。' })
     const sdk = createChatSdk({
       ui: false, id: 'e2e-si-resume', storage: 'memory', llm, autoTitle: false,  // autoTitle 会额外消费 stub 响应并污染 systemPrompts 索引,关闭
       capabilities: { ...CAPS, vfs: false, subagent: false },

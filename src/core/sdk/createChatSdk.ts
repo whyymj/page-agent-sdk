@@ -37,6 +37,7 @@ import { createMemoryMiddleware } from '../harness/memory'
 import { createPermissionsMiddleware, type PermissionRule } from '../harness/permissions'
 import { createApprovalMiddleware } from '../harness/approval'
 import { createHumanConfirmTool, createHumanConfirmMiddleware, HUMAN_CONFIRM_TOOL_NAME, type PlanConfirmationRecord } from '../harness/humanConfirm'
+import { createBulkGuardMiddleware, type BulkGuardOptions } from '../harness/bulkGuard'
 import {
   createCheckpointManager,
   createCheckpointMiddleware,
@@ -287,7 +288,10 @@ export interface ChatSdkOptions {
     contextInspector?: boolean // 上下文检查 inspectContext(默认 true;读每轮消息分类 token 占比,纯计算零 LLM 成本)
     agentCompression?: boolean // 压缩 agent 自主决策(默认 false;opt-in,开 + summaryLlm 可用 → decide 驱动压缩,失败降级静态;requires summarization)
     preferences?: boolean      // 跨会话用户偏好记忆(默认 false;opt-in,自动写用户浏览器,行为敏感默认关;捕获→持久化→pin 段注入)
+    bulkGuard?: boolean        // 大批量变更门禁(默认 false;单次写触达现有组件节点数超阈 → approval 确认;须同时配置 approval,否则 no-op 留痕;bulk-change-guard)
   }
+  /** 大批量变更门禁(默认关;capabilities.bulkGuard:true 开启)。量纲 = 现有组件节点数(同组件多 patch 不拦,新增内容不计);豁免:方案确认留痕 + 本会话同形态已确认一次 */
+  bulkGuard?: BulkGuardOptions
   /** 子 agent 委派(spawn_agent/spawn_agents);默认开启,{ enabled: false } 关闭 */
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | BaseChatModel; maxDepth?: number; maxParallel?: number; timeoutMs?: number; thinkingMode?: 'simple' | 'deep' }
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
@@ -1383,6 +1387,29 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ? createSubagentsMiddleware(subagentsForAssemble, { llm: options.llm, thinkingModeDefault: options.subagent?.thinkingMode, allTools: () => core.agent?.allTools ?? allTools, debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null, getBind: () => liveData()?.bind, tracker: subagentTracker, guardMiddleware: childGuards.length ? childGuards : undefined, getVfsFiles: useVfs ? () => vfsStore.files : undefined, enterDataScope: dataOpsController?.enterScope ? (id) => dataOpsController.enterScope!(id) : undefined, exitDataScope: dataOpsController?.exitScope ? (id) => dataOpsController.exitScope!(id) : undefined, onUsage: (u) => { usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0); usage.completion_tokens = (usage.completion_tokens ?? 0) + (u.completion_tokens ?? 0); usage.total_tokens = (usage.total_tokens ?? 0) + (u.total_tokens ?? 0) }, timeoutMs: options.subagent?.timeoutMs,
       ...(componentLock ? { componentLock, resolveComponents: (args: { components?: string[]; task: string }) => resolveTargetComponents(args, collectComponentNames(liveData()?.bind, codeAssetPgIdPaths)) } : {}) })
     : undefined
+
+  // bulk-change-guard(大批量变更门禁,缓解非根治):单次写触达现有组件节点数超阈 → 挂 approval 确认。
+  // 装配规则(评审 3-1,硬性防 headless 挂死):① 默认关(capabilities.bulkGuard,集成方显式开)
+  // ② 必须配置 approval(白名单/confirm 至少一项)才装 —— 未配 approval 无响应方,「无响应方检测」机制
+  // 不存在,整体 no-op + info 留痕。量纲 = 现有组件节点数(同组件多 patch 不拦;新增内容不计破坏面);
+  // 挂起自带 timeoutMs(默认 30s 超时自动拒,stream 路径无 approvalWatch 兜底);observe 模式只留痕不挂起;
+  // 豁免:lastPlanConfirmation(3c 方案确认留痕)/ 本会话同形态已确认一次。
+  const useBulkGuard = !!options.capabilities?.bulkGuard && !!approvalMw
+  const bulkGuardMw = useBulkGuard
+    ? createBulkGuardMiddleware({
+        ...(options.bulkGuard ?? {}),
+        getBind: () => liveData()?.bind,
+        tools: allTools,  // writeCapable 标注判定(单一真相源)
+        getPlanConfirmation: () => lastPlanConfirmation,
+        onEvent: (info) => {
+          core.agent?.debugLogs?.value?.push({ timestamp: Date.now(), type: 'middleware', data: info })
+        },
+        // 挂起走 ctx.emit(approval_request 流内通道,与 approval/humanConfirm 同源;core 外发 emit 吞该事件勿用)
+      })
+    : undefined
+  if (options.capabilities?.bulkGuard && !approvalMw) {
+    console.info('[page-agent-sdk] bulkGuard 已请求但未配置 approval,门禁未装配(整体 no-op;配置 approval.tools 或 approval.confirm 后生效)')
+  }
   const subagentsController = subagentsMw ? (subagentsMw as any).controller as import('../harness/subagent').SubagentsController : null
 
   /** 思考深度锁定反射(subagent-thinking-mode-lock):thinkingMode 解析(显式 > 顶层缺省)+ 实际生效状态。
@@ -1610,6 +1637,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(subagentsMw ? [subagentsMw] : []),
     // parallel-subagent-delegation Q3b:主 agent 写检查(委派在途组件锁前缀拒写;只装主栈,子 agent 走自己的栈)
     ...(componentWriteGuardMw ? [componentWriteGuardMw] : []),
+    // bulk-change-guard:大批量变更门禁(现组件节点数超阈 → approval)。装在 componentWriteGuard 之内
+    // (D3:批量写命中在途锁组件 → 先收 COMPONENT_LOCKED 机制拒,不劳用户确认后才拒)
+    ...(bulkGuardMw ? [bulkGuardMw] : []),
     ...(augmentSystemMw ? [augmentSystemMw] : []),
     ...(contextInspectorMw ? [contextInspectorMw] : []),  // context-inspector:wrapModelCall 快照实际消息构成(大小/分类/占比)
     ...(options.middleware || []),
@@ -2006,6 +2036,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       focusMw.reset()
       resumeNoticeMw.reset() // 切会话:清待注入恢复标记(下方 applySnapshot 若灌入历史会重新标记)
       lastPlanConfirmation = undefined // 切会话:清方案确认留痕(方案时效限本会话;回原会话经 applySnapshot 恢复)
+      bulkGuardMw?.state.reset() // 切会话:清 bulk-guard 会话级豁免态(每类只拦一次的计数重置)
       // 偏好本身跨会话保留(不 reset);仅重置消息扫描水位(新会话 messages 从 0 起,须重扫)
       preferencesMw?.resetScanCursor()
       // session-history S1:切会话清 checkpoint 栈,防旧会话快照污染新会话(开 checkpoint 时,否则 restore 会回退到旧会话态)
@@ -2042,6 +2073,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       focusMw.reset()
       resumeNoticeMw.reset() // 清空会话:新会话无恢复历史,清待注入标记
       lastPlanConfirmation = undefined // 清空会话:清方案确认留痕(save-and-plan-gates 3c)
+      bulkGuardMw?.state.reset() // 清空会话:清 bulk-guard 会话级豁免态
       preferencesMw?.resetScanCursor() // 偏好跨会话保留;只重置扫描水位(同 switchSession)
       if (checkpointMgr) checkpointMgr.importStack([])
       if (core.agent) core.agent.debugLogs.value = []
@@ -2258,6 +2290,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         mission: useMission ? missionMw.getMission() : undefined,
         // 方案确认留痕(save-and-plan-gates 3c):本会话最近一次 RHC 方案确认(带 options);DebugDrawer 可见
         planConfirmation: lastPlanConfirmation,
+        // bulk-change-guard 反射:装配状态 + 阈值 + 会话级豁免形态集
+        bulkGuard: useBulkGuard ? { enabled: true, threshold: options.bulkGuard?.threshold ?? 4, mode: options.bulkGuard?.mode ?? 'confirm', confirmedKinds: [...bulkGuardMw!.state.confirmedKinds] } : { enabled: false },
         // 跨会话用户偏好(DebugDrawer 只读视图;capabilities.preferences:false → undefined)
         preferences: usePreferences && preferencesMw ? preferencesMw.getPreferences() : undefined,
         workingMemory: useWorkingMemory ? workingMemoryMw.getWorkingMemory() : undefined,

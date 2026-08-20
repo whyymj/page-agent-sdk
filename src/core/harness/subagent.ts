@@ -470,6 +470,7 @@ async function runSubagent(
     maxVerifyAttempts: opts.maxVerifyAttempts ?? 0,
     onLog, // 子 agent 日志下沉 → spawn 工具转发到主 debugLogs(带 source 标签)
     debug: opts.debug,
+    __pgIsSubagent: true, // 主栈门禁豁免标记(zero-tool-gate:子 agent 纯文本收口是正常形态,如 craftNotes [note] 收口)
   })
   if (opts.debug) console.log(`[subagent] 启动子 agent(depth=${depth},工具 ${childTools.length} 个)`)
   // 子流 AbortController 链(父 signal abort → 子 abort;超时独立 abort 子;fix-hang-and-feedback abort 收口同源)

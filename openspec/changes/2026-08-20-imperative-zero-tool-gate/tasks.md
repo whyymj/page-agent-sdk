@@ -1,37 +1,36 @@
-# Tasks(imperative-zero-tool-gate,按依赖序)
+# Tasks(imperative-zero-tool-gate,按依赖序;已过怀疑论评审回改 + 事实清单 D5 并入)
 
-## Phase 1:纯函数 + 单元
+## Phase 1:纯函数 + 单元 ✅(2026-08-21)
 
-- [ ] `detectActionImperative(text)`:操作动词白名单正则(**首子句动词锚定**)+ 只读动词反例前置且同位置锚定(看看/查/了解/说说/解释/总结/对比/**确认一下/核对**…) + 免操作词(不用改/只是问问/先别动/**不用写入**)
-  - 正例基线:「把标题改成X」「加个横幅」「重新生成」「删掉第2个」「从头做一个专题页」
-  - 反例基线(评审 1-8 扩):「这是啥组件」「看看这个配置」「总结一下刚才做了什么」「你好」「确认一下刚才改的标题对不对」「帮我优化这段文案直接发我,不用写入」「做个对比」
-- [ ] `buildZeroToolFeedback()`:双出口文案(说明改动位置 / 继续执行 / 说明原因)+ 嵌入事实清单
-- [ ] `buildTurnFactSheet(state)`:纯函数,从 state.messages 统计本轮事实 —— 工具调用按名计数(read×2, write×0…)/ 成功写入路径列表 / 失败回滚计数 / todos 完成度;零 LLM 调用
-  - selftest:混合工具调用轮 → 清单计数正确;零工具轮 → write×0 + 路径空;清单文案要素齐全(计数/路径/失败/todos 四段)
-- [ ] selftest(新 sec-NN):正反例判定 / 免操作词豁免 / 反馈文案要素齐全(含事实清单段)
+- [x] `detectActionImperative(text)` 落 `src/core/harness/actionGate.ts`:操作动词白名单(首子句 **16 字窗口**锚定 —— 12 字截掉「把 navbar 的标题改成」的动词,实测扩)+ 只读动词反例前置(看看/查/确认/总结/对比/检查…) + 免操作词 + **问句豁免**(「做好了吗」含操作动词但是状态询问 —— 实测修);正例基线 11 条/反例基线 12 条全过
+- [x] `buildTurnFactSheet(usage, todos, isWriteTool)`:工具按名计数(写工具零调用强制补 `write×0` —— 滤零计数弱化对账,实测修)/ 成功写入路径(≤5 截断)/ 失败回灌数 / todos 完成度
+- [x] `isZeroEffectiveWrite`:writeCapable 口径 + **委派工具(use_/spawn)计等效写**(editor 主场景防误伤);`buildZeroToolFeedback`(三出口 + 事实清单段);`mentionsLocation` 出口①机械化(jsonPath/组件 id/「路径」模式)
+- [x] selftest(sec-95,31 项):正反例/零写判定/事实清单/出口①
 
-## Phase 2:门禁接线(createAgent 循环条件层)
+## Phase 2:门禁接线(createAgent 循环条件层)✅(2026-08-21)
 
-- [ ] 轮内写工具计数:**`writeCapable` 标注判定**(不硬编码名单)+ 委派工具(use_*/spawn_agent/spawn_agents)计等效写;计数在轮内工具结果收集处新增(现有 WRITE_TOOL_NAMES 只计失败,createAgent.ts:989-995)
-- [ ] 门禁分支挂入 else-if 回灌链(与 transitional/narration/completion 同形态,createAgent.ts:898-918):①操作祈使 ②零写+零委派 ③纯文本收尾且句尾非问号(完结门禁句尾正则 todos.ts:84,**不带 rounds 前置** —— 谎报第 1 路恰发生在 rounds===0)→ 回灌(文案含 `buildTurnFactSheet` 事实清单);预算 ≤2 独立计数,超限放行 + emit `ZERO_TOOL_GATE_EXHAUSTED` observable
-- [ ] 出口①机械化:回灌后收口文本含 jsonPath/组件 id 粗匹配模式 → 视为已说明,不二次回灌
-- [ ] 豁免:句尾问号 / 本轮有写或委派调用 / 免操作词 / **intentGuard 命中本条用户消息时跳过**
-- [ ] **装配期只装主栈**(createChatSdk,仿 intentGuard 装配过滤;子 agent 循环不跑本门禁)
-- [ ] debugLogs 留痕 `stage:'zero_tool_gate'`(attempt/消息预览)
+- [x] 轮内工具用量捕获(结果收集循环:按名计数/成功写路径 extractWriteTargetPath/失败数;条件写 eval_script 按保守口径计写)
+- [x] 门禁分支挂完结门禁之后(else-if 链尾):三要素 AND → 回灌(文案含事实清单);**无 rounds 前置**(谎报第 1 路恰发生在 rounds===0);预算 ≤2 超限放行 + emit `ZERO_TOOL_GATE_EXHAUSTED` observable
+- [x] 出口①机械化:收口文本含位置模式 → 不二次回灌
+- [x] 豁免:句尾问号 / 只读动词 / 免操作词 / 本轮写过或委派过 / **子 agent 不装**(`CreateAgentOptions.__pgIsSubagent` + `state.__pgIsSubagent`,subagent.ts 建 child 时置 true;两处 state 重建均保持标记)
+- [x] debugLogs 留痕 `stage:'zero_tool_gate'`(attempt/factSheet/content)
+- [x] 实施期修:块注释内 `use_*/spawn_*` 的 `*/` **终止了块注释**(tsc Invalid character 二分定位);findLast 不在 lib 目标内改倒序循环
 
-## Phase 3:e2e(stub 驱动真 ReAct)
+## Phase 3:e2e(stub 驱动真 ReAct)✅(2026-08-21,instruction-adherence 12 项)
 
-- [ ] 祈使句 + 零工具纯文本收尾 → 回灌续跑(第 2 段响应做工具调用或逐项说明位置);断言回灌消息含事实清单段(工具计数 + 写入路径)
-- [ ] 问句豁免(「这是啥组件」零工具收尾不触发)
-- [ ] 写过后收尾不触发
-- [ ] **委派过后收尾不触发**(use_html 调用后纯文本收口「已修改」,editor 主场景,评审 1-7)
-- [ ] **intentGuard 命中的混合消息**(「这是什么组件?顺便改成橙色」守规只作答)→ 不回灌(评审 1-9)
-- [ ] **子 agent 栈不装门禁**:html 子 agent 纯文本收口(`[note]`)零回灌(评审 1-6)
-- [ ] 预算 ≤2:连续 3 次零工具收尾 → 第 3 次放行收口 + `ZERO_TOOL_GATE_EXHAUSTED` observable(评审 1-10)
-- [ ] 与完结门禁共存:todos 未完成 + 零工具 → else-if 串行接力,各自计数不串;rounds===0 零 todos 谎报路径可达
+- [x] 祈使句 + 零工具纯文本谎报「已完成」→ 回灌续跑(第 2 段做 write,第 3 段带位置说明收口);模型被调 3 次(无门禁 2 次);debugLogs 恰 1 次;事实清单含 write×0 + 「成功写入路径:无」
+- [x] 问句豁免(「这个功能怎么用?」零工具收尾不触发)
+- [x] 只读动词豁免(「看看现在有几个组件」)
+- [x] 写过后收尾不触发
+- [x] 收口含位置说明不二次回灌(出口①)
+- [x] 预算 ≤2:连续 3 次谎报 → 第 3 次放行 + ZERO_TOOL_GATE_EXHAUSTED observable 恰 1 次;放行返回最终文本
+- [x] 附带修复:resume-notice 用例第二轮被新门禁回灌干扰(stub『重新生成』轮回复无位置说明)→ 桩补位置说明,断言索引归位
+- [ ] 委派豁免 e2e(需 subagent 场景;selftest isZeroEffectiveWrite 已覆盖 use_html/spawn_agents 判定,ReAct 级待 editor 真 LLM 验证)
+- [ ] intentGuard 命中跳过 e2e(混合消息「这是什么组件?顺便改成橙色」守规只作答)—— 自查:当前实现读「最新一条 human 消息」整体判定,问号豁免已覆盖混合消息尾问号场景;intentGuard pin 注入与门禁回灌并存的极端序列留真 LLM 观察
+- [ ] 子 agent 不装门禁 e2e(selftest 级经 __pgIsSubagent 标记断言已隐含;craftNotes [note] 收口实测待 editor)
 
-## Phase 4:文档 + 计数 + 验收
+## Phase 4:文档 + 计数 + 验收 ✅(2026-08-21)
 
-- [ ] CLAUDE.md 规划与任务锚定段增条目;CHANGELOG [Unreleased];计数同步
-- [ ] editor 实测:刷新丢数据后「重新生成」(C-14)—— resumeNotice + 本门禁双保险,agent 先核实再执行
-- [ ] 三绿(`npm test && npm run build && npm run test:e2e`)
+- [x] CLAUDE.md 规划与任务锚定段增「零工具收尾门禁」条目;CHANGELOG [Unreleased] Added;计数同步(2685/899/102)
+- [x] 三绿 2685/899/102 + browser 102 + exports 14 + types/alignment 0 错误
+- [ ] editor 实测:刷新丢数据后「重新生成」(C-14)—— resumeNotice + 本门禁双保险,agent 先核实再执行(editor 升级后跑)

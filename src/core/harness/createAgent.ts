@@ -33,6 +33,7 @@ import { withRetry, isAbort, type RetryOptions } from './retry'
 import { withStallTimeout, StreamStalledError, StreamMaxDurationError, DEFAULT_STREAM_STALL_MS, DEFAULT_STREAM_MAX_DURATION_MS } from '../utils/stallTimeout'
 import { isContextLengthError } from './errors'
 import { detectIncompleteFinish, buildGateFeedback } from './todos'
+import { detectActionImperative, isZeroEffectiveWrite, buildTurnFactSheet, buildZeroToolFeedback, mentionsLocation, type TurnToolUsage } from './actionGate'
 import {
   type Middleware,
   type ModelRequest,
@@ -254,6 +255,8 @@ export interface CreateAgentOptions {
   roundTokenBudget?: number
   /** 日志下沉:每条 debugLog 产生时回调(子 agent 经此把日志转发到主 debugLogs) */
   onLog?: (entry: DebugLog) => void
+  /** 子 agent 标记(subagent.ts 建子循环时置 true):imperative-zero-tool-gate 等主栈门禁据此豁免(子纯文本收口是正常形态) */
+  __pgIsSubagent?: boolean
   /** span 采集回调(capabilities.tracing 开时由 createChatSdk 注入;关时 undefined → startSpan/endSpan no-op 零开销) */
   onSpan?: (span: TraceSpan) => void
   /** 一次 agent 调用结束的 trace 回调(stream/invoke finally 触发,传完整 spans + metrics;createChatSdk 经此 emit('trace')) */
@@ -472,6 +475,7 @@ export function createAgent(options: CreateAgentOptions) {
   }
 
   let state: HarnessState = createInitialState()
+  if (options.__pgIsSubagent) state.__pgIsSubagent = true  // 子 agent 循环:主栈门禁(zero-tool-gate)豁免标记
 
   /** 系统段 token 预算占比(harden-context-resilience Phase 5):system 段最多占窗口 25%,余 75% 留对话+工具结果+输出 */
   const SYSTEM_BUDGET_RATIO = 0.25
@@ -738,6 +742,7 @@ export function createAgent(options: CreateAgentOptions) {
     spans.value = []
     spanSeq = 0
     state = createInitialState()
+    if (options.__pgIsSubagent) state.__pgIsSubagent = true  // 每次循环重建 state 保持子 agent 标记
     state.messages = messages
 
     // beforeAgent(正序):初始化中间件状态(todos/skills/memory 等)
@@ -789,6 +794,17 @@ export function createAgent(options: CreateAgentOptions) {
       budgetHinted: false,
     }
     state.loopProgress = progress
+
+    // imperative-zero-tool-gate:本轮工具用量(事实清单原料;每 invoke 新建,门禁局部消费)
+    const turnUsage: TurnToolUsage = { counts: {}, writePaths: [], failures: 0 }
+    let zeroToolRetries = 0           // 门禁回灌预算(≤2,同完结门禁;超限放行 + observable 留痕)
+    const maxZeroToolRetries = 2
+    /** writeCapable 标注判定(单一真相源;bulkGuard/componentLock 同口径;标注缺失退 WRITE_TOOL_NAMES 名单) */
+    const isWriteToolByName = (name: string): boolean => {
+      const t = allTools.find((x) => x.name === name) as { writeCapable?: boolean | ((args: Record<string, unknown>) => boolean) } | undefined
+      if (t && 'writeCapable' in t) return typeof t.writeCapable === 'function' ? true : t.writeCapable === true  // 条件写(eval_script transform)按保守口径计写
+      return WRITE_TOOL_NAMES.has(name)
+    }
 
     let rounds = 0
     let iterations = 0 // 总循环计数(含自纠轮),受 maxIterations 硬上限约束防死循环(harden-react-loop-budget)
@@ -916,6 +932,30 @@ export function createAgent(options: CreateAgentOptions) {
               currentMessages.push(new HumanMessage(buildGateFeedback(state.todos)))
               continue
             }
+            // imperative-zero-tool-gate(操作指令零工具收尾门禁,防谎报完成):完结门禁只盯 todos,「拆 0 说做完」
+            // (不建 todos 直接纯文本谎报「已完成」)绕过它。三要素 AND:①用户消息为操作祈使 ②本轮零写/零委派
+            // ③纯文本收尾且非问句。回灌带事实清单(D5:机制供给事实,LLM 对账复述,与清单不符无处嘴硬);
+            // 预算 ≤2 超限放行 + observable 留痕(对齐 garbled 耗尽模式 —— 谎报放行是最该让集成方感知的时刻)。
+            // 无 rounds 前置(谎报第 1 路恰发生在 rounds===0);intentGuard 命中最新 user 消息时跳过
+            // (双信号对冲:pin 段说别做、本门禁说快做会打架);出口①机械化:收口文本含位置说明 → 不再二次回灌。
+            // 子 agent 不触发:装配期只装主栈,子栈 state.__pgIsSubagent 标记。
+            const lastHumanContent = (() => { for (let mi = currentMessages.length - 1; mi >= 0; mi--) { const m = currentMessages[mi]; if ((m as unknown as { _getType?: () => string })._getType?.() === 'human') return String((m as unknown as { content?: unknown }).content ?? '') } return '' })()
+            if (!garbled && !state.__pgIsSubagent && zeroToolRetries < maxZeroToolRetries
+              && isZeroEffectiveWrite(turnUsage, isWriteToolByName)
+              && detectActionImperative(lastHumanContent)
+              && !mentionsLocation(response.content)
+              && !/[?？]\s*$/.test(response.content.trim())) {
+              zeroToolRetries += 1
+              pendingFormatRetry = true
+              log('middleware', { stage: 'zero_tool_gate', attempt: zeroToolRetries, factSheet: buildTurnFactSheet(turnUsage, state.todos, isWriteToolByName), content: response.content.slice(0, 160) })
+              currentMessages.push(new HumanMessage(buildZeroToolFeedback(buildTurnFactSheet(turnUsage, state.todos, isWriteToolByName))))
+              continue
+            }
+            // 预算耗尽仍零工具收尾:observable 留痕(评审 1-10;谎报放行恰是最该让集成方知晓的时刻,不能零感知)
+            if (!garbled && !state.__pgIsSubagent && zeroToolRetries >= maxZeroToolRetries && isZeroEffectiveWrite(turnUsage, isWriteToolByName)
+              && detectActionImperative(lastHumanContent)) {
+              onEvent({ type: 'error', message: '操作指令经 2 次回灌后仍以零工具纯文本收尾(疑似谎报完成),已放行;最终回复可能不实', severity: 'observable', code: 'ZERO_TOOL_GATE_EXHAUSTED', context: { factSheet: buildTurnFactSheet(turnUsage, state.todos, isWriteToolByName) } } as any)
+            }
             // beforeReturn 钩子(正序):agent 返回前可拦截自纠(回灌 user 消息继续循环)。
             // garbled 时不跑 verify(garbled content 跑 verify 无意义);预算检查前置(verifyAttempts < maxVerifyAttempts):避免预算耗尽仍跑钩子(尤其 adversarial 子 agent 烧 token),框架级防御不靠中间件自觉
             if (!garbled && maxVerifyAttempts > 0 && state.verifyAttempts < maxVerifyAttempts) {
@@ -992,6 +1032,18 @@ export function createAgent(options: CreateAgentOptions) {
           const key = extractWriteTargetPath(ctxs[i].call.args)
           if (r.status === 'error') progress.writeFailures[key] = (progress.writeFailures[key] ?? 0) + 1
           else delete progress.writeFailures[key]
+        }
+        // imperative-zero-tool-gate:本轮工具用量捕获(事实清单原料 —— 按名计数/成功写路径/失败数)
+        for (let i = 0; i < ctxs.length; i++) {
+          const r = results[i]
+          if (!r) continue
+          const name = ctxs[i].call.name
+          turnUsage.counts[name] = (turnUsage.counts[name] ?? 0) + 1
+          if (r.status === 'error') turnUsage.failures += 1
+          if (isWriteToolByName(name) && r.status !== 'error') {
+            const p = extractWriteTargetPath(ctxs[i].call.args)
+            turnUsage.writePaths.push(p || '(整体)')
+          }
         }
         if (signal?.aborted) break // 中止则不进入下一轮
         rounds++
