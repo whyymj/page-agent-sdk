@@ -658,6 +658,8 @@ export interface AgentInfo {
   planPhase?: { inPlanning: boolean; rounds: number; limit: number };
   /** 当前任务目标锚点(mission 中间件;未开启/未 capture → undefined) */
   mission?: Mission;
+  /** 方案确认留痕(save-and-plan-gates 3c:RHC 带 options 的方案被点选;undefined=本会话无已确认方案) */
+  planConfirmation?: PlanConfirmationRecord;
   /** 跨会话用户偏好(preferences 中间件;updatedAt 新在前;capabilities.preferences:false → undefined) */
   preferences?: PersistedPreference[];
   /** 宿主动作元信息(actions 注册;集成方 save_draft/publish 等) */
@@ -970,7 +972,14 @@ export interface ApprovalOptions {
 }
 export declare function createApprovalMiddleware(opts?: ApprovalOptions): any;
 export declare function createHumanConfirmTool(): any;
-export declare function createHumanConfirmMiddleware(): any;
+/** 方案确认留痕(save-and-plan-gates 3c):RHC 带 options 的方案被用户点选 → 记录 {at, summary, choice, viaOptions};inspect().planConfirmation 反射 */
+export interface PlanConfirmationRecord {
+  at: number;
+  summary: string;
+  choice: string;
+  viaOptions: true;
+}
+export declare function createHumanConfirmMiddleware(onResolved?: (record: PlanConfirmationRecord) => void): any;
 export declare const HUMAN_CONFIRM_TOOL_NAME: string;
 export interface CheckpointMeta {
   id: number;
@@ -1063,6 +1072,8 @@ export interface SessionSnapshot {
   workingMemory?: WorkingMemory;
   /** 上下文聚焦焦点(multi-focus:Focus[] 数组;null=清除标记;旧版本单个 applySnapshot 读时归一化) */
   focus?: Focus[] | null;
+  /** 方案确认留痕(save-and-plan-gates 3c:RHC 带 options 方案确认;跨刷新/切回原会话恢复;切/重置清除) */
+  planConfirmation?: PlanConfirmationRecord;
 }
 export type StorageEvent =
   | { type: 'degraded'; reason: string }

@@ -30,7 +30,7 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2609 项断言)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2618 项断言)
 npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,864 项;tests/e2e/<module>.mjs 按模块拆分)
 npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,102 项;tests/browser/<demo>.spec.ts)
 ```
@@ -101,7 +101,7 @@ skills/                         # 分发给使用者的 Agent Skill(入 npm 包 
 - **组件锁 · 同组件单委派互斥(3.13 机制锁,`sdk/componentLock.ts`)**:① 委派互斥 —— 同组件并发第二个 `use_html` 立即回灌 `COMPONENT_BUSY`(零子 agent 消耗);锁目标 = `components` 显式声明(过滤编造名)/ 缺省 task 文本整词唯一命中才锁(0 或 ≥2 命中不锁,宁漏不误);acquire 多组件原子(任一被占全失败不留半套锁),release 幂等。② 主写守卫(`createComponentWriteGuardMiddleware` wrapToolCall)—— 委派在途时主写工具命中锁组件子树回灌 `COMPONENT_LOCKED`(整体 set 拒;dryRun 不拦);**codeField 恒守卫(3.24.1,M4 真 LLM 驱动)**:已存在代码组件的 code 路径恒拒回灌 `CUSTOM_CODE_DELEGATION` 引导委派(`codeFieldIndexPaths` 实时解析;新建元素/整体 set/dryRun 不拦;不配 `getCodeFieldPaths` 零变化)—— flash 实测 3 次无视提示词禁令直写,机制化;**时序注意:守卫检查在工具派发同步段,use_html 的 acquire 在数个 await 之后** —— 并发场景下须有宏任务间隙(真 LLM 流式天然满足;e2e 用 slow_probe 时序锚)。③ commit 人工并发检测(`hashString` 快照比对)—— 在途窗口同组件 code 被外部改 → keep_external 保留人工值 + warn + **组件名经 `state.__pgKeepExternal` → `runSubagent` 的 `decorateSubagentResult` 随委派返回值回流主上下文**(ask-first 文案;否则主 agent 读到人工 stub 误判「子 agent 占位符」后读后写覆盖 —— M4 实测修);组件被删 → 不复活 + vfs 副本清理;索引位移 → 按 `__pgId` commit 不写错位置。观察层 `inspect().subagent.lockedComponents` + DebugDrawer 锁视图。真 LLM 复验(modes 套件,M4 4/4):并行发生 ✓ / 人工并发 keep_external 终态保留 ✓ / 墙钟量化断言待环境(LLM 代理黑洞两杀,deferred 有登记)
 
 ### 其他能力(详见 architecture.md §⑩⑪⑮)
-- MCP 远程工具(**逐 server 渐进注入**:各 server 连接落定即注入工具,坏 server 的 3 次连接重试不再拖累好 server;连接重试 3 次递增退避吸收上游瞬时 502/断连 + 握手 15s 降级 + **callTool 超时闸 60s**(`callTimeoutMs` 可调,3.6+;超时回灌自纠不断连))/ Verify 自检 opt-in(`createWriteBackCheck` + adversarial)/ `get_dom` opt-in / `inspect_env` 默认开 / actions 宿主动作 / SkillSpec.exec(一次性)vs tools(反复查询)勿双轨 / Approval(无响应方 30s 自动拒)/ Checkpoint 每轮存档 / Automation 预算 + `sdk.batch`
+- MCP 远程工具(**逐 server 渐进注入**:各 server 连接落定即注入工具,坏 server 的 3 次连接重试不再拖累好 server;连接重试 3 次递增退避吸收上游瞬时 502/断连 + 握手 15s 降级 + **callTool 超时闸 60s**(`callTimeoutMs` 可调,3.6+;超时回灌自纠不断连))/ Verify 自检 opt-in(`createWriteBackCheck` + adversarial)/ `get_dom` opt-in / `inspect_env` 默认开 / actions 宿主动作 / SkillSpec.exec(一次性)vs tools(反复查询)勿双轨 / Approval(无响应方 30s 自动拒)/ Checkpoint 每轮存档 / Automation 预算 + `sdk.batch` / **方案确认留痕 `lastPlanConfirmation`**(RHC 带 options 的方案被点选 → `{at,summary,choice,viaOptions}` 记录;仅方案确认记录(允许/拒绝/无 options 不写);随 SessionSnapshot 持久化跨刷新存活;switch/reset 清除;ApprovalBar 上下文提示行不自动跳过;`inspect().planConfirmation` 反射;bulk-change-guard 豁免的公共接口)
 
 ### 对话鲁棒性(详见 architecture.md §⑮)
 - **三档错误模型**:recoverable 回灌自纠 / fatal emit+中断 / observable 记录;导出 `routeError`/`asAgentError`/`agentError`
@@ -133,7 +133,7 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test    # tsx 跑 src/core/__tests__/selftest.ts,2609 项断言
+npm test    # tsx 跑 src/core/__tests__/selftest.ts,2618 项断言
 ```
 按模块拆分:`src/core/__tests__/modules/sec-NN.ts`(54+ 个模块)各导出 `run(ctx)`,runner 汇总;共享 `TestCtx` 在 `modules/_ctx.ts`。tsx 跑源码(不经构建),触不到 createChatSdk 顶层 API 作用域。**改任何核心模块后必跑**。
 
@@ -178,7 +178,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2609/864/102)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2618/874/102)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判)→ `npm run test:size` → `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证

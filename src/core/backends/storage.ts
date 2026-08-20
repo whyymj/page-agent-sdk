@@ -15,6 +15,7 @@
  */
 import type { AgentMessage, TokenUsage } from '../types'
 import type { VfsFile, Todo, Mission, WorkingMemory, Focus } from '../harness/state'
+import type { PlanConfirmationRecord } from '../harness/humanConfirm'
 import { makeId } from '../utils/id'
 
 // ===== 默认值 =====
@@ -28,8 +29,8 @@ const EVICT_DELAY_MS = 300
 const META_KIND = '__meta__'
 const KEY_PREFIX = 'v:1'
 
-type SnapshotKind = 'messages' | 'vfs' | 'todos' | 'memory' | 'checkpoints' | 'usage' | 'mission' | 'workingMemory' | 'focus'
-const SNAPSHOT_KINDS: SnapshotKind[] = ['messages', 'vfs', 'todos', 'memory', 'checkpoints', 'usage', 'mission', 'workingMemory', 'focus']
+type SnapshotKind = 'messages' | 'vfs' | 'todos' | 'memory' | 'checkpoints' | 'usage' | 'mission' | 'workingMemory' | 'focus' | 'planConfirmation'
+const SNAPSHOT_KINDS: SnapshotKind[] = ['messages', 'vfs', 'todos', 'memory', 'checkpoints', 'usage', 'mission', 'workingMemory', 'focus', 'planConfirmation']
 
 // ===== 数据结构 =====
 export interface SessionMeta {
@@ -58,6 +59,8 @@ export interface SessionSnapshot {
   workingMemory?: WorkingMemory
   /** 上下文聚焦焦点(multi-focus:Focus[] 数组;null=清除标记;旧版本存单个 Focus 对象,applySnapshot 读时归一化 [focus]) */
   focus?: Focus[] | null
+  /** 方案确认留痕(save-and-plan-gates 3c:RHC 带 options 的方案被点选;ApprovalBar 上下文提示 + bulk-change-guard 豁免;切/重置会话清除) */
+  planConfirmation?: PlanConfirmationRecord
 }
 
 /** 持久化的用户创建 skill(getContent 函数不可序列化,故 content 直接存字符串)

@@ -428,6 +428,11 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 
 **来源**:path-scoped-validation(path-scoped-validation change 实施期登记)。`restore_data` 的 `SNAPSHOT_SCHEMA_INVALID`(dataOps.ts restoreData 工具)对快照值做**当前 schema 的整对象校验** —— editor 若回退含 `script:""` 脏数据的历史快照会与 write 路径同样株连挂死。本 change 只动了写路径(set/patches/merge/append/move/eval/draft),快照回退路径未动(非目标明示)。**重启触发**:editor 实测回退失败案例出现。修法:快照是「历史既有数据」(非 agent 本次写入),回退校验可直接放开或降级 warning 留痕 —— 与写路径「只校验写入内容」哲学一致。
 
+### [2026-08-20] 3b「方案征询不机制化」残留风险登记(save-and-plan-gates Phase 3)— ⏸ 暂缓(预期永不触发)
+
+**来源**:save-and-plan-gates 3b 结论落定。「是否属方案类任务」是语义判断,机制做不了(不造伪机制);防线拆解 = 删除 approval 恒在 + save_page 确认(3a 已实施)+ bulk-change-guard(后续 change)+ 提示词。**重启触发**:实测出现「不征询直接删且绕过 approval」案例 —— 预期永不触发(approval 是硬门禁);若真出现说明 approval 链路被绕过,属 P0 缺陷而非本项设计缺陷。
+
+
 ## 维护约定
 
 - 暂缓项**不进** `project.md`「进行中的 change」(避免占心智);本文件是唯一索引。

@@ -211,6 +211,8 @@ export interface AgentInfo {
   planPhase?: { inPlanning: boolean; rounds: number; limit: number }
   /** 当前任务目标锚点(mission 中间件;未开启/未 capture → undefined) */
   mission?: import('../harness/state').Mission
+  /** 方案确认留痕(save-and-plan-gates 3c:RHC 带 options 的方案被点选;ApprovalBar 上下文提示 + bulk-guard 豁免;切/重置会话清除) */
+  planConfirmation?: import('../harness/humanConfirm').PlanConfirmationRecord
   /** 跨会话用户偏好(preferences 中间件;updatedAt 新在前;capabilities.preferences:false → undefined) */
   preferences?: import('../backends/preferenceStore').PersistedPreference[]
   /** 跨压缩工作记忆(workingMemory 中间件;pin 最近 read/query/search 定位 path + read hash,≤10 LRU) */

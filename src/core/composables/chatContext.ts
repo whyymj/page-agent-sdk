@@ -15,6 +15,7 @@ import { resolveDialogIcons, type DialogIcons } from '../components/icons'
 import { resolveDialogMessages, type DialogMessages, type DialogLocale } from '../components/messages'
 import type { AgentMessage, AgentInfo, StreamHandler, AgentImage } from '../types'
 import type { Focus } from '../harness/state'
+import type { PlanConfirmationRecord } from '../harness/humanConfirm'
 import { compressImage, MAX_IMAGES_PER_ROUND, ImageInputError } from '../tools/imageInput'
 
 /** useChat 返回类型(对话状态 + 操作,14 项) */
@@ -113,6 +114,8 @@ export interface ChatContext {
   isPendingAssistant: (idx: number) => boolean
   /** 全部聚焦焦点(响应式:infoTick ++ → 重算;空数组=未聚焦;ChatInput 多 chip 渲染 🎯 path) */
   focuses: ComputedRef<Focus[]>
+  /** 方案确认留痕(ApprovalBar 上下文提示行;undefined=本会话无已确认方案) */
+  planConfirmation: ComputedRef<PlanConfirmationRecord | undefined>
   /** 追加聚焦焦点(→ sdk.addFocus) */
   addFocus: (focus: Focus) => { ok: boolean; error?: string }
   /** 移除单个聚焦焦点(→ sdk.removeFocus;ChatInput chip ✕) */
@@ -282,6 +285,11 @@ export function createChatContext(opts: ChatContextOptions = {}): ChatContext {
     void opts.infoTick?.value
     return opts.getFocuses?.() ?? []
   })
+  // 方案确认留痕(响应式:infoTick ++ → 重算;ApprovalBar 上下文提示行 —— 本会话已确认过方案时提示「此操作属方案内」帮用户快速判断,不自动跳过)
+  const planConfirmation = computed<PlanConfirmationRecord | undefined>(() => {
+    void opts.infoTick?.value
+    return opts.getInfo?.()?.planConfirmation
+  })
   const addFocus = (f: Focus): { ok: boolean; error?: string } => (opts.onAddFocus ? opts.onAddFocus(f) : { ok: false, error: 'focus 未启用' })
   const removeFocus = (path: string): void => { opts.onRemoveFocus?.(path) }
   const clearFocus = (): void => {
@@ -325,6 +333,7 @@ export function createChatContext(opts: ChatContextOptions = {}): ChatContext {
     editQueued,
     isPendingAssistant,
     focuses,
+    planConfirmation,
     addFocus,
     removeFocus,
     clearFocus,

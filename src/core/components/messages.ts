@@ -87,6 +87,8 @@ export interface DialogMessages {
   viewArgs: string
   collapseArgs: string
   argsTruncatedSuffix: string     // …(已截断)
+  planConfirmedPrefix: string     // 本会话已确认过方案 / Plan confirmed this session:(方案确认上下文提示行,值在后)
+  planConfirmedSuffix: string     // ,此操作可能属方案内 / , this op may be part of it
   // ===== ConflictBar =====
   conflictTitlePrefix: string     // 写入冲突: / Write conflict:
   conflictTitleSuffix: string     // 已被外部修改 / was modified externally
@@ -332,6 +334,8 @@ export const MESSAGES_ZH_CN: DialogMessages = {
   viewArgs: '查看参数',
   collapseArgs: '收起参数',
   argsTruncatedSuffix: '\n…(已截断)',
+  planConfirmedPrefix: '本会话已确认过方案「',
+  planConfirmedSuffix: '」,此操作可能属方案内',
   conflictTitlePrefix: '写入冲突:',
   conflictTitleSuffix: ' 已被外部修改',
   conflictDetailTemplate: 'AI 基于「读取时的旧值」准备{op},但该属性在你读取之后被外部代码/其他 agent/手动改过。',
@@ -574,6 +578,8 @@ export const MESSAGES_EN_US: DialogMessages = {
   viewArgs: 'View args',
   collapseArgs: 'Collapse args',
   argsTruncatedSuffix: '\n…(truncated)',
+  planConfirmedPrefix: 'Plan confirmed this session: "',
+  planConfirmedSuffix: '". This op may be part of it',
   conflictTitlePrefix: 'Write conflict:',
   conflictTitleSuffix: ' was modified externally',
   conflictDetailTemplate: 'The AI prepared to {op} based on the stale value it read, but the property was changed afterwards by external code / another agent / manual edit.',

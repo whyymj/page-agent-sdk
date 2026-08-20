@@ -12,6 +12,7 @@ import MsgText from './MsgText.vue'
 const ctx = useChatContext()
 const { pendingApproval, resolveApproval } = ctx.chat
 const m = ctx.messages
+const planConfirmation = ctx.planConfirmation
 
 /** 工具调用参数 JSON 默认收起,点「查看参数」展开;新一次挂起重置 */
 const approvalArgsExpanded = ref(false)
@@ -67,6 +68,10 @@ const approvalArgsPreview = computed(() => {
         </button>
       </div>
       <pre v-if="approvalArgsPreview && approvalArgsExpanded" class="approval-args">{{ approvalArgsPreview }}</pre>
+      <!-- 方案确认上下文(save-and-plan-gates 3c):本会话已确认过方案 → 提示行帮用户快速判断该点同意;不自动跳过(拆兜底不可) -->
+      <div v-if="planConfirmation" class="approval-plan-context">
+        <IconGlyph :icon="ctx.icons.recommend" />{{ m.planConfirmedPrefix }}{{ planConfirmation.choice }}{{ m.planConfirmedSuffix }}
+      </div>
       <div class="approval-actions">
         <button class="approval-deny" @click="resolveApproval(false)"><MsgText :text="m.deny" /></button>
         <button class="approval-allow" @click="resolveApproval(true)"><MsgText :text="m.approve" /></button>
@@ -95,6 +100,7 @@ const approvalArgsPreview = computed(() => {
 .approval-question { margin: 10px 0; padding: 10px 12px; border-radius: 8px; background: #fff; border: 1px solid #fde68a; font-size: 13px; color: #1f2937; line-height: 1.6; white-space: pre-wrap; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03); }
 .approval-context { margin: 6px 0 10px; padding: 0 2px; font-size: 12px; color: #92400e; line-height: 1.6; }
 .approval-recommend { margin: 8px 0 10px; padding: 8px 12px; border-radius: 8px; background: rgba(var(--cs-primary-rgb), 0.06); border-left: 3px solid var(--cs-primary); font-size: 12px; color: var(--cs-primary); line-height: 1.6; }
+.approval-plan-context { margin: 8px 0 2px; padding: 8px 12px; border-radius: 8px; background: #ecfdf5; border-left: 3px solid #10b981; font-size: 12px; color: #047857; line-height: 1.6; }
 .approval-opt { padding: 6px 16px; border: 1px solid var(--cs-primary); border-radius: 7px; background: #fff; color: var(--cs-primary); font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
 .approval-opt:hover { background: var(--cs-primary); color: #fff; transform: translateY(-1px); }
 </style>

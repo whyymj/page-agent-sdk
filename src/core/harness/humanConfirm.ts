@@ -55,8 +55,28 @@ export function createHumanConfirmTool(): StructuredToolInterface {
   )
 }
 
-/** 创建人工确认中间件:拦截 request_human_confirmation,发 approval_request 事件,await 用户选择 */
-export function createHumanConfirmMiddleware(): Middleware {
+/**
+ * RHC 确认留痕(save-and-plan-gates 3c):仅「带 options 的方案确认」记录 ——
+ * 单组件删除确认等非方案 RHC 不写入(防 bulk-change-guard 豁免被一次低敏感确认烧掉)。
+ * viaOptions 恒 true(口径过滤的实现侧:回调仅在 options 选择路径触发)。
+ */
+export interface PlanConfirmationRecord {
+  /** 确认时间戳 */
+  at: number
+  /** question 摘要(ApprovalBar 提示行 / bulk 豁免文案可见) */
+  summary: string
+  /** 用户选择的方案(options 之一) */
+  choice: string
+  /** 带 options 的方案确认(口径标记,恒 true;非方案确认不记录) */
+  viaOptions: true
+}
+
+/**
+ * 创建人工确认中间件:拦截 request_human_confirmation,发 approval_request 事件,await 用户选择。
+ * onResolved(save-and-plan-gates 3c):用户裁决回调 —— 仅「带 options 且用户点了某方案」时触发
+ * (方案确认留痕 lastPlanConfirmation);true/false(允许/拒绝)与非方案征询不回调,由调用方口径控制。
+ */
+export function createHumanConfirmMiddleware(onResolved?: (record: PlanConfirmationRecord) => void): Middleware {
   return {
     name: 'humanConfirm',
     wrapToolCall: async (ctx: ToolCallContext, next: (ctx: ToolCallContext) => Promise<ToolExecResult>) => {
@@ -70,6 +90,18 @@ export function createHumanConfirmMiddleware(): Middleware {
           if (settled) return
           settled = true
           cleanup.forEach((fn) => fn())
+          // 3c 留痕回调:仅「options 方案被点选」记录(string choice 且本次征询带 options);
+          // 允许(true)/拒绝(false)与非方案征询不记录(评审 2-5 口径:单组件删除确认不解除批量门禁武装)
+          if (onResolved && typeof choice === 'string' && Array.isArray(ctx.args?.options) && ctx.args.options.length > 0) {
+            try {
+              onResolved({
+                at: Date.now(),
+                summary: String(ctx.args?.question ?? '').slice(0, 120),
+                choice: String(choice),
+                viaOptions: true,
+              })
+            } catch { /* 留痕失败不影响确认流程 */ }
+          }
           if (choice === false) {
             resolve({
               content: '用户拒绝了该方案。请停止当前操作,询问用户希望如何调整,不要擅自执行。',

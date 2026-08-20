@@ -157,5 +157,64 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:session-integrity] plan-confirmation:RHC 方案点选 → 留痕 + inspect 反射 + 切会话清除 + 快照恢复(save-and-plan-gates 3c)')
+  {
+    // storage:'memory' 同实例共享后端;走 stream(UI 路径,approval_request 事件可达 handler)模拟 ApprovalBar 点选方案。
+    // (send/invoke 路径 approval_request 不外发,由 30s approvalWatch 自动拒收口 —— F1 契约)
+    const llm = stubModel(
+      { toolCalls: [{ name: 'request_human_confirmation', args: { question: '整页重建方案:保留哪些区块?', options: ['方案A:全保留', '方案B:只保留导航'] } }] },
+      { text: '已按所选方案执行' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-si-planconf', storage: 'memory', llm, autoTitle: false,
+      capabilities: { ...CAPS, vfs: false, subagent: false },
+    })
+    await sdk.mount()
+    assert(sdk.inspect().planConfirmation === undefined, '✓ 留痕边界 → 初始无方案确认(inspect 反射 undefined)')
+    await sdk.stream([{ role: 'user', content: '重建整页', timestamp: Date.now() }], (e) => {
+      if (e.type === 'approval_request' && Array.isArray(e.args?.options)) e.resolve('方案B:只保留导航')
+    })
+    const rec = sdk.inspect().planConfirmation
+    assert(rec && rec.choice === '方案B:只保留导航' && rec.viaOptions === true, '✓ 方案确认 → 带 options 点选后 inspect().planConfirmation 记录 choice')
+    assert(rec.summary.includes('整页重建') && typeof rec.at === 'number', '✓ 方案确认 → 记录含 question 摘要 + 时间戳')
+    const pcLogs = sdk.debugLogs.value.filter((l) => l.data?.stage === 'plan_confirmation')
+    assert(pcLogs.length === 1, `✓ 方案确认 → debugLogs 留痕 plan_confirmation 恰 1 次(实际 ${pcLogs.length})`)
+    // 切新会话 → 清除;切回原会话 → 快照恢复(豁免链跨刷新/切换不断)
+    const idA = sdk.sessionId
+    await sdk.switchSession()
+    assert(sdk.inspect().planConfirmation === undefined, '✓ 生命周期 → 切新会话留痕清除(方案时效限本会话)')
+    await sdk.switchSession(idA)
+    const rec2 = sdk.inspect().planConfirmation
+    assert(rec2 && rec2.choice === '方案B:只保留导航', '✓ 生命周期 → 切回原会话留痕随快照恢复(3c 跨刷新存活)')
+    sdk.resetSession()
+    assert(sdk.inspect().planConfirmation === undefined, '✓ 生命周期 → resetSession 留痕清除')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:session-integrity] plan-confirmation 口径:允许/拒绝/无 options 不留痕(单组件确认不烧豁免)')
+  {
+    const cases = [
+      { name: '允许(true)', args: { question: '删除组件 X?', options: ['删', '不删'] }, choice: true },
+      { name: '拒绝(false)', args: { question: '删除组件 X?', options: ['删'] }, choice: false },
+      { name: '无 options 点选', args: { question: '用哪个标题?' }, choice: '标题一' },
+    ]
+    for (const c of cases) {
+      const llm = stubModel(
+        { toolCalls: [{ name: 'request_human_confirmation', args: c.args }] },
+        { text: '收到' },
+      )
+      const sdk = createChatSdk({
+        ui: false, id: 'e2e-si-planconf-neg', storage: false, llm, autoTitle: false,
+        capabilities: { ...CAPS, vfs: false, subagent: false },
+      })
+      await sdk.mount()
+      await sdk.stream([{ role: 'user', content: '操作一下', timestamp: Date.now() }], (e) => {
+        if (e.type === 'approval_request') e.resolve(c.choice)
+      })
+      assert(sdk.inspect().planConfirmation === undefined, `✓ 口径过滤 → ${c.name} 不留痕(非方案确认)`)
+      sdk.unmount()
+    }
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

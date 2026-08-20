@@ -36,7 +36,7 @@ import { createSkillsMiddleware, type SkillSpec } from '../harness/skills'
 import { createMemoryMiddleware } from '../harness/memory'
 import { createPermissionsMiddleware, type PermissionRule } from '../harness/permissions'
 import { createApprovalMiddleware } from '../harness/approval'
-import { createHumanConfirmTool, createHumanConfirmMiddleware, HUMAN_CONFIRM_TOOL_NAME } from '../harness/humanConfirm'
+import { createHumanConfirmTool, createHumanConfirmMiddleware, HUMAN_CONFIRM_TOOL_NAME, type PlanConfirmationRecord } from '../harness/humanConfirm'
 import {
   createCheckpointManager,
   createCheckpointMiddleware,
@@ -958,6 +958,16 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const resumeNoticeMw = createResumeNoticeMiddleware(() => {
     core.agent?.debugLogs?.value?.push({ timestamp: Date.now(), type: 'middleware', data: { stage: 'resume_notice' } })
   })
+  // 方案确认留痕(save-and-plan-gates 3c):RHC 带 options 的方案被用户点选 → 记录(时间戳+question 摘要+选择);
+  // 供 ApprovalBar 上下文提示行(本会话已确认过方案)+ bulk-change-guard 豁免(三 change 公共接口)。
+  // 随 SessionSnapshot 持久化(editor storage:'indexed' 跨刷新恢复会话,内存态刷新即丢会断豁免链);切/重置会话清除。
+  // 口径:仅方案类确认记录 —— 单组件删除确认(true/false)不写入(评审 2-5:防低敏感确认烧掉批量门禁豁免)
+  let lastPlanConfirmation: PlanConfirmationRecord | undefined
+  const humanConfirmMw = createHumanConfirmMiddleware((record) => {
+    lastPlanConfirmation = record
+    persistSave({ planConfirmation: record })
+    core.agent?.debugLogs?.value?.push({ timestamp: Date.now(), type: 'middleware', data: { stage: 'plan_confirmation', summary: record.summary, choice: record.choice } })
+  })
   // 上下文聚焦(focus-context):指定组件精修,目标/视野/范围三层收敛。getSchema 延迟引用 liveData(适配 setData 运行时替换,同 checkpointMgr.getData 模式)
   // 焦点变更统一 emit focus_change(所有入口:API/agent 工具/dialog chip/reset;闭包引用 emit,运行时已初始化)
   const focusMw = createFocusMiddleware({ getSchema: () => liveData()?.schema, getBind: () => liveData()?.bind, onChange: (focuses) => emit({ type: 'focus_change', focuses }) })
@@ -1589,7 +1599,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     // 会话级 checkpoint:auto 模式每轮 beforeModel 首次自动存(回滚到上次正常时);顺序无关(仅 beforeAgent/beforeModel 副作用)
     ...(useCheckpoint && checkpointAuto && checkpointMgr ? [createCheckpointMiddleware(checkpointMgr)] : []),
     // 人工确认(主动侧):拦截 request_human_confirmation,发 approval_request;装在 approval 白名单之前(更外层,先收口,避免双重确认)
-    ...(useHumanConfirm ? [createHumanConfirmMiddleware()] : []),
+    ...(useHumanConfirm ? [humanConfirmMw] : []),
     // 人工确认(被动侧):白名单工具调用前确认(wrapToolCall 洋葱,此处更内层;实例同 childGuards 注入子栈,fix-authorization-surface)
     ...(approvalMw ? [approvalMw] : []),
     // baseline-guard(自冲突根因修):非 dataOps 工具改 bind(自定义工具/actions/委派落地等)→ 基线一次刷新。
@@ -1770,6 +1780,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       // context-persist-resilience 功能A:恢复 mission/workingMemory(刷新/切会话后长任务目标 + 工作记忆不丢;reset 在 applySnapshot 前,恢复值不被清)
       if (snap.mission && useMission) missionMw.setMission(snap.mission)
       if (snap.workingMemory && useWorkingMemory) workingMemoryMw.restore(snap.workingMemory)
+      // 方案确认留痕恢复(save-and-plan-gates 3c):刷新/切会话回原会话后豁免链不断
+      // (内存态刷新即丢 → ApprovalBar 提示行消失 + bulk 豁免失效;随 snapshot 存取)
+      if (snap.planConfirmation) lastPlanConfirmation = snap.planConfirmation
       // focus-auto-switch:恢复 focus(刷新/切会话后聚焦状态保留)。
       // multi-focus:归一化(优先 focuses 数组,fallback 旧 focus 单个 → [focus])+ 逐 path 校验剔除失效(schema 变化);与 sdk.setFocus 单一真相
       if (useFocus) {
@@ -1992,6 +2005,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       workingMemoryMw.reset()
       focusMw.reset()
       resumeNoticeMw.reset() // 切会话:清待注入恢复标记(下方 applySnapshot 若灌入历史会重新标记)
+      lastPlanConfirmation = undefined // 切会话:清方案确认留痕(方案时效限本会话;回原会话经 applySnapshot 恢复)
       // 偏好本身跨会话保留(不 reset);仅重置消息扫描水位(新会话 messages 从 0 起,须重扫)
       preferencesMw?.resetScanCursor()
       // session-history S1:切会话清 checkpoint 栈,防旧会话快照污染新会话(开 checkpoint 时,否则 restore 会回退到旧会话态)
@@ -2027,6 +2041,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       workingMemoryMw.reset()
       focusMw.reset()
       resumeNoticeMw.reset() // 清空会话:新会话无恢复历史,清待注入标记
+      lastPlanConfirmation = undefined // 清空会话:清方案确认留痕(save-and-plan-gates 3c)
       preferencesMw?.resetScanCursor() // 偏好跨会话保留;只重置扫描水位(同 switchSession)
       if (checkpointMgr) checkpointMgr.importStack([])
       if (core.agent) core.agent.debugLogs.value = []
@@ -2241,6 +2256,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         })),
         planPhase: todosMw.getPlanPhase(),
         mission: useMission ? missionMw.getMission() : undefined,
+        // 方案确认留痕(save-and-plan-gates 3c):本会话最近一次 RHC 方案确认(带 options);DebugDrawer 可见
+        planConfirmation: lastPlanConfirmation,
         // 跨会话用户偏好(DebugDrawer 只读视图;capabilities.preferences:false → undefined)
         preferences: usePreferences && preferencesMw ? preferencesMw.getPreferences() : undefined,
         workingMemory: useWorkingMemory ? workingMemoryMw.getWorkingMemory() : undefined,
@@ -2601,6 +2618,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     // storage 仍残留旧清单 → 刷新恢复出遗留的已完成 todos。代价:未用过 todos 的会话多写一条空记录(可忽略)。
     const todos = core.agent?.getState?.()?.todos ?? []
     persistSave({ todos })
+    // 方案确认留痕(save-and-plan-gates 3c):确认即时 persistSave 已存,此处兜底覆盖
+    // (确认后未发消息即刷新的场景由即时写覆盖;重置后写 undefined 清除残留防旧值复活)
+    persistSave({ planConfirmation: lastPlanConfirmation })
     // context-persist-resilience 功能A:持久化 mission/workingMemory(刷新/切会话后长任务目标 + 工作记忆不丢;非空才写省 IDB 写)
     if (useMission) {
       const m = missionMw.getMission()

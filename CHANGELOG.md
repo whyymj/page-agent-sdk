@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### Added(方案确认留痕 save-and-plan-gates 3c:RHC 方案点选机制化供给「已确认」事实)
+
+- **`lastPlanConfirmation` 方案确认留痕**:`request_human_confirmation` 带 options 的方案被用户点选 → core 记录 `{at, summary, choice, viaOptions:true}`(时间戳 + question 摘要 + 所选方案)。口径过滤:仅方案确认记录 —— 允许/拒绝/无 options 征询不写入(防单组件删除确认烧掉批量门禁豁免,为 bulk-change-guard 预留公共接口)。回调抛错吞掉不影响确认流程
+- **随会话快照持久化**:`SessionSnapshot.planConfirmation` 新 kind(确认即时 persistSave + afterRound 兜底)—— editor 类 `storage:'indexed'` 集成跨刷新/切会话回原会话豁免链不断;switchSession/resetSession 清除(方案时效限本会话)
+- **ApprovalBar 上下文提示行**:本会话存在已确认方案时,工具确认弹窗追加「本会话已确认过方案『xxx』,此操作可能属方案内」提示行(帮用户快速判断,**不自动跳过** —— 拆兜底不可);zh/en 双语
+- **`inspect().planConfirmation` 反射**(DebugDrawer 可见);`humanConfirm` 中间件加 `onResolved` 回调参数;`PlanConfirmationRecord` 类型导出;debugLogs 留痕 `stage:'plan_confirmation'`
+
 ### Changed(write 校验局部化 path-scoped-validation:拔「兄弟节点株连」架构根因)
 
 > ⚠️ **校验语义收窄,依赖全局校验的集成方需迁移**:schema 校验从「全局结构一致」收窄为「**被写子树结构合法**」—— 单点写入不再被其他节点的历史脏数据拦死(editor 实测 script:"" 事故:改 A 被兄弟 B 的脏数据株连,agent 被迫批量改数据迁就 schema)。
@@ -19,7 +26,7 @@
 - 新导出:`validateAtPath` / `resolveSchemaPath` / `schemaHasRefinement` / `arrayMinLength` / `elementSchemaCandidates` / `PathSchemaResolution` / `ValidateAtPathResult`(schemaUtils)+ `applyPatchesToBind` / `validateRootValueLocally` / `validateWriteLocally` / `LocalWriteBack` / `LocalValidationPlan`(dataOps);主包与 headless 子集同步
 
 ### Tests
-- selftest 2588→2609(sec-92:局部校验 20 项 —— 事故复刻反株连/append 反株连/remove 结构约束/strip 联动/union 歧义/整体 set 契约/patches 原子性/防原型污染);sec-01「缺必填拒」与 sec-02「叶子设子属性」两断言按新契约改写
+- selftest 2588→2618(sec-92:局部校验 20 项;sec-93:方案确认留痕口径 9 项);e2e 856→874(session-integrity plan-confirmation 生命周期 + 口径过滤 11 项);sec-01「缺必填拒」与 sec-02「叶子设子属性」两断言按新契约改写
 
 ## [3.37.0] - 2026-08-20
 
