@@ -252,7 +252,8 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `contextOptions` | `Partial<ContextManagerOptions> \| false` | Fine params (`false` disables compression). Includes `promptSoftCapTokens` (3.11+ compression cost cap — 160K default when window ≥320K, explicit `0` disables) and `preserveLastToolResults` (default `['describe_data','describe_data']` — keep field descriptions in compressed summary) |
 | | `summaryLlm` | `BaseChatModel \| LLMConfig` | Summary-dedicated LLM (defaults to main `llm`) |
 | | `maxMemoryRounds` | `number` · default `30` | Dialog history memory round cap (`0` disables trim) |
-| | `vfs` | `{initialFiles?,maxBytes?}` · default 4MB | In-memory workspace cap (LRU evict on overflow) |
+| | `vfs` | `{initialFiles?,maxBytes?,poolBytes?,mainTools?}` · default 4MB, `mainTools:true` | In-memory workspace cap (LRU evict on overflow). `mainTools:false` (3.41+) hides the 9 vfs tools from the main agent's view (usageHints sync-skips the vfs section) while subagent stacks keep supply via the internal tool pool — for orchestrator-only main agents |
+| | `data.tools` | `'high' \| string[]` | 3.41+ assembly-time dataOps tool whitelist. `'high'` drops the legacy quartet (`get/set/edit/delete_data` — superseded by `read`/`write`); an explicit name array filters exactly; opt-in families (draft/resource) always preserved when assembled
 | **Persistence** | `storage` | `'indexed' \| 'session' \| 'local' \| 'memory' \| config \| false` · default off | Assign to enable; multi-agent isolated by `id` |
 | | `session` | `{id?,autoResume?,title?}` | Session control |
 | | `shareContext` | `boolean` · default `false` | Same `id` instances share one agent |
@@ -494,8 +495,8 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 2687 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 864 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm test            # 2762 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 906 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test

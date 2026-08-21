@@ -55,11 +55,11 @@ async function openEditorPage(context, url) {
 /**
  * idle 判定(比 lib 的 waitIdle 快且更可靠):
  * busy 读 send-btn 的 stop-btn class(绑定 SDK state.loading,整个生成期间恒 true,
- * 连子 agent reasoning 不打日志的静默期也覆盖);idle = 不 busy + 新 assistant 消息出现
- * + 20s 稳定窗(防「轮次间隙」误判,替代 lib 的 90s×3 采样确认,每轮省 ~5min)。
- * 兜底:活动子 agent > 0 视为 busy(reasoning 无 stop-btn 场景);页面 reload → 抛(会话已断)。
- * approval 自动拒:编辑器删除/保存确认框无限等待用户(headless 无人点 → busy 永挂,实测 18min 卡死);
- * 拒绝保持页面不被 agent 清空/保存,新旧配置同等待遇,对比公平。
+ * 连子 agent reasoning 不打日志的静默期也覆盖);msgs 用 **sdk.messages 数据源计数**
+ * (DOM 行计数在 editor 上不可靠:实测重启后 assistant 行恒 1,数据层正常 —— DOM 结构与
+ * 面板状态耦合,数据数组才是事实源);idle = 不 busy + 新 assistant 消息出现 + 20s 稳定窗。
+ * 兜底:活动子 agent > 0 视为 busy;页面 reload → 抛(会话已断);busy 停 + 日志静默 60s
+ * 无新回复 = 错误收场轮,按结束处理(采到什么算什么,报告 errors 呈现)。
  */
 async function waitEditorIdle(page, baselineMsgs, { timeoutMs = 1_200_000 } = {}) {
   const t0 = Date.now()
@@ -77,10 +77,10 @@ async function waitEditorIdle(page, baselineMsgs, { timeoutMs = 1_200_000 } = {}
     const st = await page.evaluate((base) => {
       const sendBtn = document.querySelector('.chat-dialog button.send-btn')
       const busy = !!sendBtn && sendBtn.classList.contains('stop-btn')
-      const n = document.querySelectorAll('.chat-dialog .message-row.assistant[data-msg-idx]').length
+      const msgs = (window.__sdk?.messages ?? []).filter((m) => m.role === 'assistant').length
       const logs = window.__sdk?.debugLogs?.value ?? []
       return {
-        busy, msgs: n, base,
+        busy, msgs, base,
         active: window.__sdk?.getActiveSubagents?.().length ?? 0,
         logN: logs.length,
         quietMs: logs.length ? Date.now() - logs[logs.length - 1].timestamp : 0,
@@ -90,8 +90,10 @@ async function waitEditorIdle(page, baselineMsgs, { timeoutMs = 1_200_000 } = {}
     // debugLogs 清零(quietMs 为 epoch)→ reload,续跑无意义
     if (st.quietMs > 1e12) throw new Error('页面已 reload(debugLogs 清零),会话断,需重跑本轮')
     if (st.busy || st.active > 0) { sawBusy = true; stable = 0 } else stable += 1
-    // 必须先见过 busy(证明 prompt 真的处理过),再连续 8 次采样(≈20s)不 busy 且新消息已出
-    if (sawBusy && stable >= 8 && st.msgs > st.base) return st
+    // idle = 见过 busy(prompt 确被处理)+ 连续 8 次采样(≈20s)不 busy + 日志静默 >60s。
+    // 不再依赖消息计数:editor 场景 DOM 行计数与 sdk.messages 计数实测都不可靠
+    // (DOM 行重启后恒 1;sdk.messages 与 UI 数组不同源,轮内不增)。busy/active/日志是三源独立信号,足够。
+    if (sawBusy && stable >= 8 && st.quietMs > 60_000) return st
     if (Math.random() < 0.08) console.log('   [idle 采样]', JSON.stringify(st))
     await sleep(2500)
   }
@@ -110,7 +112,8 @@ async function runOnce(browser, url, config, runNo) {
     // 方案征询自动应答(首轮实测:agent 出方案征询确认即收尾,零写入;无人确认对比失效):
     // idle 后若末条 assistant 像在等确认 → 回「确认,直接执行」,最多 3 轮(防无限对话)
     for (let turn = 0; turn < 4; turn++) {
-      const prevMsgs = await page.evaluate(() => document.querySelectorAll('.chat-dialog .message-row.assistant[data-msg-idx]').length)
+      // 基线仅用于诊断日志(采样里带出);idle 判定已不依赖计数
+      const prevMsgs = await page.evaluate(() => (window.__sdk.messages ?? []).filter((m) => m.role === 'assistant').length)
       await waitEditorIdle(page, prevMsgs, { timeoutMs: 1_200_000 }) // 生成整页 5-15min,上限 20min
       if (turn === 3) break
       const lastContent = await page.evaluate(() => {

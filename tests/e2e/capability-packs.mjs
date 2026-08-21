@@ -1167,5 +1167,34 @@ export async function run() {
     sdk2.unmount()
   }
 
+  console.log('[e2e:capability-packs] main-surface-slim Phase 2:vfs.mainTools:false(主栈隐藏 vfs 工具,子 agent 池保供)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    // 队列:主委派 → 子 vfs_write → 子收口 → 主收口(与单模式 commit 用例同链路,叠加 mainTools:false)
+    const llm = stubModel(
+      { toolCalls: [{ name: 'use_html', args: { task: '改横幅' } }] },
+      { toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_banner.html', content: '<section>新横幅</section>' } }] },
+      { text: '已改' },
+      { text: '完成' },
+    )
+    const bind = { title: 't', components: [{ type: 'custom', name: 'banner', code: '<section>旧</section>', __pgId: 'c_banner' }] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-vfs-hide', storage: false, llm,
+      vfs: { mainTools: false }, // ← 主栈隐藏 9 个 vfs 工具
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
+    })
+    await sdk.mount()
+    const toolNames = sdk.inspect().tools.map((t) => t.name)
+    assert(!toolNames.includes('vfs_read') && !toolNames.includes('vfs_write') && !toolNames.includes('vfs_ls'), '✓ vfs.mainTools:false → 主栈无 vfs 工具(inspect().tools 实测)')
+    assert(!toolNames.some((n) => n.startsWith('vfs_')), `✓ vfs.mainTools:false → 全部 9 个 vfs_* 出局(实测残留 ${toolNames.filter((n) => n.startsWith('vfs_')).length})`)
+    assert(toolNames.includes('use_html'), '✓ vfs.mainTools:false → use_html 委派工具保留')
+    // 子 agent 链路不回归:委派 → 子 vfs_write(子池保供)→ commit 回写 data.code
+    await sdk.send('改横幅')
+    assert(bind.components[0].code === '<section>新横幅</section>', '✓ vfs.mainTools:false → 子 agent vfs_write + commit 全链路不回归(子池保供生效)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

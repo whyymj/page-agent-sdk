@@ -490,6 +490,11 @@ export interface DataConfig {
    *  配置后 read 受保护路径返占位符(精确值不入 LLM 消息流),写侧强制(freeze 拒/verbatim 展开校验)。
    *  opt-in:未配(默认)全部行为零变化 */
   resources?: ResourceProtectSpec[];
+  /**
+   * 装配期工具白名单(main-surface-slim Phase 1):`'high'` 预设(全量减旧四件 get/set/edit/delete_data)/
+   * 具体名单(按名过滤,未装配名 warn 留痕)。不传 = 全量零回归;仅首次装配生效,运行时 setData 忽略。
+   */
+  tools?: string[] | 'high';
 }
 /** createDataOps 选项(审计回调 / 快照上限 / 乐观锁) */
 export interface DataOpsOptions {
@@ -499,6 +504,11 @@ export interface DataOpsOptions {
   onConflict?: (conflict: ConflictInfo) => Promise<ConflictResolution>;
   /** 冲突监听字段白名单(任意深度字段名):声明后仅这些字段的值变动触发自动冲突检测(位置不敏感);未声明 = 不开自动检测(仅显式 expectedHash 校验);['*'] = 全字段检测(旧 autoLock 行为) */
   conflictWatchFields?: string[];
+  /**
+   * 装配期工具白名单(main-surface-slim Phase 1):`'high'` 预设(全量减旧四件 get/set/edit/delete_data)/
+   * 具体名单(按名过滤,未装配名 warn 留痕)。不传 = 全量零回归。
+   */
+  tools?: string[] | 'high';
 }
 
 /** 数据操作控制器(运行时替换配置;createDataOps 返回的工具数组上以不可枚举属性 `controller` 挂载) */
@@ -804,7 +814,7 @@ export interface ChatSdkOptions {
   permissions?: PermissionRule[];
   /** 自定义中间件(注入到内置中间件之后;可拦截/观察模型调用、工具、prompt) */
   middleware?: any[];
-  vfs?: { initialFiles?: Record<string, string>; maxBytes?: number };
+    vfs?: { initialFiles?: Record<string, string>; maxBytes?: number; poolBytes?: { largeResults?: number; drafts?: number; userFiles?: number }; mainTools?: boolean };
   /** 每个数据对象最多保留快照数(默认 20) */
   maxSnapshots?: number;
   /** 乐观锁冲突裁决策略(默认 'ask'):ask=挂起 pendingConflict 等人工 resolveConflict;overwrite=agent 强制覆盖(宿主与 agent 争同一份数据且 agent 优先时用,冲突自动收口不挂起,无人值守场景防永挂);keep_external=自动保留外部修改(agent 收到提示重新 read)。自动裁决仍外发 conflict 事件(conflict.autoResolved 标记) */

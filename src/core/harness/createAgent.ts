@@ -34,6 +34,7 @@ import { withStallTimeout, StreamStalledError, StreamMaxDurationError, DEFAULT_S
 import { isContextLengthError } from './errors'
 import { detectIncompleteFinish, buildGateFeedback } from './todos'
 import { detectActionImperative, isZeroEffectiveWrite, buildTurnFactSheet, buildZeroToolFeedback, mentionsLocation, detectStatusQuery, assertsCompletion, isZeroToolCalls, buildStatusQueryFeedback, type TurnToolUsage } from './actionGate'
+import { isSuccessfulWriteResult } from './writeGate'
 import {
   type Middleware,
   type ModelRequest,
@@ -672,9 +673,19 @@ export function createAgent(options: CreateAgentOptions) {
       const result = await (target.invoke as any)(ctx.args, { configurable: callConfig })
       let content = typeof result === 'string' ? result : JSON.stringify(result)
       // 大结果外存:经 ctx.state.files(vfs 中间件注入的共享引用),超阈值转存 vfs 只留预览+引用
+      // main-surface-slim Phase 2:vfsAvailable 判定从「allTools 含 vfs_read 工具名」改为
+      // 「state.files 非空」—— vfs.mainTools:false 隐藏主栈 vfs 工具后,大结果外存照常
+      // (files 注入与工具暴露解绑;外存后模型经 usageHints/工具结果里的 vfs_read 引用按需回读,
+      // 子 agent 池仍含 vfs 工具)
+      // review 回改(P1):上段注释的「usageHints 提供 vfs_read 引用」不成立(usageHints 无 vfs 段),
+      // 且 offload 外存文案硬编码「用 vfs_read 回读」—— 主栈隐藏 vfs_read 后该引用成死路(模型调
+      // 不存在的工具)。故主栈 vfs_read 缺席时退回 passThrough/截断路径(行为安全,信息可达性不受损):
+      // files 非空决定「能存」,工具在场决定「能读」,两者都在才外存。子 agent 栈有自己的 vfs 工具池,
+      // 不受影响。
+      const mainVfsReadAvailable = allTools.some((t) => t.name === 'vfs_read')
       content = offloadLargeResult(content, {
         files: ctx.state.files,
-        vfsAvailable: allTools.some((t) => t.name === 'vfs_read'),
+        vfsAvailable: !!ctx.state.files && mainVfsReadAvailable,
         toolName: ctx.name,
         threshold: offloadThreshold,
         passThroughChars: offloadPassThrough,
@@ -1055,7 +1066,11 @@ export function createAgent(options: CreateAgentOptions) {
           const name = ctxs[i].call.name
           turnUsage.counts[name] = (turnUsage.counts[name] ?? 0) + 1
           if (r.status === 'error') turnUsage.failures += 1
-          if (isWriteToolByName(name) && r.status !== 'error') {
+          // stale-read-invalidation Phase 0:写成功判定改 isSuccessfulWriteResult 四重门槛
+          // (writeCapable args-aware + 非 dryRun + 非 throw + 非 ERROR: 字符串)—— dataOps 业务失败
+          // 是 return toolError 字符串不 throw,旧口径只看 status 会把 SCHEMA_INVALID 的写计入
+          // fact-sheet「成功写入路径」,零工具门禁的事实清单失真(评审 A1 同源缺陷)
+          if (isSuccessfulWriteResult(allTools.find((t) => t.name === name) as (Record<string, unknown> & { name: string }) | undefined, ctxs[i].call.args, r)) {
             const p = extractWriteTargetPath(ctxs[i].call.args)
             turnUsage.writePaths.push(p || '(整体)')
           }

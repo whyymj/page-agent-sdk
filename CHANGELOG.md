@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+## [3.41.0] - 2026-08-21
+
+### Added(main-surface-slim 主栈暴露面瘦身 + 写成功判定地基)
+
+- **`data.tools` 装配期工具白名单**:`createChatSdk({ data: { tools: 'high' | string[] } })` / `createDataOps(config, { tools })`。`'high'` 预设裁掉旧四件(`get/set/edit/delete_data`,与高层 `read`/`write` 同职能二选一),高层套与 opt-in 家族(draft/resource)全保留;具体名单按名精确过滤,集成方完全自控;未装配名 warn 留痕(拼写错/已改名早暴露);纯写名单(全裁读工具)warn 提醒「模型无法核实结果」;不传 = 全量零回归
+- **`vfs.mainTools` 主栈暴露面开关**:`createChatSdk({ vfs: { mainTools: false } })` 把 9 个 vfs 工具从主 agent 视野隐藏(usageHints 同步不注入 vfs 用法段),子 agent 栈不受影响 —— html 子 agent 的 allowedTools 过滤仍能吃到经 `subagentPoolTools` 补充供给的 vfs 工具池;主栈大结果 offload 降级为 passThrough/截断(不再回灌 vfs_read 引用);默认 `true` 零变化。editor 场景实测动机:主 agent 只编排不落盘,42→32 工具
+- **`isSuccessfulWriteResult` 写成功判定纯函数**(stale-read-invalidation Phase 0 地基,导出):四重门槛 —— args-aware `writeCapable` + 非 dryRun + `status !== 'error'` + content 非 `ERROR:` 前缀(toolError 返回式失败路径)。**同源缺陷修复**:`turnUsage.writePaths` 原只看 `status`,SCHEMA_INVALID/VERSION_CONFLICT 等 `return toolError()` 字符串写被计入 zero-tool-gate 事实清单「成功写入路径」→ 改用同口径,失败写不再被说成写成了
+
 ## [3.40.3] - 2026-08-21
 
 ### Added

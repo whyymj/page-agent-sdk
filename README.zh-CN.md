@@ -248,7 +248,8 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `contextOptions` | `Partial<ContextManagerOptions> \| false` | 细参覆盖（`false` 关压缩）。含 `promptSoftCapTokens`（3.11+ 压缩触发成本上限,窗口 ≥320K 默认 160K、显式 0 关）与 `preserveLastToolResults`（默认 `['describe_data','describe_data']`——压缩摘要里保留字段说明） |
 | | `summaryLlm` | `BaseChatModel \| LLMConfig` | 摘要专用 LLM（不配用主 `llm`） |
 | | `maxMemoryRounds` | `number` · 默认 `30` | 对话历史内存上限轮次（`0` 关裁剪） |
-| | `vfs` | `{initialFiles?,maxBytes?}` · 默认 4MB | 内存工作区上限（超限 LRU 淘汰） |
+| | `vfs` | `{initialFiles?,maxBytes?,poolBytes?,mainTools?}` · 默认 4MB, `mainTools:true` | 内存工作区上限（超限 LRU 淘汰）。`mainTools:false`（3.41+）把 9 个 vfs 工具从主 agent 视野隐藏（usageHints 同步不注入 vfs 段），子 agent 栈经内部工具池照常供给 —— 适合主 agent 只编排不落盘的场景 |
+| | `data.tools` | `'high' \| string[]` | 3.41+ dataOps 装配期工具白名单。`'high'` 裁掉旧四件（`get/set/edit/delete_data`，与高层 `read`/`write` 同职能二选一）；具体名单按名精确过滤；opt-in 家族（draft/resource）装配了就保留 |
 | **持久化** | `storage` | `'indexed' \| 'session' \| 'local' \| 'memory' \| 配置 \| false` · 默认关 | 赋值开启；多 agent 靠 `id` 隔离 |
 | | `session` | `{id?,autoResume?,title?}` | 会话控制 |
 | | `shareContext` | `boolean` · 默认 `false` | 同 `id` 多实例共享同一 agent |
@@ -497,8 +498,8 @@ function switchTo(i: number) {
 ## 自测
 
 ```bash
-npm test            # 2687 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 864 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm test            # 2762 项断言（tsx 源码级，不依赖 LLM）
+npm run test:e2e    # 906 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试

@@ -205,7 +205,7 @@ createChatSdk({
   session: { id?, autoResume?, title? },  // 会话控制
 
   /* ===== 容量与鲁棒性 ===== */
-  vfs: { initialFiles?, maxBytes?, poolBytes? },      // 虚拟工作区(默认总上限 8MB;2.16.0+ 三池分池:large_results/drafts/userFiles 各自 LRU,`poolBytes` 单池配)
+  vfs: { initialFiles?, maxBytes?, poolBytes?, mainTools? },  // 虚拟工作区(默认总上限 8MB;2.16.0+ 三池分池:large_results/drafts/userFiles 各自 LRU,`poolBytes` 单池配;3.41+ `mainTools:false` 主栈隐藏 9 个 vfs 工具、子 agent 栈照常供给)
   maxSnapshots: 20,             // 主数据快照数(默认 20,FIFO)
   maxMemoryRounds: 30,          // 内存保留对话轮数(默认 30,超限压缩为摘要;0 关闭)
   maxToolRounds: 10,            // 最多工具调用轮次(默认 10;只计真实工具轮,格式/verify 自纠不消耗;另有 maxIterations 总迭代硬上限防死循环)

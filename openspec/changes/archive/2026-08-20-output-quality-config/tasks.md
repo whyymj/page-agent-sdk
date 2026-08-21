@@ -23,11 +23,27 @@
 
 ## Phase 3:真 LLM 对比验收
 
-- [ ] 同 prompt(世界杯专题页)跑旧配置 vs 新配置,**各 ≥3-5 次**;**每跑新会话**(storage:'indexed' 跨刷新恢复 + resumeNotice 干扰,评审)
-- [ ] 采集:组件数/层级(list_components 快照)、占位文案扫描、token/耗时(sdk.usage)、委派规格遵循度
-- [ ] **一等指标(评审补)**:范例 load 率(debugLogs load_skill 被调)/ 失败率回滚次数(add_component_tree failed+COMPONENT_BUSY+预检拒)/ 子 agent 委派成功率(use_html 数 vs commit 成功数)
-- [ ] 人工评视觉层次(截图对比)
-- [ ] 结论写入本 change(归档时)+ 若提升不显著 → 分析(模型/thinking 是否真生效/范例是否被 load —— 按上述一等指标排查,防误判「范例无用」)
+- [x] 同 prompt(世界杯专题页)跑旧配置 vs 新配置,**各 ≥3-5 次**;**每跑新会话**(storage:'indexed' 跨刷新恢复 + resumeNotice 干扰,评审)——2026-08-21 v5 跑完 3+3(`tests/runtime/quality-compare-real-llm.mjs`,aiBaseline=1 开关分新旧,每轮独立 context;期间排掉 3 个套件坑:approval 挂起自动处理/方案征询自动应答/idle 判定去消息计数化)
+- [x] 采集:组件数/层级(list_components 快照)、占位文案扫描、token/耗时(sdk.usage)、委派规格遵循度
+- [x] **一等指标(评审补)**:范例 load 率(debugLogs load_skill 被调)/ 失败率回滚次数(add_component_tree failed+COMPONENT_BUSY+预检拒)/ 子 agent 委派成功率(use_html 数 vs commit 成功数)
+- [ ] 人工评视觉层次(截图对比)——报告含回复全文,截图留待用户抽查
+- [x] 结论写入本 change(归档时)+ 若提升不显著 → 分析(模型/thinking 是否真生效/范例是否被 load —— 按上述一等指标排查,防误判「范例无用」)
+
+**Phase 3 结果(2026-08-21,`_real-llm-quality-compare.json`)**:
+
+| 指标 | 旧配置(flash 全量,3 轮) | 新配置(范例+v4-pro,有效轮 1、2) | Δ |
+|---|---|---|---|
+| 组件数 | 8 / 10 / 6(均 8.0) | 11 / 13(均 12) | **+4(+50%)** |
+| 层级 | 恒 2(全平铺) | 2 / 3(run2 破层) | 破平铺但不稳定 |
+| 类型多样性 | 6.7 | 7.5 | +0.8 |
+| 范例 load 率 | 0/3 | 3/3(全文注入 3/3) | 管道全通 |
+| 委派(成功率) | 1/1/2(全 done) | 1/1(__pgId 修复后链路健康) | 持平 |
+| 占位文案 | 0 | 0 | 持平(双低) |
+| prompt token | ~580K | 613K/324K | 持平 |
+
+- **new run 3 为废数据**(1.2min/1 组件/279 tok:LLM 代理黑洞 + 重试耗尽残轮,已标注不计入结论)
+- **一等指标排查结论**:范例 load 3/3 全文注入(非 vfs 引用)→ 范例确实生效;委派链路经 3.40.2 `__pgId` 修复后两组全部 done → 委派非瓶颈;层级提升不稳(run1 仍平铺)→ 剩余短板在 flash 主编排「组装纪律」而非范例/思考深度,后续可考虑编排 prompt 补容器结构引导(另行立项)
+- 过程副产品:3 个真 LLM 实测驱动的 SDK 修复(3.40.2 `__pgId` 委派零落地 P0 / 3.40.3 状态询问零核实门禁 / 套件 approval-方案-idle 三坑)
 
 ## Phase 4:归档
 

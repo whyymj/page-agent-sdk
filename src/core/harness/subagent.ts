@@ -130,6 +130,12 @@ export interface SubagentOptions {
   llm: SubagentLlmConfig | BaseChatModel
   /** 主 agent 全部工具(子 agent 按白名单筛选只读子集)。支持 getter:运行时 setTools/addTool 动态加的工具对子 agent 立即可见(P1-4) */
   allTools: StructuredToolInterface[] | (() => StructuredToolInterface[])
+  /**
+   * 子 agent 筛选池额外补充的工具(main-surface-slim Phase 2:vfs.mainTools:false 时主栈 allTools
+   * 不含 vfs 工具,但 html 子 agent 的 allowedTools('vfs_write' 等)仍要筛得到)。装配期由 createChatSdk
+   * 把 vfs 工具数组经此传入;与 allTools 合并去重后按白名单筛选。不传 = 零变化。
+   */
+  subagentPoolTools?: StructuredToolInterface[]
   /** 子 agent 额外可用的工具名(默认仅只读主数据 + fetch) */
   allowedTools?: string[]
   /** 子 agent 默认身份(spawn 运行时的 role 优先;都缺省用兜底) */
@@ -351,12 +357,20 @@ async function runSubagent(
   // P1-4:allTools 支持 getter —— 子 agent spawn 时取主 agent 最新工具集(运行时 setTools/addTool 动态加的工具对子 agent 可见,不再用装配期快照)
   const getAllTools: () => StructuredToolInterface[] = () =>
     typeof opts.allTools === 'function' ? opts.allTools() : opts.allTools
+  // main-surface-slim Phase 2:主栈隐藏的 vfs 工具经 subagentPoolTools 补进子 agent 筛选池
+  // (合并去重:allTools 动态变化时以 name 为键,补充工具不覆盖主池同名项)
+  const getMergedPool = (): StructuredToolInterface[] => {
+    if (!opts.subagentPoolTools?.length) return getAllTools()
+    const main = getAllTools()
+    const mainNames = new Set(main.map((t) => t.name))
+    return [...main, ...opts.subagentPoolTools.filter((t) => !mainNames.has(t.name))]
+  }
   // 子 agent 工具:主合并池按白名单筛只读子集 + 排除框架/保留工具(装配期源头 filter)+ extraTools(预声明子 agent 的专属工具,不经筛选)
-  let childTools = buildChildTools(getAllTools(), allow, opts.extraTools ?? [])
+  let childTools = buildChildTools(getMergedPool(), allow, opts.extraTools ?? [])
   // writablePaths(子 agent 写权限):写工具包 path guard 后加入(越界 PATH_OUT_OF_SCOPE;整体 set 禁)
   if (opts.writablePaths?.length) {
     childTools = childTools.filter((t) => !isWriteCapableTool(t)) // A2 移除写工具(按标注单一真相源,防重复)
-    const guardedWrites = getAllTools()
+    const guardedWrites = getMergedPool()
       .filter((t) => isWriteCapableTool(t) && !isReservedFrameworkTool(t.name))
       .map((t) => wrapWithPathGuard(t, opts.writablePaths!))
     childTools = [...childTools, ...guardedWrites]
@@ -704,6 +718,11 @@ export interface SubagentsMiddlewareOptions {
   thinkingModeDefault?: 'simple' | 'deep'
   /** 主 agent 全部工具(子 agent 按只读白名单筛)。支持 getter(P1-4:动态工具对子 agent 可见) */
   allTools: StructuredToolInterface[] | (() => StructuredToolInterface[])
+  /**
+   * 子 agent 筛选池额外补充(main-surface-slim Phase 2:vfs.mainTools:false 时主栈隐藏的 vfs 工具
+   * 经此保供,html 子 agent allowedTools 仍筛得到)。configToSubOpts 透传 SubagentOptions.subagentPoolTools。
+   */
+  subagentPoolTools?: StructuredToolInterface[]
   /** 读主 agent 全部焦点(multi-focus:预声明子 agent 同样继承主焦点) */
   getFocuses?: () => Focus[]
   /** 取主数据 schema getter(focus-auto-switch:透传给子 focus 中间件) */
@@ -746,6 +765,7 @@ function configToSubOpts(config: SubagentConfig, main: SubagentsMiddlewareOption
     llm: config.llm ?? main.llm,
     ...(thinkingMode ? { thinkingMode } : {}),
     allTools: main.allTools,
+    ...(main.subagentPoolTools?.length ? { subagentPoolTools: main.subagentPoolTools } : {}),
     systemPrompt: config.systemPrompt,
     temperature: config.temperature,
     maxTokens: config.maxTokens,
