@@ -10,7 +10,7 @@
  * D. mentionsLocation 出口①机械化(jsonPath/组件 id 模式)
  */
 import type { TestCtx } from './_ctx'
-import { detectActionImperative, isZeroEffectiveWrite, buildTurnFactSheet, buildZeroToolFeedback, mentionsLocation, type TurnToolUsage } from '../../harness/actionGate'
+import { detectActionImperative, isZeroEffectiveWrite, buildTurnFactSheet, buildZeroToolFeedback, mentionsLocation, detectStatusQuery, assertsCompletion, isZeroToolCalls, buildStatusQueryFeedback, type TurnToolUsage } from '../../harness/actionGate'
 
 export async function run(ctx: TestCtx): Promise<void> {
   const { assert } = ctx
@@ -79,5 +79,25 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(mentionsLocation('改动在 navbar 组件的 props.title 路径') === true, '✓ 出口① → 「路径」字样命中')
     assert(mentionsLocation('改好了') === false, '✓ 出口① → 空泛收口不命中(仍回灌)')
     assert(mentionsLocation('已完成全部修改,数据都在') === false, '✓ 出口① → 无位置说明不命中')
+  }
+
+  // ===== E. status-query-zero-verify-gate(状态询问零核实断言门禁,editor 实测 2026-08-21)=====
+  {
+    // detectStatusQuery:editor 实测原句「写到了哪里」必命中
+    assert(detectStatusQuery('写到了哪里') === true, '✓ 状态询问 → 「写到了哪里」命中(editor 实测原句)')
+    assert(detectStatusQuery('完成了吗') === true, '✓ 状态询问 → 「完成了吗」命中')
+    assert(detectStatusQuery('页面要移动端效果') === false, '✓ 状态询问 → 操作指令不命中')
+    assert(detectStatusQuery('组件的属性是什么') === false, '✓ 状态询问 → 概念问句不命中(答历史知识无需核实)')
+    // assertsCompletion:断言词命中/如实回答不命中
+    assert(assertsCompletion('htmlCode ✅ 已写入,cssCode 已写入') === true, '✓ 完成断言 → 「已写入」命中')
+    assert(assertsCompletion('JS代码没有写入成功,jsCode 是空字符串') === false, '✓ 完成断言 → 如实报告「未写入」不命中')
+    // isZeroToolCalls:连 read 都没有才算零核实
+    assert(isZeroToolCalls({ counts: {}, writePaths: [], failures: 0 }) === true, '✓ 零核实 → 零工具命中')
+    assert(isZeroToolCalls({ counts: { read: 1 }, writePaths: [], failures: 0 }) === false, '✓ 零核实 → 调过 read(已核实)不命中')
+    // 回灌文案要素:先核实 + 事实清单 + 防凭印象
+    const fb = buildStatusQueryFeedback(buildTurnFactSheet({ counts: {}, writePaths: [], failures: 0 }, []))
+    assert(fb.includes('没有调用任何工具') && fb.includes('本轮事实:工具调用 无'), '✓ 状态回灌 → 零工具事实明示')
+    assert(fb.includes('核实') && fb.includes('刷新回退'), '✓ 状态回灌 → 先核实 + 刷新回退风险提示')
+    assert(fb.includes('不要凭印象回复'), '✓ 状态回灌 → 防凭印象收口')
   }
 }

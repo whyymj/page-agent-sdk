@@ -111,3 +111,40 @@ export function buildZeroToolFeedback(factSheet: string): string {
 export function mentionsLocation(text: string): boolean {
   return LOCATION_MENTION_RE.test(text || '')
 }
+
+// ===== status-query-zero-verify-gate(状态询问零核实断言门禁,editor 真实会话 2026-08-21 驱动) =====
+
+/**
+ * 状态询问问句(问结果/进度/位置):「写到了哪里/完成了吗」类。答案必须基于实际数据 ——
+ * editor 实测:委派失败(keep_external/轮次上限)+ 页面刷新回退后,「写到了哪里」被零工具
+ * 凭对话记忆编出整张「✅ 已写入」状态表(resumeNotice 纯提示词管不住 flash,须机制)。
+ */
+const STATUS_QUERY_RE = /(写到了哪|写到哪|在哪写|什么位置|完成了吗|完成没|做完了吗|做好了|好了吗|搞定了吗|生成了吗|改好了吗|改完了吗|保存了吗|写入了吗|写入了没有|有没有写入|有没有保存|现在的?(页面|数据|状态|内容)|当前(页面|数据|状态)|进度如何|进度怎么样|什么状态)/
+
+/** 回复中的完成态断言词(宣称数据已是目标态) */
+const COMPLETION_ASSERT_RE = /(已写入|已保存|已添加|已删除|已修改|已更新|已设置|已生成|已创建|已搭建|已删除|已经写入|已经完成|全部完成|全部搞定)/
+
+/** 判定用户消息是否为「状态询问」(纯函数) */
+export function detectStatusQuery(text: string): boolean {
+  return STATUS_QUERY_RE.test((text || '').trim())
+}
+
+/** 判定回复是否断言完成态(零核实断言的必要条件之一) */
+export function assertsCompletion(text: string): boolean {
+  return COMPLETION_ASSERT_RE.test(text || '')
+}
+
+/** 本轮零工具调用(连 read 都没有 —— 状态断言毫无事实依据;调过任何工具 = 至少核实过,放行) */
+export function isZeroToolCalls(usage: TurnToolUsage): boolean {
+  return Object.values(usage.counts).every((n) => n <= 0)
+}
+
+/** 状态询问零核实断言的回灌文案(先核实再断言;复用事实清单口径) */
+export function buildStatusQueryFeedback(factSheet: string): string {
+  return [
+    '⚠️ 这是关于数据现状的询问,但本轮你没有调用任何工具(含 read)就断言了「已写入/已完成」状态。',
+    `${factSheet}`,
+    '数据可能已被刷新回退或外部修改,凭对话记忆断言状态不可靠。',
+    '请先用 read / list 类工具核实实际数据再据实回答;若实际未写入,如实说明并继续完成,不要凭印象回复「已完成」。',
+  ].join('\n')
+}

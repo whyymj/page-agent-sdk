@@ -33,7 +33,7 @@ import { withRetry, isAbort, type RetryOptions } from './retry'
 import { withStallTimeout, StreamStalledError, StreamMaxDurationError, DEFAULT_STREAM_STALL_MS, DEFAULT_STREAM_MAX_DURATION_MS } from '../utils/stallTimeout'
 import { isContextLengthError } from './errors'
 import { detectIncompleteFinish, buildGateFeedback } from './todos'
-import { detectActionImperative, isZeroEffectiveWrite, buildTurnFactSheet, buildZeroToolFeedback, mentionsLocation, type TurnToolUsage } from './actionGate'
+import { detectActionImperative, isZeroEffectiveWrite, buildTurnFactSheet, buildZeroToolFeedback, mentionsLocation, detectStatusQuery, assertsCompletion, isZeroToolCalls, buildStatusQueryFeedback, type TurnToolUsage } from './actionGate'
 import {
   type Middleware,
   type ModelRequest,
@@ -949,6 +949,21 @@ export function createAgent(options: CreateAgentOptions) {
               pendingFormatRetry = true
               log('middleware', { stage: 'zero_tool_gate', attempt: zeroToolRetries, factSheet: buildTurnFactSheet(turnUsage, state.todos, isWriteToolByName), content: response.content.slice(0, 160) })
               currentMessages.push(new HumanMessage(buildZeroToolFeedback(buildTurnFactSheet(turnUsage, state.todos, isWriteToolByName))))
+              continue
+            }
+            // status-query-zero-verify-gate(状态询问零核实断言门禁,editor 实测 2026-08-21):「写到了哪里/
+            // 完成了吗」类状态询问,agent 本轮连 read 都没调却断言「已写入/已完成」(凭对话记忆编状态表)→
+            // 回灌先核实。触发场景:委派失败(keep_external/轮次上限)+ 页面刷新回退后记忆全陈旧,
+            // resumeNotice 纯提示词管不住。与 imperative gate 共用回灌预算(zeroToolRetries,防死循环);
+            // 调过任何工具(含 read)= 至少核实过,不触发;断言词不命中(如实说「未写入」)不触发。
+            if (!garbled && !state.__pgIsSubagent && zeroToolRetries < maxZeroToolRetries
+              && isZeroToolCalls(turnUsage)
+              && detectStatusQuery(lastHumanContent)
+              && assertsCompletion(response.content)) {
+              zeroToolRetries += 1
+              pendingFormatRetry = true
+              log('middleware', { stage: 'status_query_gate', attempt: zeroToolRetries, factSheet: buildTurnFactSheet(turnUsage, state.todos, isWriteToolByName), content: response.content.slice(0, 160) })
+              currentMessages.push(new HumanMessage(buildStatusQueryFeedback(buildTurnFactSheet(turnUsage, state.todos, isWriteToolByName))))
               continue
             }
             // 预算耗尽仍零工具收尾:observable 留痕(评审 1-10;谎报放行恰是最该让集成方知晓的时刻,不能零感知)

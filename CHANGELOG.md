@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+## [3.40.3] - 2026-08-21
+
+### Added
+
+- **状态询问零核实断言门禁(status-query-zero-verify)**:「写到了哪里/完成了吗」类状态询问,agent 本轮连 read 都没调却断言「已写入/已完成」(凭对话记忆编状态表)→ 回灌「先核实再断言」。editor 实测驱动(2026-08-21 诊断:委派失败 + 页面刷新回退后,「写到了哪里」被零工具谎报全 ✅;resumeNotice 纯提示词管不住 flash)。与 imperative-zero-tool-gate 共用回灌预算(≤2);调过任何工具(含 read)= 已核实放行;如实报告「未写入」不触发;debugLogs `stage:'status_query_gate'`
+
 ## [3.40.2] - 2026-08-21
 
 ### Fixed
