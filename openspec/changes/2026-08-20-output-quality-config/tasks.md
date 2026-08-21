@@ -4,21 +4,21 @@
 
 ## Phase 0:验收前置(无阻塞,可先行)
 
-- [ ] editor AiAssistant 挂 dev-only `window.__sdk = this.sdk`(评审 3-1:验收脚本以 window.__sdk 为就绪条件,editor 现无暴露,不补则 Phase 3 跑不起来)
-- [ ] 验证:`UISPEC_BASE=http://local.smzdm.com:8565 node tests/runtime/_real-llm-lib.mjs` 冒烟(能等到 __sdk、能取 inspect/usage)
+- [x] editor AiAssistant 挂 dev-only `window.__sdk = this.sdk`(评审 3-1:验收脚本以 window.__sdk 为就绪条件,editor 现无暴露,不补则 Phase 3 跑不起来)——2026-08-21 已挂,NODE_ENV=development 门控 + beforeDestroy 清理
+- [x] 验证:`UISPEC_BASE=http://local.smzdm.com:8565 node tests/runtime/_real-llm-lib.mjs` 冒烟(能等到 __sdk、能取 inspect/usage)——2026-08-21 PASS(Playwright 等价路径:`window.__sdk` 挂载即就绪,67 keys;登录态过期一度阻塞,用户补 token 后通过;产物 /tmp/exemplar-verify/)
 
 ## Phase 1:范例填充(阻塞:用户挑专题)
 
-- [ ] 用户挑 2-3 个高质量线上专题 → 编辑器导出 `window.Editor.nodeInfo` JSON(child 保留 3-5 区块,过长 props 截断)
-- [ ] 用户挑 1-2 个高质量 compCode 的 `props.htmlCode` 完整值
-- [ ] **拆双 skill** 填入 `exemplars.js`:page-tree-exemplars(页面树)/ code-component-exemplars(纯代码);每范例附看点批注(模块划分/文案具体化/间距节奏)
-- [ ] **体积预算 ≤30KB**(评审:超 offload 阈值会外存 vfs 指针,few-shot 静默失效)
-- [ ] 验证:双 skill 自动注册(load_skill 列表可见)+ 编排提示含「参照范例」段 + **debugLogs 验证 load_skill 工具结果为全文形态**(非 vfs 引用,评审)
+- [x] 用户挑 2-3 个高质量线上专题 → 编辑器导出 `window.Editor.nodeInfo` JSON(child 保留 3-5 区块,过长 props 截断)——2026-08-21 用户提供 1 个线上真实专题(test.json,197KB/9 区块/12 组件类型);**1 个已填,后续用户再挑可追加**(范例文件头有维护步骤)
+- [x] 用户挑 1-2 个高质量 compCode 的 `props.htmlCode` 完整值——同一专题内取「头图双视频切换」compCode(htmlCode 1002 字 + jsCode 655 字,含交互逻辑,真实线上)
+- [x] **拆双 skill** 填入 `exemplars.js`:page-tree-exemplars(页面树)/ code-component-exemplars(纯代码);每范例附看点批注(模块划分/文案具体化/间距节奏)
+- [x] **体积预算 ≤30KB**(评审:超 offload 阈值会外存 vfs 指针,few-shot 静默失效)——树范例 9872 字符紧凑 JSON + 代码范例 2197 字符;offload 阈值按模型上下文自适应(flash 1M 窗口 → 20000 字符),双双安全
+- [x] 验证:双 skill 自动注册(load_skill 列表可见)+ 编排提示含「参照范例」段 + **debugLogs 验证 load_skill 工具结果为全文形态**(非 vfs 引用,评审)——2026-08-21 全 PASS:inspect().skills 含双 skill 且旧名单数不存在;page-tree-exemplars load_skill 结果 10883 字符全文(含 markdown 头 +「超值大牌专区」,无 vfs_read/已外存字样);systemPrompt 两处观测到引导段;agent 复述正确(9 区块/双视频切换)。附带:零工具收尾门禁在纯查询轮正常回灌事实清单,未误执行写操作
 
 ## Phase 2:思考模型配置(阻塞:用户提供模型名)
 
-- [ ] 用户确认网关可用思考模型(thinking 版 deepseek / claude;flash 无效)
-- [ ] `ai-llm.local.js` 配 htmlSubagent.llm(**baseUrl 引用式写法照抄 config.js:59 示例,同源代理绕 Clash,勿写死绝对地址**)+ thinkingMode:'deep'
+- [x] 用户确认网关可用思考模型(thinking 版 deepseek / claude;flash 无效)——2026-08-21 网关实测:deepseek-v4-pro 支持 thinking 且默认出 reasoning_content(deepseek-v4/claude/gpt-4o 等均 400)
+- [x] `ai-llm.local.js` 配 htmlSubagent.llm(**baseUrl 引用式写法照抄 config.js:59 示例,同源代理绕 Clash,勿写死绝对地址**)+ thinkingMode:'deep'——改走 config.js DEFAULT_HTML_SUBAGENT 默认配置路径(随 8368810 提交,免 ai-llm.local.js;ai-llm.local.js 覆盖链路仍可用)
 - [ ] 验证:**主判据 = DebugDrawer 可见子 agent 思考输出(reasoning)**;辅助 = inspect().subagent.subagents[].thinkingApplied === 'applied'(评审主次对调:网关可能剥离 extra_body.thinking,SDK 侧注入成功不等于生效)
 
 ## Phase 3:真 LLM 对比验收

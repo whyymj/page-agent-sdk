@@ -12,7 +12,7 @@
 import type { Middleware } from '../harness/middleware'
 import type { VfsStore } from '../backends/vfs'
 import { normalize as normalizeVfsPath } from '../backends/vfs'
-import type { DataOpsController } from '../tools/dataOps'
+import { supplementPgId, type DataOpsController } from '../tools/dataOps'
 import type { Focus } from '../harness/state'
 import { getByPath, setByPath } from '../tools/jsonUtils'
 import { validateHtmlFormat } from '../tools/htmlValidate'
@@ -186,9 +186,15 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
   return {
     name: 'code-asset-checkout-commit',
     beforeAgent: (state) => {
-      // ① checkout:data[<codeField>] → vfsStore(按 __pgId,覆盖式刷新 = data 最新快照;子 agent vfs_edit 直接改 vfsStore 同引用)
       const ctrl = getController()
       const bind = ctrl?.get?.().bind
+      // ⓪ 宿主路径注入补 __pgId(editor 真实会话诊断驱动,2026-08-21):宿主用自定义工具走自身原生流程
+      // 加组件(如编辑器 add_component 直改 reactive bind)不经 SDK write 路径 → internalAfterWrite 的
+      // supplementPgId 永远不跑 → 组件无 __pgId → checkout/文件地图/commit 全链路失明,子 agent 无文件
+      // 可改(撞轮次上限/谎报成功,commit 零落地)。checkout 入口幂等补齐(与 write 路径同函数同语义),
+      // 宿主侧零配合成本;已有 __pgId 保持(幂等)。
+      if (bind) supplementPgId(bind, writablePaths)
+      // ① checkout:data[<codeField>] → vfsStore(按 __pgId,覆盖式刷新 = data 最新快照;子 agent vfs_edit 直接改 vfsStore 同引用)
       let codeTotal = 0, codeHit = 0
       // Q3c:checkout 时记组件级 code hash(Map<__pgId, hash>,对象引用 holder 经 state 浅合并保留);
       // commit 前比对 —— 不一致 = 人工/宿主在委派窗口内直改了 bind(锁防不了人工,零桥接合法路径),

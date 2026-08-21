@@ -1,6 +1,6 @@
 # Proposal: output-quality-config(生成质量配置落地:范例填充 + 思考模型 + 真 LLM 对比验收)
 
-> 状态:**规划完成,阻塞用户输入,已过怀疑论评审回改**(补硬前置 window.__sdk、范例体积预算与双 skill 拆分、验收指标补全、thinking 判据主次对调)。优先级 P1。对应反思 G6:质量类用例(A-11/A-12/F-01 丰富度断言)对着 flash 基线跑必挂 —— output-quality-uplift(3.36.0)通了「管道」,本 change 通「电」。**目标仓库:editor_fangzhou**。
+> 状态:**Phase 0/1/2 已实施(2026-08-21),剩 Phase 3 对比验收 + Phase 4 归档**。用户已提供 1 个线上真实专题范例 + 网关实测思考模型(v4-pro);双 skill 已填(树 9872 字符 + 代码组件 2197 字符,均低于 offload 阈值),思考模型经 config.js 默认配置落地(8368810)。优先级 P1。对应反思 G6:质量类用例(A-11/A-12/F-01 丰富度断言)对着 flash 基线跑必挂 —— output-quality-uplift(3.36.0)通了「管道」,本 change 通「电」。**目标仓库:editor_fangzhou**。
 
 ## Why(反思结论 G6,2026-08-20)
 

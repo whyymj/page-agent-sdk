@@ -1,5 +1,7 @@
 # Proposal: atomic-tree-add(editor add_component_tree 原子化:dry-run 预校验 + 失败补偿)
 
+
+> ✅ 已实施,随 editor **6699a6b** 发布(2026-08-20,随 SDK 3.40.1 发布周期落地)。两段式:validateTreeSpec 纯预检聚合全部错误 → 整批拒零添加;运行时失败顶层 addedIds 反向补偿回滚,补偿失败升级 rollbackFailed。
 > 状态:**规划完成,未实施,已过怀疑论评审回改**(现状描述纠正、「90% 前置拦截」降格、运行时失败用例改桩注入、补偿触发条件/viableCount/字段校验补全)。优先级 P1。**目标仓库:editor_fangzhou**(规划存 SDK 仓库 openspec 统一管理)。对应反思 G4 / 用例集 C-10。
 
 ## Why(反思结论 G4,2026-08-20)

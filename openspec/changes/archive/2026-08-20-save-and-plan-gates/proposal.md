@@ -1,5 +1,7 @@
 # Proposal: save-and-plan-gates(保存确认 + 方案征询纪律的机制化拆解)
 
+
+> ✅ 已实施,随 **3.39.0**(RHC 方案确认留痕 lastPlanConfirmation)+ **editor 77b7230**(save_page 挂 approval)发布(2026-08-20)。留痕随 session snapshot 持久化 + ApprovalBar 上下文提示行 + inspect 反射;bulk-change-guard 豁免的公共接口。e2e 902 贡献 11 项。
 > 状态:**规划完成,未实施,已过怀疑论评审回改**(3a 超时断言纠正、3c 改动面补全、lastPlanConfirmation 升级结构化+随会话快照持久化)。优先级 P1。对应反思 G3:三条纪律(保存/方案征询/确认去重)目前是纯提示词,flash 有违反提示词前科(codeField 直写 3 次),能机制化的机制化,不能的明示残留风险。
 
 ## Why(反思结论 G3,2026-08-20)

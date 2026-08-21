@@ -1,5 +1,7 @@
 # Proposal: path-scoped-validation(write 校验局部化,拔「兄弟节点株连」架构根因)
 
+
+> ✅ 已实施,随 **3.38.0** 发布(2026-08-20)。write 校验整对象 → path 级局部校验(union-tolerant / append 只校验新增 / 外科手术式写回 / 根级 refine 移出 write),拔「兄弟节点株连」架构根因(editor script:"" 事故家族)。selftest 2588→(2687 贡献 20 项)。
 > 状态:**规划完成,未实施,已过怀疑论评审回改**(写回语义/strip 联动/append 株连复刻/union 处理四处补设计)。优先级 P0(数据安全结构性隐患)。测试用例集 C-04 家族的根治方案(editor schema union 只是堵了当前一个洞)。
 
 ## Why(实测事故 + 架构分析,2026-08-20)

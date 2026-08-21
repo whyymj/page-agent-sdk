@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+## [3.40.2] - 2026-08-21
+
+### Fixed
+
+- **codeAsset checkout 入口幂等补 `__pgId`(宿主路径组件注入)**:宿主用自定义工具走自身原生流程加的组件(如编辑器 `add_component` 直改 reactive bind)不经 SDK write 路径 → `internalAfterWrite` 的 `supplementPgId` 永不触发 → 组件无 `__pgId` → checkout/组件代码文件地图/commit 全链路失明,html 子 agent 无 vfs 文件可改(撞轮次上限返回残稿,或自建文件被孤儿清理删除后**谎报成功**),commit 零落地 —— editor 真实会话「说干完了,实际没写入」根因。修复:`beforeAgent`(checkout)入口调 `supplementPgId`(与 write 路径同函数同语义,幂等),宿主侧零配合。selftest sec-75 增 4 断言(补齐/幂等/全链路 commit 落地)
+
 ## [3.40.1] - 2026-08-21
 
 ### Added(edge-hardening 边界加固 SDK 侧打包)

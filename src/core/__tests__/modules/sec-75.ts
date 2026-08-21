@@ -76,6 +76,25 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(update.__pgTouched instanceof Set && update.__pgTouched.size === 0, '✓ beforeAgent 初始化 __pgTouched 空 Set(本轮私有,并发隔离)')
   }
 
+  // ===== ⓪ 宿主路径注入补 __pgId(editor 诊断驱动 2026-08-21):宿主原生流程加的组件(无 __pgId)checkout 入口幂等补齐 =====
+  {
+    // ① 无 __pgId(模拟编辑器 add_component 直改 bind)→ checkout 补齐 + 建 vfs 工作副本
+    const bind: any = { title: 't', components: [{ name: 'host-added', code: '<p>placeholder</p>' }] }
+    const { vfsStore, mw } = setup(bind)
+    mw.beforeAgent!(createInitialState())
+    const pgId = bind.components[0].__pgId
+    assert(typeof pgId === 'string' && pgId, '✓ 宿主路径注入:beforeAgent 给无 __pgId 的宿主添加组件补 __pgId(幂等)')
+    assert(vfsStore.files[`html/${pgId}.html`]?.content === '<p>placeholder</p>', '✓ 宿主路径注入:补齐后 checkout 建 vfs 工作副本(子 agent 有文件可改)')
+    // ② 幂等:已有 __pgId 保持,再跑不换 id
+    mw.beforeAgent!(createInitialState())
+    assert(bind.components[0].__pgId === pgId, '✓ 宿主路径注入:已有 __pgId 保持(幂等,不换映射键)')
+    // ③ 全链路:宿主组件 → checkout 补齐 → vfs_edit → afterAgent commit 落地 data.code
+    const st = runRound(mw, [{ path: `html/${pgId}.html`, content: '<p>real code</p>' }], bind, vfsStore)
+    await mw.wrapToolCall!({ name: 'vfs_edit', args: { path: `html/${pgId}.html`, oldString: 'x', newString: 'y' }, state: st } as any, mockNext)
+    mw.afterAgent!(st)
+    assert(bind.components[0].code === '<p>real code</p>', '✓ 宿主路径注入:全链路 commit 落地(委派改码回写宿主组件,editor「说干完了实际没写入」根因修复)')
+  }
+
   // ===== wrapToolCall hook:vfs_* 改 codeVfsPrefix 下文件 → 记 touched;非 prefix / 非 vfs 工具不记 =====
   {
     const bind: any = { title: 't', components: [{ __pgId: 'c_a', name: 'a', code: '<p/>' }] }
