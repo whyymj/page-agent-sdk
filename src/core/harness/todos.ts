@@ -4,7 +4,8 @@
  * 对齐 Deep Agents 的 todoListMiddleware(langchainjs),扩展(add-adaptive-planning):
  *  - write_todos 整表替换 todos(非增量 patch,LLM 易用);项无 id 时框架按 index 生成 t-N
  *  - update_todo({id, content?, status?}) 按 id 增量更新单项(执行中动态修订,不必重传整个清单)
- *  - maxPlanRevisions:规划阶段总轮次预算(防"光规划不执行"死循环),与 maxIterations 总闸正交
+ *  - maxPlanRevisions:计划修订次数上限(防"反复改计划不执行"死循环;只计 write_todos 调用,调研轮不计
+ *    —— 调研密集工作流(如 editor 连查 11 轮组件文档)不应耗尽预算,「光调研不执行」由 maxToolRounds 轮次预算兜底),与 maxIterations 总闸正交
  *
  * 工具通过闭包维护 todos + 规划阶段状态;beforeModel 每轮同步进 state(供 UI)。
  * createTodosMiddleware(initialTodos, { maxPlanRevisions }) 支持从持久化恢复注入;reset 运行期可重置。
@@ -95,7 +96,7 @@ export function buildGateFeedback(todos: Todo[]): string {
 }
 
 export interface TodosMiddlewareOptions {
-  /** 规划阶段总轮次预算(默认 5);planning 状态下超限 → write_todos/update_todo 回灌提示(不强制终止,maxIterations 兜底) */
+  /** 计划修订次数上限(默认 5;只计 write_todos 调用,调研轮不计);planning 状态下超限 → 改计划形态的调用回灌提示(不强制终止,maxIterations 兜底) */
   maxPlanRevisions?: number
 }
 
@@ -104,24 +105,31 @@ export function createTodosMiddleware(
   opts: TodosMiddlewareOptions = {},
 ): Middleware & {
   reset: (todos: Todo[]) => void
+  /** rounds = 计划修订次数(write_todos 调用数,调研轮不计);键名保留 rounds 兼容既有 inspect 反射面 */
   getPlanPhase: () => { inPlanning: boolean; rounds: number; limit: number }
 } {
   let todos: Todo[] = ensureIds(initialTodos)
   let writeTodosThisRound = 0
   let updateTodosThisRound = 0
-  // 规划阶段防死循环状态机(与 maxIterations 总闸正交):首次 write_todos 进入,主数据写工具成功退出
+  // 规划阶段防死循环状态机(与 maxIterations 总闸正交):首次 write_todos 进入,主数据写工具成功退出。
+  // 计数只算「计划修订次数」(write_todos 调用)不算调研轮 —— 旧版 beforeModel 每轮 +1(含调研轮),
+  // editor 实测(2026-08-22 诊断)连查 11 轮组件文档即超限,update_todo 状态推进被误拒 ×3;
+  // 「光调研不执行」改由 maxToolRounds 轮次预算(3.43 两档提示)兜底,此处只防「反复改计划」
   let inPlanning = false
-  let planPhaseRounds = 0
+  let planRevisions = 0
   const maxPlanRevisions = opts.maxPlanRevisions ?? 5
 
   const writeTodosTool = tool(
     async ({ todos: input }) => {
-      // 规划阶段预算:首次进入;已进入且超限 → 回灌不执行(防光规划不执行)
+      // 规划阶段预算:首次进入;已进入且修订次数超限 → 回灌不执行(防反复改计划不执行)
       if (!inPlanning) {
         inPlanning = true
-        planPhaseRounds = 1
-      } else if (planPhaseRounds > maxPlanRevisions) {
-        return `规划阶段已达上限(${maxPlanRevisions} 轮,现在已是第 ${planPhaseRounds} 版计划)。停止调研/修订,基于当前清单开始执行(用 write 落地;advanced 模式亦可用 set_data/edit_data)。当前清单:\n${todos.map((t, i) => `${i + 1}. #${t.id} [${t.status}] ${t.content}`).join('\n') || '(空)'}`
+        planRevisions = 1
+      } else {
+        planRevisions++
+        if (planRevisions > maxPlanRevisions) {
+          return `规划阶段已达上限(${maxPlanRevisions} 次修订,现在已是第 ${planRevisions} 版计划)。停止修订,基于当前清单开始执行(用 write 落地;advanced 模式亦可用 set_data/edit_data)。当前清单:\n${todos.map((t, i) => `${i + 1}. #${t.id} [${t.status}] ${t.content}`).join('\n') || '(空)'}`
+        }
       }
       todos = ensureIds(input)
       return `已更新任务清单:${todos.length} 项\n${todos.map((t, i) => `${i + 1}. #${t.id} [${t.status}] ${t.content}`).join('\n')}`
@@ -150,9 +158,13 @@ export function createTodosMiddleware(
 
   const updateTodoTool = tool(
     async ({ id, content, status, parentId, deps, criteria, evidence }) => {
-      // planning 状态下同样受预算约束(防用 update_todo 绕过)
-      if (inPlanning && planPhaseRounds > maxPlanRevisions) {
-        return `规划阶段已达上限(${maxPlanRevisions} 轮,现在已是第 ${planPhaseRounds} 版计划)。停止修订,基于当前清单开始执行。当前任务 id:${todos.map((t) => t.id).join(', ') || '(空)'}`
+      // planning 状态下超限 → 只拒「改计划形态」(content/parentId/deps/criteria,防用 update_todo 绕过修订上限);
+      // status/evidence 是执行进度跟踪,放行(editor 实测:调研 11 轮后标 t2 completed 被误拒,状态机断拍)
+      if (
+        inPlanning && planRevisions > maxPlanRevisions &&
+        (content !== undefined || parentId !== undefined || deps !== undefined || criteria !== undefined)
+      ) {
+        return `规划阶段已达上限(${maxPlanRevisions} 次修订,现在已是第 ${planRevisions} 版计划)。停止修订计划内容(改任务文本/层级/依赖);status/evidence 进度跟踪可继续,或基于当前清单开始执行。当前任务 id:${todos.map((t) => t.id).join(', ') || '(空)'}`
       }
       const idx = todos.findIndex((t) => t.id === id)
       if (idx < 0) {
@@ -192,8 +204,7 @@ export function createTodosMiddleware(
     beforeModel: () => {
       writeTodosThisRound = 0
       updateTodosThisRound = 0
-      if (inPlanning) planPhaseRounds++ // 规划阶段每轮计数(含 read/query/search 调研轮)
-      return { todos } // 同步闭包 todos 进 state
+      return { todos } // 同步闭包 todos 进 state(修订计数在 write_todos 内维护,调研轮不计)
     },
     augmentPrompt: () => renderTodos(todos),
     wrapToolCall: async (ctx, next) => {
@@ -219,7 +230,7 @@ export function createTodosMiddleware(
       // 主数据写工具成功 → 退出规划阶段(开始执行了)
       if (PLAN_EXIT_TOOLS.has(ctx.name) && result?.status !== 'error') {
         inPlanning = false
-        planPhaseRounds = 0
+        planRevisions = 0
       }
       return result
     },
@@ -227,9 +238,9 @@ export function createTodosMiddleware(
     reset: (next: Todo[]) => {
       todos = ensureIds(next.map((t) => ({ ...t })))
       inPlanning = false
-      planPhaseRounds = 0
+      planRevisions = 0
     },
-    getPlanPhase: () => ({ inPlanning, rounds: planPhaseRounds, limit: maxPlanRevisions }),
+    getPlanPhase: () => ({ inPlanning, rounds: planRevisions, limit: maxPlanRevisions }),
   }
   return mw
 }

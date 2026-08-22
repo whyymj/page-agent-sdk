@@ -42,7 +42,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(/#research/.test(r), '✓ write_todos 显式 id(research)→ 保留')
   }
 
-  // === maxPlanRevisions 阶段防死循环 ===
+  // === maxPlanRevisions 阶段防死循环(3.44 语义:只计 write_todos 修订,调研轮不计) ===
   {
     const mw = createTodosMiddleware([], { maxPlanRevisions: 2 })
     const tools = byName(mw.tools!)
@@ -51,27 +51,37 @@ export async function run(ctx: TestCtx): Promise<void> {
     const st = createState()
 
     // 首次 write_todos → 进入 planning(rounds=1)
-    await invoke(writeT, { todos: [{ content: 'A', status: 'in_progress' }] })
+    await invoke(writeT, { todos: [{ content: 'A', status: 'in_progress' }, { content: 'B', status: 'pending' }] })
     let pp = mw.getPlanPhase()
     assert(pp.inPlanning === true && pp.rounds === 1 && pp.limit === 2, '✓ maxPlanRevisions:首次 write_todos → 进入 planning(rounds=1, limit=2)')
 
-    // beforeModel 计数(轮2 → rounds=2)
-    mw.beforeModel!({ messages: [], state: st })
+    // 调研轮不计:beforeModel 多轮(模拟 read/query/search 调研)→ rounds 不涨(editor 实测 11 轮查文档超限误伤的根因)
+    for (let i = 0; i < 11; i++) mw.beforeModel!({ messages: [], state: st })
     pp = mw.getPlanPhase()
-    assert(pp.rounds === 2, '✓ maxPlanRevisions:planning 状态 beforeModel → rounds++(2)')
+    assert(pp.rounds === 1 && pp.inPlanning === true, '✓ maxPlanRevisions:调研轮不计(beforeModel ×11 → rounds 仍 1,不再误伤调研密集工作流)')
 
-    // beforeModel(轮3 → rounds=3 > limit 2)
-    mw.beforeModel!({ messages: [], state: st })
+    // 调研多轮后 update_todo 状态推进不受限(editor 诊断场景:标 t2 completed 被旧版误拒)
+    const rTrack = await invoke(updateT, { id: 't-1', status: 'completed' })
+    assert(/已更新任务 #t-1/.test(rTrack), '✓ maxPlanRevisions:未超限时 update_todo 状态跟踪正常')
+
+    // 修订计数:第 2 次 write_todos 执行(rounds=2 = limit 未超)
+    await invoke(writeT, { todos: [{ content: 'A2', status: 'in_progress' }, { content: 'B', status: 'pending' }] })
     pp = mw.getPlanPhase()
-    assert(pp.rounds === 3, '✓ maxPlanRevisions:beforeModel 再 ++(3 > limit 2)')
+    assert(pp.rounds === 2, '✓ maxPlanRevisions:第 2 次 write_todos → rounds=2(=limit,仍执行)')
 
-    // 超限 → write_todos 回灌(不执行)
-    const r = await invoke(writeT, { todos: [{ content: 'B', status: 'pending' }] })
-    assert(/规划阶段已达上限|停止调研/.test(r), '✓ maxPlanRevisions:planning 超限 → write_todos 回灌提示(不执行)')
+    // 第 3 次修订 > limit 2 → 回灌(不执行)
+    const r = await invoke(writeT, { todos: [{ content: 'C', status: 'pending' }] })
+    assert(/规划阶段已达上限|停止修订/.test(r) && /第 3 版计划/.test(r), '✓ maxPlanRevisions:修订超限 → write_todos 回灌提示(含「第 3 版计划」计数,不执行)')
+    pp = mw.getPlanPhase()
+    assert(pp.rounds === 3, '✓ maxPlanRevisions:被拒的修订调用也计数(rounds=3)')
 
-    // 超限 → update_todo 也回灌
-    const r2 = await invoke(updateT, { id: 't-1', status: 'completed' })
-    assert(/规划阶段已达上限|停止修订/.test(r2), '✓ maxPlanRevisions:planning 超限 → update_todo 也回灌(防绕过)')
+    // 超限 → update_todo 改计划形态(content)回灌(防绕过)
+    const rShape = await invoke(updateT, { id: 't-1', content: '改任务文本' })
+    assert(/规划阶段已达上限/.test(rShape), '✓ maxPlanRevisions:超限后 update_todo 改 content(计划形态)→ 回灌(防绕过修订上限)')
+
+    // 超限 → update_todo 纯 status/evidence 进度跟踪放行(3.44:执行跟踪不是修订)
+    const r2 = await invoke(updateT, { id: 't-2', status: 'completed', evidence: '已写入' })
+    assert(/已更新任务 #t-2/.test(r2), '✓ maxPlanRevisions:超限后 update_todo 纯 status/evidence → 放行(进度跟踪不受限)')
   }
 
   // === 写工具成功退出 planning(经 wrapToolCall);error 不退出 ===
@@ -101,7 +111,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     const tools = byName(mw.tools!)
     const st = createState()
     await invoke(tools['write_todos'], { todos: [{ content: 'A', status: 'in_progress' }] })
-    mw.beforeModel!({ messages: [], state: st }) // rounds=2
+    mw.beforeModel!({ messages: [], state: st }) // 轮计数已移除(3.44 只计修订),此处仅重置轮内混用标记
     await mw.wrapToolCall!({ id: 'c1', name: 'write', args: {}, state: st } as ToolCallContext, async () => ({ content: 'ok', status: 'done' }))
     assert(mw.getPlanPhase().inPlanning === false, '✓ 重入前置:write 退出 planning')
     // 再 write_todos → 重新进入,rounds 重置为 1

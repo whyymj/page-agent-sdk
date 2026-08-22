@@ -2,6 +2,12 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.43.1] - 2026-08-22
+
+### Fixed(规划预算误伤,editor 诊断 14-42 驱动)
+
+- **`maxPlanRevisions` 计数语义修正:只计计划修订次数,不再计调研轮**:旧版规划阶段 `beforeModel` 每轮 +1(刻意含 read/query/search 调研轮),editor 实测(2026-08-22 诊断)连查 11 轮组件文档即超限(maxPlanRevisions=5),后续 3 次 `update_todo` 状态推进被误拒(todos 状态机断拍,靠后续 write_todos 全表重写兜底);且回灌文案「现在已是第 13 版计划」误导(实际只修订过 1 版)。修正:① 计数只算 `write_todos` 调用(修订次数,名称与行为对齐),「光调研不执行」改由 `maxToolRounds` 轮次预算(3.43 两档提示)兜底;② 超限后 `update_todo` 只拒**改计划形态**(content/parentId/deps/criteria,防绕过修订上限),纯 status/evidence 进度跟踪放行;③ 文案改为「N 次修订,现在已是第 N 版计划」如实计数。`inspect().planPhase.rounds` 键名保留(值语义变为修订次数),`limit` 反射不变
+
 ## [3.43.0] - 2026-08-22
 
 ### Changed(轮次预算:默认上调 + 撞墙前自适应,editor 诊断 13-00 驱动)

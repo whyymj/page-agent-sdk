@@ -501,7 +501,7 @@ flowchart LR
 - **agentCompression**(opt-in):gate(`shouldTriggerCompression`)通过才 `summaryLlm.decide`(两段式工具循环:bind 临时 `inspect_context` 工具 → 模型查构成 → 回灌 → JSON schema 校验;`decisionTimeoutMs` 6s / `decisionMaxTokens` 2048);决策覆盖切分/摘要 mode/召回/preserve;失败降级静态压缩;决策经 `inspect().lastCompression` 可观测
 
 ### 规划与任务锚定
-- **自适应规划**:`write_todos`(整表替换,框架生成 id `t-1/t-2…`)+ `update_todo({id, content?, status?})`(增量改单项);一轮内两者不可混用;`maxPlanRevisions`(默认 5)防规划死循环:主数据写工具成功才退出规划,超限回灌「停止调研去执行」;复杂度判断由 LLM 做(usageHints 引导),框架不做启发式;`capabilities.planning:false` 关
+- **自适应规划**:`write_todos`(整表替换,框架生成 id `t-1/t-2…`)+ `update_todo({id, content?, status?})`(增量改单项);一轮内两者不可混用;`maxPlanRevisions`(默认 5)防规划死循环:主数据写工具成功才退出规划,超限回灌「停止修订去执行」—— 计数只算 write_todos 修订次数(调研轮不计,2026-08-22 editor 诊断:11 轮查文档耗尽旧版轮次计数致 update_todo 误拒),超限后 update_todo 只拒改计划形态、status/evidence 进度跟踪放行;复杂度判断由 LLM 做(usageHints 引导),框架不做启发式;`capabilities.planning:false` 关
 - **Mission**(默认开 `capabilities.missionAnchor`):会话级目标锚定 `{goal, acceptanceCriteria?, …}`;首条任务型 user 启发式 capture(宁漏不误)+ `send({mission})`/`setMission` 显式;`augmentPrompt` 每轮注入 pin 段(在 state 不在 messages → 天然跨压缩)
 - **workingMemory**(默认开):自动捕获 `read`/`query_data`/`search_data` 的 locatedPaths(LRU ≤10)+ read hash(lastHashes,LRU ≤10);pin 段每轮注入跨压缩;防压缩后重复检索/凭记忆写致 autoLock 误冲突
 - **Focus 上下文聚焦**(默认开,opt-in 需主动聚焦):多焦点 `Focus[] {path, label?}`;三层收敛 —— 目标提示 + 子树 schema 视野 + **范围 strict**(写工具 `jsonPath` 不在任一焦点子树 → `PATH_DENIED` 回灌自纠;无 jsonPath 整体写 = 越界拒;eval_script 参与拦截;vfs_write/vfs_edit 不拦);API `setFocus`/`addFocus`/`removeFocus`/`clearFocus`/`getFocuses` + agent 工具(advanced)+ ChatDialog 输入框 chip + user message 焦点历史标注;持久化 + 子 agent 继承全部焦点

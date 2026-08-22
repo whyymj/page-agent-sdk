@@ -55,7 +55,7 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
         // request_human_confirmation 仅 humanConfirm 能力开时装载;关闭时改引导文字征询,勿教调不存在的工具
         if (caps?.humanConfirm) hints.push('  · 规划出多步方案若需用户拍板 → 先 request_human_confirmation 给方案选项,确认后再执行。')
         else hints.push('  · 规划出多步方案若需用户拍板 → 以文字列出方案选项等用户回复,勿自行拍板。')
-        hints.push('  · 规划阶段有轮次预算(maxPlanRevisions,默认 5):勿反复调研/改计划而不执行,规划充分后即开始 write 落地。')
+        hints.push('  · 计划修订有次数上限(maxPlanRevisions,默认 5,只计 write_todos 调用、调研轮不计):勿反复改计划而不执行,规划充分后即开始 write 落地。')
       }
       if (hasDataOps) {
         hints.push('改主数据前先 get_data({jsonPath}) 读其当前真实值(返回末尾 hash=xxx 为乐观锁标识),基于真实值改,不要凭记忆。写入是否被自动校验由集成方 conflictWatchFields 声明决定:若已声明且主数据在你 read 之后被外部改过,会触发冲突——集成方若开启人工介入,工具会挂起等用户决定(保留外部/强制覆盖/回退),你应等待工具返回后按结果继续(保留外部→重新 get 再改;强制覆盖→已写入,继续;回退→已回退到历史快照,基于回退值重写);未开启人工介入时返回 VERSION_CONFLICT 不写入,重新 get 拿最新值再改。')

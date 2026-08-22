@@ -654,7 +654,7 @@ export interface AgentInfo {
   memory: string;
   middleware: string[];
   todos: { id: string; content: string; status: string }[];
-  /** 规划阶段防死循环状态(maxPlanRevisions 预算;planning 关闭时 inPlanning 恒 false) */
+  /** 规划阶段防死循环状态(rounds = 计划修订次数,调研轮不计;planning 关闭时 inPlanning 恒 false) */
   planPhase?: { inPlanning: boolean; rounds: number; limit: number };
   /** 当前任务目标锚点(mission 中间件;未开启/未 capture → undefined) */
   mission?: Mission;
@@ -1207,9 +1207,9 @@ export interface ChatSdkOptions {
   /** 内存中保留的对话轮数上限(默认 50);超限把最旧轮次压缩为摘要 system 消息(防 OOM);0 关闭 */
   maxMemoryRounds?: number;
   debug?: boolean;
-  /** agent 工具调用轮次上限(默认 15);大 JSON 分块构建(draft_write×N + draft_commit + read 确认)是多轮场景,可能触顶被截断,建议调大到 20-30 */
+  /** agent 工具调用轮次上限(3.43 起默认 30);整页多组件搭建等计划规模天然需要多轮,预算吃紧时 SDK 自动注入两档轮次预算提示引导收口 */
   maxToolRounds?: number;
-  /** 规划阶段总轮次预算(默认 5);planning 状态下超限 → write_todos/update_todo 回灌,防"光规划不执行"死循环。与 maxIterations 正交 */
+  /** 计划修订次数上限(默认 5,只计 write_todos 调用,调研轮不计);超限 → 改计划形态的调用回灌(update_todo 纯 status/evidence 进度跟踪放行),防"反复改计划不执行"死循环。与 maxIterations 正交 */
   maxPlanRevisions?: number;
   /** 模型调用失败自动重试次数(默认 2;网络/429/5xx 重试,4xx 与 abort 不重试) */
   maxRetries?: number;
