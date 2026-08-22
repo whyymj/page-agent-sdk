@@ -107,6 +107,22 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(finalA.startsWith('最终综合回答'), '收口综合:工具轮耗尽后强制再跑一轮综合,返回最终回答(非"请简化问题")')
     assert(finalA.includes('工具调用次数已达上限') && finalA.includes('继续'), '收口综合附超调用次数可见提示(达上限/可回复继续),不「莫名停了」')
 
+    // ② 日志模型名真值:llm_request/context 记 llm 实例的 .model(编辑器诊断曾两度误记 gpt-3.5-turbo 兜底串误导排障)
+    const mockM = new MockLLM([{ content: '好' }])
+    ;(mockM as any).model = 'stub-live-model'
+    const agentM = createAgent({ llm: mockM as any, maxToolRounds: 1, maxRetries: 0 })
+    await agentM.stream([{ role: 'user', content: 'hi', timestamp: Date.now() }], () => {}, undefined)
+    const reqM = (agentM.debugLogs.value as any[]).filter((l) => l.type === 'llm_request').map((l) => l.data.model)
+    assert(reqM.length > 0 && reqM.every((m: string) => m === 'stub-live-model'), 'llm_request 日志记 llm 实例真实模型名(非选项兜底 gpt-3.5-turbo)')
+    const ctxM = (agentM.debugLogs.value as any[]).find((l) => l.type === 'context') as any
+    assert(ctxM?.data?.model === 'stub-live-model', 'context 日志同口径记实例模型名')
+    // 兜底链:实例不带模型名(如测试 stub/自定义 BaseChatModel)→ 回退 model 选项值,向后兼容
+    const mockN = new MockLLM([{ content: '好' }])
+    const agentN = createAgent({ llm: mockN as any, model: 'opt-model-x', maxToolRounds: 1, maxRetries: 0 })
+    await agentN.stream([{ role: 'user', content: 'hi', timestamp: Date.now() }], () => {}, undefined)
+    const reqN = (agentN.debugLogs.value as any[]).filter((l) => l.type === 'llm_request').map((l) => l.data.model)
+    assert(reqN.length > 0 && reqN.every((m: string) => m === 'opt-model-x'), '实例无 .model 时回退 model 选项值(兼容旧路径)')
+
     // ①+ P1-1(arch-review):收口综合经中间件栈 —— wrap-up 不再直接调 coreModelCall 绕过 wrapModelCall/afterModel。
     // 修复前:收口轮 token 不计入 sdk-events afterModel 的 usage 累加(漏计 sdk.usage)、budget 预算闸与用户自定义 wrapModelCall 失效。
     // 验证:计数中间件在收口轮也被调用(主循环 2 轮 + wrap-up 1 轮 = 3 次 model call)。

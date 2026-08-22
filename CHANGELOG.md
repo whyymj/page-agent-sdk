@@ -2,6 +2,12 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.43.2] - 2026-08-23
+
+### Fixed(诊断日志误导)
+
+- **`llm_request`/`context` 日志的 `model` 字段记实际模型名**:`createChatSdk` 装配路径只传 llm 实例不传 `model` 选项,旧逻辑直接用选项值 → 恒落 `'gpt-3.5-turbo'` 兜底串,editor 诊断(2026-08-22 diagnostics)里实际模型 deepseek-v4-flash 被记成 gpt-3.5-turbo,两度误导排障。修正:优先读当前 llm 实例的 `.model`/`.modelName`(与 `resolveModelCaps` 同口径,`setLlm` 切换后仍真值),实例不带模型名时回退 `model` 选项(兼容旧配置路径)。`startSpan` 的 model span 名与 wrap-up 日志同口径
+
 ## [3.43.1] - 2026-08-22
 
 ### Fixed(规划预算误伤,editor 诊断 14-42 驱动)

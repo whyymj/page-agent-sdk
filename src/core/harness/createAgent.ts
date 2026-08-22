@@ -500,6 +500,22 @@ export function createAgent(options: CreateAgentOptions) {
   })
   let llmWithTools = allTools.length > 0 ? (llm.bindTools?.(allTools) ?? llm) : llm
 
+  /**
+   * 日志/spans 用的实际模型名:优先取当前 llm 实例的 .model/.modelName(setLlm 切换后仍是真值)。
+   * createChatSdk 路径只传 llm 实例不传 model 选项,旧逻辑直接用选项值 → 恒落 'gpt-3.5-turbo'
+   * 兜底串,diagnostics 的 llm_request/context 日志两度误导排障(实际线上模型是 deepseek-v4-flash)。
+   * 取值口径与 llmResolver.resolveModelCaps 同源(llm?.model ?? llm?.modelName)。
+   */
+  const liveModel = (): string => {
+    const inst = llm as unknown as { model?: unknown; modelName?: unknown }
+    const fromInst = typeof inst.model === 'string' && inst.model
+      ? inst.model
+      : typeof inst.modelName === 'string' && inst.modelName
+        ? inst.modelName
+        : ''
+    return fromInst || model
+  }
+
   /** 重新绑定工具到当前 llm(setTools/setLlm 后调用;bindTools 缺失时退回裸 llm) */
   function rebindTools(): void {
     llmWithTools = allTools.length > 0 ? (llm.bindTools?.(allTools) ?? llm) : llm
@@ -831,7 +847,7 @@ export function createAgent(options: CreateAgentOptions) {
       }
     }
     let currentMessages = toLC(input)
-    log('context', { model, tools: allTools.map((t) => t.name), middleware: middlewares.map((m) => m.name) })
+    log('context', { model: liveModel(), tools: allTools.map((t) => t.name), middleware: middlewares.map((m) => m.name) })
 
     const modelHandler = composeModelCall(middlewares, (req) => coreModelCall(req, onEvent, signal))
     const toolHandler = composeToolCall(middlewares, coreExecTool)
@@ -894,10 +910,10 @@ export function createAgent(options: CreateAgentOptions) {
         // 逐轮上下文保底压缩:tool 结果累积超放行上限时,从最早的 ToolMessage 起截断为占位摘要(大模型阈值高几乎不触发)
         currentMessages = trimContextIfNeeded(currentMessages, Math.round(caps.contextWindow * 0.6)) // H1:token 口径,单轮 currentMessages ≤60% 窗口(留输出+schema)
 
-        const modelSpan = startSpan(roundSpanId, 'model', model, { round: rounds + 1, tools: allTools.map((t) => t.name) })
+        const modelSpan = startSpan(roundSpanId, 'model', liveModel(), { round: rounds + 1, tools: allTools.map((t) => t.name) })
         log('llm_request', {
           round: rounds + 1,
-          model,
+          model: liveModel(),
           tools: allTools.map((t) => t.name),
           messages: formatForLog(currentMessages),
         })
@@ -1170,7 +1186,7 @@ export function createAgent(options: CreateAgentOptions) {
           ),
           ...rest,
         ]
-        log('llm_request', { round: 'wrap_up', model, tools: [], messages: formatForLog(wrapUpMessages) })
+        log('llm_request', { round: 'wrap_up', model: liveModel(), tools: [], messages: formatForLog(wrapUpMessages) })
         // P1-1(arch-review):wrap-up 经中间件 wrapModelCall 洋葱 + afterModel,与主循环 modelHandler 对齐。
         // 此前直接调 coreModelCall 绕过中间件栈 → 收口轮 token 不计入 sdk-events afterModel 的 usage 累加(漏计 sdk.usage),
         // 且 budget 预算闸 / 用户自定义 wrapModelCall(埋点/缓存)在收口轮失效。裸 llm(不绑工具)防收口再触发工具调用。
