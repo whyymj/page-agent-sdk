@@ -2,7 +2,23 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
-## [Unreleased]
+## [3.42.0] - 2026-08-22
+
+### Fixed(S7 真 LLM 验收驱动加固,editor 实测)
+
+- **modelCaps 补 gpt-5 条目**:模型表缺 gpt-5 → 落 DEFAULT_CAPS 32K 上下文 → 撞 `MIN_CONTEXT_WINDOW` 200K 最小窗口闸拒构造(集成方表现:「AI 助手初始化失败:模型上下文窗口 32768 小于最小支持 200000」)。补 1M 上下文 / 32K 输出 / vision 条目
+- **流零 chunk 空响应守卫**:LLM 网关返回 HTTP 200 + 错误 JSON 体(非 SSE,LLM 代理黑洞实测形态)时流聚合出 null message,循环层裸读 `tool_calls` 抛未捕获 TypeError(不走三档错误模型)。修:`aggregated ?? new AIMessage(content)` 降级空响应,循环层按零 tool_calls 走既有门禁链自愈
+
+### Added(stale-read-invalidation 写驱动的过期读失效)
+
+- **窗口内新鲜度净化(默认开)**:单次 invoke 的 ReAct 窗口内,本批成功写之后被击中路径的旧 `read`/`query_data`/`search_data` 结果替换为失效占位 —— 修「round 2 的 read 快照在 round 5 write 之后整段保留到收口,又大又假」(模型看得见的旧值是误导源;乐观锁已承认 read 后数据会变,但上下文没清理)。与状态外置(mission/todos/workingMemory pin 段)、压缩(summarization)构成上下文三件套的第三块:新鲜度
+- **写成功判定为失效触发地基**:`isSuccessfulWriteResult` 四重门槛(writeCapable args-aware + 非 dryRun + 非 throw + 非 `ERROR:` toolError 字符串)—— 失败写不触发失效,防「占位文案宣称已写入 = 机制供给假事实」
+- **op 感知失效范围**:set/merge/append 失效自身/祖先/后代(兄弟安全);remove/move/del 追加父数组路径(数组移位使兄弟索引错位,旧快照是「路径标签错位」比旧值更毒);`query_data` 按 expr 静态前缀定界(写前缀外不失效,「查索引→改属性」不必重查);`search_data` 恒 root;`resource_*` 排除
+- **反 thrash 占位文案**:钉原读路径引导窄 read(防弱模型裸调 `read()` 整树)+ 引用 write 结果自带新值/新 hash(del 无值不引用不撒谎)+ query/search 分语「重跑」+ 兄弟子树「仍为读取时原值可参考」;同批串行序写后读不失效(写后核验读是正常模式),`maxParallelTools>1` 同批全失效
+- **workingMemory 联动**:写成功从结果「新 hash=」刷新同 path lastHashes(防 pin 段旧 hash 与占位「请重读」反向指令);顺手修预存缺陷:hash 为 base36(`cyrb53.toString(36)`),原正则 `[0-9a-f]` 对含 g-z 的 hash 恒失配
+- **配置与反射**:顶层 `staleReadInvalidation?: boolean`(默认 true;false 主/子一致零变化,透传链 SubagentOptions/SubagentsMiddlewareOptions/configToSubOpts);debugLogs `stage:'stale_read_invalidated'`;`inspect().staleReadsInvalidated` 会话累计
+- **明示盲区(不触发失效)**:委派写(use_html/spawn commit 直改 bind)/ 集成方 defineTool 直改 / 宿主 actions —— 兜底为编排 prompt「委派返回后 read 核对」+ 状态询问门禁;委派路径失效为 v1.5 候补(委派返回值不含 path)
+- 文档建议:多组件写任务 `maxToolRounds ≥ 20`(失效后 re-read 余量)
 
 ## [3.41.0] - 2026-08-21
 
@@ -10,7 +26,7 @@
 
 - **`data.tools` 装配期工具白名单**:`createChatSdk({ data: { tools: 'high' | string[] } })` / `createDataOps(config, { tools })`。`'high'` 预设裁掉旧四件(`get/set/edit/delete_data`,与高层 `read`/`write` 同职能二选一),高层套与 opt-in 家族(draft/resource)全保留;具体名单按名精确过滤,集成方完全自控;未装配名 warn 留痕(拼写错/已改名早暴露);纯写名单(全裁读工具)warn 提醒「模型无法核实结果」;不传 = 全量零回归
 - **`vfs.mainTools` 主栈暴露面开关**:`createChatSdk({ vfs: { mainTools: false } })` 把 9 个 vfs 工具从主 agent 视野隐藏(usageHints 同步不注入 vfs 用法段),子 agent 栈不受影响 —— html 子 agent 的 allowedTools 过滤仍能吃到经 `subagentPoolTools` 补充供给的 vfs 工具池;主栈大结果 offload 降级为 passThrough/截断(不再回灌 vfs_read 引用);默认 `true` 零变化。editor 场景实测动机:主 agent 只编排不落盘,42→32 工具
-- **`isSuccessfulWriteResult` 写成功判定纯函数**(stale-read-invalidation Phase 0 地基,导出):四重门槛 —— args-aware `writeCapable` + 非 dryRun + `status !== 'error'` + content 非 `ERROR:` 前缀(toolError 返回式失败路径)。**同源缺陷修复**:`turnUsage.writePaths` 原只看 `status`,SCHEMA_INVALID/VERSION_CONFLICT 等 `return toolError()` 字符串写被计入 zero-tool-gate 事实清单「成功写入路径」→ 改用同口径,失败写不再被说成写成了
+- **`isSuccessfulWriteResult` 写成功判定纯函数**(stale-read-invalidation Phase 0 地基,内部函数未导出):四重门槛 —— args-aware `writeCapable` + 非 dryRun + `status !== 'error'` + content 非 `ERROR:` 前缀(toolError 返回式失败路径)。**同源缺陷修复**:`turnUsage.writePaths` 原只看 `status`,SCHEMA_INVALID/VERSION_CONFLICT 等 `return toolError()` 字符串写被计入 zero-tool-gate 事实清单「成功写入路径」→ 改用同口径,失败写不再被说成写成了
 
 ## [3.40.3] - 2026-08-21
 

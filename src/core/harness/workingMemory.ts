@@ -14,10 +14,21 @@
  * 与 preserveLastToolResults 互补:preserve 保工具结果摘要(防字段描述丢),workingMemory 保 path/hash 结构化(防定位丢)。
  */
 import type { Middleware, ToolCallContext, ToolExecResult } from './middleware'
+import { extractWritePaths } from './subagent'
 
 const MAX_ENTRIES = 10
 /** read/query/search 之外的工具不捕获(只 pin 定位类) */
 const CAPTURE_TOOLS = new Set(['read', 'query_data', 'search_data'])
+/** 结果含「新 hash=」的写工具家族(stale-read-invalidation 联动:写成功刷新 lastHashes) */
+const WRITE_HASH_TOOLS = new Set(['write', 'set_data', 'edit_data', 'draft_commit'])
+
+/** lastHashes 键归一(read 侧 args.jsonPath 与写侧 extractWritePaths 输出统一:剥 '$.'/'$' 前缀,防同路径两键并存) */
+function normalizeWmKey(p: string): string {
+  let s = String(p)
+  if (s.startsWith('$.') ) s = s.slice(2)
+  else if (s.startsWith('$')) s = s.slice(1)
+  return s || '(root)'
+}
 
 export function createWorkingMemoryMiddleware(): Middleware & {
   getWorkingMemory: () => import('./state').WorkingMemory | undefined
@@ -71,10 +82,11 @@ export function createWorkingMemoryMiddleware(): Middleware & {
         const content = typeof result.content === 'string' ? result.content : ''
         if (ctx.name === 'read') {
           // read:jsonPath 参数为 path(无则 root);结果含 hash=xxx(乐观锁用)
+          // hash 为 base36(cyrb53.toString(36))→ 字符集 [0-9a-z];原 [0-9a-f] 对含 g-z 的 hash 恒失配(预存缺陷顺手修)
           const jp = (ctx.args?.jsonPath as string) || ''
-          const path = jp || '(root)'
+          const path = normalizeWmKey(jp) || '(root)'
           capturePath(path)
-          const hashMatch = content.match(/hash=([0-9a-f]{6,})/i)
+          const hashMatch = content.match(/hash=([0-9a-z]{6,})/i)
           if (hashMatch) captureHash(path, hashMatch[1])
         } else {
           // query/search:args.jsonPath + 结果中 @ xxx 命中路径(多条)
@@ -82,6 +94,26 @@ export function createWorkingMemoryMiddleware(): Middleware & {
           if (jp) capturePath(jp)
           const hits = content.match(/@\s([a-zA-Z0-9_.[\]]+)/g)
           if (hits) hits.forEach((m) => capturePath(m.replace(/^@\s/, '')))
+        }
+      }
+      // stale-read-invalidation 联动(C5/A3):写成功从结果「新 hash=」捕获覆盖同 path lastHashes ——
+      // 否则 pin 段「勿重复检索 <path>=旧hash」与失效占位「请重读」同 path 双源相反指令,弱模型裁决随机。
+      // 门自然收窄:成功写结果才含「新 hash=」(dryRun/ERROR: 字符串/挂起裁决都不含);path 用写工具口径(整体 = '(root)')
+      if (result.status === 'done' && WRITE_HASH_TOOLS.has(ctx.name)) {
+        const content = typeof result.content === 'string' ? result.content : ''
+        const hashMatch = content.match(/新 hash=([0-9a-z]{6,})/i)
+        if (hashMatch) {
+          const paths = extractWritePaths(ctx.args).map(normalizeWmKey)
+          if (paths.length) paths.forEach((p) => captureHash(p, hashMatch[1]))
+          else captureHash('(root)', hashMatch[1])
+        } else if (content.startsWith('已删除')) {
+          // 删除族成功(已删除主数据 @ path,无新 hash):清对应 path 及其后代的 lastHashes ——
+          // 路径已不存在,留着旧 hash 就是 C5 要消的反向指令(code review P2:删除族无新值可刷)
+          for (const p of extractWritePaths(ctx.args).map(normalizeWmKey)) {
+            for (const k of Object.keys(lastHashes)) {
+              if (k === p || k.startsWith(p + '.')) delete lastHashes[k]
+            }
+          }
         }
       }
       return result

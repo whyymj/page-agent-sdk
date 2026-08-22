@@ -252,6 +252,11 @@ export interface ChatSdkOptions {
    * tokenBudget 正交:后者跨会话累计、需 automation 能力;本项单 invoke、无条件可用(防单轮死循环烧钱)。
    */
   roundTokenBudget?: number
+  /**
+   * 写驱动过期读失效(stale-read-invalidation,默认 true):单次 invoke 窗口内,本批成功写之后被击中
+   * 路径的旧 read/query/search 结果替换为失效占位(防模型凭旧快照答状态/用错位索引)。false = 主/子一致关闭零变化。
+   */
+  staleReadInvalidation?: boolean
   /** 时间预算 ms(从 agent 开始计时,超过 → 停止;需 capabilities.automation:true) */
   timeBudgetMs?: number
   /** 无人值守错误恢复:致命错误(invoke 抛错)自动 restore_last_checkpoint + 重试次数(默认 1;防单点错误永久中断批量/长任务)。需 capabilities.automation:true */
@@ -1321,6 +1326,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           allTools: () => core.agent?.allTools ?? allTools, // P0-1(getter→合并池):含中间件工具(vfs 等);原指向局部 rebuildExtraTools 池致能力包 allowedTools 恒落空
           ...(vfsMainToolsHidden && useVfs ? { subagentPoolTools: createVfsTools(vfsStore) } : {}), // main-surface-slim Phase 2:主栈隐藏的 vfs 工具子池保供
           allowedTools: subAllowed.length ? subAllowed : undefined,
+          // stale-read-invalidation 透传(主/子一致;未设 = 子 createAgent 默认 true)
+          ...(options.staleReadInvalidation !== undefined ? { staleReadInvalidation: options.staleReadInvalidation } : {}),
           // 子 agent 独立配置(自定义身份/温度/上下文上限/技能)
           systemPrompt: subOpts?.systemPrompt,
           temperature: subOpts?.temperature,
@@ -1390,7 +1397,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       })
     : undefined
   const subagentsMw = useSubagent && subagentsForAssemble !== undefined
-    ? createSubagentsMiddleware(subagentsForAssemble, { llm: options.llm, thinkingModeDefault: options.subagent?.thinkingMode, allTools: () => core.agent?.allTools ?? allTools, ...(vfsMainToolsHidden && useVfs ? { subagentPoolTools: createVfsTools(vfsStore) } : {}), debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null, getBind: () => liveData()?.bind, tracker: subagentTracker, guardMiddleware: childGuards.length ? childGuards : undefined, getVfsFiles: useVfs ? () => vfsStore.files : undefined, enterDataScope: dataOpsController?.enterScope ? (id) => dataOpsController.enterScope!(id) : undefined, exitDataScope: dataOpsController?.exitScope ? (id) => dataOpsController.exitScope!(id) : undefined, onUsage: (u) => { usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0); usage.completion_tokens = (usage.completion_tokens ?? 0) + (u.completion_tokens ?? 0); usage.total_tokens = (usage.total_tokens ?? 0) + (u.total_tokens ?? 0) }, timeoutMs: options.subagent?.timeoutMs,
+    ? createSubagentsMiddleware(subagentsForAssemble, { llm: options.llm, thinkingModeDefault: options.subagent?.thinkingMode, staleReadInvalidation: options.staleReadInvalidation, allTools: () => core.agent?.allTools ?? allTools, ...(vfsMainToolsHidden && useVfs ? { subagentPoolTools: createVfsTools(vfsStore) } : {}), debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null, getBind: () => liveData()?.bind, tracker: subagentTracker, guardMiddleware: childGuards.length ? childGuards : undefined, getVfsFiles: useVfs ? () => vfsStore.files : undefined, enterDataScope: dataOpsController?.enterScope ? (id) => dataOpsController.enterScope!(id) : undefined, exitDataScope: dataOpsController?.exitScope ? (id) => dataOpsController.exitScope!(id) : undefined, onUsage: (u) => { usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0); usage.completion_tokens = (usage.completion_tokens ?? 0) + (u.completion_tokens ?? 0); usage.total_tokens = (usage.total_tokens ?? 0) + (u.total_tokens ?? 0) }, timeoutMs: options.subagent?.timeoutMs,
       ...(componentLock ? { componentLock, resolveComponents: (args: { components?: string[]; task: string }) => resolveTargetComponents(args, collectComponentNames(liveData()?.bind, codeAssetPgIdPaths)) } : {}) })
     : undefined
 
@@ -2049,6 +2056,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       if (checkpointMgr) checkpointMgr.importStack([])
       // 释放上一会话的调试日志(切会话后旧日志不再相关,立即释放内存)
       core.agent!.debugLogs.value = []
+      core.agent!.resetStaleReadsInvalidated?.() // stale-read 失效计数同点清零,防旧会话计数带进新会话
       if (!snap) snap = await store.load(agentId, target)
       if (snap) {
         core.applySnapshot(snap)
@@ -2082,7 +2090,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       bulkGuardMw?.state.reset() // 清空会话:清 bulk-guard 会话级豁免态
       preferencesMw?.resetScanCursor() // 偏好跨会话保留;只重置扫描水位(同 switchSession)
       if (checkpointMgr) checkpointMgr.importStack([])
-      if (core.agent) core.agent.debugLogs.value = []
+      if (core.agent) { core.agent.debugLogs.value = []; core.agent.resetStaleReadsInvalidated?.() }
       if (store) {
         store.createSession(core.agentId, options.session?.title, core.sessionId).catch((e: unknown) => {
           if (options.debug) console.warn('[page-agent-sdk][persist] createSession 失败(已吞):', e)
@@ -2284,6 +2292,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           promptSoftCap: resolvePromptSoftCap(modelCaps.contextWindow, resolvedCtxOpts.promptSoftCapTokens),
         },
         memory: memoryMw.get(),
+        // stale-read-invalidation 会话累计(顶层字段,不寄生 inspect().context —— 那是 contextInspector 每轮覆盖快照且随其开关消失)
+        staleReadsInvalidated: core.agent?.getStaleReadsInvalidated?.() ?? 0,
         middleware: middlewares.map((m) => m.name),
         todos: (core.agent?.getState?.()?.todos ?? []).map((t) => ({
           id: t.id, content: t.content, status: t.status,
@@ -2808,6 +2818,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       maxVerifyAttempts: useVerify ? verifyMaxAttempts : 0,
       // C4 单 invoke token 预算(opt-in,默认关):超限友好收口;与 automation 全局 tokenBudget 正交
       roundTokenBudget: options.roundTokenBudget ?? 0,
+      // stale-read-invalidation(默认 true):窗口内写后旧读占位;false 主/子一致关闭零变化
+      staleReadInvalidation: options.staleReadInvalidation,
       // setLlm 后回调:重解析模型能力(contextWindow/maxOutputTokens 影响 offload 阈值/压缩)
       onLlmChange: (newLlm: BaseChatModel) => {
         // 仅更新实例引用;modelCaps 重算 + 最小窗口校验 + 集中回灌由 createChatSdk.setLlm 权威处理

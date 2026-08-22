@@ -35,6 +35,7 @@ import { isContextLengthError } from './errors'
 import { detectIncompleteFinish, buildGateFeedback } from './todos'
 import { detectActionImperative, isZeroEffectiveWrite, buildTurnFactSheet, buildZeroToolFeedback, mentionsLocation, detectStatusQuery, assertsCompletion, isZeroToolCalls, buildStatusQueryFeedback, type TurnToolUsage } from './actionGate'
 import { isSuccessfulWriteResult } from './writeGate'
+import { invalidateStaleReads, type StaleWriteRecord } from './readInvalidation'
 import {
   type Middleware,
   type ModelRequest,
@@ -271,6 +272,12 @@ export interface CreateAgentOptions {
   vision?: boolean
   /** content parts 协议形态(默认 'openai' 即 LangChain 标准多模态格式,ChatAnthropic 亦兼容转换;'anthropic' 原生 image block) */
   imageContentFormat?: 'openai' | 'anthropic'
+  /**
+   * 写驱动过期读失效(stale-read-invalidation,默认 true):单次 invoke 窗口内,本批成功写(writeCapable
+   * 四重门槛判定)之后,此前被击中路径(等值/祖先/后代;remove/move/del 追加父数组)的旧 read/query/search
+   * 结果替换为失效占位(防模型凭旧快照答状态/继续用错位索引)。false = 主/子一致关闭零变化。
+   */
+  staleReadInvalidation?: boolean
   debug?: boolean
 }
 
@@ -370,6 +377,7 @@ export function createAgent(options: CreateAgentOptions) {
     onTrace,
     onLlmChange,
     imageContentFormat = 'openai' as 'openai' | 'anthropic',
+    staleReadInvalidation = true,
     debug = false,
   } = options
 
@@ -409,6 +417,8 @@ export function createAgent(options: CreateAgentOptions) {
 
   // shallowRef:浅响应式,不深度代理 push 进来的 data 对象,避免与 currentMessages 共享引用污染日志快照
   const debugLogs = shallowRef<DebugLog[]>([])
+  // stale-read-invalidation 会话累计(跨 invoke;inspect().staleReadsInvalidated 反射,类比 debugLogs 闭包真相源)
+  let staleReadsInvalidated = 0
   function log(type: DebugLog['type'], data: any) {
     // 始终记录到 debugLogs(供日志抽屉查看请求上下文历史);debug 时额外输出到 console
     const entry: DebugLog = { timestamp: Date.now(), type, data }
@@ -652,7 +662,11 @@ export function createAgent(options: CreateAgentOptions) {
       }
       throw err
     }
-    const message = aggregated as unknown as BaseMessage
+    // 流正常结束但零有效 chunk(网关回 200 + 错误 JSON 体非 SSE:LLM 代理黑洞实测形态,6003 error_code
+    // 无 data: 前缀,SSE 解析零 chunk 即 end)→ aggregated 为 null,裸用会让循环层读 tool_calls 崩
+    // TypeError 未走三档错误模型(deferred 登记实证)。构造空 AI 消息降级为可观测的「空响应」,
+    // 循环层按无 tool_calls 处理(空响应门禁/零工具收尾门禁自然接手引导模型重试)
+    const message = (aggregated as unknown as BaseMessage) ?? new AIMessage(content)
     const toolCalls = ((message as any).tool_calls || []) as ModelResponse['toolCalls']
     return { message, toolCalls, content }
   }
@@ -1060,6 +1074,8 @@ export function createAgent(options: CreateAgentOptions) {
           else delete progress.writeFailures[key]
         }
         // imperative-zero-tool-gate:本轮工具用量捕获(事实清单原料 —— 按名计数/成功写路径/失败数)
+        // stale-read-invalidation:同循环收集本批成功写记录(name/args/callIndex),批后做一次失效占位
+        const batchWrites: StaleWriteRecord[] = []
         for (let i = 0; i < ctxs.length; i++) {
           const r = results[i]
           if (!r) continue
@@ -1073,6 +1089,22 @@ export function createAgent(options: CreateAgentOptions) {
           if (isSuccessfulWriteResult(allTools.find((t) => t.name === name) as (Record<string, unknown> & { name: string }) | undefined, ctxs[i].call.args, r)) {
             const p = extractWriteTargetPath(ctxs[i].call.args)
             turnUsage.writePaths.push(p || '(整体)')
+            batchWrites.push({ name, args: ctxs[i].call.args, callIndex: i })
+          }
+        }
+        // stale-read-invalidation(写驱动过期读失效):本批成功写 → 此前被击中路径的旧 read/query/search
+        // 结果替换为失效占位(路径提取自 AIMessage.tool_calls,幂等;同批串行序:写后读不失效)
+        if (staleReadInvalidation && batchWrites.length) {
+          const inv = invalidateStaleReads(currentMessages, batchWrites, { round: rounds + 1, maxParallelTools })
+          if (inv.invalidatedCount > 0) {
+            currentMessages = inv.messages
+            staleReadsInvalidated += inv.invalidatedCount
+            log('middleware', {
+              stage: 'stale_read_invalidated',
+              round: rounds + 1,
+              writtenPaths: batchWrites.map((w) => extractWriteTargetPath(w.args) || '(整体)'),
+              invalidatedCount: inv.invalidatedCount,
+            })
           }
         }
         if (signal?.aborted) break // 中止则不进入下一轮
@@ -1200,6 +1232,10 @@ export function createAgent(options: CreateAgentOptions) {
     getState: () => state,
     // getter:setTools/setLlm 后 allTools 重赋值,getter 始终取最新(inspect().tools 动态反映)
     get allTools() { return allTools },
+    /** stale-read-invalidation 会话累计失效数(getInfo/inspect 反射;createChatSdk 经 AgentInfo.staleReadsInvalidated 暴露) */
+    getStaleReadsInvalidated: () => staleReadsInvalidated,
+    /** 会话切换/重置时清零(与 debugLogs 清空同点位调用,防旧会话计数带进新会话) */
+    resetStaleReadsInvalidated: () => { staleReadsInvalidated = 0 },
     setTools,
     setLlm,
     setModelCaps,

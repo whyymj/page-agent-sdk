@@ -32,6 +32,7 @@ import { run as runPreferences } from './e2e/preferences.mjs'
 import { run as runDiagnostics } from './e2e/diagnostics.mjs'
 import { run as runInstructionAdherence } from './e2e/instruction-adherence.mjs'
 import { run as runThinkingMode } from './e2e/thinking-mode.mjs'
+import { run as runStaleRead } from './e2e/stale-read-invalidation.mjs'
 
 const modules = [
   ['systemprompt', runSystemprompt],
@@ -65,6 +66,7 @@ const modules = [
   ['diagnostics', runDiagnostics],
   ['instruction-adherence', runInstructionAdherence],
   ['thinking-mode', runThinkingMode],
+  ['stale-read-invalidation', runStaleRead],
 ]
 
 let totalPass = 0, totalFail = 0

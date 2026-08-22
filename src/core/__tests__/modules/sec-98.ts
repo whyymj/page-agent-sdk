@@ -42,4 +42,10 @@ export async function run(ctx: TestCtx) {
 
   // 8. 空 content 的 done(理论不出现;防御)不因 String('') 误判
   assert(isSuccessfulWriteResult(mkTool('write', true), {}, { content: '', status: 'done' }) === true, '✓ 写成功判定 → 空 content 的 done 放行(非 ERROR 前缀)')
+
+  // 9. 非写入的「成功字符串」跳过(code review P2):keep_external 裁决 / no-op 删除 —— 都不是写,
+  //    失效占位「已写入」不能向模型供给假事实
+  assert(isSuccessfulWriteResult(mkTool('write', true), { value: { a: 1 } }, { content: '已保留外部修改(未写入)。当前值:{"a":2} (hash=xxx)', status: 'done' }) === false, '✓ 写成功判定 → keep_external「未写入」裁决不算写')
+  assert(isSuccessfulWriteResult(mkTool('write', true), { patch: { jsonPath: 'x.0' }, del: true }, { content: '主数据 @ x.0 不存在(无需删除)', status: 'done' }) === false, '✓ 写成功判定 → no-op 删除「无需删除」不算写')
+  assert(isSuccessfulWriteResult(mkTool('delete_data', true), { jsonPath: 'x.0' }, { content: '已删除主数据 @ x.0', status: 'done' }) === true, '✓ 写成功判定 → 真删除(已删除,数据确变)算写(对照组)')
 }

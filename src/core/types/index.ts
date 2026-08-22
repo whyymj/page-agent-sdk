@@ -219,6 +219,8 @@ export interface AgentInfo {
   preferences?: import('../backends/preferenceStore').PersistedPreference[]
   /** 跨压缩工作记忆(workingMemory 中间件;pin 最近 read/query/search 定位 path + read hash,≤10 LRU) */
   workingMemory?: { locatedPaths: string[]; lastHashes: Record<string, string> }
+  /** 写驱动过期读失效会话累计(stale-read-invalidation;写后旧 read/query/search 结果被替换为占位的次数) */
+  staleReadsInvalidated?: number
   /** 当前上下文聚焦焦点(focus 中间件;兼容:首个;未聚焦/未开启 → undefined) */
   focus?: import('../harness/state').Focus
   /** 全部聚焦焦点(multi-focus;空数组=未聚焦) */

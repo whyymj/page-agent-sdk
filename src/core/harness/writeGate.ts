@@ -32,5 +32,11 @@ export function isSuccessfulWriteResult(
   const wc = 'writeCapable' in tool ? (tool as { writeCapable?: unknown }).writeCapable : undefined
   const capable = typeof wc === 'function' ? wc(args ?? {}) : wc === true
   if (!capable) return false
-  return !String(result.content || '').startsWith('ERROR:')
+  const content = String(result.content || '')
+  if (content.startsWith('ERROR:')) return false
+  // 非写入的「成功字符串」(code review P2):keep_external 冲突裁决(数据被外部改但本写未落)与
+  // no-op 删除(路径本不存在,数据零变化)—— 都不是写。前者不触发失效与「宿主直改不失效」的既有
+  // 覆盖边界一致;后者无任何数据变化,失效即假过期。防占位文案「已写入」向模型供给假事实。
+  if (content.includes('未写入') || content.includes('无需删除')) return false
+  return true
 }

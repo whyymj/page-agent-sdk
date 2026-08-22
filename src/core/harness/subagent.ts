@@ -187,6 +187,11 @@ export interface SubagentOptions {
   maxVerifyAttempts?: number
   /** 思考深度锁定(subagent-thinking-mode-lock;configToSubOpts 透传 SubagentConfig.thinkingMode ?? 顶层缺省)。仅 LLMConfig 构造路径生效;实例路径 warn + no-op */
   thinkingMode?: 'simple' | 'deep'
+  /**
+   * 写驱动过期读失效透传(stale-read-invalidation 评审 B4:顶层 false 必须主/子一致,否则「零变化」承诺是假的)。
+   * 未设 = 子 agent createAgent 默认 true(与主一致);createChatSdk/中间件层显式透传覆盖。
+   */
+  staleReadInvalidation?: boolean
 }
 
 /** 判定 llm 是模型实例(BaseChatModel)还是配置对象(SubagentLlmConfig) */
@@ -485,6 +490,8 @@ async function runSubagent(
     onLog, // 子 agent 日志下沉 → spawn 工具转发到主 debugLogs(带 source 标签)
     debug: opts.debug,
     __pgIsSubagent: true, // 主栈门禁豁免标记(zero-tool-gate:子 agent 纯文本收口是正常形态,如 craftNotes [note] 收口)
+    // stale-read-invalidation 透传(评审 B4:子 agent 同样生效且可关;未设走 createAgent 默认 true)
+    ...(opts.staleReadInvalidation !== undefined ? { staleReadInvalidation: opts.staleReadInvalidation } : {}),
   })
   if (opts.debug) console.log(`[subagent] 启动子 agent(depth=${depth},工具 ${childTools.length} 个)`)
   // 子流 AbortController 链(父 signal abort → 子 abort;超时独立 abort 子;fix-hang-and-feedback abort 收口同源)
@@ -716,6 +723,8 @@ export interface SubagentsMiddlewareOptions {
   llm: SubagentLlmConfig | BaseChatModel
   /** 全局思考深度缺省(subagent-thinking-mode-lock:顶层 `subagent.thinkingMode` 透传;子 agent 显式 config.thinkingMode 优先) */
   thinkingModeDefault?: 'simple' | 'deep'
+  /** 写驱动过期读失效透传(stale-read-invalidation 评审 B4:顶层 false 主/子一致;未设走子 createAgent 默认 true) */
+  staleReadInvalidation?: boolean
   /** 主 agent 全部工具(子 agent 按只读白名单筛)。支持 getter(P1-4:动态工具对子 agent 可见) */
   allTools: StructuredToolInterface[] | (() => StructuredToolInterface[])
   /**
@@ -764,6 +773,8 @@ function configToSubOpts(config: SubagentConfig, main: SubagentsMiddlewareOption
   return {
     llm: config.llm ?? main.llm,
     ...(thinkingMode ? { thinkingMode } : {}),
+    // stale-read-invalidation 透传(B4:顶层 false 主/子一致;显式优先链 = 中间件层 > 子 createAgent 默认)
+    ...(main.staleReadInvalidation !== undefined ? { staleReadInvalidation: main.staleReadInvalidation } : {}),
     allTools: main.allTools,
     ...(main.subagentPoolTools?.length ? { subagentPoolTools: main.subagentPoolTools } : {}),
     systemPrompt: config.systemPrompt,

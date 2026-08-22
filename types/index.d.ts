@@ -666,6 +666,8 @@ export interface AgentInfo {
   actions?: Record<string, { description: string; hasParams: boolean }>;
   /** 跨压缩工作记忆(workingMemory 中间件;pin 最近 read/query/search 定位 path + read hash,≤10 LRU) */
   workingMemory?: WorkingMemory;
+  /** 写驱动过期读失效会话累计(stale-read-invalidation;写后旧 read/query/search 结果被替换为占位的次数) */
+  staleReadsInvalidated?: number;
   /** 当前上下文聚焦焦点(focus 中间件;兼容:首个;未聚焦/未开启 → undefined) */
   focus?: Focus;
   /** 全部聚焦焦点(multi-focus;空数组=未聚焦) */
@@ -1229,6 +1231,8 @@ export interface ChatSdkOptions {
   tokenBudget?: number;
   /** 单次 invoke 的 token 预算上限(opt-in,默认关):本次 agent 调用累计 total_tokens 超限 → 中断收口(observable emit + 友好文本,已完成部分保留);与 automation 全局 tokenBudget 正交 */
   roundTokenBudget?: number;
+  /** 写驱动过期读失效(stale-read-invalidation,默认 true):单次 invoke 窗口内,本批成功写之后被击中路径的旧 read/query/search 结果替换为失效占位(防模型凭旧快照答状态/用错位索引)。false = 主/子一致关闭零变化 */
+  staleReadInvalidation?: boolean;
   /** 时间预算 ms(从 agent 开始计时,超过 → 停止;需 capabilities.automation:true) */
   timeBudgetMs?: number;
   /** 无人值守错误恢复:致命错误(invoke 抛错)自动 restore_last_checkpoint + 重试次数(默认 1;防单点错误永久中断批量/长任务)。需 capabilities.automation:true */

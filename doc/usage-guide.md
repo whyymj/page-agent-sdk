@@ -208,6 +208,7 @@ createChatSdk({
   vfs: { initialFiles?, maxBytes?, poolBytes?, mainTools? },  // 虚拟工作区(默认总上限 8MB;2.16.0+ 三池分池:large_results/drafts/userFiles 各自 LRU,`poolBytes` 单池配;3.41+ `mainTools:false` 主栈隐藏 9 个 vfs 工具、子 agent 栈照常供给)
   maxSnapshots: 20,             // 主数据快照数(默认 20,FIFO)
   maxMemoryRounds: 30,          // 内存保留对话轮数(默认 30,超限压缩为摘要;0 关闭)
+  staleReadInvalidation: true,  // 写驱动过期读失效(3.42+ 默认开):单次 invoke 窗口内成功写之后,被击中路径的旧 read/query/search 结果替换为失效占位;false 主/子一致关闭
   maxToolRounds: 10,            // 最多工具调用轮次(默认 10;只计真实工具轮,格式/verify 自纠不消耗;另有 maxIterations 总迭代硬上限防死循环)
   maxRetries: 2,                // 模型调用失败重试次数(默认 2;网络/429/5xx 重试)
   capabilities: { dataOps: true, fetch: true, planning: true, vfs: true, verify: true, domInspect: false, inspectEnv: true, draftWrite: false, workingMemory: true },  // 能力开关(默认全开;关掉省 token。dataOps/fetch 控制内置工具装载;verify 反向默认关需显式开;domInspect=get_dom 读渲染后 DOM(2.20+)默认关 opt-in;inspectEnv=inspect_env 读 window 环境/调试变量(2.20+)默认开排查用;draftWrite=draft_write/commit 分块构建大 JSON(2.20+)默认关 opt-in;workingMemory=跨压缩记忆(2.20+)默认开)

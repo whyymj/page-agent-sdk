@@ -10,7 +10,7 @@
 
 ## Phase 1:纯函数 readInvalidation.ts
 
-- [ ] 新文件 `src/core/harness/readInvalidation.ts`:`invalidateStaleReads(messages, writtenPaths, opts)` 纯函数
+- [x] 新文件 `src/core/harness/readInvalidation.ts`:`invalidateStaleReads(messages, writtenPaths, opts)` 纯函数
   - 配对 walk:路径提取一律取自 **AIMessage.tool_calls**(name+args),content 只作替换目标(天然幂等);`call.id` 缺失 → tool_calls 顺序 + name 兜底,再失配跳过(宁漏勿误)
   - 读 path 提取(列表):read/get_data = `[jsonPath] ∪ jsonPaths`(缺省 ROOT);query_data = expr 经 `jpTokenize` 静态前缀(遇 `[*]`/`[?(`/`..` 截断);search_data = 恒 ROOT
   - 写 path 提取:**复用 `subagent.ts` `extractWritePaths`**(已含 path 键),补:空 = ROOT;`patch.op==='move'` 的 value(目标路径)并入
@@ -19,21 +19,21 @@
   - **排除**:resource_update/resource_delete 不触发(资源池路径非数据 jsonPath;占位符语义下旧 read 内容仍准确)
   - 同批串行序:传本批写 ToolMessage 索引下界;`maxParallelTools===1`(默认)只失效更早的读,`>1` 同批全失效
   - 占位文案(反 thrash 四要素):原读路径钉进文案 + 引用 write 结果新值/新 hash(write 自带 600 字符 + 新 hash;del/restore 无则不引用不撒谎)+ 兄弟子树「仍为读取时原值可参考」+ 分工具分语(query/search 说「重跑 query/search」不说「重新 read」)
-- [ ] selftest 白盒(新 sec 模块,清单见 proposal 验收 1):含 remove/move/del 兄弟失效、ERROR: 字符串跳过、jsonPaths 不误判 root、expr 前缀定界、components vs components2、同批串行序、幂等重跑
+- [x] selftest 白盒(sec-99:58 项,清单见 proposal 验收 1;实配发现:write patch op=remove 结果仍带新值+hash,仅 del/delete_data 无 → hasPostValue 口径按 del 而非 op):含 remove/move/del 兄弟失效、ERROR: 字符串跳过、jsonPaths 不误判 root、expr 前缀定界、components vs components2、同批串行序、幂等重跑
 
 ## Phase 2:createAgent 循环接线 + 联动
 
-- [ ] `CreateAgentOptions.staleReadInvalidation?: boolean`(默认 true);工具批 push 完成后按 Phase 0 判定收集 writtenPaths → `invalidateStaleReads`
-- [ ] debugLogs `stage:'stale_read_invalidated'` { round, writtenPaths, invalidatedCount }
-- [ ] **workingMemory 联动**:写成功从结果「新 hash=」捕获覆盖同 path lastHashes(防 pin 段「勿重复检索=旧hash」与占位「请重读」反向指令)
-- [ ] **opt-out 透传链**:`SubagentOptions` + `SubagentsMiddlewareOptions` + `configToSubOpts` + `runSubagent` createAgent 调用(对照 thinkingMode 先例);顶层 false → 主/子一致零变化
-- [ ] 反射:createAgent 闭包 getter + **AgentInfo 顶层字段** `staleReadsInvalidated`(会话累计;不寄生 inspect().context——那是 contextInspector 每轮覆盖快照且随其开关消失)
-- [ ] selftest:循环层断言(写后旧 read 替换 / 关开关原文保留 / 子 agent 同样生效且可关)
+- [x] `CreateAgentOptions.staleReadInvalidation?: boolean`(默认 true);工具批 push 完成后按 Phase 0 判定收集 writtenPaths → `invalidateStaleReads`
+- [x] debugLogs `stage:'stale_read_invalidated'` { round, writtenPaths, invalidatedCount }
+- [x] **workingMemory 联动**:写成功从结果「新 hash=」捕获覆盖同 path lastHashes(防 pin 段「勿重复检索=旧hash」与占位「请重读」反向指令)
+- [x] **opt-out 透传链**:`SubagentOptions` + `SubagentsMiddlewareOptions` + `configToSubOpts` + `runSubagent` createAgent 调用(对照 thinkingMode 先例);顶层 false → 主/子一致零变化
+- [x] 反射:createAgent 闭包 getter + **AgentInfo 顶层字段** `staleReadsInvalidated`(会话累计;不寄生 inspect().context——那是 contextInspector 每轮覆盖快照且随其开关消失)
+- [x] selftest:循环层断言(sec-100:18 项)(写后旧 read 替换 / 关开关原文保留 / 子 agent 同样生效且可关)
 
 ## Phase 3:e2e + 真实层验收
 
-- [ ] e2e(stub model):断言用**自定义 wrapModelCall 中间件捕获 req.messages**(llm_request.messages 非 debug 下恒 `[]`,formatForLog 短路);写后下一轮旧 read = 占位;false 主/子双路原文保留;stage 日志断言
-- [ ] **types/index.d.ts + types/headless.d.ts 双同步**(headless 有独立复制的 ChatSdkOptions)+ `test:types` / `test:types-alignment` / `test:exports` 三门禁
+- [x] e2e(stub model,tests/e2e/stale-read-invalidation.mjs:15 项):断言用**自定义 wrapModelCall 中间件捕获 req.messages**(llm_request.messages 非 debug 下恒 `[]`,formatForLog 短路);写后下一轮旧 read = 占位;false 主/子双路原文保留;stage 日志断言;SCHEMA_INVALID 失败写零失效端到端
+- [x] **types/index.d.ts + types/headless.d.ts 双同步**(headless 有独立复制的 ChatSdkOptions)+ `test:types` / `test:types-alignment` / `test:exports` 三门禁
 - [ ] 真 LLM(editor,quality-compare `--baseline-diff`):
   - 主指标(正确性):写后问「第 N 个组件现在是什么」×3-5 穿插 + resume-then-ask → 断言答前有 read 且答案 = 写后真值
   - thrash 指标:写后同 path re-read 次数 / 写次数,新旧对比(debugLogs 计数)

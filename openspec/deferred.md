@@ -433,6 +433,11 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 **来源**:save-and-plan-gates 3b 结论落定。「是否属方案类任务」是语义判断,机制做不了(不造伪机制);防线拆解 = 删除 approval 恒在 + save_page 确认(3a 已实施)+ bulk-change-guard(后续 change)+ 提示词。**重启触发**:实测出现「不征询直接删且绕过 approval」案例 —— 预期永不触发(approval 是硬门禁);若真出现说明 approval 链路被绕过,属 P0 缺陷而非本项设计缺陷。
 
 
+
+### [2026-08-22] 流式响应体为错误 JSON 时聚合 null message 崩溃(stream 零 chunk 路径)— ✅ 已修(f31702a,当日收口)
+
+**来源**:editor-local-draft-restore Phase 3 真 LLM 验收(editor 本地 dev + Playwright)。LLM 网关(user-bff-api 代理)返回 **HTTP 200 + 错误 JSON 体**(`{"error_code":6003,...}`,非 SSE)时,流聚合出 null message → `createAgent` 循环层读 `message.tool_calls` 直接 `TypeError: Cannot read properties of null` **未捕获崩溃**(legacy 包 55408 行),未走三档错误模型/重试/observable。与已修的 stream 启动闸(响应头假死)同族不同路径:**响应头已到、body 非事件流、零 chunk 即 end** —— 流停滞看门狗(90s)来不及触发就先崩了。**重启触发**:任何网关/中转层返回 200+JSON 错误体的环境(editor 生产网关 6003 形态实测存在);或下次动 streamer/聚合层时顺手修。修法候选:流结束后校验聚合 message 非空,空/null → 构造 recoverable 错误回灌自纠(或按 body 可解析 JSON 判网关错误归因),禁止裸访问 tool_calls。
+
 ## 维护约定
 
 - 暂缓项**不进** `project.md`「进行中的 change」(避免占心智);本文件是唯一索引。

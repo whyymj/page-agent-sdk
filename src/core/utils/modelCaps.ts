@@ -25,6 +25,7 @@ const MODEL_TABLE: Array<{ pattern: RegExp; caps: ModelCaps }> = [
   { pattern: /deepseek-v4/i, caps: { contextWindow: 1048576, maxOutputTokens: 393216 } }, // v4:1M 上下文 / 384K 输出
   { pattern: /deepseek-reasoner|deepseek-r1/i, caps: { contextWindow: 65536, maxOutputTokens: 8192 } },
   { pattern: /deepseek/i, caps: { contextWindow: 131072, maxOutputTokens: 8192 } },
+  { pattern: /gpt-5/i, caps: { contextWindow: 1048576, maxOutputTokens: 32768, vision: true } }, // GPT-5:1M 上下文 / 32K 输出(2026-08 网关实测模型面;缺条目会落 DEFAULT_CAPS 32K 撞 MIN_CONTEXT_WINDOW 闸)
   { pattern: /gpt-4\.1/i, caps: { contextWindow: 1047576, maxOutputTokens: 32768, vision: true } },
   { pattern: /gpt-4o-mini/i, caps: { contextWindow: 131072, maxOutputTokens: 16384, vision: true } },
   { pattern: /gpt-4o/i, caps: { contextWindow: 131072, maxOutputTokens: 16384, vision: true } },

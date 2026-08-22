@@ -1,6 +1,7 @@
 # Proposal: editor-local-draft-restore(编辑器本地草稿恢复:agent 改动刷新不丢)
 
-> 状态:**规划完成待实施**。优先级 P1(editor 侧)。目标仓库:editor_fangzhou。
+> ✅ **已实施并验收归档(2026-08-22)**。editor 分支 `feature/FS-0000_ai功能增强_wh` commits:`27c73db`(主体:doSave savedAt + restoreLocalDraft 双条件判定 + 横幅二选一 + markDraftSynced)/ `106679e`(验收驱动修复:updateTime ISO 解析 P0 + 预览草稿键存量 bug)/ `bc3baad`(AiAssistant maxTokens 透传)。
+> 验收:S1-S6 机制 20/20(Playwright,save 接口 route 拦截零服务端写入)+ S7 真 LLM 6/6(glm-5.2:agent 写入 → 刷新横幅恢复 → 追问读到恢复后组件零重做)。过程副产品:LLM 网关模型面剧变登记(deepseek/gpt-4/claude/kimi 全 400,gpt-5 带 tools 不可用,glm-5.2 可用)+ SDK 两加固 f31702a(modelCaps gpt-5 条目 + 流零 chunk 空响应守卫)。
 > 驱动:2026-08-21 三份真 LLM 会话诊断实证的「刷新即丢」—— agent 写入 `Editor.nodeInfo` 的改动只存在于内存,dev server 重启 / 页面刷新 / HMR 全页 reload 后回到服务端状态,用户看到「说干完了,页面是空的」(诊断 msg[19/24/33/37] 反复出现「没看到效果/没有保存成功」,agent 反复重做,烧了大量 token 与用户信任)。
 
 ## Why(现状核实,2026-08-21)

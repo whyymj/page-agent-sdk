@@ -113,6 +113,10 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(resolveModelCaps({ model: 'claude-3-5-sonnet-20240620' }).vision === true, 'vision 表 → claude-3-5 true')
     assert(resolveModelCaps({ model: 'qwen-vl-max' }).vision === true, 'vision 表 → qwen-vl true')
     assert(resolveModelCaps({ model: 'glm-4v-flash' }).vision === true, 'vision 表 → glm-4v true(longest-match 压过 glm-4)')
+    // gpt-5 表条目(2026-08 网关模型面补):缺条目会落 DEFAULT_CAPS 32K → 撞 MIN_CONTEXT_WINDOW 200K 闸拒构造
+    const gpt5 = resolveModelCaps({ model: 'gpt-5' })
+    assert(gpt5.contextWindow === 1048576 && gpt5.vision === true, '模型表 → gpt-5 命中(1M 窗口,过 200K 最小闸)')
+    assert(resolveModelCaps({ model: 'gpt-5-mini' }).contextWindow === 1048576, '模型表 → gpt-5-mini 变体同条目')
     // 表命中:false 系(保守)
     assert(resolveModelCaps({ model: 'deepseek-v4' }).vision === false, 'vision 表 → deepseek false')
     assert(resolveModelCaps({ model: 'glm-5.2' }).vision === false, 'vision 表 → glm-5 false')

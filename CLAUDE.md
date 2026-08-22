@@ -30,8 +30,8 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2762 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,906 项;tests/e2e/<module>.mjs 按模块拆分)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2846 项断言)
+npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,921 项;tests/e2e/<module>.mjs 按模块拆分)
 npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,102 项;tests/browser/<demo>.spec.ts)
 ```
 
@@ -82,6 +82,7 @@ skills/                         # 分发给使用者的 Agent Skill(入 npm 包 
 - `summarization`(compressInput 不改原数组)与 `trimMemoryMessages`(OOM 裁剪)独立;`maxMemoryRounds >= summaryThresholdRounds`
 - 压缩不丢关键信息:description 快照注入 + `preserveLastToolResults` + 写成功附 path + `reliableWriteRules`;压缩 LLM 摘要异步化(模板先行零阻塞 + 后台前缀缓存)
 - 健壮性:窗口 ≥200K 硬约束;三闸阈值跟随 `setLlm`;overflow → 激进 trim → 重试 → 仍超抛;vfs 引用保护;系统段预算 25%;mission/workingMemory/focus 跨刷新持久化;`agentCompression` opt-in(decide 6s 超时降级静态)
+- **stale-read-invalidation 写驱动过期读失效(3.42,默认开)**:单次 invoke 窗口内本批成功写(writeGate 四重门槛:writeCapable args-aware + 非 dryRun + 非 throw + 非 `ERROR:` 字符串)之后,被击中路径(等值/祖先/后代;remove/move/del 追加父数组防索引错位)的旧 read/query/search ToolMessage 替换为失效占位(钉原读路径引窄读 + 引用写结果新值/hash 反 thrash;query/search 分语「重跑」;del 不引用不撒谎);同批串行序写后读不失效,`maxParallelTools>1` 同批全失效;`query_data` 按 expr 静态前缀定界、`search_data` 恒 root;resource_* 排除;workingMemory 联动写后刷新 lastHashes(hash 为 base36,原 `[0-9a-f]` 正则漏 g-z 已修);`staleReadInvalidation:false` 主/子一致关闭;委派写/集成方直改 bind/宿主 actions **不在失效面**(明示盲区,兜底=状态询问门禁);debugLogs `stage:'stale_read_invalidated'` + `inspect().staleReadsInvalidated` 会话累计;多组件写任务建议 `maxToolRounds ≥ 20`(失效后 re-read 余量)
 
 ### 规划与任务锚定
 - `write_todos`(整表替换)+ `update_todo`(增量),一轮内不可混用;`maxPlanRevisions`(默认 5)防规划死循环;复杂度判断由 LLM 做
@@ -134,7 +135,7 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test    # tsx 跑 src/core/__tests__/selftest.ts,2762 项断言
+npm test    # tsx 跑 src/core/__tests__/selftest.ts,2846 项断言
 ```
 按模块拆分:`src/core/__tests__/modules/sec-NN.ts`(54+ 个模块)各导出 `run(ctx)`,runner 汇总;共享 `TestCtx` 在 `modules/_ctx.ts`。tsx 跑源码(不经构建),触不到 createChatSdk 顶层 API 作用域。**改任何核心模块后必跑**。
 
@@ -179,7 +180,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2762/906/102)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2846/921/102)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判)→ `npm run test:size` → `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证
