@@ -205,11 +205,11 @@ createChatSdk({
   session: { id?, autoResume?, title? },  // 会话控制
 
   /* ===== 容量与鲁棒性 ===== */
-  vfs: { initialFiles?, maxBytes?, poolBytes?, mainTools? },  // 虚拟工作区(默认总上限 8MB;2.16.0+ 三池分池:large_results/drafts/userFiles 各自 LRU,`poolBytes` 单池配;3.41+ `mainTools:false` 主栈隐藏 9 个 vfs 工具、子 agent 栈照常供给)
+  vfs: { initialFiles?, maxBytes?, poolBytes? },  // 虚拟工作区(默认总上限 8MB;2.16.0+ 三池分池:large_results/drafts/userFiles 各自 LRU,`poolBytes` 单池配)
   maxSnapshots: 20,             // 主数据快照数(默认 20,FIFO)
   maxMemoryRounds: 30,          // 内存保留对话轮数(默认 30,超限压缩为摘要;0 关闭)
   staleReadInvalidation: true,  // 写驱动过期读失效(3.42+ 默认开):单次 invoke 窗口内成功写之后,被击中路径的旧 read/query/search 结果替换为失效占位;false 主/子一致关闭
-  maxToolRounds: 10,            // 最多工具调用轮次(默认 10;只计真实工具轮,格式/verify 自纠不消耗;另有 maxIterations 总迭代硬上限防死循环)
+  maxToolRounds: 30,            // 最多工具调用轮次(默认 30,3.43 起〔3.28 曾调 10→15,editor 实测复杂整页搭建仍触顶〕;只计真实工具轮,格式/verify 自纠不消耗;另有 maxIterations 总迭代硬上限防死循环)
   maxRetries: 2,                // 模型调用失败重试次数(默认 2;网络/429/5xx 重试)
   capabilities: { dataOps: true, fetch: true, planning: true, vfs: true, verify: true, domInspect: false, inspectEnv: true, draftWrite: false, workingMemory: true },  // 能力开关(默认全开;关掉省 token。dataOps/fetch 控制内置工具装载;verify 反向默认关需显式开;domInspect=get_dom 读渲染后 DOM(2.20+)默认关 opt-in;inspectEnv=inspect_env 读 window 环境/调试变量(2.20+)默认开排查用;draftWrite=draft_write/commit 分块构建大 JSON(2.20+)默认关 opt-in;workingMemory=跨压缩记忆(2.20+)默认开)
   verify: { maxAttempts: 2 },        // 自检(传 check/maxAttempts/adversarial 任一即自动开,无需 capabilities.verify:true;check 省略→默认写后读回验证;见 6.10)
@@ -920,7 +920,7 @@ createChatSdk({ maxRetries: 0 })   // 关闭自动重试
 
 agent 对自身消耗有了感知,长任务不再「闷头烧到中断」:
 
-- **消耗提示(C1)**:工具轮次达 `maxToolRounds` 的 70%、或本次任务累计 prompt token 达 softCap 一半时,system prompt 注入一行「⏳ 预算提示」(给两个出口:收敛收口 or 向用户汇报进度)。每任务只注入一次,零配置默认生效。
+- **轮次预算感知(3.43,createAgent 核心)**:已用轮次达 `maxToolRounds` 的 70% 起每轮持续注入「⚠️ 轮次预算提醒」、剩余 ≤2 轮升级「告急」(引导优先收口/如实标记未完成项,模型撞墙前自适应而非触顶被打断;只进本轮 system 重渲染不污染历史)。**消耗提示(C1,token 维度)**:本次任务累计 prompt token 达 softCap 一半时注入一行「⏳ 预算提示」(每任务一次;轮次维度已移交核心持续注入)。
 - **写失败提醒(C2)**:同一写路径连续 ≥2 次失败(乐观锁冲突/schema 拒绝等)时,注入「先 read 重新核对 / restore_data 回退」提醒,防同一条路反复撞墙。
 - **单轮 token 预算**(`roundTokenBudget`,opt-in 默认关):单次 `send` 的累计 token 超限 → 友好收口文本中断(已完成部分保留,可继续对话「继续完成」),debugLogs 留痕。与 automation 的 `tokenBudget` 正交:后者跨会话累计、需 `capabilities.automation`;本项单次调用、无条件可用,防单轮死循环烧钱。
 

@@ -41,6 +41,21 @@ export class StreamMaxDurationError extends StreamStalledError {
 /** 默认停滞阈值 90s:大上下文 prefill 实测 30-60s(1M 窗口),留裕量;正常生成 chunk 间隔 <5s */
 export const DEFAULT_STREAM_STALL_MS = 90_000
 
+/**
+ * LLM 空响应错误:流正常结束但零有效 chunk(网关回 200 + 错误 JSON 体非 SSE,LLM 代理黑洞实测形态)。
+ * 3.42 曾在 coreModelCall 降级为空 AI 消息防 tool_calls 崩溃,但 editor 诊断(2026-08-22)实证:
+ * 用户只见沉默空回复气泡,无任何错误提示。现升级为显式抛错(coreModelCall 自动重试 1 次仍空后抛),
+ * 与 StreamStalledError 同款传播路径:send reject + error 事件(UI 可见);子 agent 上下文变 error
+ * result,主 agent 可自愈(回落直写,实测 use_html 超时自愈同款)。
+ */
+export class EmptyLLMResponseError extends Error {
+  constructor() {
+    super('LLM 返回空响应:流正常结束但零内容(网关可能返回了错误体;已自动重试 1 次仍为空),请重发或稍后重试')
+    this.name = 'EmptyLLMResponseError'
+    ;(this as { status?: number }).status = 502 // 上游网关问题(非客户端错);抛出点在流结束后,不进 withRetry,此标记仅供归因
+  }
+}
+
 /** 默认流总时长上限 10min:flash 生成大组件实测 3-7min 单流,留裕量;黑洞实测冻结 7min+ 永不恢复 */
 export const DEFAULT_STREAM_MAX_DURATION_MS = 600_000
 

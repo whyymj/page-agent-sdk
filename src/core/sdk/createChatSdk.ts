@@ -65,7 +65,7 @@ import { createSdkEvents } from './events'
 import type { ContextManagerOptions } from '../composables/useContextManager'
 import { resolveContextOptions, PRESET_PRESERVE, type ContextPreset } from './contextPreset'
 import { composeMiddlewareStack } from './middlewareStack'
-import { createVfs, createVfsMiddleware, createVfsTools, VFS_TOOL_NAMES, normalize as normalizeVfsPath, type VfsStore } from '../backends/vfs'
+import { createVfs, createVfsMiddleware, VFS_TOOL_NAMES, normalize as normalizeVfsPath, type VfsStore } from '../backends/vfs'
 import type { VfsFile, HarnessState, Mission, Focus } from '../harness/state'
 import { createDataOps, type DataConfig, type DataOpsController, type ConflictResolution } from '../tools/dataOps'
 import { hashValue, watchFieldsHash } from '../tools/jsonUtils'
@@ -223,7 +223,7 @@ export interface ChatSdkOptions {
   /** 自定义中间件(在内置中间件之后注入;可拦截/观察模型调用、工具执行、prompt 增强等) */
   middleware?: Middleware[]
   /** 虚拟工作区:初始文件 + 内存字节上限(默认 4MB,超限 LRU 淘汰最旧)+ 主栈工具暴露开关(main-surface-slim Phase 2) */
-  vfs?: { initialFiles?: Record<string, string>; maxBytes?: number; poolBytes?: { largeResults?: number; drafts?: number; userFiles?: number }; mainTools?: boolean }
+  vfs?: { initialFiles?: Record<string, string>; maxBytes?: number; poolBytes?: { largeResults?: number; drafts?: number; userFiles?: number } }
   /** 每个 数据槽最多保留快照数(默认 20,FIFO 丢最旧) */
   maxSnapshots?: number
   /** 乐观锁冲突裁决策略(默认 'ask'):ask=挂起 pendingConflict 等人工 resolveConflict;overwrite=agent 强制覆盖(宿主与 agent 争同一份数据且 agent 优先时用,冲突自动收口不挂起,无人值守场景防永挂);keep_external=自动保留外部修改(agent 收到提示重新 read)。自动裁决仍外发 conflict 事件(conflict.autoResolved 标记) */
@@ -1092,8 +1092,6 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         maxSnapshots: options.maxSnapshots,
         onConflict: conflictMgr.set,
         conflictWatchFields: options.conflictWatchFields,
-        // main-surface-slim Phase 1:data.tools 白名单透传('high' 预设 / 具体名单;装配期过滤 LLM 工具面)
-        tools: finalDataConfig.tools,
         vfsStore: (useDraft || !!finalDataConfig?.resources?.length) ? vfsStore : undefined,  // draft 工具 / 受保护资源(opt-in):vfsStore 提供 → createDataOps 装 draft_write/draft_commit + resource_*
         // code-as-data-asset:htmlSubagent writablePaths → pgIdPaths(schema extend 加 __pgId:safeParse 不剥离 + afterWrite 补 __pgId)+ largeTextPaths(主 scope read code 摘要)
         ...(codeAssetPgIdPaths.length ? { pgIdPaths: codeAssetPgIdPaths } : {}),
@@ -1274,9 +1272,6 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const useSkills = caps.skills
   // code-as-data-asset:htmlSubagent 单模式强依赖 vfs 工作副本 + vfs 工具(checkout/commit + 子 agent vfs_edit);集成商关了 vfs 也强制开(零感知)
   const useVfs = caps.vfs || hasCodeAsset
-  // main-surface-slim Phase 2:vfs 主栈工具暴露开关(false → vfs 中间件 tools 不进主栈,主 agent 视野 -9 工具;
-  // offload/state.files 注入/子 agent 池保供不受影响)。缺省 true = 现状零变化
-  const vfsMainToolsHidden = options.vfs?.mainTools === false
   // vfs 是内置中间件,其工具(createVfsMiddleware 注入)标 builtin(否则 inspect().tools 里会落到 'user',语义错)
   if (useVfs) {
     for (const n of VFS_TOOL_NAMES) toolSources.set(n, 'builtin')
@@ -1324,7 +1319,6 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       : createSubagentMiddleware({
           llm: subOpts?.llm ?? options.llm,
           allTools: () => core.agent?.allTools ?? allTools, // P0-1(getter→合并池):含中间件工具(vfs 等);原指向局部 rebuildExtraTools 池致能力包 allowedTools 恒落空
-          ...(vfsMainToolsHidden && useVfs ? { subagentPoolTools: createVfsTools(vfsStore) } : {}), // main-surface-slim Phase 2:主栈隐藏的 vfs 工具子池保供
           allowedTools: subAllowed.length ? subAllowed : undefined,
           // stale-read-invalidation 透传(主/子一致;未设 = 子 createAgent 默认 true)
           ...(options.staleReadInvalidation !== undefined ? { staleReadInvalidation: options.staleReadInvalidation } : {}),
@@ -1397,7 +1391,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       })
     : undefined
   const subagentsMw = useSubagent && subagentsForAssemble !== undefined
-    ? createSubagentsMiddleware(subagentsForAssemble, { llm: options.llm, thinkingModeDefault: options.subagent?.thinkingMode, staleReadInvalidation: options.staleReadInvalidation, allTools: () => core.agent?.allTools ?? allTools, ...(vfsMainToolsHidden && useVfs ? { subagentPoolTools: createVfsTools(vfsStore) } : {}), debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null, getBind: () => liveData()?.bind, tracker: subagentTracker, guardMiddleware: childGuards.length ? childGuards : undefined, getVfsFiles: useVfs ? () => vfsStore.files : undefined, enterDataScope: dataOpsController?.enterScope ? (id) => dataOpsController.enterScope!(id) : undefined, exitDataScope: dataOpsController?.exitScope ? (id) => dataOpsController.exitScope!(id) : undefined, onUsage: (u) => { usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0); usage.completion_tokens = (usage.completion_tokens ?? 0) + (u.completion_tokens ?? 0); usage.total_tokens = (usage.total_tokens ?? 0) + (u.total_tokens ?? 0) }, timeoutMs: options.subagent?.timeoutMs,
+    ? createSubagentsMiddleware(subagentsForAssemble, { llm: options.llm, thinkingModeDefault: options.subagent?.thinkingMode, staleReadInvalidation: options.staleReadInvalidation, allTools: () => core.agent?.allTools ?? allTools, debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null, getBind: () => liveData()?.bind, tracker: subagentTracker, guardMiddleware: childGuards.length ? childGuards : undefined, getVfsFiles: useVfs ? () => vfsStore.files : undefined, enterDataScope: dataOpsController?.enterScope ? (id) => dataOpsController.enterScope!(id) : undefined, exitDataScope: dataOpsController?.exitScope ? (id) => dataOpsController.exitScope!(id) : undefined, onUsage: (u) => { usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0); usage.completion_tokens = (usage.completion_tokens ?? 0) + (u.completion_tokens ?? 0); usage.total_tokens = (usage.total_tokens ?? 0) + (u.total_tokens ?? 0) }, timeoutMs: options.subagent?.timeoutMs,
       ...(componentLock ? { componentLock, resolveComponents: (args: { components?: string[]; task: string }) => resolveTargetComponents(args, collectComponentNames(liveData()?.bind, codeAssetPgIdPaths)) } : {}) })
     : undefined
 
@@ -1629,7 +1623,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           }),
         ]
       : []),
-    ...(useVfs ? [createVfsMiddleware(vfsStore, { mainTools: options.vfs?.mainTools })] : []),
+    ...(useVfs ? [createVfsMiddleware(vfsStore)] : []),
     ...(summarizationMw ? [summarizationMw] : []), // summarization:跨轮历史压缩(setLlm 后 setContextWindow 回灌新窗口)
     ...(useWorkingMemory ? [workingMemoryMw] : []), // summarization 后(augmentPrompt 段跨压缩保留;pin 最近 read/query/search 的 path/hash)
     ...(useFocus ? [focusMw] : []), // workingMemory 后:上下文聚焦(目标/视野/范围三层收敛 pin 段;同 mission 跨压缩保留)

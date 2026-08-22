@@ -61,6 +61,9 @@ export class StubChatModel extends BaseChatModel {
       if (err.status === undefined) err.status = 400
       throw err
     }
+    // emptyStream:零 chunk 直接 end(模拟网关 200 + 错误 JSON 体非 SSE → SSE 解析零 chunk;
+    //   测 EmptyLLMResponseError 重试/抛错链路,createAgent coreModelCall 零 chunk 守卫)
+    if (resp.emptyStream) return
     const msg = new AIMessageChunk({
       content: resp.text ?? '',
       tool_calls: (resp.toolCalls ?? []).map((tc, i) => ({

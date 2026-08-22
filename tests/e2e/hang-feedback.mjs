@@ -244,5 +244,42 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:hang-feedback] 空响应守卫(empty-llm-response)①:首次零 chunk → 自动重试 1 次成功')
+  {
+    // 队列:① 零 chunk(网关 200 + 错误 JSON 体非 SSE 形态)② 重试正常文本
+    const llm = stubModel({ emptyStream: true }, { text: '好的,重试后正常回复' })
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-empty-retry-ok', storage: false, llm,
+      capabilities: { ...CAPS, subagent: false },
+    })
+    await sdk.mount()
+    const reply = await sdk.send('hi')
+    assert(reply === '好的,重试后正常回复', '✓ 首次空响应 → 自动重试 1 次后正常返回文本(原:静默空回复气泡)')
+    assert(llm.calls === 2, `✓ 恰好重试 1 次(calls=${llm.calls},不无限重试)`)
+    assert(sdk.debugLogs.value.some((l) => l.type === 'error' && l.data?.stage === 'empty_llm_response_retry'), '✓ debugLogs 留痕 empty_llm_response_retry')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:hang-feedback] 空响应守卫(empty-llm-response)②:重试耗尽 → 显式报错(send reject + error 事件)')
+  {
+    // 队列:两次均零 chunk → 重试仍空 → 抛 EmptyLLMResponseError(3.42 曾降级空 AI 消息防崩溃,
+    // 但 editor 诊断实证用户只见沉默空泡无提示;现走 StreamStalledError 同款错误通道)
+    const llm = stubModel({ emptyStream: true }, { emptyStream: true })
+    const errors = []
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-empty-exhausted', storage: false, llm,
+      capabilities: { ...CAPS, subagent: false },
+      onEvent: (e) => { if (e.type === 'error') errors.push(e) },
+    })
+    await sdk.mount()
+    let err
+    try { await sdk.send('hi') } catch (e) { err = e }
+    assert(!!err && /空响应/.test(err.message), '✓ 重试仍空 → send reject 抛 EmptyLLMResponseError(原:静默空回复无任何提示)')
+    assert(llm.calls === 2, `✓ 首调 + 重试各 1 次后放弃(calls=${llm.calls},有界)`)
+    assert(errors.some((e) => /空响应/.test(e.message)), '✓ error 事件外发(集成方 onEvent / UI 可感知失败原因)')
+    assert(sdk.debugLogs.value.some((l) => l.type === 'error' && l.data?.stage === 'empty_llm_response'), '✓ debugLogs 留痕 empty_llm_response(诊断导出可见)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-2846%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-2806%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -253,12 +253,11 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `summaryLlm` | `BaseChatModel \| LLMConfig` | Summary-dedicated LLM (defaults to main `llm`) |
 | | `maxMemoryRounds` | `number` · default `30` | Dialog history memory round cap (`0` disables trim) |
 | | `staleReadInvalidation` | `boolean` · default `true` | 3.42+ write-driven stale read invalidation: within one invoke's ReAct window, old `read`/`query_data`/`search_data` results hit by a later successful write are replaced with an invalidation placeholder (keeps the model from answering state from stale snapshots; anti-thrash copy references the write's own new value/hash). `false` = off for main + subagent stacks |
-| | `vfs` | `{initialFiles?,maxBytes?,poolBytes?,mainTools?}` · default 4MB, `mainTools:true` | In-memory workspace cap (LRU evict on overflow). `mainTools:false` (3.41+) hides the 9 vfs tools from the main agent's view (usageHints sync-skips the vfs section) while subagent stacks keep supply via the internal tool pool — for orchestrator-only main agents |
-| | `data.tools` | `'high' \| string[]` | 3.41+ assembly-time dataOps tool whitelist. `'high'` drops the legacy quartet (`get/set/edit/delete_data` — superseded by `read`/`write`); an explicit name array filters exactly; opt-in families (draft/resource) always preserved when assembled
+| | `vfs` | `{initialFiles?,maxBytes?,poolBytes?}` · default 4MB | In-memory workspace cap (LRU evict on overflow) |
 | **Persistence** | `storage` | `'indexed' \| 'session' \| 'local' \| 'memory' \| config \| false` · default off | Assign to enable; multi-agent isolated by `id` |
 | | `session` | `{id?,autoResume?,title?}` | Session control |
 | | `shareContext` | `boolean` · default `false` | Same `id` instances share one agent |
-| **Robustness/other** | `maxRetries` / `maxParallelTools` / `maxToolRounds` | `number` · 2 / 1 / 10 | Model retries / per-round tool concurrency (>1 enables same-round parallel delegation with failure isolation + per-component mutex locks) / max rounds |
+| **Robustness/other** | `maxRetries` / `maxParallelTools` / `maxToolRounds` | `number` · 2 / 1 / 30 | Model retries / per-round tool concurrency (>1 enables same-round parallel delegation with failure isolation + per-component mutex locks) / max rounds |
 | | `roundTokenBudget` | `number` · default `0` (off) | Per-invocation cumulative token cap (3.11+; exceed → friendly wrap-up, partial work preserved; orthogonal to automation's `tokenBudget`, no automation capability needed) |
 | | `mcp` | `McpServerConfig[]` | Remote MCP servers (http/sse/websocket) |
 | | `middleware` | `Middleware[]` | Custom middleware (appended to built-in stack) |
@@ -496,8 +495,8 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 2846 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 921 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm test            # 2806 assertions (tsx, source-level; no LLM dependency)
+npm run test:e2e    # 929 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test

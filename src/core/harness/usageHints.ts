@@ -74,7 +74,7 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
       if (rc.domInspect) hints.push('改完数据想确认渲染是否生效(或定位元素/辅助 UI 设计问答)用 get_dom({selector?,depth?}) 读渲染后 DOM(结构化返回 tag/attrs/text/children,depth 控制深度防爆炸,只读)。配合宿主 actions(save_draft/publish 等)形成"改数据→get_dom 看渲染→触发动作"闭环。')
       if (rc.draftWrite) {
         hints.push('生成超大 JSON(如 50+ 组件页面,单次 write 受 max_tokens 限制装不下)用 draft_write 分块构建 → draft_commit 原子提交:draft_write({draftId, chunk, mode}) mode:"start" 新建/"append" 追加(拼 JSON 片段到 drafts 池);累积完 draft_commit({draftId}) 合并 + schema 校验 + 写主数据(失败草稿保留可修后重试,成功自动清草稿)。小改仍用 write patch,只在大 JSON 从零生成时用 draft。')
-        hints.push('⚠️ 大 JSON 分块构建是典型多轮工具调用(draft_write×N + draft_commit + read 确认 + 调研 read/query),默认 maxToolRounds=15 可能触顶被 while 截断导致草稿写不完;目标组件数大时集成方应在 createChatSdk 配 maxToolRounds ≥ 20(或按 N+5 估算)。draft_commit 提交同样走乐观锁(改前 read 拿 hash,bind 被改过会触发冲突介入,不静默覆盖)。')
+        hints.push('⚠️ 大 JSON 分块构建是典型多轮工具调用(draft_write×N + draft_commit + read 确认 + 调研 read/query),默认 maxToolRounds=30(3.43 起;轮次预算吃紧时 system 会注入预算提示段,按提示优先收口);目标组件数很大时集成方仍可在 createChatSdk 显式上调 maxToolRounds(按 N+10 估算)。draft_commit 提交同样走乐观锁(改前 read 拿 hash,bind 被改过会触发冲突介入,不静默覆盖)。')
       }
       if (rc.todoDeps) hints.push('复杂任务可用 todos 层级依赖:write_todos 时给 todo 传 parentId(父任务 id,表达层级)+ deps(依赖的 todo id 数组,必须先完成)。有依赖的任务,deps 全 completed 后再标 in_progress;完成时 update_todo({id, status:"completed", evidence:"完成证据"}) 记证据。无依赖关系的任务不传 parentId/deps(扁平)。')
       if (rc.focus) {
@@ -111,16 +111,18 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
         hints.push('用户在选项里选了哪个,就按那个方案继续;选「拒绝」则停止并询问如何调整。')
       }
       // C1/C2 自感知预算提示(context-economy-phase2):数据源 state.loopProgress(createAgent 每轮更新);
-      // 轮次/token 提示每任务只注入一次(budgetHinted 闭包于 per-invoke progress 对象),写失败提醒随失败存续注入
+      // 3.43 起轮次维度移交 createAgent 核心(roundBudgetHintText:持续注入 + 两档升级,不受 budgetHinted
+      // 一次性约束 —— 2026-08-22 editor 诊断实证缺陷:token 触发(大上下文任务早触发)消耗掉唯一一次
+      // budgetHinted 机会,轮次维度(真正吃紧时)反被饿死从未注入);此处仅保留 token 维度 + 写失败提醒。
+      // token 提示每任务只注入一次(budgetHinted 闭包于 per-invoke progress 对象),写失败提醒随失败存续注入
       const p = state?.loopProgress
       if (p) {
         const usedTokens = p.invokeUsage.prompt_tokens || p.invokeUsage.total_tokens
         const softCap = budget?.promptSoftCap ?? Number.POSITIVE_INFINITY
-        const nearRounds = p.maxToolRounds > 0 && p.rounds >= Math.ceil(p.maxToolRounds * 0.7)
         const nearTokens = softCap !== Number.POSITIVE_INFINITY && usedTokens >= softCap * 0.5
-        if (!p.budgetHinted && (nearRounds || nearTokens) && (p.rounds > 0 || usedTokens > 0)) {
+        if (!p.budgetHinted && nearTokens && usedTokens > 0) {
           p.budgetHinted = true
-          hints.push(`⏳ 预算提示:本任务已用 ${p.rounds}/${p.maxToolRounds} 工具轮、累计约 ${Math.max(1, Math.round(usedTokens / 1000))}K prompt tokens。若已接近目标请收敛并给出总结;尚未接近请向用户汇报进度与剩余计划,勿默默继续。`)
+          hints.push(`⏳ 预算提示:本任务累计约 ${Math.max(1, Math.round(usedTokens / 1000))}K prompt tokens(已过 softCap 半程)。若已接近目标请收敛并给出总结;尚未接近请向用户汇报进度与剩余计划,勿默默继续。轮次预算吃紧时系统会另行注入轮次提示段。`)
         }
         const failEntries = Object.entries(p.writeFailures).filter(([, n]) => n >= 2)
         if (failEntries.length) {

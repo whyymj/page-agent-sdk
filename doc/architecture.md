@@ -474,7 +474,7 @@ flowchart LR
 
 **eval_script:**`transform` 沙箱脚本(Worker 三层防护)返回新值或 `{patches}` 增量;`jsonPath` 子树模式(仅 clone 子树,>100KB 超时自适应)。
 
-**分块写(opt-in `capabilities.draftWrite`):**`draft_write`/`draft_commit`(类 git add→commit),commit 走完整校验链 + 乐观锁;大 JSON 场景建议 `maxToolRounds` 20-30。
+**分块写(opt-in `capabilities.draftWrite`):**`draft_write`/`draft_commit`(类 git add→commit),commit 走完整校验链 + 乐观锁;大 JSON 场景 `maxToolRounds` 默认 30(3.43 起)已够,更复杂可上调。
 
 **工具面恒全暴露(3.31 移除 `toolMode`/`interceptors`):**`createDataOps` 直出 14 工具,无呈现模式筛选(原 `filterByToolMode` 已删);usageHints 按**能力开关**注入运行时工具说明,无档位(**集成方 systemPrompt 只写业务知识,不重复声明工具语法**);检测到存量 systemPrompt 含「simple 模式/未暴露」措辞时 warn(原自动降级逻辑随档位一并移除)。interceptors(read/write/input/output)整功能移除——读写管控统一由 schema 白名单 + 受保护资源 + focus 承担。
 
@@ -528,7 +528,7 @@ flowchart LR
 - **三档错误模型**:`AgentError.severity`(recoverable 回灌 LLM 自纠 / fatal emit+中断 / observable 记录);`routeError`/`asAgentError`/`agentError` 导出(框架内置 catch 用简化路由,供集成方自定义);`onEvent('error')` payload 带 `{severity?,code?,context?}`
 - **模型调用重试**(`harness/retry.ts`):网络/429/5xx 指数退避(默认 `maxRetries`=2);4xx 与 abort 不重试;⚠️ 错误判定**先排除 abort 再判 status**
 - **停止生成(abort)**:signal 穿透 `llm.stream`;abort 保留已生成 partial
-- **挂起有界收口三契约**:① 超时默认值表(approval/humanConfirm 无响应方 30s 自动拒 / MCP 握手 15s / skills fetch 30s / LLM 流停滞看门狗 `streamStallMs` 90s,`StreamStalledError` 408 不重试 / **流总时长 `streamMaxDurationMs` 600s** —— 空转帧黑洞兜底(keepalive 空转不断重置间隔计时,实测冻结 7min+ 无报错;绝对截止抛 `StreamMaxDurationError` 继承 408 不重试,重委派/重发自愈));② 兜底收口必留痕(结构化 error/warn/debugLogs);③ abort 收口:`activeControllers` 注册表 **core 级**,send/batch 接 `signal` 可中断;unmount/switchSession/resetSession 先 abort 全部在途流再收口
+- **挂起有界收口三契约**:① 超时默认值表(approval/humanConfirm 无响应方 30s 自动拒 / MCP 握手 15s / skills fetch 30s / LLM 流停滞看门狗 `streamStallMs` 90s,`StreamStalledError` 408 不重试 / **流总时长 `streamMaxDurationMs` 600s** —— 空转帧黑洞兜底(keepalive 空转不断重置间隔计时,实测冻结 7min+ 无报错;绝对截止抛 `StreamMaxDurationError` 继承 408 不重试,重委派/重发自愈)/ **LLM 空响应守卫(3.42.1)**:网关回 200 + 错误 JSON 体(非 SSE)时流零 chunk → 自动重试 1 次(零 chunk 未 emit delta,重发安全),仍空抛 `EmptyLLMResponseError`(502)走 stall 同款错误通道 —— send reject + error 事件 UI 显错,子 agent 变 error result 主 agent 可自愈;此前 3.42 降级空 AI 消息防崩溃但用户只见沉默空泡(editor 诊断实证);debugLogs `stage:'empty_llm_response_retry'/'empty_llm_response'`);② 兜底收口必留痕(结构化 error/warn/debugLogs);③ abort 收口:`activeControllers` 注册表 **core 级**,send/batch 接 `signal` 可中断;unmount/switchSession/resetSession 先 abort 全部在途流再收口
 - **resetSession**(同步公开 API):abort 在途流 + 收口挂起冲突(keep_external)+ 重置全部内存态(messages/vfs/todos/memory/mission/workingMemory/focus/checkpoint/debugLogs)+ 新 sessionId;**storage 关也完整执行**(store 相关才门控)
 - **shareContext**:同 `id` 多实例复用同一 `AgentCore`;**串行闸与在途流注册表 core 级**(send/batch/switchSession/stream 全经 `core.runSerial`);生命周期收口中止共享 core 的**全部**在途流(含其他实例发起的)
 - **onEvent / hook**:构造时 `onEvent` 订阅常用时机(`data_change`/`message_update`/`tool_call`/`tool_result`/`text`/`round_start`/`done`/`usage`/`session_restored`/`error` 等,§⑦);`approval_request` 不外发;流式事件仅 stream 模式;`sdk.hook(handler)` 运行时动态订阅(返回取消函数)

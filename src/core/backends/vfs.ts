@@ -535,13 +535,10 @@ export function createVfsTools(store: VfsStore): StructuredToolInterface[] {
 }
 
 /** vfs 中间件:beforeAgent 把 store.files 注入 state(共享引用,工具改即 state 改) */
-export function createVfsMiddleware(store: VfsStore, opts?: { mainTools?: boolean }): Middleware {
-  const mainTools = opts?.mainTools !== false // 缺省 true = 现状(主栈暴露 vfs 工具)
+export function createVfsMiddleware(store: VfsStore): Middleware {
   return {
     name: 'vfs',
-    // main-surface-slim Phase 2:mainTools:false → vfs 工具不进主栈(主 agent 不需要碰工作副本;
-    // 子 agent 池由 createChatSdk 装配期单独保供)。store/files 注入与 offload 依赖不受影响
-    ...(mainTools ? { tools: createVfsTools(store) } : {}),
+    tools: createVfsTools(store),
     beforeAgent: () => ({ files: store.files }),
   }
 }

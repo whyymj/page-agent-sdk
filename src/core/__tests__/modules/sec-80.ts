@@ -1,6 +1,6 @@
 /** sec-80:team-review-hardening 阶段 E(E1-E5 行为批) */
 import type { TestCtx } from './_ctx'
-import { createAgent, computeMaxIterations } from '../../harness/createAgent'
+import { createAgent, computeMaxIterations, roundBudgetHintText } from '../../harness/createAgent'
 import { createVfs, createVfsTools } from '../../backends/vfs'
 import { createSessionStore } from '../../backends/storage'
 import { asAgentError } from '../../tools/toolError'
@@ -37,6 +37,24 @@ export async function run(ctx: TestCtx): Promise<void> {
     const agentErr = asAgentError(err, 'recoverable')
     assert(agentErr.message.includes('测试错误'), 'E1-辅助 asAgentError 应保留原错误信息')
     assert(agentErr.severity === 'recoverable', 'E1-辅助 asAgentError 应设置 recoverable')
+  }
+
+  console.log('\nE6:轮次预算感知提示(round-budget-awareness,3.43 editor 实测驱动)')
+  {
+    // 预算充裕:零提示(不打扰正常轮次)
+    assert(roundBudgetHintText(3, 30) === '', '✓ 预算充裕(3/30)→ 无提示段')
+    assert(roundBudgetHintText(0, 30) === '', '✓ 首轮(0/30)→ 无提示段')
+    // ≥70%:提醒档(引导优先收口)
+    const warn = roundBudgetHintText(21, 30)
+    assert(warn.includes('轮次预算提醒') && warn.includes('21/30') && warn.includes('9 轮'), '✓ 70% 阈值(21/30)→ 提醒档(含已用/剩余轮数)')
+    assert(roundBudgetHintText(20, 30) === '' && roundBudgetHintText(21, 30) !== '', '✓ 70% 边界:max=30 时 20 轮不打扰、21 轮起提醒')
+    // 剩余 ≤2:告急档(优先级高,先判;指导诚实收口而非硬撑)
+    const urgent = roundBudgetHintText(28, 30)
+    assert(urgent.includes('轮次预算告急') && urgent.includes('仅剩 2 轮') && urgent.includes('update_todo'), '✓ 剩余 2 轮 → 告急档(含 update_todo 如实标记引导)')
+    assert(roundBudgetHintText(29, 30).includes('仅剩 1 轮'), '✓ 剩余 1 轮 → 告急档')
+    // 触顶/非法输入:零提示(收口路径不打扰;防负数/0 除错)
+    assert(roundBudgetHintText(30, 30) === '' && roundBudgetHintText(35, 30) === '', '✓ 已触顶 → 无提示(收口路径,不打扰)')
+    assert(roundBudgetHintText(5, 0) === '' && roundBudgetHintText(-1, 10) === '', '✓ 非法输入(max<=0/负数)→ 空(防御)')
   }
 
   console.log('\nE2:wrap-up 摘要保留')

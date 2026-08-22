@@ -2,6 +2,22 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.43.0] - 2026-08-22
+
+### Changed(轮次预算:默认上调 + 撞墙前自适应,editor 诊断 13-00 驱动)
+
+- **默认 `maxToolRounds` 15 → 30**:12 组件整页搭建(9 轮查文档 + 12 组件写入 + 3 次委派)天然 >15 轮,实测 15/15 触顶断在「查文档查到一半」(计划规模与预算错配)。`maxIterations`(×3=90)防自纠死循环总闸仍兜底
+- **轮次预算感知两档提示(createAgent 核心)**:已用轮次 ≥70% 起每轮持续注入「⚠️ 轮次预算提醒」(引导砍非必要查询/直奔核心写入)、剩余 ≤2 轮升级「告急」(引导诚实收口 + update_todo 如实标记未完成项)—— 模型撞墙**前**自适应,而非触顶被强制打断;提示只进本轮 system 重渲染,不污染历史消息
+- **C1 消耗提示轮次维度移交核心(修饿死缺陷)**:原 usageHints 的「⏳ 预算提示」为一次性(budgetHinted)且轮次/token 两维度共享标志 —— 大上下文任务 token 触发早发生,消耗掉唯一机会,轮次维度(真正吃紧时)从未注入(本次诊断实证);轮次维度移交核心持续注入后,usageHints 仅保留 token 维度(一次性)
+
+### Removed(撤回 3.41 的两个工具面开关)
+
+- **`data.tools` 白名单与 `vfs.mainTools` 主栈暴露开关移除**:实测收益(每轮省几 K token schema)不抵配置决策成本 —— 集成方需要理解「旧四件 vs 高层套」「主栈 vfs 工具与子 agent 池的关系」等 SDK 内部史才能正确决策,属「让用户疑惑的配置项」。SDK 回到**零配置全量工具面**(与 3.40 行为一致);弱模型工具选择稳定性问题未来若实际发生,应做**自动**瘦身(如检测到 html 子 agent 时自动收敛),不再暴露开关。`get/set/edit/delete_data` 与 9 个 vfs 工具恢复恒在主 agent 视野(与 3.41 之前的默认行为一致;已在 3.41 配置这两个选项的集成方删掉配置即可,其余零变化)
+
+### Fixed(editor 诊断驱动:空响应从「沉默空泡」升级为「重试 + 显式报错」)
+
+- **LLM 空响应自动重试 + 显式报错**:网关回 HTTP 200 + 错误 JSON 体(非 SSE)时流零 chunk,3.42 的守卫降级为空 AI 消息防了崩溃,但 editor 诊断(2026-08-22)实证用户只见**沉默空回复气泡**,无任何提示(连发「hi/??？」均空泡)。升级:① coreModelCall 检测零 chunk **自动重试 1 次**(零 chunk = 未 emit 任何 delta,重发安全不重复);② 重试仍空 → 抛 `EmptyLLMResponseError`,与 `StreamStalledError` 同款传播路径 —— send reject + error 事件(UI 显「LLM 返回空响应…请重发」)、子 agent 上下文变 error result(主 agent 可自愈回落直写,use_html 超时自愈同款)。debugLogs 留痕 `stage:'empty_llm_response_retry'` / `'empty_llm_response'`
+
 ## [3.42.0] - 2026-08-22
 
 ### Fixed(S7 真 LLM 验收驱动加固,editor 实测)

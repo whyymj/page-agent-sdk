@@ -45,12 +45,6 @@ export interface DataConfig {
    *  配置后 read 受保护路径返占位符(精确值不入 LLM 消息流),写侧强制(freeze 拒/verbatim 展开校验)。
    *  未配(默认)→ 全部行为零变化。opt-in:仅配 data.resources + 提供 vfsStore 时装配资源工具 */
   resources?: ResourceProtectSpec[]
-  /**
-   * 装配期工具白名单(main-surface-slim Phase 1):`'high'` 预设(全量减旧四件 get/set/edit/delete_data)/
-   * 具体名单(按名过滤,未装配名 warn)。createChatSdk({ data: { tools } }) 透传给 createDataOps 的 opts.tools;
-   * 仅首次装配生效,运行时 setData 替换配置时忽略(工具面是装配期决策)。
-   */
-  tools?: string[] | 'high'
 }
 
 export interface DataAuditEntry {
@@ -107,17 +101,6 @@ export interface DataOpsOptions {
    * read 返回 hash 与比对同源。
    */
   conflictWatchFields?: string[]
-  /**
-   * 装配期工具白名单(main-surface-slim Phase 1:上下文层裁剪,机制层不动):
-   * - 不传 = 全量输出(14 工具,零回归)
-   * - `'high'` 预设 = 高层套:全量减去与 read/write 同职能的旧四件(get_data/set_data/edit_data/delete_data)
-   *   —— 单一职责:新旧同职能工具二选一,提示词「工具纪律」段可随之删;draft 与 resource 等
-   *   opt-in 家族不受预设影响(集成方显式开启的能力不静默砍)
-   * - 具体名单 = 按名精确过滤(集成方完全自控);名单含未装配名 console.warn 留痕
-   * 注意:过滤发生在装配期,子 agent 工具池从主池筛选 → 白名单对子 agent 同样生效;
-   * set_data 依赖链(restore_data/conflictPolicy/eval_script transform)走内部通道不受影响。
-   */
-  tools?: string[] | 'high'
 }
 
 export interface DataSnapshotEntry {
@@ -127,12 +110,6 @@ export interface DataSnapshotEntry {
   label?: string
   value: unknown
 }
-
-/** 'high' 预设剔除的旧套工具(与 read/write 同职能的新旧并存;main-surface-slim Phase 1) */
-const DATAOPS_LEGACY_TOOLS = new Set(['get_data', 'set_data', 'edit_data', 'delete_data'])
-
-/** 读工具名集(review P2:白名单全裁读工具时 warn 留痕用) */
-const DATAOPS_READ_TOOLS = new Set(['read', 'get_data', 'query_data', 'search_data', 'describe_data', 'schema_data'])
 
 /** 数据操作控制器(运行时替换配置,供 createChatSdk 暴露 sdk.setData 等) */
 export interface DataOpsController {
@@ -1657,7 +1634,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     resourceTools.push(rget, rupdate, rlist, rdelete)
   }
 
-  const allTools: StructuredToolInterface[] = [
+  const tools: StructuredToolInterface[] = [
     describeData, getData, setData, editData, deleteData,
     restoreData, historyData,
     queryData, searchData, evalScript,
@@ -1665,24 +1642,6 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     ...draftTools,
     ...resourceTools,
   ]
-  // main-surface-slim Phase 1:装配期工具白名单(裁的是 LLM 每轮可见的工具 schema 面,写机制零变化)
-  const requested = opts.tools
-  let tools: StructuredToolInterface[] = allTools
-  if (requested === 'high') {
-    tools = allTools.filter((t) => !DATAOPS_LEGACY_TOOLS.has(t.name))
-  } else if (Array.isArray(requested) && requested.length) {
-    const wanted = new Set(requested)
-    tools = allTools.filter((t) => wanted.has(t.name))
-    const assembled = new Set(allTools.map((t) => t.name))
-    for (const n of requested) {
-      if (!assembled.has(n)) console.warn(`[page-agent-sdk] data.tools 白名单含未装配的工具 "${n}",已忽略(当前已装配:${[...assembled].join(', ')})`)
-    }
-    // review P2:名单切掉全部读工具 → 模型写后无法核实结果(谎报完成概率上升,恰是 zero-tool-gate 要防的)。
-    // 属集成方自控的合法选择,但留痕提醒(宁提示不禁止)
-    if (tools.length && !tools.some((t) => DATAOPS_READ_TOOLS.has(t.name))) {
-      console.warn('[page-agent-sdk] data.tools 白名单不含任何读工具(read/get_data/query_data/search_data):模型将无法读取/核实主数据,确认这是预期配置')
-    }
-  }
   Object.defineProperty(tools, 'controller', { value: controller, enumerable: false, configurable: false, writable: false })
   // per-scope 基线 marker(P1-13):子 agent 工具池构建时按此识别 dataOps 工具并包 scope proxy
   // (不可枚举 → 不污染遍历;经 wrapWithPathGuard 的 Proxy 透传可见)

@@ -1,4 +1,6 @@
-# Tasks(main-surface-slim;SDK 侧)
+# Tasks
+
+> **2026-08-22 回退注记**:Phase 1/2 曾随 3.41.0 发布,Phase 3(editor 接入)评估时维护者拍板移除两选项(3.43.0,详见 proposal 头部回退说明)。下方 Phase 3 各项**不再适用**;Phase 1/2 勾选保留为历史记录(对应能力已在 3.43.0 撤除,相关测试 sec-96/sec-97 与 e2e 用例同批删除)。(main-surface-slim;SDK 侧)
 
 ## Phase 1:dataOps 工具白名单
 

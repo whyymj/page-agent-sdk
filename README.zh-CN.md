@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-2846%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-2806%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -249,12 +249,11 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `summaryLlm` | `BaseChatModel \| LLMConfig` | 摘要专用 LLM（不配用主 `llm`） |
 | | `maxMemoryRounds` | `number` · 默认 `30` | 对话历史内存上限轮次（`0` 关裁剪） |
 | | `staleReadInvalidation` | `boolean` · 默认 `true` | 3.42+ 写驱动过期读失效：单次 invoke 窗口内，后续成功写击中路径的旧 `read`/`query_data`/`search_data` 结果替换为失效占位（防模型凭旧快照答状态；占位引用写结果自带新值/hash 防 thrash）。`false` = 主/子栈一致关闭 |
-| | `vfs` | `{initialFiles?,maxBytes?,poolBytes?,mainTools?}` · 默认 4MB, `mainTools:true` | 内存工作区上限（超限 LRU 淘汰）。`mainTools:false`（3.41+）把 9 个 vfs 工具从主 agent 视野隐藏（usageHints 同步不注入 vfs 段），子 agent 栈经内部工具池照常供给 —— 适合主 agent 只编排不落盘的场景 |
-| | `data.tools` | `'high' \| string[]` | 3.41+ dataOps 装配期工具白名单。`'high'` 裁掉旧四件（`get/set/edit/delete_data`，与高层 `read`/`write` 同职能二选一）；具体名单按名精确过滤；opt-in 家族（draft/resource）装配了就保留 |
+| | `vfs` | `{initialFiles?,maxBytes?,poolBytes?}` · 默认 4MB | 内存工作区上限（超限 LRU 淘汰） |
 | **持久化** | `storage` | `'indexed' \| 'session' \| 'local' \| 'memory' \| 配置 \| false` · 默认关 | 赋值开启；多 agent 靠 `id` 隔离 |
 | | `session` | `{id?,autoResume?,title?}` | 会话控制 |
 | | `shareContext` | `boolean` · 默认 `false` | 同 `id` 多实例共享同一 agent |
-| **鲁棒/其他** | `maxRetries` / `maxParallelTools` / `maxToolRounds` | `number` · 2 / 1 / 10 | 模型重试 / 同轮工具并发(>1 启用同轮并行委派,失败隔离 + 同组件锁互斥)/ 最大轮次 |
+| **鲁棒/其他** | `maxRetries` / `maxParallelTools` / `maxToolRounds` | `number` · 2 / 1 / 30 | 模型重试 / 同轮工具并发(>1 启用同轮并行委派,失败隔离 + 同组件锁互斥)/ 最大轮次 |
 | | `roundTokenBudget` | `number` · 默认 `0`（关） | 单次调用累计 token 上限（3.11+;超限友好收口,已完成部分保留;与 automation 的 `tokenBudget` 正交,无需开 automation） |
 | | `mcp` | `McpServerConfig[]` | 远程 MCP server（http/sse/websocket） |
 | | `middleware` | `Middleware[]` | 自定义中间件（拼到内置栈末尾） |
@@ -499,8 +498,8 @@ function switchTo(i: number) {
 ## 自测
 
 ```bash
-npm test            # 2846 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 921 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm test            # 2806 项断言（tsx 源码级，不依赖 LLM）
+npm run test:e2e    # 929 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试

@@ -5,7 +5,7 @@
  * - StreamStalledError 不被 isRetryable 当网络错
  * - skills 远程 fetch abort → 超时错误分类(readSkillDoc)
  */
-import { withStallTimeout, StreamStalledError, StreamMaxDurationError, DEFAULT_STREAM_MAX_DURATION_MS } from '../../utils/stallTimeout'
+import { withStallTimeout, StreamStalledError, StreamMaxDurationError, EmptyLLMResponseError, DEFAULT_STREAM_MAX_DURATION_MS } from '../../utils/stallTimeout'
 import { isRetryable } from '../../harness/retry'
 import { readSkillDoc } from '../../harness/skills'
 import type { TestCtx } from './_ctx'
@@ -89,6 +89,15 @@ export async function run(ctx: TestCtx): Promise<void> {
   // isRetryable 不当网络错重试(4xx 语义)
   {
     assert(isRetryable(new StreamStalledError(1000)) === false, '✓ StreamStalledError 不进重试(停滞重试大概率复现)')
+  }
+
+  console.log('\n[fix-hang-and-feedback · LLM 空响应错误(网关 200+错误体形态)]')
+  {
+    // editor 诊断(2026-08-22)实证:3.42 空响应降级为空 AI 消息防崩溃,但用户只见沉默空泡;
+    // 升级为显式抛错(coreModelCall 自动重试 1 次仍空后)→ send reject + error 事件 UI 可见
+    const e = new EmptyLLMResponseError()
+    assert(e.name === 'EmptyLLMResponseError' && /空响应/.test(e.message), '✓ EmptyLLMResponseError 消息可读(归因网关错误体 + 已重试)')
+    assert((e as { status?: number }).status === 502, '✓ EmptyLLMResponseError status=502(上游网关问题归因;抛出点在流结束后不进 withRetry)')
   }
 
   console.log('\n[fix-hang-and-feedback · 流总时长上限(maxMs,空转帧黑洞兜底)]')

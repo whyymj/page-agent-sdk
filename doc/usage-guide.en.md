@@ -195,7 +195,7 @@ createChatSdk({
   capabilities: { agentCompression: true },  // requires summarization; decisionTimeoutMs (default 6s) / decisionMaxTokens (default 2048) configurable
   maxMemoryRounds: 30,             // dialog history memory cap (0 disables trim)
   staleReadInvalidation: true,     // write-driven stale read invalidation (3.42+, default on): old read/query/search results hit by a later successful write are replaced with a placeholder within the invoke window; false disables for main+subagent
-  vfs: { maxBytes: 8*1024*1024, poolBytes?, mainTools? },  // workspace cap (default 8MB; 2.16.0+ three pools: large_results/drafts/userFiles, each its own LRU; 3.41+ `mainTools:false` hides the 9 vfs tools from the main agent, subagent stacks keep supply)
+  vfs: { maxBytes: 8*1024*1024, poolBytes? },  // workspace cap (default 8MB; 2.16.0+ three pools: large_results/drafts/userFiles, each its own LRU)
 
   // persistence
   storage: 'indexed',              // 'indexed'|'session'|'local'|'memory'|config|false (default off)
@@ -205,7 +205,7 @@ createChatSdk({
   // robustness
   maxRetries: 2,                   // model call retries (network/429/5xx)
   maxParallelTools: 1,              // per-round tool concurrency
-  maxToolRounds: 10,               // max tool rounds (default 10; counts only real tool rounds — format/verify self-correction doesn't consume; maxIterations total-iteration hard cap prevents self-correction loops)
+  maxToolRounds: 30,               // max tool rounds (default 30 since 3.43 — 3.28 raised 10→15, real-world complex page builds still hit it; counts only real tool rounds — format/verify self-correction doesn't consume; maxIterations total-iteration hard cap prevents self-correction loops)
 
   // external tools
   mcp: [{ transport: 'http'|'sse'|'websocket', url, name? }],
@@ -732,7 +732,7 @@ defineSkill({
 
 - 4-layer adaptive compression (`contextPreset`: auto/conservative/aggressive/complex). **LLM summary is async (2.41.0+)**: compression returns immediately with an index summary (**no first-token block**; previously it awaited the LLM ≤15s), while an LLM summary runs in the background into a prefix cache; later rounds reuse it (LLM prefix + fresh index tail).
 - **Compression cost cap** (`contextOptions.promptSoftCapTokens`, 3.11+): the token trigger is `min(window × ratio, softCap)`. Huge-window models (e.g. 1M-window flash-class) would burn hundreds of thousands of tokens before the ratio trigger fires — the soft cap switches "when to compress" to a cost dimension: **defaults to 160K when unset and window ≥320K**; an explicit positive value wins; explicit `0` disables (small-window models are unaffected — the cap can only trigger earlier, never later). Verify the effective value via `inspect().compression.promptSoftCap`. See `doc/context-management.md` §5.
-- **Budget self-awareness (3.11+)**: a "⏳ budget hint" line is injected into the system prompt once per task when tool rounds reach 70% of `maxToolRounds` or cumulative prompt tokens reach half the soft cap (advisory: converge or report progress); the same write path failing ≥2 times consecutively injects a "re-read / restore_data" reminder. Opt-in per-invocation cap `roundTokenBudget` (default off): cumulative tokens for a single `send` exceeding it → friendly wrap-up text, partial work preserved — unlike automation's `tokenBudget` it needs no `capabilities.automation` and scopes to one call (guards against a single runaway round).
+- **Round-budget awareness (3.43, createAgent core)**: once used rounds reach 70% of `maxToolRounds`, a "⚠️ round budget" notice is injected into every round's system prompt, escalating to "critical" when ≤2 rounds remain — the model adapts (cut non-essential queries, finish core writes, honestly mark unfinished todos) before hitting the wall instead of being cut off mid-task; the notice lives in the per-round system re-render only, never pollutes history. **Token budget hint (C1)**: a one-shot "⏳ budget hint" line is injected when cumulative prompt tokens reach half the soft cap; the same write path failing ≥2 times consecutively injects a "re-read / restore_data" reminder. Opt-in per-invocation cap `roundTokenBudget` (default off): cumulative tokens for a single `send` exceeding it → friendly wrap-up text, partial work preserved — unlike automation's `tokenBudget` it needs no `capabilities.automation` and scopes to one call (guards against a single runaway round).
   ```ts
   createChatSdk({ roundTokenBudget: 50000 })  // per-task cap ~50K tokens, friendly wrap-up on exceed
   ```

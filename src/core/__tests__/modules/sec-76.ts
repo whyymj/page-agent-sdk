@@ -26,33 +26,30 @@ function stateWith(progress: Partial<LoopProgress>): HarnessState {
 export async function run(ctx: TestCtx) {
   const { assert, invoke } = ctx
 
-  // ===== C1:轮次达 70% 触发预算提示 =====
+  // ===== C1:轮次维度已移交 createAgent 核心(3.43)——usageHints 不再注入轮次提示 =====
   {
+    // 2026-08-22 editor 诊断实证缺陷:token 触发(大上下文早触发)消耗掉一次性 budgetHinted,
+    // 轮次维度(真正吃紧时)被饿死从未注入 → 轮次维度移交核心 roundBudgetHintText(持续注入 + 两档升级,
+    // 见 sec-80);此处轮次再多也不注入(无 softCap 配置时 token 维度同样不触发)
     const mw = createUsageHintsMiddleware(undefined, false, { promptSoftCap: Number.POSITIVE_INFINITY })
     const s = stateWith({ rounds: 7, maxToolRounds: 10 })
     const out = (mw.augmentPrompt as (st: HarnessState) => string | undefined)(s) ?? ''
-    assert(out.includes('预算提示') && out.includes('7/10'), '✓ C1 预算提示 → 轮次 ≥70%(7/10)注入提示行')
-    // 一次性:同任务(budgetHinted 已置位)再次渲染不再注入
+    assert(!out.includes('预算提示'), '✓ C1 轮次维度移交核心 → usageHints 轮次 ≥70% 不再注入(由 roundBudgetHintText 持续承担)')
     const out2 = (mw.augmentPrompt as (st: HarnessState) => string | undefined)(s) ?? ''
-    assert(!out2.includes('预算提示'), '✓ C1 预算提示 → 每任务只注入一次(budgetHinted 置位后不重复)')
+    assert(!out2.includes('预算提示'), '✓ C1 轮次维度移交核心 → 重复渲染同样不注入')
   }
 
-  // ===== C1:未达 70% 不注入 =====
-  {
-    const mw = createUsageHintsMiddleware(undefined, false, { promptSoftCap: Number.POSITIVE_INFINITY })
-    const out = (mw.augmentPrompt as (st: HarnessState) => string | undefined)(stateWith({ rounds: 3, maxToolRounds: 10 })) ?? ''
-    assert(!out || !out.includes('预算提示'), '✓ C1 预算提示 → 轮次 30% 未达阈值不注入')
-  }
-
-  // ===== C1:token 维度(累计 ≥ softCap/2)触发;无 softCap 配置不触发 =====
+  // ===== C1:token 维度(累计 ≥ softCap/2)触发 + 一次性;无 softCap 配置不触发 =====
   {
     const mwCap = createUsageHintsMiddleware(undefined, false, { promptSoftCap: 160_000 })
     const s = stateWith({ rounds: 1, maxToolRounds: 10, invokeUsage: { prompt_tokens: 90_000, completion_tokens: 0, total_tokens: 90_000 } })
     const out = (mwCap.augmentPrompt as (st: HarnessState) => string | undefined)(s) ?? ''
-    assert(out.includes('预算提示') && out.includes('90K'), '✓ C1 预算提示 → 累计 ≥ softCap/2(90K/160K)注入(轮次未达也触发)')
+    assert(out.includes('预算提示') && out.includes('90K'), '✓ C1 预算提示 → 累计 ≥ softCap/2(90K/160K)注入(token 维度保留)')
+    const outAgain = (mwCap.augmentPrompt as (st: HarnessState) => string | undefined)(s) ?? ''
+    assert(!outAgain.includes('预算提示'), '✓ C1 预算提示 → 每任务只注入一次(budgetHinted 置位后不重复)')
     const mwNoCap = createUsageHintsMiddleware(undefined, false)
     const out2 = (mwNoCap.augmentPrompt as (st: HarnessState) => string | undefined)(stateWith({ rounds: 1, maxToolRounds: 10, invokeUsage: { prompt_tokens: 90_000, completion_tokens: 0, total_tokens: 90_000 } })) ?? ''
-    assert(!out2 || !out2.includes('预算提示'), '✓ C1 预算提示 → 未配 softCap 时 token 维度不触发(1/10 轮 + 90K 不注入)')
+    assert(!out2 || !out2.includes('预算提示'), '✓ C1 预算提示 → 未配 softCap 时 token 维度不触发')
   }
 
   // ===== C2:写失败计数 ≥2 注入提醒;清零后不注入 =====

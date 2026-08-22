@@ -98,8 +98,6 @@ import { run as run_sec_92 } from './modules/sec-92'
 import { run as run_sec_93 } from './modules/sec-93'
 import { run as run_sec_94 } from './modules/sec-94'
 import { run as run_sec_95 } from './modules/sec-95'
-import { run as run_sec_96 } from './modules/sec-96'
-import { run as run_sec_97 } from './modules/sec-97'
 import { run as run_sec_98 } from './modules/sec-98'
 import { run as run_sec_99 } from './modules/sec-99'
 import { run as run_sec_100 } from './modules/sec-100'
@@ -225,8 +223,6 @@ await run_sec_92(ctx)
 await run_sec_93(ctx)
 await run_sec_94(ctx)
 await run_sec_95(ctx)
-await run_sec_96(ctx)
-await run_sec_97(ctx)
 await run_sec_98(ctx)
 await run_sec_99(ctx)
 await run_sec_100(ctx)

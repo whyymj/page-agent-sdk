@@ -30,7 +30,7 @@ import { getTraceMetrics } from '../utils/traceMetrics'
 import { extractTextDelta, extractReasoningDelta, extractUsage, normalizeUsage } from '../utils/contentParts'
 import { createInitialState, type HarnessState, type LoopProgress } from './state'
 import { withRetry, isAbort, type RetryOptions } from './retry'
-import { withStallTimeout, StreamStalledError, StreamMaxDurationError, DEFAULT_STREAM_STALL_MS, DEFAULT_STREAM_MAX_DURATION_MS } from '../utils/stallTimeout'
+import { withStallTimeout, StreamStalledError, StreamMaxDurationError, EmptyLLMResponseError, DEFAULT_STREAM_STALL_MS, DEFAULT_STREAM_MAX_DURATION_MS } from '../utils/stallTimeout'
 import { isContextLengthError } from './errors'
 import { detectIncompleteFinish, buildGateFeedback } from './todos'
 import { detectActionImperative, isZeroEffectiveWrite, buildTurnFactSheet, buildZeroToolFeedback, mentionsLocation, detectStatusQuery, assertsCompletion, isZeroToolCalls, buildStatusQueryFeedback, type TurnToolUsage } from './actionGate'
@@ -281,9 +281,10 @@ export interface CreateAgentOptions {
   debug?: boolean
 }
 
-// 默认工具轮预算(3.28 调整:原 10 对「读 N 个组件 props + 逐个 write 配置」类多组件任务过紧,模型 serial 调用易触顶被 while 截断致任务中断;
-//   15 给多组件场景留 buffer;总闸 maxIterations = max(maxToolRounds*3, 30) 跟随,防自纠死循环仍兜底。集成方大 JSON 从零生成(draft)仍建议显式配 ≥20)
-const DEFAULT_MAX_TOOL_ROUNDS = 15
+// 默认工具轮预算(3.43 再调:10→15(3.28)后 editor 实测 12 组件整页搭建仍触顶 —— 9 轮查文档 + 12 组件写入 + 3 次委派
+//   天然 >15 轮,计划规模与预算错配致任务中途断;30 覆盖典型复杂任务且 maxIterations = max(*3, 30)=90 总闸仍防自纠死循环。
+//   配合轮次预算感知提示(轮次预算告急注入 system),模型撞墙前自适应而非触顶被打断)
+const DEFAULT_MAX_TOOL_ROUNDS = 30
 /** debugLogs 条目上限:超限丢最旧,防异常多轮/子 agent 大量转发日志撑爆内存(纯内存,每轮重置,此为单轮兜底) */
 const MAX_DEBUG_LOGS = 300
 /** 单条日志内 message content 截断阈值:llm_request 每轮记录完整 messages(O(N²) 增长),截断既保可读又控内存 */
@@ -329,6 +330,25 @@ export function trimContextIfNeededImpl(messages: BaseMessage[], maxTokens: numb
  */
 export function computeMaxIterations(maxToolRounds: number, userMax?: number): number {
   return userMax ?? Math.max(maxToolRounds * 3, 30)
+}
+
+/**
+ * 轮次预算感知提示(round-budget-awareness):已用轮次占 maxToolRounds 比例高时返回注入 system 的提示段,
+ * 让模型在撞墙**前**自适应(砍非必要查询/直奔核心写入/如实标记未完成项),而非触顶被 react_call_limit 强制打断。
+ * 3.43 editor 实测驱动:12 组件整页计划(min ~25 轮)撞 15 轮上限,任务断在「查文档查到一半」。
+ * 两档:剩余 ≤2 轮告急(优先级高,先判);已用 ≥70% 提醒。零开销纯函数,可白盒单测。
+ */
+export function roundBudgetHintText(usedRounds: number, maxToolRounds: number): string {
+  if (maxToolRounds <= 0 || usedRounds < 0) return ''
+  const remaining = maxToolRounds - usedRounds
+  if (remaining <= 0) return '' // 已触顶(收口路径),不打扰
+  if (remaining <= 2) {
+    return `⚠️ 轮次预算告急:本轮任务已用 ${usedRounds}/${maxToolRounds} 轮工具调用,仅剩 ${remaining} 轮。立即停止扩展性操作(查询/重读/优化),完成手头最关键的一步写入或委派,然后用纯文本给出诚实结论:哪些已完成、哪些未做(用 update_todo 如实标记),用户可回复「继续」续跑。`
+  }
+  if (usedRounds >= Math.ceil(maxToolRounds * 0.7)) {
+    return `⚠️ 轮次预算提醒:本轮任务已用 ${usedRounds}/${maxToolRounds} 轮工具调用,剩余 ${remaining} 轮。优先完成核心写入/委派与收口,砍掉非必要的查询与重复读;若预估剩余步骤超出预算,先做最重要的部分并如实标记未完成项,不要等被打断。`
+  }
+  return ''
 }
 
 /** C2 写失败计数认定的写工具集(dataOps 高层 + 底层写路径;draft_commit 视为根路径写) */
@@ -545,10 +565,12 @@ export function createAgent(options: CreateAgentOptions) {
    *  只替换首部 system(主 prompt,每轮重渲染),保留其余 SystemMessage ——
    *  压缩摘要 / trim 累积摘要经 toLC 转成 SystemMessage 落在 index≥1;旧实现 filter 掉所有 system,
    *  会把这些摘要首轮即剥光 → 长对话跨轮摘要从未送达模型(主流程审查 P0-1)。
-   *  循环内无新增 system(工具结果/模型回复均非 system),messages[0] 由 toLC 保证恒为主 prompt。 */
-  function replaceSystem(messages: BaseMessage[]): BaseMessage[] {
+   *  循环内无新增 system(工具结果/模型回复均非 system),messages[0] 由 toLC 保证恒为主 prompt。
+   *  extra 追加到主 prompt 尾部(轮次预算感知等每轮变化的横切提示;只进本轮请求,不污染历史)。 */
+  function replaceSystem(messages: BaseMessage[], extra?: string): BaseMessage[] {
     const rest = messages[0] && typeOf(messages[0]) === 'system' ? messages.slice(1) : messages.slice()
-    return [new SystemMessage(buildSystemPrompt()), ...rest]
+    const base = buildSystemPrompt()
+    return [new SystemMessage(extra ? `${base}\n\n${extra}` : base), ...rest]
   }
 
   /**
@@ -663,10 +685,22 @@ export function createAgent(options: CreateAgentOptions) {
       throw err
     }
     // 流正常结束但零有效 chunk(网关回 200 + 错误 JSON 体非 SSE:LLM 代理黑洞实测形态,6003 error_code
-    // 无 data: 前缀,SSE 解析零 chunk 即 end)→ aggregated 为 null,裸用会让循环层读 tool_calls 崩
-    // TypeError 未走三档错误模型(deferred 登记实证)。构造空 AI 消息降级为可观测的「空响应」,
-    // 循环层按无 tool_calls 处理(空响应门禁/零工具收尾门禁自然接手引导模型重试)
-    const message = (aggregated as unknown as BaseMessage) ?? new AIMessage(content)
+    // 无 data: 前缀,SSE 解析零 chunk 即 end)→ aggregated 为 null。
+    // 3.42 曾构造空 AI 消息降级(防循环层读 tool_calls 崩 TypeError),但 editor 诊断(2026-08-22)实证:
+    // 用户只见沉默空回复气泡,无任何提示。现升级:① 自动重试 1 次(零 chunk = 未 emit 任何 delta,
+    // 重发安全不重复;_emptyRetry 单次防死循环,同 _ctxRetry 模式);② 重试仍空 → 抛 EmptyLLMResponseError
+    // 走 StreamStalledError 同款通道(send reject + error 事件 → UI 显错;子 agent 变 error result,
+    // 主 agent 可自愈),不再静默空泡。
+    if (aggregated === null) {
+      if (!(req as any)._emptyRetry) {
+        ;(req as any)._emptyRetry = true
+        log('error', { stage: 'empty_llm_response_retry', hint: '流正常结束但零 chunk(网关 200+错误体形态),自动重试 1 次' })
+        return coreModelCall(req, onEvent, signal, caller)
+      }
+      log('error', { stage: 'empty_llm_response', retried: true, hint: '重试后仍零 chunk,抛 EmptyLLMResponseError 显式报错' })
+      throw new EmptyLLMResponseError()
+    }
+    const message = aggregated as unknown as BaseMessage
     const toolCalls = ((message as any).tool_calls || []) as ModelResponse['toolCalls']
     return { message, toolCalls, content }
   }
@@ -687,15 +721,8 @@ export function createAgent(options: CreateAgentOptions) {
       const result = await (target.invoke as any)(ctx.args, { configurable: callConfig })
       let content = typeof result === 'string' ? result : JSON.stringify(result)
       // 大结果外存:经 ctx.state.files(vfs 中间件注入的共享引用),超阈值转存 vfs 只留预览+引用
-      // main-surface-slim Phase 2:vfsAvailable 判定从「allTools 含 vfs_read 工具名」改为
-      // 「state.files 非空」—— vfs.mainTools:false 隐藏主栈 vfs 工具后,大结果外存照常
-      // (files 注入与工具暴露解绑;外存后模型经 usageHints/工具结果里的 vfs_read 引用按需回读,
-      // 子 agent 池仍含 vfs 工具)
-      // review 回改(P1):上段注释的「usageHints 提供 vfs_read 引用」不成立(usageHints 无 vfs 段),
-      // 且 offload 外存文案硬编码「用 vfs_read 回读」—— 主栈隐藏 vfs_read 后该引用成死路(模型调
-      // 不存在的工具)。故主栈 vfs_read 缺席时退回 passThrough/截断路径(行为安全,信息可达性不受损):
-      // files 非空决定「能存」,工具在场决定「能读」,两者都在才外存。子 agent 栈有自己的 vfs 工具池,
-      // 不受影响。
+      // files 非空决定「能存」,vfs_read 工具在场决定「能读」(外存引用文案引导模型 vfs_read 回读,
+      // 工具不在场该引用成死路),两者都在才外存;否则退回 passThrough/截断路径(信息可达性不受损)
       const mainVfsReadAvailable = allTools.some((t) => t.name === 'vfs_read')
       content = offloadLargeResult(content, {
         files: ctx.state.files,
@@ -862,7 +889,8 @@ export function createAgent(options: CreateAgentOptions) {
 
         // beforeModel(正序):中间件更新 state(todos 推进等),随后重渲染 system
         state = runBeforeModel(middlewares, { messages: currentMessages, state })
-        currentMessages = replaceSystem(currentMessages)
+        // 轮次预算感知(round-budget-awareness):预算吃紧时把提示段注入本轮 system(只在 [0] 重渲染,不污染历史消息)
+        currentMessages = replaceSystem(currentMessages, roundBudgetHintText(rounds, maxToolRounds))
         // 逐轮上下文保底压缩:tool 结果累积超放行上限时,从最早的 ToolMessage 起截断为占位摘要(大模型阈值高几乎不触发)
         currentMessages = trimContextIfNeeded(currentMessages, Math.round(caps.contextWindow * 0.6)) // H1:token 口径,单轮 currentMessages ≤60% 窗口(留输出+schema)
 

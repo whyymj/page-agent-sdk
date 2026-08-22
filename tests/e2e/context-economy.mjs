@@ -85,5 +85,28 @@ export async function run() {
     s4.unmount()
   }
 
+  console.log('[e2e:context-economy] 轮次预算感知(3.43):预算吃紧 → system 注入提示段,模型撞墙前可见剩余轮数')
+  {
+    // maxToolRounds=10:ceil(10*0.7)=7 → 第 8 次模型调用(已用 7 轮)起「提醒」;
+    // 剩余 ≤2(已用 8/9)→ 「告急」。提示只进本轮 system[0] 重渲染,不污染历史消息
+    const model = new StubChatModel(
+      [...Array.from({ length: 10 }, () => ({ toolCalls: [{ name: 'echo', args: { msg: 'x' } }] })), { text: '收口' }],
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-round-hint', storage: 'memory', llm: model,
+      capabilities: MIN_CAPS, tools: [echo], maxToolRounds: 10, autoTitle: false,
+    })
+    await sdk.mount()
+    await sdk.send('跑任务')
+    const sys = model.systemPrompts
+    assert(!sys.slice(0, 7).some((p) => p.includes('轮次预算')), `预算充裕期(前 7 次调用)无提示段(不打扰)`)
+    assert(sys[7]?.includes('轮次预算提醒') && sys[7].includes('7/10'), `70% 阈值(已用 7/10)→ system 注入「提醒」段,实际:${sys[7]?.slice(-120)}`)
+    assert(sys[8]?.includes('轮次预算告急') && sys[8].includes('仅剩 2 轮'), `剩余 2 轮 → 升级「告急」段`)
+    assert(sys[9]?.includes('轮次预算告急') && sys[9].includes('仅剩 1 轮'), `剩余 1 轮 → 告急段持续`)
+    // 不污染历史:提示只存在于每轮 system 重渲染,sdk.messages(UI 可见)零残留
+    assert(!sdk.messages.some((m) => (m.content || '').includes('轮次预算')), '提示段不进历史消息(UI 零残留,只影响本轮请求)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }
