@@ -135,7 +135,7 @@ export const _optFields: Pick<ChatSdkOptions,
 export const _capKeys: Pick<NonNullable<ChatSdkOptions['capabilities']>,
   'dataOps' | 'fetch' | 'planning' | 'missionAnchor' | 'workingMemory' | 'focus' | 'skills' | 'vfs'
   | 'summarization' | 'memory' | 'subagent' | 'inspectEnv' | 'contextInspector' | 'verify' | 'domInspect'
-  | 'draftWrite' | 'tracing' | 'todoDeps' | 'skillHostScript' | 'automation' | 'agentCompression'
+  | 'draftWrite' | 'tracing' | 'skillHostScript' | 'automation' | 'agentCompression'
 > = null as any
 
 // 6. send options per-call 字段(audit P1-24:d.ts 与 src SendOptions 对齐,防 maxAutoRetries 漂移)

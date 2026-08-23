@@ -31,7 +31,7 @@ import { extractTextDelta, extractReasoningDelta, extractUsage, normalizeUsage }
 import { createInitialState, type HarnessState, type LoopProgress } from './state'
 import { withRetry, isAbort, type RetryOptions } from './retry'
 import { withStallTimeout, StreamStalledError, StreamMaxDurationError, EmptyLLMResponseError, DEFAULT_STREAM_STALL_MS, DEFAULT_STREAM_MAX_DURATION_MS } from '../utils/stallTimeout'
-import { isContextLengthError } from './errors'
+import { isContextLengthError, decorateModelUnavailable } from './errors'
 import { type TurnToolUsage } from './actionGate'
 import { isSuccessfulWriteResult } from './writeGate'
 import { invalidateStaleReads, effectiveWritePaths, type StaleWriteRecord } from './readInvalidation'
@@ -627,6 +627,8 @@ export function createAgent(options: CreateAgentOptions) {
         console.warn(`[page-agent-sdk] 上下文超限(启动)→ 激进 trim 重试:${beforeTokens} → ${afterTokens} tokens`)
         return coreModelCall({ ...req, messages: trimmed }, onEvent, signal, caller)
       }
+      // model-offline-guidance:网关/厂商下线模型面 → 打码 + message 附引导留痕(severity/重试语义不变,4xx 本就不重试)
+      if (decorateModelUnavailable(err)) log('error', { stage: 'model_unavailable', at: 'launch', status: (err as { status?: number })?.status })
       throw err
     }
     // catch 已 return/throw,此处 stream 必已赋值;narrow 防 TS 报 possibly undefined
@@ -671,6 +673,8 @@ export function createAgent(options: CreateAgentOptions) {
         console.warn(`[page-agent-sdk] 上下文超限 → 激进 trim 重试:${beforeTokens} → ${afterTokens} tokens(窗口 ${caps.contextWindow})`)
         return coreModelCall({ ...req, messages: trimmed }, onEvent, signal, caller)
       }
+      // model-offline-guidance:迭代中撞离线模型(已 emit,不重试)→ 同款打码 + 引导
+      if (decorateModelUnavailable(err)) log('error', { stage: 'model_unavailable', at: 'iterate', status: (err as { status?: number })?.status })
       throw err
     }
     // 流正常结束但零有效 chunk(网关回 200 + 错误 JSON 体非 SSE:LLM 代理黑洞实测形态,6003 error_code
@@ -903,16 +907,17 @@ export function createAgent(options: CreateAgentOptions) {
         const response = await modelHandler({ messages: currentMessages, state })
         currentMessages.push(response.message)
 
-        log('llm_response', { round: rounds + 1, content: response.content, toolCalls: response.toolCalls })
         // usage 兼容:OpenAI/DeepSeek additional_kwargs.usage + Anthropic response_metadata.usage(extractUsage 统一;主链 usage 累加已在 sdk-events 多 provider fallback)
+        // llm_response 日志 data 带归一 usage(含 reasoning_tokens):激活 DebugDrawer 既有 per-log 用量行(此前 data 不带 usage 是死路径)
+        const nuLog = normalizeUsage(response.message)
+        log('llm_response', { round: rounds + 1, content: response.content, toolCalls: response.toolCalls, ...(nuLog ? { usage: nuLog } : {}) })
         endSpan(modelSpan, response.aborted ? 'timeout' : 'ok', { usage: extractUsage(response.message) })
-        // C1 自感知预算:本 invoke 累计 usage(normalizeUsage 归一 camelCase 兼容;主链会话级累加不受影响)
+        // C1 自感知预算:本 invoke 累计 usage(normalizeUsage 归一 camelCase 兼容;主链会话级累加不受影响;reasoning 不进预算)
         {
-          const nu = normalizeUsage(response.message)
-          if (nu) {
-            progress.invokeUsage.prompt_tokens += nu.prompt_tokens ?? 0
-            progress.invokeUsage.completion_tokens += nu.completion_tokens ?? 0
-            progress.invokeUsage.total_tokens += nu.total_tokens ?? 0
+          if (nuLog) {
+            progress.invokeUsage.prompt_tokens += nuLog.prompt_tokens ?? 0
+            progress.invokeUsage.completion_tokens += nuLog.completion_tokens ?? 0
+            progress.invokeUsage.total_tokens += nuLog.total_tokens ?? 0
           }
         }
 

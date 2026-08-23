@@ -172,6 +172,8 @@ export interface TokenUsage {
   cache_read_input_tokens?: number;
   /** prompt caching 本次写入的 input tokens(Anthropic;写价格 1.25x,5m/1h TTL 内复用) */
   cache_creation_input_tokens?: number;
+  /** 推理/思考 token 数(completion 子集,展示为占比;OpenAI 兼容可得,Anthropic 当前依赖栈不暴露则省略) */
+  reasoning_tokens?: number;
 }
 /** 批处理单任务结果(sdk.batch 返回;ok=true 含 reply,ok=false 含 error) */
 export interface BatchResult {
@@ -1251,7 +1253,7 @@ export interface ChatSdkOptions {
   /** 图片输入配置组(image-input-vision):images.upload 上传换 URL(集成方 OSS)/ images.describe 绑定识图转述(集成方识图子 agent / 自有 vision API,非多模态主模型时转述注入) */
   images?: ImagesConfig;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
-  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; tracing?: boolean; todoDeps?: boolean; automation?: boolean; workingMemory?: boolean; focus?: boolean; skillHostScript?: boolean; contextInspector?: boolean; agentCompression?: boolean; preferences?: boolean; bulkGuard?: boolean };
+  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; tracing?: boolean; automation?: boolean; workingMemory?: boolean; focus?: boolean; skillHostScript?: boolean; contextInspector?: boolean; agentCompression?: boolean; preferences?: boolean; bulkGuard?: boolean };
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number; timeoutMs?: number; thinkingMode?: 'simple' | 'deep' };
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[];
@@ -1761,6 +1763,8 @@ export interface Capability { name: string; defaultOn: boolean; requires?: reado
 export type CapabilityFlags = Partial<Record<string, boolean>>;
 export type ResolvedCapabilities = Record<string, boolean>;
 export declare const CAPABILITIES: readonly Capability[];
+/** 已列入移除计划的配置键(config-surface-pruning;维护者确认外部零使用,warn 一版后移除)。键 = capabilities 键名,值 = 迁移指引 */
+export declare const DEPRECATED_CAPABILITIES: Readonly<Record<string, string>>;
 /** 单一解析:集成方原始 caps(Partial)→ 全量 boolean(opt-out 默认开 !==false / opt-in 默认关 ===true;requires 依赖未满足强制关)。参数宽松 Record<string,unknown>(兼容含 subagents 等非 boolean 字段的 caps 对象;只读已知 capability 的 boolean) */
 export declare function resolveCapabilities(caps?: Record<string, unknown>): ResolvedCapabilities;
 export declare function resolveStorage(storage: any): any | null;
@@ -1772,7 +1776,7 @@ export interface SdkEvents {
 }
 export declare function createSdkEvents(onEvent?: (e: any) => void): SdkEvents;
 export declare function selectBuiltinTools(caps: { dataOps?: boolean; fetch?: boolean; domInspect?: boolean; inspectEnv?: boolean } | undefined, dataOps: any[], fetchDocs: any[], dom?: any[], inspect?: any[]): any[];
-export declare function createUsageHintsMiddleware(caps: { planning?: boolean; dataOps?: boolean; subagent?: boolean; humanConfirm?: boolean; inspectEnv?: boolean; domInspect?: boolean; draftWrite?: boolean; todoDeps?: boolean; focus?: boolean; subagents?: { id: string; description: string; temperature?: number }[] } | undefined, hasDataOps: boolean, budget?: { promptSoftCap?: number }): any;
+export declare function createUsageHintsMiddleware(caps: { planning?: boolean; dataOps?: boolean; subagent?: boolean; humanConfirm?: boolean; inspectEnv?: boolean; domInspect?: boolean; draftWrite?: boolean; focus?: boolean; subagents?: { id: string; description: string; temperature?: number }[] } | undefined, hasDataOps: boolean, budget?: { promptSoftCap?: number }): any;
 export declare const fetchDocTools: any[];
 /** DOM 读取工具 get_dom(随 capabilities.domInspect 装配,opt-in) */
 export declare const domTools: any[];
@@ -2160,6 +2164,12 @@ export declare const CompressDecisionSchema: {
 export declare const MIN_CONTEXT_WINDOW: number;
 /** 判定错误是否为上下文超限(模型输入超 contextWindow);复用 langchain ContextOverflowError + 兜底正则。harden-context-resilience */
 export declare function isContextLengthError(err: unknown): boolean;
+/** 判定错误是否为「模型不可用」(网关/厂商下线模型面:model is offline / not support for model / model_not_found)。model-offline-guidance;仅消费于模型调用失败 catch 点,勿用于工具错误归一化(裸 "does not exist" 形态会误伤路径错误) */
+export declare function isModelUnavailableError(err: unknown): boolean;
+/** 命中模型不可用 → 就地打 `code:'MODEL_UNAVAILABLE'` + message 尾附可操作引导(幂等);返回是否命中。severity/重试语义由调用方维持现状 */
+export declare function decorateModelUnavailable(err: unknown): boolean;
+/** 模型不可用引导文案(换模型名 setLlm / 查网关模型面;不引导声明任何新配置) */
+export declare const MODEL_UNAVAILABLE_GUIDANCE: string;
 export declare function resolveModelCaps(model: string): any;
 export declare function estimateTokens(text: string): number;
 export declare function offloadThresholdChars(contextWindow: number): number;

@@ -1,6 +1,6 @@
 # Proposal: reasoning-tokens-observability（默认 deep 的成本可见化）
 
-> 状态：**评审修订完成待实施**（2026-08-23 团队复审：Anthropic「双协议提取」降级为不可得、展示落点修正、合并点补全）。优先级 P2（SDK）。目标仓库：zhuanti-agent。
+> 状态：**已实施（2026-08-24）**，随下个 minor 发布。复审记录：2026-08-23 团队复审（Anthropic「双协议提取」降级为不可得、展示落点修正、合并点补全）。优先级 P2（SDK）。目标仓库：zhuanti-agent。
 > 驱动：default-deep-thinking 落地后主/子模型默认注入 deep，token/耗时抬高约 2-5×，但 **reasoning 成本在 `sdk.usage` 里被并入 completion_tokens，不可见、不可对账**——集成方无法判断「默认 deep 到底多花了多少」，也无法按场景权衡 simple/deep。
 
 ## Why（现状核实）

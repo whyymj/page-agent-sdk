@@ -222,7 +222,7 @@ export async function run() {
     )
     const sdk = createChatSdk({
       ui: false, id: 'e2e-todos-tier', storage: 'memory', llm: model,
-      capabilities: { ...MIN_CAPS, planning: true, todoDeps: true },
+      capabilities: { ...MIN_CAPS, planning: true },
     })
     await sdk.mount()
     await sdk.send('帮我规划一个父子任务')

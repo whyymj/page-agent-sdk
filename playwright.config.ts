@@ -8,10 +8,13 @@ process.env.PLAYWRIGHT_BROWSERS_PATH ??= join(homedir(), 'Library', 'Caches', 'm
 
 export default defineConfig({
   testDir: './tests/browser',
-  fullyParallel: false,
+  fullyParallel: false, // 保持 false:workers:N 下 spec 文件即调度分片、文件内保序(与串行行为一致);开启收益趋零、CPU 争抢峰值翻倍
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  workers: 1,
+  // browser-test-sharding:2 = 并行档(spec 文件级分片,每文件独立 context + mockLlm page.route 拦截,无跨文件共享态)。
+  // 明令禁止「预启动 dev server + 复用」依赖:遗留旧 server optimizeDeps 失配 → 页面强制 reload → 在途用例假性失败(CLAUDE.md §3.5 前科);
+  // 保持 Playwright 托管生命周期(不在则拉起、跑完即收)。冷 .vite 缓存首跑遇批量 reload 型失败 → 重跑一次预热,不判回归
+  workers: 4,
   reporter: 'list',
   timeout: 60_000,
   expect: { timeout: 10_000 },

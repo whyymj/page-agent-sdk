@@ -476,6 +476,10 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 
 **来源**:`2026-08-23-tool-call-economy` Phase 0 挖掘裁决(mining-report.md):读→读邻接 11.1%、同 path 重复读 0、root 读 40% 是新会话首查需要 —— 探路二连读浪费信号不成立,骨架行的 token 反向风险不划算。**重启触发**:后续真 LLM 数据显示探路式二连读显著(如新集成方 schema 复杂交错场景)。**重启须知(评审红线已沉淀)**:骨架行严禁 `hash=` 字样(workingMemory 首匹配提取会吃脏值);必须从投影后的值计算(freeze/verbatim 占位符、`<code Nkb>` 摘要之后 —— 安全面);offload 外存大结果骨架须在预览头部存活;验收带 S1/S5 prompt token ±15% 反向门禁。
 
+### [2026-08-24] 200+错误体非 SSE 的模型下线识别(model-offline-guidance)— ⏸ 暂缓(行为改动违零副作用)
+
+**来源**:`2026-08-23-model-offline-guidance` 实施时明示盲区:网关回 200 + 错误 JSON 体(modelverse 6003 黑洞形态)时 body 不捕获,统一转 `EmptyLLMResponseError`(自动重试 1 次后抛)——该形态下的 `model is offline` 文案检测抓不到,`MODEL_UNAVAILABLE` 码不生效。**为何暂缓**:覆盖需新增 body 捕获 = 流解析行为改动(违零副作用红线),须与 `streamMaxDurationMs`/空转黑洞族一起设计。**重启触发**:真实环境再现「200+错误体且含下线文案」的可复现样本。**重启须知**:`EmptyLLMResponseError` 携带原始 body 摘要(不改变重试语义),`isModelUnavailableError` 对 body 文案复检。
+
 ## 维护约定
 
 

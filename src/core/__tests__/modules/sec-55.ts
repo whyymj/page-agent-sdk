@@ -6,7 +6,7 @@
  *  - 中间件 controller:setContextWindow(summarization/contextInspector)
  */
 import type { TestCtx } from './_ctx'
-import { isContextLengthError } from '../../harness/errors'
+import { isContextLengthError, isModelUnavailableError, decorateModelUnavailable, MODEL_UNAVAILABLE_GUIDANCE } from '../../harness/errors'
 import { MIN_CONTEXT_WINDOW, resolveModelCaps } from '../../utils/modelCaps'
 import { createSummarizationMiddleware } from '../../harness/summarization'
 import { createContextInspectorMiddleware } from '../../harness/contextInspector'
@@ -29,6 +29,25 @@ export async function run(ctx: TestCtx) {
   assert(!isContextLengthError(null), '✓ isContextLengthError → null = false')
   assert(!isContextLengthError(undefined), '✓ isContextLengthError → undefined = false')
   assert(!isContextLengthError({ status: 429 }), '✓ isContextLengthError → 429 限流 = false(不误判,职责正交)')
+
+  // ===== isModelUnavailableError + decorateModelUnavailable(model-offline-guidance;仅模型调用 catch 点消费,不进工具错误归一化)=====
+  assert(isModelUnavailableError({ status: 400, message: 'Invalid param: model [deepseek-v4-flash] is offline' }), '✓ isModelUnavailableError → 网关 400 "model [x] is offline" = true(modelverse 实测形态)')
+  assert(isModelUnavailableError({ status: 400, message: 'Invalid param: model [x] not support for model xxx' }), '✓ isModelUnavailableError → 400 "not support for model" = true')
+  assert(isModelUnavailableError({ code: 'model_not_found', message: 'The model `gpt-x` does not exist' }), '✓ isModelUnavailableError → code=model_not_found(OpenAI 原生 404)= true(经 code 不依赖 message 特征)')
+  assert(!isModelUnavailableError({ status: 400, message: '路径 components.9 does not exist' }), '✓ isModelUnavailableError → 工具/路径错误 "does not exist"(裸子串弃用)= false(不误伤 PATH_DENIED 类)')
+  assert(!isModelUnavailableError(new Error('路径 components.9 does not exist')), '✓ isModelUnavailableError → 无 status 的普通工具错误 = false')
+  assert(!isModelUnavailableError({ status: 400, message: 'Invalid param: temperature out of range' }), '✓ isModelUnavailableError → 普通参数 400 = false(不误标)')
+  assert(!isModelUnavailableError({ status: 500, message: 'model is offline maybe' }), '✓ isModelUnavailableError → 5xx 服务端错 = false(特征锚定 400/404,职责正交)')
+  assert(!isModelUnavailableError(null), '✓ isModelUnavailableError → null = false')
+  {
+    const e1: any = Object.assign(new Error('Invalid param: model [glm-x] is offline'), { status: 400 })
+    assert(decorateModelUnavailable(e1) === true, '✓ decorateModelUnavailable → 命中返回 true')
+    assert(e1.code === 'MODEL_UNAVAILABLE' && String(e1.message).includes(MODEL_UNAVAILABLE_GUIDANCE), '✓ decorateModelUnavailable → 打码 + message 附引导(追加非替换,原文保留)')
+    const len1 = String(e1.message).length
+    assert(decorateModelUnavailable(e1) === true && String(e1.message).length === len1, '✓ decorateModelUnavailable → 幂等(二次装饰不重复追加)')
+    const e2: any = new Error('普通参数错误')
+    assert(decorateModelUnavailable(e2) === false && e2.code === undefined && !String(e2.message).includes('网关'), '✓ decorateModelUnavailable → 未命中不改不装饰(工具错误零污染)')
+  }
 
   // ===== MIN_CONTEXT_WINDOW(200K 硬约束)=====
   assert(MIN_CONTEXT_WINDOW === 200000, '✓ MIN_CONTEXT_WINDOW === 200000')

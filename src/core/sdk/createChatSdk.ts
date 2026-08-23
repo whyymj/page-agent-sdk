@@ -22,6 +22,7 @@ import type { DialogIcons } from '../components/icons'
 import type { DialogMessages, DialogLocale } from '../components/messages'
 import { createAgent, type DebugLog } from '../harness/createAgent'
 import { asAgentError } from '../tools/toolError'
+import { decorateModelUnavailable } from '../harness/errors'
 import { isAbort } from '../harness/retry'
 import { z, type ZodType } from 'zod'
 import { getSchemaAtPath, schemaHasCodeField, inferWritablePaths, getSchemaTopKeys } from '../tools/schemaUtils'
@@ -60,7 +61,7 @@ import { isChatModel, resolveLlm, deriveTitle } from './llmResolver'
 import { constructLlmFromConfig, constructOpenLlmSync } from '../llm/constructLlm'
 import { createConflictManager, type ConflictPolicy } from './conflictManager'
 import { resolveStorage, resolveDialogConfig } from './optionsResolver'
-import { resolveCapabilities } from '../capabilities'
+import { resolveCapabilities, DEPRECATED_CAPABILITIES } from '../capabilities'
 import { createSdkEvents } from './events'
 import type { ContextManagerOptions } from '../composables/useContextManager'
 import { resolveContextOptions, PRESET_PRESERVE, type ContextPreset } from './contextPreset'
@@ -289,14 +290,13 @@ export interface ChatSdkOptions {
     domInspect?: boolean     // DOM 读取工具 get_dom(默认 false;agent 读渲染后 DOM 结构,opt-in;有 token 成本,集成方按需开启)
     inspectEnv?: boolean     // 环境探查工具 inspect_env(默认 true;读 window 环境/location/调试变量,轻量只读,排查调试用)
     draftWrite?: boolean     // 分块写工具 draft_write/draft_commit(默认 false;几百 K JSON 分块构建再原子提交,opt-in;需 dataOps + vfs,advanced 暴露)
-    tracing?: boolean        // 结构化追踪 TraceSpan(默认 false;opt-in,采集有开销;DebugDrawer trace tab + getTraceMetrics + onEvent('trace'))
-    todoDeps?: boolean       // todos 层级依赖 parentId/deps(默认 false;opt-in,LLM 维护依赖图;structured-todos-tier Phase 2)
+    tracing?: boolean        // 结构化追踪 TraceSpan(默认 false;opt-in,采集有开销;DebugDrawer trace tab + getTraceMetrics + onEvent('trace'))⚠️ deprecation warn 期,计划 3.48 移除
     automation?: boolean     // 无人值守自动化(默认 false;预算闸 token/time + 错误恢复;automation-layer Phase 4,opt-in 最远)
-    skillHostScript?: boolean  // skill exec 宿主脚本执行(默认 false;opt-in,允许 skill exec.context:'host' 全权执行;仅集成方内联 code,远程 url+host 禁止)
+    skillHostScript?: boolean  // skill exec 宿主脚本执行(默认 false;opt-in,允许 skill exec.context:'host' 全权执行;仅集成方内联 code,远程 url+host 禁止)⚠️ deprecation warn 期,计划 3.48 移除
     contextInspector?: boolean // 上下文检查 inspectContext(默认 true;读每轮消息分类 token 占比,纯计算零 LLM 成本)
     agentCompression?: boolean // 压缩 agent 自主决策(默认 false;opt-in,开 + summaryLlm 可用 → decide 驱动压缩,失败降级静态;requires summarization)
-    preferences?: boolean      // 跨会话用户偏好记忆(默认 false;opt-in,自动写用户浏览器,行为敏感默认关;捕获→持久化→pin 段注入)
-    bulkGuard?: boolean        // 大批量变更门禁(默认 false;单次写触达现有组件节点数超阈 → approval 确认;须同时配置 approval,否则 no-op 留痕;bulk-change-guard)
+    preferences?: boolean      // 跨会话用户偏好记忆(默认 false;opt-in,自动写用户浏览器,行为敏感默认关;捕获→持久化→pin 段注入)⚠️ deprecation warn 期,计划 3.48 移除
+    bulkGuard?: boolean        // 大批量变更门禁(默认 false;单次写触达现有组件节点数超阈 → approval 确认;须同时配置 approval,否则 no-op 留痕;bulk-change-guard)⚠️ deprecation warn 期,计划 3.48 移除
   }
   /** 大批量变更门禁(默认关;capabilities.bulkGuard:true 开启)。量纲 = 现有组件节点数(同组件多 patch 不拦,新增内容不计);豁免:方案确认留痕 + 本会话同形态已确认一次 */
   bulkGuard?: BulkGuardOptions
@@ -866,8 +866,10 @@ function createSdkEventMiddleware(emit: SdkEventHandler, messages: AgentMessage[
         usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (roundUsage.prompt_tokens ?? 0)
         usage.completion_tokens = (usage.completion_tokens ?? 0) + (roundUsage.completion_tokens ?? 0)
         usage.total_tokens = (usage.total_tokens ?? 0) + (roundUsage.total_tokens ?? 0)
+        // reasoning 是 completion 子集,单独累计(有值才携带,不占位不加数;invokeUsage 预算判定不涉此字段)
+        if (roundUsage.reasoning_tokens) usage.reasoning_tokens = (usage.reasoning_tokens ?? 0) + roundUsage.reasoning_tokens
         roundCounter++
-        emit({ type: 'usage', round: roundCounter, usage: roundUsage, cumulative: { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, total_tokens: usage.total_tokens } })
+        emit({ type: 'usage', round: roundCounter, usage: roundUsage, cumulative: { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens, total_tokens: usage.total_tokens, ...(usage.reasoning_tokens ? { reasoning_tokens: usage.reasoning_tokens } : {}) } })
       }
     },
     afterAgent: async () => {
@@ -1066,6 +1068,14 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
   // 内置能力开关(默认全开;false 则对应中间件/工具不装载)
   const caps = resolveCapabilities(options.capabilities)  // 单一解析(消除 !==false/===true 混;opt-in/out 经注册表 defaultOn,requires 表达依赖)
+  // config-surface-pruning:候选撤除面 deprecation warn(配置命中才触发,每挂载一次;含移除目标版本 + 迁移指引,不引导声明任何新配置)
+  if (options.capabilities && typeof options.capabilities === 'object') {
+    for (const k of Object.keys(DEPRECATED_CAPABILITIES)) {
+      if ((options.capabilities as Record<string, unknown>)[k]) {
+        console.warn(`[page-agent-sdk][capabilities.${k}] ${DEPRECATED_CAPABILITIES[k as keyof typeof DEPRECATED_CAPABILITIES]}。维护者确认无外部使用,计划 3.48.0 移除;如你在使用请到仓库 issue 说明将按反馈保留`)
+      }
+    }
+  }
   const useDataOps = caps.dataOps
   const useDraft = caps.draftWrite  // draft_write/commit 分块构建大 JSON(opt-in,默认关;需 dataOps + vfs)
   const useTracing = caps.tracing  // 结构化追踪 TraceSpan(opt-in,默认关;采集有开销)
@@ -1345,7 +1355,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           // fix-main-sub-isolation:per-scope 乐观锁基线(P1-13,子 read/write 不污染主基线)+ 子 usage 回传(P1-17a)+ 子执行超时(P1-17b,opt-in)
           enterDataScope: dataOpsController?.enterScope ? (id) => dataOpsController.enterScope!(id) : undefined,
           exitDataScope: dataOpsController?.exitScope ? (id) => dataOpsController.exitScope!(id) : undefined,
-          onUsage: (u) => { usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0); usage.completion_tokens = (usage.completion_tokens ?? 0) + (u.completion_tokens ?? 0); usage.total_tokens = (usage.total_tokens ?? 0) + (u.total_tokens ?? 0) },
+          onUsage: (u) => { usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0); usage.completion_tokens = (usage.completion_tokens ?? 0) + (u.completion_tokens ?? 0); usage.total_tokens = (usage.total_tokens ?? 0) + (u.total_tokens ?? 0); if (u.reasoning_tokens) usage.reasoning_tokens = (usage.reasoning_tokens ?? 0) + u.reasoning_tokens },
           timeoutMs: subOpts?.timeoutMs,
         })
 
@@ -1394,7 +1404,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       })
     : undefined
   const subagentsMw = useSubagent && subagentsForAssemble !== undefined
-    ? createSubagentsMiddleware(subagentsForAssemble, { llm: options.llm, thinkingModeDefault: options.subagent?.thinkingMode, staleReadInvalidation: options.staleReadInvalidation, allTools: () => core.agent?.allTools ?? allTools, debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null, getBind: () => liveData()?.bind, tracker: subagentTracker, guardMiddleware: childGuards.length ? childGuards : undefined, getVfsFiles: useVfs ? () => vfsStore.files : undefined, enterDataScope: dataOpsController?.enterScope ? (id) => dataOpsController.enterScope!(id) : undefined, exitDataScope: dataOpsController?.exitScope ? (id) => dataOpsController.exitScope!(id) : undefined, onUsage: (u) => { usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0); usage.completion_tokens = (usage.completion_tokens ?? 0) + (u.completion_tokens ?? 0); usage.total_tokens = (usage.total_tokens ?? 0) + (u.total_tokens ?? 0) }, timeoutMs: options.subagent?.timeoutMs,
+    ? createSubagentsMiddleware(subagentsForAssemble, { llm: options.llm, thinkingModeDefault: options.subagent?.thinkingMode, staleReadInvalidation: options.staleReadInvalidation, allTools: () => core.agent?.allTools ?? allTools, debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null, getBind: () => liveData()?.bind, tracker: subagentTracker, guardMiddleware: childGuards.length ? childGuards : undefined, getVfsFiles: useVfs ? () => vfsStore.files : undefined, enterDataScope: dataOpsController?.enterScope ? (id) => dataOpsController.enterScope!(id) : undefined, exitDataScope: dataOpsController?.exitScope ? (id) => dataOpsController.exitScope!(id) : undefined, onUsage: (u) => { usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0); usage.completion_tokens = (usage.completion_tokens ?? 0) + (u.completion_tokens ?? 0); usage.total_tokens = (usage.total_tokens ?? 0) + (u.total_tokens ?? 0); if (u.reasoning_tokens) usage.reasoning_tokens = (usage.reasoning_tokens ?? 0) + u.reasoning_tokens }, timeoutMs: options.subagent?.timeoutMs,
       ...(componentLock ? { componentLock, resolveComponents: (args: { components?: string[]; task: string }) => resolveTargetComponents(args, collectComponentNames(liveData()?.bind, codeAssetPgIdPaths)) } : {}) })
     : undefined
 
@@ -1948,7 +1958,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         } catch (err) {
           // abort(用户经 signal 中止):不计错误,静默上抛(同 useChat「abort 不计入 error」语义)
           if (isAbort(err, options.signal)) throw err
-          const ae = asAgentError(err, 'fatal')
+          let ae = asAgentError(err, 'fatal')
+          // model-offline-guidance:emit 携带结构化 MODEL_UNAVAILABLE 码(引导文案已由 coreModelCall 装饰进 message;此处兜底装饰经不经 coreModelCall 的错误源;severity 仍 fatal)
+          if (decorateModelUnavailable(err)) ae = { ...ae, code: 'MODEL_UNAVAILABLE', message: err instanceof Error ? err.message : ae.message }
           // 仍有重试次数 + 有 checkpoint 可回退 → restore 回本轮前(含本轮 user)+ 重试,emit observable 告知
           if (attempt < maxAuto && checkpointMgr?.canRestore()) {
             attempt += 1
@@ -2002,6 +2014,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
             for (let j = i + 1; j < tasks.length; j++) results.push({ index: j, task: tasks[j], error: 'aborted(外部中止)', ok: false })
             break
           }
+          decorateModelUnavailable(err) // model-offline-guidance:批量任务撞离线模型 → 引导随 message 进 BATCH_TASK_FAILED 结果
           const ae = asAgentError(err, 'fatal')
           emit({ type: 'error', message: `批量任务 ${i + 1}/${tasks.length} 失败:${ae.message}`, severity: 'observable', code: 'BATCH_TASK_FAILED', context: { index: i, task: task.slice(0, 100) } } as any)
           results.push({ index: i, task, error: ae.message, ok: false })

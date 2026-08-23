@@ -33,7 +33,7 @@ export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict, DialogConfig,
 export { buildSystemPrompt, buildDataPrompt, DEFAULT_SYSTEM_PROMPT } from './sdk/promptBuilder'
 export { resolveContextOptions, type ContextPreset, CONTEXT_PRESETS } from './sdk/contextPreset'
 // capabilities 能力开关注册表 + 单一解析
-export { resolveCapabilities, CAPABILITIES, type Capability, type CapabilityFlags, type ResolvedCapabilities } from './capabilities'
+export { resolveCapabilities, CAPABILITIES, DEPRECATED_CAPABILITIES, type Capability, type CapabilityFlags, type ResolvedCapabilities } from './capabilities'
 export { defineTool } from './sdk/defineTool'
 // 宿主动作(actions):集成方注册页面操作(保存/发布/预览等),SDK 自动包成命名 tool 供 agent 调用
 export { actionsToTools, actionsToInspectInfo } from './sdk/actions'
@@ -60,7 +60,7 @@ export { compressImage, ImageInputError } from './tools/imageInput'
 export { createVerifyMiddleware, createWriteBackCheck } from './harness/verify'
 export type { VerifyCheck, VerifyCheckContext, VerifyCheckResult, VerifyMiddlewareOptions, WriteBackCheckOptions } from './harness/verify'
 export { createContextInspectorMiddleware } from './harness/contextInspector'
-export { isContextLengthError } from './harness/errors'
+export { isContextLengthError, isModelUnavailableError, decorateModelUnavailable, MODEL_UNAVAILABLE_GUIDANCE } from './harness/errors'
 export type { ContextInspectorMiddleware, ContextInspectorOptions } from './harness/contextInspector'
 export { analyzeContext } from './utils/contextAnalysis'
 export type { ContextSnapshot, ContextCategory, AnalyzeContextOptions } from './utils/contextAnalysis'

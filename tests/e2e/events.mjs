@@ -63,6 +63,41 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:events] ✓ usage 事件与 sdk.usage 反映 reasoning_tokens(reasoning-tokens-observability;completion 子集单独累计)')
+  {
+    const llm = stubModel({ text: 'ok', usage: { prompt_tokens: 10, completion_tokens: 100, total_tokens: 110, completion_tokens_details: { reasoning_tokens: 60 } } })
+    const events = []
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-usage-reasoning', storage: 'memory', llm, capabilities: MIN_CAPS,
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' } },
+      onEvent: (e) => { if (e.type === 'usage') events.push(e) },
+    })
+    await sdk.mount()
+    await sdk.send('x')
+    const ue = events[events.length - 1]
+    assert(ue && ue.usage.reasoning_tokens === 60, '✓ usage 事件 round usage 带 reasoning_tokens(60,原始 completion_tokens_details 归一)')
+    assert(ue && ue.cumulative.reasoning_tokens === 60 && ue.cumulative.completion_tokens === 100, '✓ usage 事件 cumulative 透传 reasoning(60)且 completion 不受影响(子集不加数)')
+    assert(sdk.usage.reasoning_tokens === 60, '✓ sdk.usage.reasoning_tokens 累计(60)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:events] ✓ 无 reasoning 细分 → 字段省略不占位(Anthropic 依赖栈现状;旧三字段逐位不变)')
+  {
+    const llm = stubModel({ text: 'ok', usage: { prompt_tokens: 10, completion_tokens: 40, total_tokens: 50 } })
+    const events = []
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-usage-noreason', storage: 'memory', llm, capabilities: MIN_CAPS,
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' } },
+      onEvent: (e) => { if (e.type === 'usage') events.push(e) },
+    })
+    await sdk.mount()
+    await sdk.send('x')
+    const ue = events[events.length - 1]
+    assert(ue && ue.usage.reasoning_tokens === undefined && ue.cumulative.reasoning_tokens === undefined, '✓ 无 reasoning 细分 → usage/cumulative 均不携带(不置 0 不占位)')
+    assert(ue && ue.usage.prompt_tokens === 10 && ue.usage.completion_tokens === 40 && ue.usage.total_tokens === 50, '✓ 旧三字段行为逐位不变')
+    sdk.unmount()
+  }
+
   console.log('[e2e:events] session_restored 事件类型可订阅(switchSession 切回已存会话不报错;真实快照触发需 LLM 造数据,e2e 用 FAKE_LLM 仅验证类型系统)')
   {
     let restored = null

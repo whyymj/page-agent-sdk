@@ -1,6 +1,6 @@
 # Proposal: config-surface-pruning（配置面持续收敛审计）
 
-> 状态：**评审修订完成待实施**（2026-08-23 团队复审：撤「仿 toolMode deprecation 路径」错误先例引用、证据标准升级 ①-⑤、editor 侧使用率改为用户提供信号）。常态治理，非一次性。优先级 P3（SDK）。目标仓库：zhuanti-agent。
+> 状态：**第一轮已实施（2026-08-24：todoDeps 直删 + 4 项 deprecation warn；后续轮随 3.48 warn 期推进）**。常态治理，非一次性。复审记录：2026-08-23 团队复审（撤「仿 toolMode deprecation 路径」错误先例引用、证据标准升级 ①-⑤、editor 侧使用率改为用户提供信号）。优先级 P3（SDK）。目标仓库：zhuanti-agent。
 > 驱动：项目哲学「不出让人疑惑的配置项」+ main-surface-slim 回退教训（data.tools/vfs.mainTools 因决策成本过高被撤）。配置面只增不减会重蹈覆辙；需要周期性审计 + 撤除低价值开关。
 
 ## Why（现状核实，复审纠正）

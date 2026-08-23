@@ -17,6 +17,7 @@ import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
 import type { StructuredToolInterface } from '@langchain/core/tools'
 import { createAgent } from './createAgent'
+import { decorateModelUnavailable } from './errors'
 import { createSkillsMiddleware, type SkillSpec } from './skills'
 import type { Middleware } from './middleware'
 import { runPool } from '../utils/pool'
@@ -613,6 +614,8 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
             opts.tracker?.finish(taskId, 'done', r ?? '(未完成)')
             return { ok: true as const, text: r ?? '(未完成)' }
           } catch (e) {
+            // model-offline-guidance:子撞离线模型 → 引导随 error result 回灌主 LLM(掐「反复重委派烧整轮子 agent」;仅装饰,allSettled 语义不变)
+            decorateModelUnavailable(e)
             const msg = String((e as Error)?.message ?? e)
             opts.tracker?.finish(taskId, 'error', msg)
             return { ok: false as const, error: msg }

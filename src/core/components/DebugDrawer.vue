@@ -661,6 +661,7 @@ function decisionSummary(d: { keepRounds?: number; windowRatio?: number; summari
                     <span class="usage">prompt: {{ log.data.usage.prompt_tokens ?? '-' }}</span>
                     <span class="usage">completion: {{ log.data.usage.completion_tokens ?? '-' }}</span>
                     <span class="usage">total: {{ log.data.usage.total_tokens ?? '-' }}</span>
+                    <span v-if="log.data.usage.reasoning_tokens" class="usage">reasoning: {{ log.data.usage.reasoning_tokens }}({{ Math.round((log.data.usage.reasoning_tokens / Math.max(1, log.data.usage.completion_tokens ?? 0)) * 100) }}%)</span>
                   </div>
                 </template>
 

@@ -5,7 +5,7 @@ import { extractSchemaHint } from '../../presets'
 import { diffObjects } from '../../tools/jsonUtils'
 import { fetchDocTools } from '../../tools/fetchDoc'
 import { selectBuiltinTools, fetchTools, defineDataToolset } from '../../toolsets'
-import { resolveCapabilities, CAPABILITIES } from '../../capabilities'
+import { resolveCapabilities, CAPABILITIES, DEPRECATED_CAPABILITIES } from '../../capabilities'
 import { inspectTools } from '../../tools/envTool'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
 import { createSkillsMiddleware, defineSkill, resolveDocKind, normalizeVfsPath, readSkillDoc } from '../../harness/skills'
@@ -375,18 +375,23 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(dr2.draftWrite === false, 'resolveCapabilities → draftWrite:true 但 dataOps:false → 强制关(requires 未满足)')
     const dr3 = resolveCapabilities({ draftWrite: true, vfs: false })
     assert(dr3.draftWrite === false, 'resolveCapabilities → draftWrite:true 但 vfs:false → 强制关(requires 未满足)')
-    // CAPABILITIES 注册表完整(22 开关;13 opt-out + 9 opt-in,agentCompression/preferences opt-in 新增)
-    assert(CAPABILITIES.length === 22, 'CAPABILITIES 注册表 → 22 开关')
+    // CAPABILITIES 注册表完整(config-surface-pruning 撤 todoDeps 后 21 开关;13 opt-out + 8 opt-in;另有 bulkGuard 注册表外特判)
+    assert(CAPABILITIES.length === 21, 'CAPABILITIES 注册表 → 21 开关')
     assert(CAPABILITIES.filter((c) => c.defaultOn).length === 13, 'CAPABILITIES → 13 opt-out(默认开)')
-    assert(CAPABILITIES.filter((c) => !c.defaultOn).length === 9, 'CAPABILITIES → 9 opt-in(默认关)')
+    assert(CAPABILITIES.filter((c) => !c.defaultOn).length === 8, 'CAPABILITIES → 8 opt-in(默认关)')
     // skillHostScript opt-in 默认关 + requires skills
     const shs = CAPABILITIES.find((c) => c.name === 'skillHostScript')!
     assert(!!shs && shs.defaultOn === false && shs.requires?.includes('skills'), '✓ skillHostScript:opt-in 默认关 + requires skills')
     // 全量解析后每个 capability 都有明确 boolean(无 undefined)
-    const all = resolveCapabilities({ dataOps: false, verify: true, domInspect: true, tracing: true, automation: true, todoDeps: true })
+    const all = resolveCapabilities({ dataOps: false, verify: true, domInspect: true, tracing: true, automation: true })
     for (const c of CAPABILITIES) {
       assert(typeof all[c.name] === 'boolean', `resolveCapabilities → ${c.name} 解析为 boolean(非 undefined)`)
     }
+    // config-surface-pruning:todoDeps 撤除(残键静默忽略)+ deprecation warn 名单恰 4 项
+    assert(!('todoDeps' in resolveCapabilities({ todoDeps: true } as any)), '✓ config-surface-pruning → todoDeps 撤除:残键被 resolveCapabilities 静默忽略(不崩)')
+    assert(!CAPABILITIES.some((c) => c.name === 'todoDeps'), '✓ config-surface-pruning → 注册表不再含 todoDeps(21 开关)')
+    assert(Object.keys(DEPRECATED_CAPABILITIES).length === 4 && ['preferences', 'tracing', 'skillHostScript', 'bulkGuard'].every((k) => k in DEPRECATED_CAPABILITIES), '✓ DEPRECATED_CAPABILITIES → 恰 4 项 warn 名单(preferences/tracing/skillHostScript/bulkGuard)')
+    assert(Object.values(DEPRECATED_CAPABILITIES).every((v) => typeof v === 'string' && v.length > 0), '✓ DEPRECATED_CAPABILITIES → 每项含迁移指引文案')
   }
 
   // ===== move op(jsonUtils moveByPath + write/edit patches 集成)=====

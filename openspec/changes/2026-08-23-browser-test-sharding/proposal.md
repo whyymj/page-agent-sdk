@@ -1,6 +1,6 @@
 # Proposal: browser-test-sharding（browser E2E 分片提速）
 
-> 状态：**评审修订完成待实施**（2026-08-23 团队复审：fullyParallel 不开、预启动改明令禁止、<2min 门禁分档）。优先级 P3（工程效能）。目标仓库：zhuanti-agent。
+> 状态：**已实施（2026-08-24，workers:4 全量 1.4min 达标）**。复审记录：2026-08-23 团队复审（fullyParallel 不开、预启动改明令禁止、<2min 门禁分档）。优先级 P3（工程效能）。目标仓库：zhuanti-agent。
 > 驱动：browser 套件已到 104 项 / ~4.2min（单 worker 串行），「每次改动必跑」的纪律正被时长侵蚀；继续涨用例会更慢。
 
 ## Why（现状核实，复审补强）

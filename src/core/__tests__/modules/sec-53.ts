@@ -126,6 +126,15 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(c2?.cache_read_input_tokens === 700 && c2?.cache_creation_input_tokens === 50, 'normalizeUsage usage_metadata.input_token_details 缓存字段 → 归一携带(langchain 标准形态)')
     const c3 = normalizeUsage({ usage_metadata: { input_tokens: 10, output_tokens: 5 } } as any)
     assert(c3?.cache_read_input_tokens === undefined && c3?.cache_creation_input_tokens === undefined, 'normalizeUsage 无缓存字段 → 不携带(缺省不占位)')
+    // reasoning token(reasoning-tokens-observability):langchain 标准 output_token_details.reasoning 与原始 completion_tokens_details.reasoning_tokens 两形态;有值才携带
+    const r1 = normalizeUsage({ usage_metadata: { input_tokens: 10, output_tokens: 100, output_token_details: { reasoning: 60 } } } as any)
+    assert(r1?.reasoning_tokens === 60 && r1?.completion_tokens === 100, 'normalizeUsage usage_metadata.output_token_details.reasoning → 携带(langchain 标准,@langchain/openai 映射形态)')
+    const r2 = normalizeUsage({ additional_kwargs: { usage: { prompt_tokens: 10, completion_tokens: 100, completion_tokens_details: { reasoning_tokens: 60 } } } } as any)
+    assert(r2?.reasoning_tokens === 60, 'normalizeUsage 原始 completion_tokens_details.reasoning_tokens → 携带(OpenAI/DeepSeek additional_kwargs 形态)')
+    const r3 = normalizeUsage({ response_metadata: { usage: { prompt_tokens: 10, completion_tokens: 100, completion_tokens_details: { reasoning_tokens: 25 } } } } as any)
+    assert(r3?.reasoning_tokens === 25, 'normalizeUsage response_metadata.usage 原始 details → 携带(流式兜底形态)')
+    const r4 = normalizeUsage({ usage_metadata: { input_tokens: 10, output_tokens: 100 } } as any)
+    assert(r4?.reasoning_tokens === undefined && r4?.completion_tokens === 100 && r4?.total_tokens === 110, 'normalizeUsage 无 reasoning 细分 → 省略不占位且旧字段逐位不变(Anthropic 依赖栈现状)')
   }
   {
     // 默认 fetch 包装剥 x-stainless-* 遥测头(严格 CORS 的 OpenAI 兼容网关白名单不含它们 → 浏览器预检失败;真 LLM 实测)

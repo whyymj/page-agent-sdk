@@ -20,7 +20,6 @@ type HintCapabilityFlags = {
   inspectEnv?: boolean
   domInspect?: boolean
   draftWrite?: boolean
-  todoDeps?: boolean
   /** 上下文聚焦(注入 set_focus/clear_focus 引导) */
   focus?: boolean
   /** 预声明子 agent(用于注入"规划-反思-执行"路由提示;空则不注入) */
@@ -79,7 +78,7 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
         hints.push('生成超大 JSON(如 50+ 组件页面,单次 write 受 max_tokens 限制装不下)用 draft_write 分块构建 → draft_commit 原子提交:draft_write({draftId, chunk, mode}) mode:"start" 新建/"append" 追加(拼 JSON 片段到 drafts 池);累积完 draft_commit({draftId}) 合并 + schema 校验 + 写主数据(失败草稿保留可修后重试,成功自动清草稿)。小改仍用 write patch,只在大 JSON 从零生成时用 draft。')
         hints.push('⚠️ 大 JSON 分块构建是典型多轮工具调用(draft_write×N + draft_commit + read 确认 + 调研 read/query),默认 maxToolRounds=30(3.43 起;轮次预算吃紧时 system 会注入预算提示段,按提示优先收口);目标组件数很大时集成方仍可在 createChatSdk 显式上调 maxToolRounds(按 N+10 估算)。draft_commit 提交同样走乐观锁(改前 read 拿 hash,bind 被改过会触发冲突介入,不静默覆盖)。')
       }
-      if (rc.todoDeps) hints.push('复杂任务可用 todos 层级依赖:write_todos 时给 todo 传 parentId(父任务 id,表达层级)+ deps(依赖的 todo id 数组,必须先完成)。有依赖的任务,deps 全 completed 后再标 in_progress;完成时 update_todo({id, status:"completed", evidence:"完成证据"}) 记证据。无依赖关系的任务不传 parentId/deps(扁平)。')
+      // todoDeps 层级依赖教学已随 config-surface-pruning 撤除(schema 的 parentId/deps 字段描述仍自解释;evidence 教学在 A1 无条件段)
       if (rc.focus) {
         hints.push('【上下文聚焦】判断任务范围,用 set_focus/add_focus/remove_focus/clear_focus 自动收敛工作范围:')
         hints.push('  · 局部任务(只改某一组件/区域,如「调导航栏」「改 components.3 样式」)→ 先 read 定位 jsonPath,再 set_focus({path:"该子树路径"}) 聚焦;聚焦后每轮只看该子树结构,写其他位置会被 PATH_DENIED 拒绝。')

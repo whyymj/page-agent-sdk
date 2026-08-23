@@ -30,8 +30,8 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2919 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,943 项;tests/e2e/<module>.mjs 按模块拆分)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2938 项断言)
+npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,957 项;tests/e2e/<module>.mjs 按模块拆分)
 npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,104 项;tests/browser/<demo>.spec.ts)
 ```
 
@@ -136,7 +136,7 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test    # tsx 跑 src/core/__tests__/selftest.ts,2919 项断言
+npm test    # tsx 跑 src/core/__tests__/selftest.ts,2938 项断言
 ```
 按模块拆分:`src/core/__tests__/modules/sec-NN.ts`(54+ 个模块)各导出 `run(ctx)`,runner 汇总;共享 `TestCtx` 在 `modules/_ctx.ts`。tsx 跑源码(不经构建),触不到 createChatSdk 顶层 API 作用域。**改任何核心模块后必跑**。
 
@@ -148,7 +148,7 @@ npm run build && npm run test:e2e    # node 跑 dist 产物,906 项
 
 #### 2.5 浏览器 E2E(改 UI/ChatDialog/dataOps 后必跑)
 ```bash
-npm run test:browser  # 104 项;也可 /browser-test 斜杠命令
+npm run test:browser  # 104 项;也可 /browser-test 斜杠命令。**并行分片(browser-test-sharding)**:`workers:4` + `fullyParallel:false`(spec 文件级分片、文件内保序,与串行行为一致;实测全量 ~1.4-1.6min)。禁依赖「预启动 dev server + 复用」(遗留旧 server optimizeDeps 失配 → 强制 reload 假性失败,§3.5 前科);**依赖变更后首跑遇批量 reload 型失败 → 重跑一次预热,不判回归**;单跑复跑用 `--grep`;时序敏感观察名单(queue/icons 净化/page-demo 流式占位)如现 flake 优先加大 delays 窗口而非上 retries
 ```
 **原理**:`tests/browser/_helpers.ts` 的 `mockLlm()` 用 `page.route()` 拦截 LLM API 端点,按脚本返回 SSE 流,使 agent ReAct 循环确定性走完,不依赖真 LLM。**双协议**:同时拦截 OpenAI 兼容(`**/chat/completions`)与 Anthropic Messages API(`**/v1/messages`),各返对应格式 SSE,共享 script 计数。spec 按 demo 拆分(complex-demo 23 / page-demo 20 / html-page 8 / customize 7 / i18n 6 / icons 6 / images 7 / header-labels 5 / rag 4 / nested 3 / lifecycle 3 / queue 3 / scrollbar 3 / error-recovery 2 / human-confirm 2 / xss 2)。写新测试模板见 `.claude/skills/browser-e2e-testing/SKILL.md`。
 
@@ -181,7 +181,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2919/943/104)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2938/957/104)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判)→ `npm run test:size` → `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证
@@ -203,7 +203,7 @@ createChatSdk({
 }).mount()
 // 运行时动态重配置:setTools/addTool/removeTool · setLlm · setMemory · setSubagents
 ```
-- **capabilities**:默认开 `dataOps`/`fetch`/`planning`/`skills`/`vfs`/`summarization`/`memory`/`subagent`/`focus`/`workingMemory`/`missionAnchor`/`contextInspector`/`inspectEnv`;opt-in `verify`/`domInspect`(get_dom 常驻 + dom_search/dom_info 经 dom-inspect skill 按需注入)/`automation`/`agentCompression`/`skillHostScript`/`draftWrite`/`preferences`(跨会话用户偏好记忆,preferenceStore + 三层信号捕获 + pin 段注入,usage-guide §6.16)/`bulkGuard`(大批量变更门禁,须同时配 approval;量纲 = 现有组件节点数,超阈挂确认/observe 无人值守,`bulkGuard:{threshold,timeoutMs,mode}` 细配)
+- **capabilities**:默认开 `dataOps`/`fetch`/`planning`/`skills`/`vfs`/`summarization`/`memory`/`subagent`/`focus`/`workingMemory`/`missionAnchor`/`contextInspector`/`inspectEnv`;opt-in `verify`/`domInspect`(get_dom 常驻 + dom_search/dom_info 经 dom-inspect skill 按需注入)/`automation`/`agentCompression`/`draftWrite`/`tracing`(结构化追踪 TraceSpan,采集有开销)/`skillHostScript`/`preferences`(跨会话用户偏好记忆,usage-guide §6.16)/`bulkGuard`(大批量变更门禁,须同时配 approval;量纲 = 现有组件节点数,超阈挂确认/observe 无人值守,`bulkGuard:{threshold,timeoutMs,mode}` 细配)。**deprecation warn 期(计划 3.48 移除,装配期命中配置 console.warn)**:`tracing`/`skillHostScript`/`preferences`/`bulkGuard`(config-surface-pruning 第一轮审计:维护者确认外部零使用;`todoDeps` 已撤除,残键静默忽略零影响)
 - **预设**(`presets`):`pageBuilder`(3.9+ 仅场景化身份 prompt;HTML 子 agent 由装配期自动装配,preset 不再自带)/ `researcher` / `minimal`,spread 进 `createChatSdk`
 - **headless**(`ui: false`):不渲染内置对话框,用 `sdk.messages` + `send`/`stream` 自建 UI。**精简子路径** `page-agent-sdk/headless`(纯核心,ESM ~446KB vs 主包 ~963KB)。headless 持久化:`sdk.stream` 不自动落盘,每轮后手动 `sdk.afterRound()`(`send` 自动)。headless 调试复用内置 `DebugDrawer`(纯 props:`logs=sdk.debugLogs`/`getInfo`/`infoTick`/`getSkillContent`,可选 `exportDiagnostics` 一键诊断报告,缺省降级本地聚合)。**诊断导出**(3.29):`sdk.exportDiagnostics()` 聚合 debugLogs/messages/inspect/usage/dataSummary 为 JSON(隐私收口:不 dump bind/剥 schema/url 凭据打码/6MB 总长闸),DebugDrawer 💾 按钮一键下载 JSON 文件(3.36.1 起原复制改下载,大日志 clipboard 易截断)
 - **UI 模块可复用**:`ChatDialog` / `MessageContent` / `CodePreview` / `DebugDrawer` / `SkillPanel` + `useChat` 均从入口导出。`inspect()` 的 `AgentInfo` 含每工具 `source`/mcp/上下文构成等。框架无关集成见 `demo/plain.html`

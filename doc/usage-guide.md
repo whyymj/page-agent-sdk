@@ -1454,7 +1454,7 @@ off2()
 | `sdk.getUserSkill(name)` | 读取用户创建的 skill 详情 | 返回 `{ name, description, content }` 或 `undefined`(不存在时);SkillPanel 编辑时调 |
 | `skillStorage` 选项 | 用户 skill 独立持久化配置 | 默认 `{ backend: 'indexed' }`(与 `storage` 分离);`false` 关闭(仅当前会话);`id` 手动指定同一 id → 跨页面/跨 agent 复用同一套用户 skill;不传 `id` 默认按 `agent::{agentId}` 隔离 |
 | `SkillPanel` 组件 | 用户创建/编辑/删除 skill 的 UI 面板 | 内置 `ChatDialog` 头部「Skill 管理」按钮已集成(支持创建/编辑/删除);集成方也可 `import { SkillPanel } from 'page-agent-sdk'` 单独用于自建 UI |
-| `sdk.usage` | 累计 token 用量 `{prompt_tokens, completion_tokens, total_tokens}` | 每轮 LLM 调用累加;无调用时全 0;单轮明细经 `onEvent('usage')` 外发 |
+| `sdk.usage` | 累计 token 用量 `{prompt_tokens, completion_tokens, total_tokens, reasoning_tokens?}` | 每轮 LLM 调用累加;无调用时全 0;单轮明细经 `onEvent('usage')` 外发。`reasoning_tokens` 为推理/思考 token(思考型模型默认 deep 后成本可见化):**completion 的子集**单独累计不加数,DebugDrawer 每轮日志显示占 completion 百分比;OpenAI 兼容端点(DeepSeek 等)回报才携带,Anthropic 协议当前依赖栈不暴露该细分则字段省略 |
 | `onAudit(entry)` 选项 | 数据写操作结构化审计回调(独立于 `debug`) | 每次 `set`/`edit`/`delete`/`restore` 经此回调外发 `{op, jsonPath, opDetail, timestamp, success, error?}`;合规审计/操作追溯 |
 
 ```ts
@@ -2186,6 +2186,9 @@ A: 没开持久化。传 `storage: 'indexed'` + 稳定的 `id`(`id` 不传会随
 **Q: Agent 报 `400 missing field tool_call_id`?**
 A: 这是 SDK 内部 LangChain 消息字段约定,已处理。如果你自定义中间件构造 `ToolMessage`,记得用 snake_case 的 `tool_call_id`。
 
+**Q: 报「model [x] is offline / not support for model」类 400?**
+A: 模型在当前网关/服务方不可用(下线或未开放)。SDK 会识别该形态打 `code:'MODEL_UNAVAILABLE'` 并在错误信息尾附引导(换模型名后 `setLlm` 重试,或查网关开放的模型面列表);主路径仍按 fatal 浮出(4xx 不重试),子 agent 委派失败时引导随错误结果回灌主 agent,可据此停手而非反复重委派。注意:**网关回 200 + 错误 JSON 体(非 SSE)的形态**走 `EmptyLLMResponseError` 通道,识别不了具体下线文案(已知盲区)。可用导出的 `isModelUnavailableError(err)` 在自己的 `onEvent` 里做分支处理。
+
 **Q: Agent 改不了某个字段?**
 A: 值不符合 `schema`(校验拦截)。检查 schema 定义与传入值。
 
@@ -2194,6 +2197,9 @@ A: ① 用 `write` 的 `patch` 增量改而非整体重传 `value`;② 调大 `m
 
 **Q: 怎么关闭某项内置能力?**
 A: 用 `capabilities: { dataOps: false, fetch: false, planning: false, skills: false, vfs: false, ... }` 关掉对应内置工具/中间件(默认全开)。`dataOps:false` → 不装 dataOps 工具集(纯调研场景);`fetch:false` → 不装 `fetch_document`。⚠️ vfs 关 → 大结果外存退化为截断;summarization 关 → 长会话不压缩。
+
+**Q: console 提示「capabilities.X 已列入移除计划」?**
+A: `tracing` / `skillHostScript` / `preferences` / `bulkGuard` 四项已进入 deprecation warn 期(维护者确认外部零使用,计划 3.48.0 移除;装配期配置命中才 warn,每挂载一次)。如你在使用,到仓库 issue 说明即可按反馈保留;迁移方式见 warn 文案(各含迁移指引)。`todoDeps` 已撤除(残键被静默忽略,不报错)。
 
 **Q: 多个 Agent 同页共存会串数据吗?**
 A: 不会。给每个传不同的 `id` 即隔离。若想让多个对话框共享**同一个** Agent,用 `shareContext: true`(同 `id`)。共享实例间有 core 级串行闸:send/switchSession 跨实例排队串行;任一实例的生命周期收口(unmount/switchSession/resetSession)会中止共享 core 的全部在途流(共享状态不允许孤儿流续写)。

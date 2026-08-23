@@ -1,6 +1,6 @@
 # Proposal: model-offline-guidance（模型下线/不可用的友好引导）
 
-> 状态：**评审修订完成待实施**（2026-08-23 团队复审：撤回「setLlm fatal 快失败」〔构造期零网络、物理不可探测〕、Why 段现状纠正、检测特征收紧、200+错误体盲区明示）。优先级 P2（SDK）。目标仓库：zhuanti-agent。
+> 状态：**已实施（2026-08-24）**，随下个 minor 发布。复审记录：2026-08-23 团队复审（撤回「setLlm fatal 快失败」〔构造期零网络、物理不可探测〕、Why 段现状纠正、检测特征收紧、200+错误体盲区明示）。优先级 P2（SDK）。目标仓库：zhuanti-agent。
 > 驱动：本会话内 deepseek-v4-flash 在 modelverse 网关「model is offline」400 复发两次。主路径已 fatal 浮出（不静默）但**错误文本不可操作**，且 automation 重试/子 agent 重委派两条旁路会反复撞墙。需要把「模型面不可用」从通用错误里识别出来，给出可操作引导。
 
 ## Why（现状核实，复审纠正）

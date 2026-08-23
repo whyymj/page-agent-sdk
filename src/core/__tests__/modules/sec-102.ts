@@ -213,7 +213,7 @@ export async function run(ctx: TestCtx) {
     const mw = createUsageHintsMiddleware(undefined, false)
     const st = { rounds: 0 } as unknown as HarnessState
     const out = (mw.augmentPrompt as (st: HarnessState) => string | undefined)(st) ?? ''
-    assert(out.includes('update_todo 标 completed 时附 evidence'), '✓ A1 引导 → usageHints 无条件段教 evidence(不再被 todoDeps 门控)')
+    assert(out.includes('update_todo 标 completed 时附 evidence'), '✓ A1 引导 → usageHints 无条件段教 evidence(独立教学段)')
   }
 
   // ===== 9. 纯函数 =====

@@ -131,6 +131,8 @@ export interface TokenUsage {
   cache_read_input_tokens?: number
   /** prompt caching 本次写入的 input tokens(Anthropic;写价格 1.25x,5m/1h TTL 内复用) */
   cache_creation_input_tokens?: number
+  /** 推理/思考 token 数(reasoning-tokens-observability;是 completion_tokens 的子集,展示为占比不做加数;OpenAI 兼容经 langchain usage_metadata.output_token_details.reasoning 或原始 completion_tokens_details.reasoning_tokens 可得,Anthropic 当前依赖栈不暴露则省略) */
+  reasoning_tokens?: number
 }
 
 /** 批处理单任务结果(sdk.batch 返回;ok=true 含 reply,ok=false 含 error) */

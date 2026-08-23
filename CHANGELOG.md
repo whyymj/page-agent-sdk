@@ -4,6 +4,26 @@
 
 ## [Unreleased]
 
+## [3.47.0] - 2026-08-24
+
+### Removed + Changed(config-surface-pruning 第一轮,配置面收敛)
+
+- **移除 `capabilities.todoDeps`**:todos 层级依赖教学段开关(structured-todos-tier Phase 2 遗留;零 examples/零文档/API 零耦合,净候选直接移除)。`write_todos` 层级字段(parentId/deps/criteria/evidence)与渲染**不受影响**(schema 恒含可选字段);残键被 `resolveCapabilities` 静默忽略不报错。审计表入库 openspec/changes/2026-08-23-config-surface-pruning/audit.md
+- **deprecation warn ×4(`tracing`/`skillHostScript`/`preferences`/`bulkGuard`)**:维护者确认外部集成方零使用,进入 warn 期(计划 **3.48.0** 移除)—— 装配期配置命中才 `console.warn`(每挂载一次,含移除目标版本 + 迁移指引,不引导声明任何新配置);导出 `DEPRECATED_CAPABILITIES` 常量。本轮只 warn 不动行为,移除在 warn 期满后执行;高使用 5 项(domInspect/draftWrite/automation/agentCompression/verify)与全部默认开项零触碰
+- **事实源修正**:capabilities 注册表注释计数勘误(bulkGuard 特判项明示);CLAUDE.md opt-in 清单补 `tracing`(原漏)
+
+### Changed(browser-test-sharding,E2E 分片提速)
+
+- **playwright `workers: 1 → 4`**(spec 文件级并行分片,`fullyParallel:false` 保持 —— 文件内保序与串行行为一致):全量 104 项 ~4.2min → **~1.4min**(-67%)。mockLlm per-page 拦截 + 每 test 独立 context,无跨文件共享态(评审逐项核实);明令禁止「预启动 dev server + 复用」依赖(遗留旧 server optimizeDeps 失配 → 强制 reload 假性失败,§3.5 前科);依赖变更后首跑遇批量 reload 型失败 → 重跑一次预热不判回归;观察名单(queue/icons 净化/page-demo 流式占位)×3 复跑零 flake 实证
+
+### Added(model-offline-guidance,模型下线/不可用友好引导)
+
+- **`MODEL_UNAVAILABLE` 识别 + 可操作引导**:新增纯检测 `isModelUnavailableError`(对齐 `isContextLengthError` 三层识别链;特征收紧为 `is offline`/`not support for model`/`model_not_found`,裸 `does not exist` 弃用防误伤「path does not exist」类工具/路径错误)—— 仅消费于**模型调用失败 catch 点**(coreModelCall 启动/迭代、send/batch invoke、子 agent error result 装饰),不进工具错误归一化路径;命中打 `code:'MODEL_UNAVAILABLE'` + message 尾附「换模型名后 setLlm / 查网关模型面」引导(幂等,原文保留),debugLogs `stage:'model_unavailable'` 留痕。主路径 fatal 浮出与「4xx 不重试」纪律零变化(setLlm 不做离线探测——构造期零网络,物理不可见);子 agent 委派失败引导随 error result 回灌主 LLM,掐「反复重委派烧整轮子 agent」。导出 `isModelUnavailableError`/`decorateModelUnavailable`/`MODEL_UNAVAILABLE_GUIDANCE`(主+headless+双 d.ts)。**明示盲区**:网关 200+错误体非 SSE 形态仍走 `EmptyLLMResponseError`(deferred 登记)。selftest +12 / e2e +4
+
+### Added(reasoning 成本可见化,默认 deep 的配套观测)
+
+- **`TokenUsage.reasoning_tokens`(reasoning-tokens-observability,只增不改)**:推理/思考 token 单独累计 —— 提取收敛 `normalizeUsage` 单点(langchain 标准 `usage_metadata.output_token_details.reasoning` + 原始 `completion_tokens_details.reasoning_tokens` 兜底;**Anthropic 当前依赖栈不暴露该细分,字段省略不报错**);主 afterModel + 两条子 agent onUsage 回传闭包三处合并点透传;usage 事件 `cumulative` 条件携带;`reasoning_tokens` 是 completion 子集,**展示为占比不做加数**,预算判定(invokeUsage/budget)不受影响。DebugDrawer 每轮 llm_response 日志带归一 usage(顺带激活既有 per-log 用量行死路径)+ reasoning 占比徽章(无值隐藏);`sdk.usage`/诊断报告自动携带。selftest +4 / e2e +5
+
 ## [3.46.0] - 2026-08-24
 
 ### Added(默认 deep 思考 / read 多路径引导 / skill 多层级参考)

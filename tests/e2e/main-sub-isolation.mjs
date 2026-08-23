@@ -39,6 +39,50 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:main-sub-isolation] ✓ model-offline-guidance 子撞离线模型 → 引导随 error result 回灌主 LLM(掐反复重委派)')
+  {
+    const llm = stubModel(
+      { toolCalls: [{ name: 'spawn_agents', args: { tasks: [{ prompt: '调研A' }] } }] },
+      { throw: Object.assign(new Error('Invalid param: model [deepseek-v4-flash] is offline'), { status: 400 }) },
+      { text: '主收口' },
+    )
+    const toolResults = []
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-msi-offline-sub', storage: false, llm,
+      capabilities: { ...CAPS, vfs: false },
+      subagent: { maxParallel: 1 },
+    })
+    await sdk.mount()
+    await sdk.stream([{ role: 'user', content: 'x', timestamp: Date.now() }], (e) => {
+      if (e.type === 'tool_result') toolResults.push(e)
+    })
+    const spawnResult = toolResults.find((r) => r.name === 'spawn_agents')
+    const text = String(spawnResult?.result ?? '')
+    assert(/【子任务 1】✗/.test(text) && /该模型在当前网关不可用/.test(text), '✓ 离线 400 → 子错误结果带可操作引导(主 LLM 可据此停手/换模型,不再盲重委派)')
+    assert(/is offline/.test(text), '✓ 原始网关错误文案保留(引导为追加非替换,排障信息不丢)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:main-sub-isolation] ✓ model-offline-guidance 主路径 400 离线 → error 事件 code=MODEL_UNAVAILABLE + message 含引导;普通 400 不误标')
+  {
+    const mk = async (throwErr, id) => {
+      const errors = []
+      const sdk = createChatSdk({
+        ui: false, id, storage: false, llm: stubModel({ throw: throwErr }),
+        capabilities: { ...CAPS, vfs: false },
+        onEvent: (e) => { if (e.type === 'error') errors.push(e) },
+      })
+      await sdk.mount()
+      try { await sdk.send('x') } catch { /* send reject = fatal 既有语义 */ }
+      sdk.unmount()
+      return errors
+    }
+    const offline = await mk(Object.assign(new Error('Invalid param: model [glm-x] is offline'), { status: 400 }), 'e2e-msi-offline-main')
+    const normal = await mk(Object.assign(new Error('Invalid param: temperature out of range'), { status: 400 }), 'e2e-msi-offline-normal')
+    assert(offline.some((e) => e.code === 'MODEL_UNAVAILABLE' && /该模型在当前网关不可用/.test(String(e.message))), '✓ 离线 400 → error 事件带 MODEL_UNAVAILABLE 码 + 引导文案(fatal 语义不变)')
+    assert(!normal.some((e) => e.code === 'MODEL_UNAVAILABLE' || /该模型在当前网关不可用/.test(String(e.message))), '✓ 普通参数 400 → 不误标(码缺省、无引导文案)')
+  }
+
   console.log('[e2e:main-sub-isolation] P1-13 per-scope 基线(子 read 不掩盖外部修改 → 父过期写冲突)')
   {
     const bind = { title: '旧标题', count: 0 }
@@ -78,11 +122,11 @@ export async function run() {
 
   console.log('[e2e:main-sub-isolation] P1-17a 子 usage 回传 core.usage')
   {
-    const u = (p, c) => ({ usage: { prompt_tokens: p, completion_tokens: c, total_tokens: p + c } })
+    const u = (p, c, r) => ({ usage: { prompt_tokens: p, completion_tokens: c, total_tokens: p + c, ...(r ? { completion_tokens_details: { reasoning_tokens: r } } : {}) } })
     const llm = stubModel(
-      { toolCalls: [{ name: 'spawn_agent', args: { prompt: '子任务' } }], ...u(10, 5) },   // 主 15
-      { text: '子完成', ...u(6, 4) },                                                       // 子 10(修前漏计)
-      { text: '主收口', ...u(12, 8) },                                                      // 主 20
+      { toolCalls: [{ name: 'spawn_agent', args: { prompt: '子任务' } }], ...u(10, 5, 3) }, // 主 15(reasoning 3)
+      { text: '子完成', ...u(6, 4, 4) },                                                    // 子 10(修前漏计;reasoning 4)
+      { text: '主收口', ...u(12, 8) },                                                      // 主 20(无 reasoning)
     )
     const sdk = createChatSdk({
       ui: false, id: 'e2e-msi-usage', storage: false, llm,
@@ -92,6 +136,7 @@ export async function run() {
     await sdk.stream([{ role: 'user', content: 'x', timestamp: Date.now() }], () => {})
     assert(sdk.usage.total_tokens === 45, `✓ P1-17a 子 LLM usage 计入 sdk.usage(45=主15+子10+主20;修前 35 漏子;实际 ${sdk.usage.total_tokens})`)
     assert(sdk.usage.prompt_tokens === 28 && sdk.usage.completion_tokens === 17, '✓ P1-17a prompt/completion 分项同样含子(28/17)')
+    assert(sdk.usage.reasoning_tokens === 7, `✓ reasoning_tokens 含子 agent onUsage 闭包透传(7=主3+子4;实际 ${sdk.usage.reasoning_tokens})`)
     sdk.unmount()
   }
 

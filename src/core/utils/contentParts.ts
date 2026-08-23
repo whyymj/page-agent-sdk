@@ -93,9 +93,16 @@ export function normalizeUsage(message: BaseMessage): TokenUsage | null {
   const details = rec.input_token_details as Record<string, unknown> | undefined
   const cacheRead = Number(rec.cache_read_input_tokens ?? rec.cacheReadInputTokens ?? details?.cache_read ?? 0) || 0
   const cacheCreate = Number(rec.cache_creation_input_tokens ?? rec.cacheCreationInputTokens ?? details?.cache_creation ?? 0) || 0
+  // reasoning token(reasoning-tokens-observability):langchain 标准 usage_metadata.output_token_details.reasoning(@langchain/openai 双路径映射)
+  // 与原始 completion_tokens_details.reasoning_tokens(OpenAI/DeepSeek additional_kwargs/response_metadata.usage)两种形态;Anthropic 依赖栈不产出则省略
+  const outDetails = rec.output_token_details as Record<string, unknown> | undefined
+  const rawDetails = rec.completion_tokens_details as Record<string, unknown> | undefined
+  const m = message as { response_metadata?: { usage?: { completion_tokens_details?: { reasoning_tokens?: unknown } } } }
+  const reasoning = Number(outDetails?.reasoning ?? rawDetails?.reasoning_tokens ?? m?.response_metadata?.usage?.completion_tokens_details?.reasoning_tokens ?? 0) || 0
   return {
     prompt_tokens: p, completion_tokens: c, total_tokens: t,
     ...(cacheRead ? { cache_read_input_tokens: cacheRead } : {}),
     ...(cacheCreate ? { cache_creation_input_tokens: cacheCreate } : {}),
+    ...(reasoning ? { reasoning_tokens: reasoning } : {}),
   }
 }

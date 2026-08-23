@@ -33,3 +33,43 @@ export function isContextLengthError(err: unknown): boolean {
   }
   return false
 }
+
+/**
+ * 判定错误是否为「模型不可用」(model-offline-guidance:网关/厂商下线模型面,modelverse「model [x] is offline」400 实测驱动)。
+ * 识别链同 isContextLengthError:lc_error_code → error.code → 400/404 + message 特征。
+ * 特征收紧为 `is offline` / `not support for model`(裸 `does not exist` 会误伤「path does not exist」类工具/路径错误,弃用);
+ * **仅消费于模型调用失败 catch 点**,不进工具错误归一化路径(asAgentError 消费点含工具 catch,放进去必误伤)。
+ */
+export function isModelUnavailableError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as { lc_error_code?: string; code?: string; status?: number; message?: string }
+  if (e.lc_error_code === 'MODEL_UNAVAILABLE') return true
+  // OpenAI 原生 404 错误码 + 本 change 打的码(已装饰形态)
+  if (e.code === 'model_not_found' || e.code === 'MODEL_UNAVAILABLE') return true
+  if ((e.status === 400 || e.status === 404) && typeof e.message === 'string') {
+    return /is offline|not support for model/i.test(e.message)
+  }
+  return false
+}
+
+/** 引导文案(model-offline-guidance;只指向换模型/查网关两个既有动作,不引导集成方声明任何新配置) */
+export const MODEL_UNAVAILABLE_GUIDANCE = '该模型在当前网关不可用:换模型名后 setLlm 重试,或检查网关/服务方开放的模型面列表'
+
+/**
+ * 命中模型不可用 → 就地打 `code:'MODEL_UNAVAILABLE'` + message 尾附引导(幂等:已装饰只跳过不重复追加);返回是否命中。
+ * severity 与重试语义由各 catch 点维持现状(4xx 本就不重试;主路径 fatal 浮出不变,子 agent error result 仅装饰 message)。
+ */
+export function decorateModelUnavailable(err: unknown): boolean {
+  if (!isModelUnavailableError(err)) return false
+  const e = err as { code?: string; message?: string }
+  const already = e.code === 'MODEL_UNAVAILABLE'
+  try {
+    e.code = 'MODEL_UNAVAILABLE'
+    if (typeof e.message === 'string' && !e.message.includes(MODEL_UNAVAILABLE_GUIDANCE)) {
+      e.message = `${e.message}(${MODEL_UNAVAILABLE_GUIDANCE})`
+    }
+  } catch {
+    /* message 只读的异形错误:仅打码 */
+  }
+  return true // 命中即 true(already 仅决定是否重复追加引导文案,不影响命中语义)
+}

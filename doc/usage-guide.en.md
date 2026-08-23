@@ -1025,7 +1025,7 @@ Beyond event subscription, the SDK instance exposes a few convenience APIs cover
 | `sdk.getUserSkill(name)` | Read a user-created skill's detail | Returns `{ name, description, content }` or `undefined` (when not found); for SkillPanel editing |
 | `skillStorage` option | User skill independent persistence config | Default `{ backend: 'indexed' }` (separate from `storage`); `false` disables (current session only); `id` manually specifies the same id to share skills across pages/agents; omit `id` for per-agent isolation (`agent::{agentId}`) |
 | `SkillPanel` component | UI panel for users to create/edit/delete skills | The built-in `ChatDialog` header "Skill Management" button already integrates it (supports create/edit/delete); integrators can also `import { SkillPanel } from 'page-agent-sdk'` for custom UIs |
-| `sdk.usage` | Cumulative token usage `{prompt_tokens, completion_tokens, total_tokens}` | Accumulated per LLM call; all 0 when no calls; per-round detail emitted via `onEvent('usage')` |
+| `sdk.usage` | Cumulative token usage `{prompt_tokens, completion_tokens, total_tokens, reasoning_tokens?}` | Accumulated per LLM call; all 0 when no calls; per-round detail emitted via `onEvent('usage')`. `reasoning_tokens` is the reasoning/thinking token count (cost visibility for the default-deep thinking mode): tracked separately as a **subset of completion** (not added on top); DebugDrawer per-round logs show it as a percentage of completion. Carried only when the endpoint reports it (OpenAI-compatible / DeepSeek); the Anthropic protocol's current dependency stack does not expose this breakdown, so the field is omitted |
 | `onAudit(entry)` option | Structured audit callback for data writes (independent of `debug`) | Fires on every `set`/`edit`/`delete`/`restore` with `{op, jsonPath, opDetail, timestamp, success, error?}`; for compliance audit / operation tracing |
 
 ```ts
@@ -1502,6 +1502,12 @@ VITE_AI_SYSTEM_PROMPT=...       # must be single-line
 
 **Q: Model returns `400 missing field tool_call_id`?**
 A: LangChain `ToolMessage` uses snake_case `tool_call_id` (not camelCase). The SDK handles this internally; if you build messages manually, use `tool_call_id`.
+
+**Q: Error like `model [x] is offline / not support for model` (400)?**
+A: The model is unavailable on your gateway/provider (offline or not offered). The SDK detects this shape, tags it `code:'MODEL_UNAVAILABLE'`, and appends actionable guidance to the error message (switch the model name and `setLlm`, or check the gateway's model list). The main path still surfaces it as fatal (4xx is never retried); when a subagent delegation fails this way, the guidance flows back with the error result so the main agent can stop instead of re-delegating blindly. Known blind spot: gateways that return **200 + a non-SSE error JSON body** surface as `EmptyLLMResponseError` instead — the offline text cannot be detected there. Use the exported `isModelUnavailableError(err)` in your own `onEvent` for custom handling.
+
+**Q: Console says "capabilities.X 已列入移除计划" (scheduled for removal)?**
+A: `tracing` / `skillHostScript` / `preferences` / `bulkGuard` are in a deprecation warning period (maintainer confirmed no external usage; removal planned for 3.48.0; the warn fires once per mount only when the key is configured). If you use one of them, open a repo issue and it will be kept per feedback; migration guidance is included in each warn message. `todoDeps` has been removed (leftover keys are silently ignored, no error).
 
 **Q: `ChatOpenAI` param errors?**
 A: Use `apiKey` (not `openAIApiKey`), `model` (not `modelName`); `baseUrl` goes via `configuration.baseURL`.
