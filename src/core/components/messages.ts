@@ -114,7 +114,6 @@ export interface DialogMessages {
   focusSubmit: string
   // ===== DebugDrawer(phase2;tab/过滤器/状态/各面板)=====
   debugTabLogs: string
-  debugTabFlow: string
   debugTabContext: string
   debugTabSubagent: string
   debugTabInfo: string
@@ -132,7 +131,6 @@ export interface DialogMessages {
   debugFlowPrep: string              // 准备 / 其他(流程视图无 round 分组标题)
   debugLogsEmpty: string
   debugLogsWrapUp: string          // 收尾 / Wrap-up(日志分组:预算耗尽等兜底收口轮)
-  debugFlowEmpty: string
   debugNoInfo: string
   debugCardView: string
   debugRequestBody: string
@@ -163,7 +161,6 @@ export interface DialogMessages {
   debugSubHistoryTitle: string       // 历史 / History
   debugStepsBtn: string
   debugStepsCountSuffix: string      // 步 / steps(n 在前)
-  debugTraceEmpty: string
   debugMetricRounds: string
   debugMetricTotal: string
   debugMetricAvg: string
@@ -359,7 +356,6 @@ export const MESSAGES_ZH_CN: DialogMessages = {
   focusSubmit: '聚焦',
   // ===== DebugDrawer =====
   debugTabLogs: '日志',
-  debugTabFlow: '流程',
   debugTabContext: '上下文',
   debugTabSubagent: '子 agent',
   debugTabInfo: 'Agent 信息',
@@ -376,7 +372,6 @@ export const MESSAGES_ZH_CN: DialogMessages = {
   debugFlowPrep: '准备 / 其他',
   debugLogsEmpty: '暂无日志，发送消息后这里会显示 Agent 的完整上下文、工具调用等信息',
   debugLogsWrapUp: '收尾',
-  debugFlowEmpty: '暂无日志，发送消息后这里按轮次展示执行流程',
   debugNoInfo: '暂无信息',
   debugCardView: '🗂 卡片视图',
   debugRequestBody: '📋 请求体',
@@ -407,7 +402,6 @@ export const MESSAGES_ZH_CN: DialogMessages = {
   debugSubHistoryTitle: '历史',
   debugStepsBtn: '步骤',
   debugStepsCountSuffix: ' 步',
-  debugTraceEmpty: '未开启 tracing(capabilities.tracing:true)或暂无 trace。跑一轮 agent 后刷新。',
   debugMetricRounds: '轮次',
   debugMetricTotal: '总耗时',
   debugMetricAvg: '平均/轮',
@@ -603,7 +597,6 @@ export const MESSAGES_EN_US: DialogMessages = {
   focusSubmit: 'Focus',
   // ===== DebugDrawer =====
   debugTabLogs: 'Logs',
-  debugTabFlow: 'Flow',
   debugTabContext: 'Context',
   debugTabSubagent: 'Sub-agents',
   debugTabInfo: 'Agent info',
@@ -620,7 +613,6 @@ export const MESSAGES_EN_US: DialogMessages = {
   debugFlowPrep: 'Preparation / other',
   debugLogsEmpty: 'No logs yet. After you send a message, the full agent context and tool calls appear here.',
   debugLogsWrapUp: 'Wrap-up',
-  debugFlowEmpty: 'No logs yet. After you send a message, the execution flow appears here by round.',
   debugNoInfo: 'No info',
   debugCardView: '🗂 Cards',
   debugRequestBody: '📋 Request body',
@@ -651,7 +643,6 @@ export const MESSAGES_EN_US: DialogMessages = {
   debugSubHistoryTitle: 'History',
   debugStepsBtn: 'Steps',
   debugStepsCountSuffix: ' steps',
-  debugTraceEmpty: 'Tracing not enabled (capabilities.tracing:true) or no trace yet. Run a round then refresh.',
   debugMetricRounds: 'Rounds',
   debugMetricTotal: 'Total',
   debugMetricAvg: 'Avg/round',

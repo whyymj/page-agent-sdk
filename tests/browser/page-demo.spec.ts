@@ -360,7 +360,8 @@ test.describe('page-demo: read → write → read', () => {
     await expect(dialog).toHaveClass(/cs-theme-dark/)
     const bg = await dialog.evaluate((el) => getComputedStyle(el).backgroundColor)
     expect(bg, '深色底 #222222').toBe('rgb(34, 34, 34)')
-    const input = page.locator('.chat-input')
+    // 3.46 起输入边框在容器 .chat-input-wrap(芯片流式布局同容器一体),不在 textarea 本体
+    const input = page.locator('.chat-input-wrap')
     const border = await input.evaluate((el) => getComputedStyle(el).borderTopColor)
     expect(border, '输入框紫调边框 rgba(115,114,255,.5)').toBe('rgba(115, 114, 255, 0.5)')
   })
@@ -661,5 +662,31 @@ test.describe('page-demo: 工具步骤展开细节(入参/返回值)', () => {
     await expect(toggles.nth(1)).toContainText('收起')
     await toggles.nth(1).click()
     await expect(page.locator('.step-detail')).toHaveCount(0)
+  })
+
+  test('流式占位:思考/工具期间不渲染空气泡,步骤后不叠占位点', async ({ page }) => {
+    // 首响应带 reasoning + 工具调用,覆盖思考块与步骤块两态;
+    // delays:首包 700ms 留 Phase A 断言窗,次包 2500ms 撑开「步骤在跑/内容未至」的 Phase C 断言窗
+    await mockLlm(page, [
+      { reasoning: '先看一下当前标题再决定怎么改。', tool_calls: [{ name: 'read', arguments: { jsonPath: 'title' } }] },
+      { text: '完成。' },
+    ], [700, 2500])
+
+    await fillInput(page, '把标题改一下')
+    await clickSend(page)
+
+    // Phase A(首包前):占位气泡(呼吸点 + 思考中),非空框
+    await expect(page.locator('.typing-dot')).toBeVisible()
+
+    // Phase B/C(reasoning/steps 到达):占位让位,assistant 气泡整体不渲染(无空框、无步骤后双 loading 点)
+    await page.waitForSelector('.step-item')
+    await expect(page.locator('.reasoning-block')).toBeVisible()
+    await expect(page.locator('.typing-dot')).toHaveCount(0)
+    await expect(page.locator('.message-row.assistant .message-bubble')).toHaveCount(0)
+
+    // Phase D(内容到达):气泡正常渲染
+    await waitForAgentIdle(page)
+    await expect(page.locator('.message-row.assistant .message-bubble')).toHaveCount(1)
+    await expect(page.locator('.message-row.assistant .message-bubble')).toContainText('完成')
   })
 })

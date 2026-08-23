@@ -65,7 +65,7 @@ export { createBulkGuardMiddleware, measureWriteScale, type BulkGuardOptions, ty
 export { createCheckpointManager, createCheckpointMiddleware } from './harness/checkpoint'
 export type { CheckpointManager, CheckpointMeta, CheckpointDeps } from './harness/checkpoint'
 export { defineSkill } from './harness/skills'
-export type { SkillSpec } from './harness/skills'
+export type { SkillSpec, SkillRefSpec } from './harness/skills'
 // 数据操作类型(单主对象 + 增量编辑 + 快照)
 export type { DataConfig, DataOpsOptions, DataOpsController, DataAuditEntry, DataSnapshotEntry, ConflictInfo, ConflictResolution } from './tools/dataOps'
 export type { ResourceProtectSpec } from './tools/resources'

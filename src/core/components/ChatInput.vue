@@ -56,33 +56,35 @@ const onPaste = (e: ClipboardEvent): void => {
     >
       <!-- 拖拽提示浮层 -->
       <div v-if="dragOver" class="drop-hint">{{ m.imageDropHint }}</div>
-      <!-- 聚焦标签(inline chip):聚焦组件精修时,输入框内顶部显示多 chip(🎯 path,multi-focus)。
-           chip 本体点击 → 回调(滚动/高亮组件);✕ 移除单个焦点(全移除=退出精修) -->
-      <div v-if="focuses.length" class="focus-chips">
-        <span
-          v-for="f in focuses"
-          :key="f.path"
-          class="focus-chip"
-          :title="m.focusChipTitlePrefix + f.path + m.focusChipTitleHint"
-          @click="focusChipClick(f)"
-        >
-          <span class="focus-chip-icon"><IconGlyph :icon="icons.focus" /></span><code class="focus-chip-path">{{ f.path }}</code>
-          <button type="button" class="focus-chip-x" data-test="focus-clear" :title="m.removeFocus" @click.stop="removeFocus(f.path)">✕</button>
-        </span>
+      <!-- chip 区(流式布局,输入容器内顶部:聚焦标签 + 待发送图片 + 输入错误纵向堆叠,永不遮挡输入文字) -->
+      <div v-if="focuses.length || pendingImages.length || imageInputError" class="chip-stack">
+        <!-- 聚焦标签(inline chip):聚焦组件精修时显示多 chip(🎯 path,multi-focus)。
+             chip 本体点击 → 回调(滚动/高亮组件);✕ 移除单个焦点(全移除=退出精修) -->
+        <div v-if="focuses.length" class="focus-chips">
+          <span
+            v-for="f in focuses"
+            :key="f.path"
+            class="focus-chip"
+            :title="m.focusChipTitlePrefix + f.path + m.focusChipTitleHint"
+            @click="focusChipClick(f)"
+          >
+            <span class="focus-chip-icon"><IconGlyph :icon="icons.focus" /></span><code class="focus-chip-path">{{ f.path }}</code>
+            <button type="button" class="focus-chip-x" data-test="focus-clear" :title="m.removeFocus" @click.stop="removeFocus(f.path)">✕</button>
+          </span>
+        </div>
+        <!-- 待发送图片 chip(image-input-vision):缩略图 + ✕;随下一条消息发出 -->
+        <div v-if="pendingImages.length" class="img-chips" data-test="img-chips">
+          <span v-for="im in pendingImages" :key="im.id" class="img-chip" :title="im.name || m.imageAlt">
+            <img class="img-chip-thumb" :src="im.dataUri" :alt="im.name || m.imageAlt" />
+            <button type="button" class="img-chip-x" data-test="img-chip-x" @click="removePendingImage(im.id)">✕</button>
+          </span>
+        </div>
+        <!-- 输入侧图片错误(超限/损坏;4s 自动清) -->
+        <div v-if="imageInputError" class="img-error" data-test="img-error">{{ imageInputError }}</div>
       </div>
-      <!-- 待发送图片 chip(image-input-vision):缩略图 + ✕;随下一条消息发出 -->
-      <div v-if="pendingImages.length" class="img-chips" data-test="img-chips">
-        <span v-for="im in pendingImages" :key="im.id" class="img-chip" :title="im.name || m.imageAlt">
-          <img class="img-chip-thumb" :src="im.dataUri" :alt="im.name || m.imageAlt" />
-          <button type="button" class="img-chip-x" data-test="img-chip-x" @click="removePendingImage(im.id)">✕</button>
-        </span>
-      </div>
-      <!-- 输入侧图片错误(超限/损坏;4s 自动清) -->
-      <div v-if="imageInputError" class="img-error" data-test="img-error">{{ imageInputError }}</div>
       <textarea
         v-model="inputText"
         class="chat-input"
-        :class="{ 'has-focus-chip': focuses.length > 0, 'has-img-chip': pendingImages.length > 0 || imageInputError }"
         :placeholder="placeholder"
         :rows="inputRows"
         @keydown="keydown"
@@ -132,7 +134,15 @@ const onPaste = (e: ClipboardEvent): void => {
   padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   flex-shrink: 0;
 }
-.chat-input-wrap { flex: 1; position: relative; min-width: 0; }
+.chat-input-wrap {
+  flex: 1; position: relative; min-width: 0;
+  /* 边框上移到容器(芯片 + 输入区一体):聚焦/图片/错误行流式排布在输入区内顶部,不再绝对定位盖住文字 */
+  border: 1px solid var(--cs-input-border, rgba(var(--cs-primary-rgb, 31, 77, 58), 0.2));
+  border-radius: var(--cs-input-radius, 8px);
+  background: var(--cs-input-bg, transparent);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.chat-input-wrap:focus-within { border-color: var(--cs-primary); box-shadow: 0 0 0 2px rgba(var(--cs-primary-rgb), 0.1); }
 .chat-input-wrap.drag-over::after {
   content: ''; position: absolute; inset: -3px; border: 2px dashed var(--cs-primary, #1f4d3a); border-radius: 10px;
   pointer-events: none; z-index: 2;
@@ -141,11 +151,9 @@ const onPaste = (e: ClipboardEvent): void => {
   position: absolute; top: 8px; left: 0; right: 0; z-index: 3; text-align: center;
   font-size: 11px; color: var(--cs-primary, #1f4d3a); pointer-events: none;
 }
-/* 聚焦 inline chip:输入框内顶部多 chip(multi-focus);chip 本体点击 → 回调,✕ 移除单个 */
-.focus-chips {
-  position: absolute; top: 5px; left: 8px; right: 8px; z-index: 1;
-  display: flex; flex-wrap: wrap; gap: 4px;
-}
+/* chip 区:容器内顶部流式堆叠(聚焦 → 图片 → 错误);自然撑高容器,输入文字永不被遮 */
+.chip-stack { display: flex; flex-direction: column; gap: 6px; padding: 8px 8px 0; }
+.focus-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .focus-chip {
   display: inline-flex; align-items: center; gap: 2px;
   padding: 1px 4px 1px 6px; border-radius: 10px;
@@ -159,12 +167,8 @@ const onPaste = (e: ClipboardEvent): void => {
 .focus-chip-path { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
 .focus-chip-x { border: none; background: transparent; color: inherit; cursor: pointer; padding: 0 4px; border-radius: 8px; font-size: 11px; line-height: 1; opacity: 0.55; transition: opacity 0.15s, background 0.15s; }
 .focus-chip-x:hover { opacity: 1; background: rgba(var(--cs-err-rgb, 220, 38, 38), 0.15); color: var(--cs-err, #dc2626); }
-/* 待发送图片 chip(image-input-vision):输入框内顶部缩略图行(与 focus chip 同区位,二者可共存纵向堆叠) */
-.img-chips {
-  position: absolute; top: 5px; left: 8px; right: 8px; z-index: 1;
-  display: flex; flex-wrap: wrap; gap: 4px;
-}
-.chat-input-wrap:not(:has(.focus-chips:empty)) .img-chips { top: 30px; }
+/* 待发送图片 chip(image-input-vision):缩略图行(流式,随容器撑高;✕ 悬浮右上角) */
+.img-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .img-chip { position: relative; width: 44px; height: 44px; border-radius: 8px; overflow: visible; flex-shrink: 0; }
 .img-chip-thumb { width: 100%; height: 100%; object-fit: cover; border-radius: 8px; border: 1px solid var(--cs-surface-border, rgba(0,0,0,0.08)); display: block; }
 .img-chip-x {
@@ -173,20 +177,14 @@ const onPaste = (e: ClipboardEvent): void => {
   cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0;
 }
 .img-chip-x:hover { opacity: 0.85; }
-.img-error {
-  position: absolute; left: 8px; right: 8px; z-index: 1;
-  font-size: 11px; color: var(--cs-err, #dc2626); line-height: 1.4;
-}
-.chat-input.has-focus-chip { padding-top: 30px; }
-.chat-input.has-img-chip { padding-top: 56px; }
+.img-error { font-size: 11px; color: var(--cs-err, #dc2626); line-height: 1.4; }
 .chat-input {
-  width: 100%; resize: vertical; border: 1px solid var(--cs-input-border, rgba(var(--cs-primary-rgb, 31, 77, 58), 0.2)); border-radius: var(--cs-input-radius, 8px);
+  display: block; width: 100%; border: none; outline: none; background: transparent; resize: vertical;
   padding: 9px 12px 38px 12px; font-size: 13px; font-family: inherit; line-height: 1.5; color: var(--cs-bg-text, inherit);
-  background: var(--cs-input-bg, transparent); outline: none; transition: border-color 0.2s; min-height: 38px; max-height: 50vh; overflow-y: auto;
+  min-height: 38px; max-height: 50vh; overflow-y: auto;
   overflow-wrap: anywhere; word-break: break-word;
 }
 .chat-input::placeholder { color: var(--cs-bg-muted, #9ca3af); opacity: 0.7; }
-.chat-input:focus { border-color: var(--cs-primary); box-shadow: 0 0 0 2px rgba(var(--cs-primary-rgb), 0.1); }
 .input-actions { position: absolute; bottom: 10px; right:  10px; display: flex; align-items: center; gap: 8px; }
 .send-hint { font-size: 10px; color: var(--cs-bg-muted, #9ca3af); opacity: 0.6; pointer-events: none; white-space: nowrap; }
 .attach-btn {

@@ -171,6 +171,7 @@ createChatSdk({
   memory: '...',                   // AGENTS.md-style persistent directives
   actions: { name: { description, run, params? } },  // host actions (2.18+): SDK wraps each as a named tool (save_draft/publish…); see §6
   schemaHint: { maxKeys?, maxChars? },               // large-schema tiered disclosure thresholds (2.18+; default 15/4000); see §6
+  images: { upload?, describe?, describeTimeoutMs? }, // image input (see 6.17): upload swaps the compressed original for an https URL (integrator OSS; falls back to inline on failure); describe binds a captioning capability (per-image text injection when the main model has no vision; the image itself is never sent)
 
   // capability toggles (default all on; verify default off)
   capabilities: { planning?, dataOps?, fetch?, skills?, vfs?, summarization?, memory?, subagent?, verify?, domInspect?, inspectEnv?, draftWrite?, workingMemory? },  // domInspect (get_dom, 2.18+) default off; inspectEnv (inspect_env, reads window/env, 2.18+) default on; draftWrite (draft_write/draft_commit chunked build, 2.19+) default off opt-in; workingMemory default on
@@ -246,8 +247,8 @@ createChatSdk({
 Declare `data`; the Agent reads/writes via tools, validated by schema (path-scoped: only the written subtree is validated — a single write is never blocked by legacy dirty data on sibling nodes; whole-object `set` only validates top-level keys present in `value` (merge semantics, absent keys preserved); cross-node refinements are not enforced at write time — use `capabilities.verify` for global checks):
 
 - **`read`** / **`write`** (2.2+, recommended): high-level entry points merging list/describe/get and set/edit/delete + auto optimistic lock + auto snapshot — lowest LLM cognitive load
-- `describe_data` / `list_data_snapshots` / `get_data` (hidden in `simple` mode, merged into `read`)
-- `set_data` / `edit_data` (jsonPath incremental patch) / `delete_data` (hidden in `simple` mode, merged into `write`)
+- `describe_data` / `get_data` (low-level; prefer `read`)
+- `set_data` / `edit_data` (jsonPath incremental patch) / `delete_data` (low-level; prefer `write` patch/del)
 - `snapshot_data` / `list_data_snapshots` / `restore_data`
 - `query_data` (JSONPath) / `search_data` (fuzzy) / `eval_script` (sandboxed)
 
@@ -597,11 +598,11 @@ sdk.vfsWrite('docs/components/hero.md', 'Hero component is for the above-the-fol
   - **Main-scope read summary**: when the main agent reads data, tagged fields (`code`) are summarized to `<code Nkb>` (keeps code body out of the main context); subagent reads full text (needs it to edit); integrator's own long text fields are unaffected.
   - **`codeField` configurable (open-schema)**: code field location defaults to `'code'` (component top level); open-schema platforms can set a nested jsonPath (e.g. `'props.html_code'`). "Is a code component" = a string at that path (non-code components are skipped naturally); assembly-time hit-check warns on zero hits (prevents silent failure on a wrong path). E.g. `createHtmlSubagent({ writablePaths:['components'], codeField:'props.html_code' })`
   - **`writablePaths` auto-inferred at assembly (3.6+, optional)**: when omitted, createChatSdk scans the top level of `data.schema` for array paths whose elements contain a `codeField` string and back-fills them (`inferWritablePaths`, console.info trace; an explicit value always wins). Forms that cannot be inferred → warn + throw asking for an explicit value: open schemas (`z.any()`/`z.record`), nested containers (e.g. `sections[].children[]`), dotted-path codeField (`props.html_code` nested shape) — prefer failing over guessing a wrong path (a wrong path silently disables the whole framework scan region)
-  - **Main-agent orchestration auto-injection (zero-config)**: at assembly — with an html subagent → delegation orchestration `htmlOrchestratorPrompt(id)` is auto-appended to the main systemPrompt (custom code: no read/no write, owned by `use_<id>`; delegate one-by-one; task spec with 4 essentials + ⑤ history-preference relay); 3.9+: without an explicit one + schema has a code array → **a default `createHtmlSubagent()` is auto-registered** (info logged, no switch; forms that can't be inferred — top-level code field / open schema — get the `htmlDirectWriteFallback` direct-write mode instead); open schema (`z.any()`) can't be scanned → opt-in spread. **Do NOT manually spread `htmlPageOrchestrator`** (auto-injection already covers it; double injection wastes tokens); opt out via `orchestratorPrompt:false`
+  - **Main-agent orchestration auto-injection (zero-config)**: at assembly — with an html subagent → delegation orchestration `htmlOrchestratorPrompt(id)` is auto-appended to the main systemPrompt (custom code: no read/no write, owned by `use_<id>`; delegate one-by-one; task spec with 4 essentials + ⑤ history-preference relay; **multi-option requests go text-first**: "give me a couple of options to pick" → this round only text proposals + user picks, delegation happens only after the choice, never generate all options up front); 3.9+: without an explicit one + schema has a code array → **a default `createHtmlSubagent()` is auto-registered** (info logged, no switch; forms that can't be inferred — top-level code field / open schema — get the `htmlDirectWriteFallback` direct-write mode instead); open schema (`z.any()`) can't be scanned → opt-in spread. **Do NOT manually spread `htmlPageOrchestrator`** (auto-injection already covers it; double injection wastes tokens); opt out via `orchestratorPrompt:false`
   - **Component craft notes `craftNotes` (on by default)**: the html subagent appends a `[note] <one-line essence>` line to its final reply (htmlSystemPrompt convention); the framework's afterAgent extracts and persists it to the component's `__pgNotes` (FIFO ≤5 × 200 chars, travels with the data JSON — persistent across sessions). On the next delegation to the same component, the file map injects the latest note (`📝 notes×N`) — **design intent persists across delegations** ("handoff from the previous maintainer": design decisions / user preferences / pitfalls); state lives in the data, not in the subagent instance (same philosophy as code-as-data-asset). `__pgNotes` rides the `__pg*` sidecar mechanism (hidden from agent read projection, unwritable by the agent, framework-owned); opt out via `craftNotes:false` (zero persistence, zero injection)
   - **Model advice (from real-LLM testing)**: prefer strong instruction-following models (deepseek-v4 / claude / gpt-4o) for html code generation; flash-class weak models amplify over-thinking (decoration enumeration / token dithering); for high-frequency/batch generation prefer non-flash
   - **Extra read-only tools `allowedTools` (3.45.1+)**: integrators can merge host-defined query tools (e.g. `rag_component_docs`/`list_components`) into the html subagent's tool pool — the subagent can look up component docs / page structure while writing code, so a delegated task mentioning component names no longer triggers "tool does not exist" hallucinations. Query-type tools only; write access stays governed by `writablePaths` (same name as the top-level `subagent.allowedTools` but a different surface: that one is the spawn-chain whitelist, this one is the capability-pack factory option)
-  - **Own model + thinking-depth lock (output-quality-uplift)**: keep the main agent on a light model for orchestration while code generation uses a stronger one — `createHtmlSubagent({ llm: { apiKey, baseUrl, model }, thinkingMode: 'deep' })`. `thinkingMode` locks thinking depth: `'deep'` injects thinking params (quality first, ~2-5x tokens/time) / `'simple'` strips them (save tokens) / unset = inherit from main; top-level `subagent.thinkingMode` acts as a global default (an explicit per-subagent value wins). OpenAI-compatible uses `extraBody.thinking`; Anthropic uses the `thinking` field (budget_tokens defaults to `min(maxTokens??4096, 8000)`; when enabled the API forces temperature to 1). **Only the LLMConfig construction path is effective**: if the subagent reuses a pre-built `BaseChatModel` instance the thinking config is frozen at construction time → warn + observable no-op (switch to passing a `SubagentLlmConfig`). The model itself must support thinking (deepseek-thinking / claude; no effect on flash-class). Effective state is reflected via `inspect().subagent.subagents[].thinkingApplied` (`applied`/`inherited`/`instance-noop`).
+  - **Own model + thinking-depth lock (output-quality-uplift)**: keep the main agent on a light model for orchestration while code generation uses a stronger one — `createHtmlSubagent({ llm: { apiKey, baseUrl, model }, thinkingMode: 'deep' })`. `thinkingMode` locks thinking depth: `'deep'` injects thinking params (quality first, ~2-5x tokens/time) / `'simple'` strips them (save tokens) / unset = inherit from main; top-level `subagent.thinkingMode` acts as a global default (an explicit per-subagent value wins). **Default deep (default-deep-thinking)**: with zero integrator config, main/sub models whose capability table marks `thinking:true` (deepseek-v4/reasoner, claude-3.7+/4-series, glm-5.2, …) automatically get deep injected for quality; non-thinking models (gpt-4o, …) get nothing (avoids 400). The main model can opt out via `llm:{ thinkingMode:'simple' }`; summary/title/compression-decision auxiliary channels are automatically simple. OpenAI-compatible uses `extraBody.thinking`; Anthropic uses the `thinking` field (budget_tokens defaults to `min(maxTokens??4096, 8000)`; when enabled the API forces temperature to 1). **Only the LLMConfig construction path is effective**: if the subagent reuses a pre-built `BaseChatModel` instance the thinking config is frozen at construction time → warn + observable no-op (switch to passing a `SubagentLlmConfig`). The model itself must support thinking (deepseek-thinking / claude; no effect on flash-class). Effective state is reflected via `inspect().subagent.subagents[].thinkingApplied` (`applied`/`inherited`/`instance-noop`).
   - **Breaking migration (2.x → 3.0)**: ① schema: add `code:z.string()` to `components[i]` (replaces `codeRef`), drop the `codeSnapshots` mirror; ② UI: bind `data.components[i].code` (replaces `codeSnapshots[p]`); ③ `createHtmlSubagent`: drop `onComplete` (framework auto-commits in afterAgent); ④ persist: send the whole data JSON to the server (including `code` + `__pgId`); ⑤ render layer: on `type:'custom'` read `data.code` (no more `codeRef`→vfs lookup).
 - **Underlying — subagent arch extensions**: `SubagentConfig` adds `allowedTools` (pull vfs/draft tools from main) / `middleware` (mount planning) / `summarization` (cross-round compression); `sdk.vfsWrite(path, content)` async-injects vfs. Both packs build on these; integrators can also use the three fields directly to configure any specialized subagent.
 
@@ -694,6 +695,24 @@ defineSkill({
 - **exec security**: default `sandbox` (reuses eval_script's Worker sandbox: static scan + `lockSandboxGlobal` network lock + timeout). `context:'host'` runs with full host authority (`AsyncFunction`, can read window/fetch/DOM), requires `capabilities.skillHostScript:true` (opt-in, default off); **host only for integrator-supplied inline `code`** (not LLM-generated, not remote); `url`+`host` is forbidden (untrusted remote).
 - **exec failure is not cached**: a failed script (e.g. network blip) doesn't block the skill (text still usable + failure noted) and is **not written to cache** — next `load_skill` re-runs exec (dynamic-skill resilience); only success is cached.
 - **exec large results**: when text + exec result exceeds 6000 chars, the createAgent offload kicks in (→ vfs + preview); the LLM re-reads via `vfs_read`. "Read-all-at-once" only guarantees the static text part.
+
+**Multi-level reference docs `references` (progressive disclosure for big skills)**: configure browser-side skills shaped like "SKILL.md index + references/ multi-file" (style recipe libraries, pattern libraries, critique guides). The main doc only carries "when + how"; secondary docs hang off `references` and are fetched on demand — a 26-recipe skill never floods the context:
+
+```ts
+defineSkill({
+  name: 'web-design-engineer',
+  description: 'Web visual design: style selection / layout / critique',
+  doc: 'vfs://skills/wde/SKILL.md',            // main: index + method (or inline via getContent)
+  references: [
+    { name: 'style-recipes/linear.md', description: 'Linear minimalist', doc: 'vfs://skills/wde/style-recipes/linear.md' },
+    { name: 'style-recipes/aesop.md', description: 'Aesop editorial', getContent: () => AESOP_MD },  // build chains can inline via import.meta.glob raw
+  ],
+})
+```
+
+- `load_skill(name)` auto-appends a **reference index** (name + description + "use `load_skill(name, ref)` on demand") to the main text; the LLM then fetches a single reference via `load_skill(name, ref='style-recipes/linear.md')` (independent cache; same-round repeats intercepted).
+- Reference sources share the main doc semantics (`doc` http/vfs / `getContent` inline); build-chain integrators map `import.meta.glob('.../*.md', { as: 'raw' })` into references; CDN/no-build uses `doc` pointing at statically hosted URLs.
+- `sdk.invalidateSkillCache(name)` clears the main text + all ref caches together.
 - **tools injection**: after `load_skill`, tools are evaluated → injected into the agent tool pool (via dedupeTools; namespace prefix `<skill>__<tool>` recommended); source labeled `skill:<name>`; unloaded by `sdk.setSkills`/`invalidateSkillCache`.
 
 ### 6.4 Memory (persistent directives)
@@ -907,7 +926,7 @@ createChatSdk({
 })
 // After a run:
 // sdk.inspect().trace → { spans, metrics } (rounds / latency / tool success rate / retries / compressions / tokens)
-// DebugDrawer 4th tab 🌳 Trace → metrics card + span list (visual)
+// DebugDrawer "📊 Context" tab, bottom 🌳 Trace section → metrics card + span list (visual)
 ```
 
 - **Span types**: `round` / `model` (LLM call) / `tool` / `compression`, with `startTs`/`endTs`/`durationMs`/`status`/`attributes` (round no, tool name, usage, etc).
@@ -1427,6 +1446,44 @@ await sdk.clearPreferences()    // clear all
 - **Division of labor with existing memory**: `memory` = integrator-authored global instructions / `craftNotes` = per-component handoff / `mission` = in-session goal / **preference memory = user-level, cross-session**
 - **Observable**: read-only "User preferences" section in the DebugDrawer Agent-info tab; captures and failures are logged to debugLogs (middleware type)
 - **Privacy boundary**: preferences stay on the device (same local IndexedDB as skillStore, never uploaded with session snapshots); pass a fixed `preferenceStorage.id` to share across pages/agents, omit to isolate per agentId
+
+### 6.17 Image input (multimodal direct / captioning bypass)
+
+The dialog has built-in image input: three entry points (📎 pick / drag / paste screenshot) → compression gate → sent with the next message. **How the image travels depends on whether the main model has vision** — decided automatically across three branches:
+
+| Main model | Detection | Behavior |
+|---|---|---|
+| Multimodal (gpt-4o / gpt-4.1 / gpt-5 / claude / qwen-vl / glm-4v…) | model-name table `vision:true`, or explicit `llm:{ vision:true }` | **zero-config direct send**: images are assembled into content parts (OpenAI protocol `image_url` / Anthropic protocol base64 `image` block, adapted per provider) |
+| Text-only (deepseek-chat etc.) | `vision:false` + `images.describe` configured | **captioning bypass**: before sending, each image goes through the integrator's vision endpoint; the caption is appended to that round's user context as `[图片 N 描述]` — the image itself is never sent to the main model |
+| Text-only, no describe | `vision:false` and no describe | **honest rejection**: send fails with guidance (switch to a multimodal model / declare `vision:true` / configure describe); images are never silently dropped |
+
+```ts
+createChatSdk({
+  container: '#root',
+  llm: { apiKey, baseUrl, model: 'my-proxy-model', vision: true },  // ① declare multimodal explicitly when a gateway proxy name is unrecognizable
+  // images: {                                                       // ② bind a captioning capability for text-only main models (vision stays the integrator's)
+  //   describe: async (image, { text }) => {
+  //     const res = await fetch('/my-vision-api', {
+  //       method: 'POST', body: JSON.stringify({ image: image.dataUri, question: text }),
+  //     }).then(r => r.json())
+  //     return res.description
+  //   },
+  //   describeTimeoutMs: 15000,   // default 15s; timeout/failure → placeholder caption + observable VISION_DESCRIBE_FAILED, conversation continues
+  // },
+})
+```
+
+**Compression gate & limits (input side, all automatic)**: files >20MB rejected; long edge scaled down to ≤1568px; jpeg q0.85 (kept as png when an alpha channel is present); SVG decoded via an Image fallback; ≤4 images per round. Failures raise structured error codes (`IMAGE_TOO_LARGE` / `IMAGE_COUNT_LIMIT` / `IMAGE_DECODE_FAILED` / `IMAGE_COMPRESS_FAILED` / `IMAGE_UNSUPPORTED_TYPE`), surfaced right in the input area.
+
+**Lightweight persistence**: persisted messages only keep a thumbnail (≤8KB) + a vfs reference; the original goes into the vfs `userImages/*` pool (LRU-evicted — after eviction a refresh just degrades to thumbnails, no crash); with `images.upload` configured, only an https URL is stored.
+
+**Optional `images.upload` (swap original for a URL; works for both branches)**: with your own OSS, the compressed original is uploaded through this hook and returns an https URL — requests and persistence then carry only the light URL (no large base64 payloads, no vfs pool usage); upload failure automatically falls back to inline dataURI with a logged note, never blocking.
+
+**Notes**:
+- `vision` precedence: explicit declaration (true or false overrides) > model-name table > default false (conservative: mistakenly sending parts and eating a 400 is worse than taking the bypass); re-evaluated on `setLlm`
+- captions persist with the message — resends and session restores never re-caption
+- headless custom UI: `sdk.send(text, { images })` (≤4); build image objects with the exported `compressImage(file)` (browser)
+- full runnable example: `examples/images-demo` (describe bound to an "analyze-form" vision endpoint: POST `{image: base64, mime}` → `{data:{description}}`; the endpoint URL lives only in the local `.env` as `VITE_VISION_URL`, with a `window.__VISION_CONFIG` runtime override for testing)
 
 ## 9. Environment variables
 

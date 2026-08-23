@@ -43,6 +43,23 @@ export interface SkillSpec {
    * 与 `exec` 正交:exec=一次性上下文初始化(加载时拿快照注入文本);tools=反复查询能力(LLM 显式调)。
    */
   tools?: SkillToolFactory[]
+  /**
+   * 多层级参考文档(skill-references,浏览器端大 skill 渐进式披露):主文档(doc/getContent)只写
+   * 「何时用 + 怎么用」索引,references 挂二级文档(风格配方/模式库/评审指南等)。load_skill(name)
+   * 主文尾部自动附参考目录(name+description);LLM 按需 load_skill(name, ref) 单个取回 ——
+   * 26 个配方式大 skill 不再整包灌上下文(与磁盘 skill 的 SKILL.md + references/ 形态 1:1)。
+   */
+  references?: SkillRefSpec[]
+}
+
+/** skill 二级参考文档(doc/getContent 二选一,doc 优先;来源语义同 SkillSpec.doc) */
+export interface SkillRefSpec {
+  /** 参考名(建议带相对路径形态,如 'style-recipes/linear.md';load_skill 的 ref 参数按此精确匹配) */
+  name: string
+  /** 一句话说明(进主文尾部参考目录,帮 LLM 选哪个 ref) */
+  description?: string
+  doc?: string
+  getContent?: () => string | Promise<string>
 }
 
 /** skill 执行钩子:加载时跑脚本拿实时数据,结果 append/prepend 进全文 */
@@ -142,6 +159,13 @@ function renderSkillsIndex(skills: SkillSpec[]): string | undefined {
   ].join('\n')
 }
 
+/** 主文尾部参考目录(skill-references):name+description 列表 + 按需取回指引;无 references 返空串 */
+function renderRefIndex(s: SkillSpec): string {
+  if (!s.references?.length) return ''
+  const lines = s.references.map((r) => `- ${r.name}${r.description ? `: ${r.description}` : ''}`)
+  return `\n\n## 参考文档(按需加载,勿整包请求)\n${lines.join('\n')}\n需要某参考时调 load_skill(name, ref="对应 name") 单独取回。`
+}
+
 export interface SkillsMiddlewareOptions {
   /** 读 vfs 文档的函数(由 createChatSdk 在 vfs 启用时注入);未注入则 vfs 路径 doc 报错提示 */
   readVfs?: (path: string) => string | undefined
@@ -234,6 +258,8 @@ async function buildSkillContent(s: SkillSpec, opts?: SkillsMiddlewareOptions): 
       cacheable = false
     }
   }
+  // 多层级参考目录附主文尾(静态配置随主文缓存;仅 references 无主文档的索引型 skill 也成立)
+  content += renderRefIndex(s)
   return { content, cacheable }
 }
 
@@ -274,8 +300,10 @@ export function createSkillsMiddleware(
     },
     get() { return skills },
     invalidateCache(name) {
-      if (name) contentCache.delete(name)
-      else contentCache.clear()
+      if (name) {
+        // 主文 + 该 skill 全部 ref 缓存同清(ref key 形如 `${name}::ref::${ref}`)
+        for (const k of [...contentCache.keys()]) if (k === name || k.startsWith(`${name}::ref::`)) contentCache.delete(k)
+      } else contentCache.clear()
     },
     async getContent(name) {
       const s = skillMap.get(name)
@@ -290,9 +318,31 @@ export function createSkillsMiddleware(
   }
 
   const loadSkillTool = tool(
-    async ({ name }) => {
+    async ({ name, ref }) => {
       const s = skillMap.get(name)
       if (!s) return `未找到 skill "${name}"。`
+      // ref 模式(skill-references):按需取二级参考文档(独立缓存;同轮同 ref 重复 load 拦截)
+      if (ref) {
+        const rSpec = s.references?.find((x) => x.name === ref)
+        if (!rSpec) {
+          return `skill "${name}" 无参考 "${ref}"。${s.references?.length ? `可用:${s.references.map((x) => x.name).join(', ')}` : '该 skill 未配置 references。'}`
+        }
+        const refKey = `${name}::ref::${ref}`
+        if (loaded.has(refKey)) return `参考 "${ref}" 已在本轮加载,无需重复。`
+        let rc = contentCache.get(refKey)
+        if (rc == null) {
+          const rr: DocReadResult = rSpec.getContent
+            ? { ok: true, content: await rSpec.getContent() }
+            : rSpec.doc
+              ? await readSkillDoc(rSpec.doc, opts?.readVfs)
+              : { ok: false, error: '参考未配置 doc / getContent' }
+          if (!rr.ok) return `读取参考 "${ref}" 失败:${rr.error}`
+          rc = rr.content
+          contentCache.set(refKey, rc)
+        }
+        loaded.add(refKey)
+        return `skill "${name}" 参考 "${ref}" 全文:\n\n${rc}`
+      }
       if (loaded.has(name)) return `skill "${name}" 已在本轮加载,无需重复。`
       // 优先用缓存(含上次 exec 成功结果;跨轮跨会话复用,避免重复 getContent/读 vfs/exec)
       let content = contentCache.get(name)
@@ -316,8 +366,11 @@ export function createSkillsMiddleware(
     },
     {
       name: 'load_skill',
-      description: '加载某个 skill 的完整指令到当前上下文(若 skill 配 exec,加载时自动执行脚本注入实时数据;若配 tools,加载后注入附带工具)。先从 system prompt 的 Skills 索引选合适的 skill,再调用此工具。',
-      schema: z.object({ name: z.string().describe('skill 名') }),
+      description: '加载某个 skill 的完整指令到当前上下文(若 skill 配 exec,加载时自动执行脚本注入实时数据;若配 tools,加载后注入附带工具)。先从 system prompt 的 Skills 索引选合适的 skill,再调用此工具。skill 主文末若附「参考文档」目录,按需传 ref 单独加载某个参考(勿整包请求大 skill 的全部参考)。',
+      schema: z.object({
+        name: z.string().describe('skill 名'),
+        ref: z.string().optional().describe('可选:该 skill references 里的参考名(如 style-recipes/linear.md),按需单独加载该参考文档'),
+      }),
     },
   )
 

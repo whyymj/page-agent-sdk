@@ -268,6 +268,45 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(/已在本轮加载/.test(r2), 'load_skill: 重复加载 → 提示无需重复')
   }
 
+  // ============ skill references(多层级参考文档,大 skill 渐进式披露)============
+  console.log('\n[skill references]')
+  {
+    const vfs: Record<string, string> = {
+      'skills/wde/SKILL.md': '# Web 设计\n主索引。',
+      'skills/wde/linear.md': '# Linear 风格\n正文。',
+      'skills/wde/aesop.md': '# Aesop 风格\n正文。',
+    }
+    const mw = createSkillsMiddleware(
+      [
+        defineSkill({
+          name: 'wde',
+          description: 'web 设计',
+          doc: 'vfs://skills/wde/SKILL.md',
+          references: [
+            { name: 'linear.md', description: 'Linear 极简', doc: 'vfs://skills/wde/linear.md' },
+            { name: 'aesop.md', doc: 'vfs://skills/wde/aesop.md' },
+          ],
+        }),
+      ],
+      { readVfs: (p) => vfs[p] },
+    )
+    const loadTool = byName(mw.tools || [])
+    // 主文加载 → 尾部自动附参考目录(name+description + ref 用法)
+    const main = await invoke(loadTool.load_skill, { name: 'wde' })
+    assert(/主索引/.test(main), 'references: 主文照常注入')
+    assert(/参考文档/.test(main) && /linear\.md.*Linear 极简/.test(main) && /aesop\.md/.test(main), 'references: 主文尾部附参考目录(含 name+description)')
+    assert(/ref=/.test(main) || /ref\)/.test(main), 'references: 目录附按需加载指引')
+    // 按需加载单个 ref → 只回该参考全文
+    const refR = await invoke(loadTool.load_skill, { name: 'wde', ref: 'linear.md' })
+    assert(/Linear 风格/.test(refR) && !/Aesop 风格/.test(refR), 'references: ref 单独取回(不带其它参考)')
+    // 同轮重复 ref → 拦截
+    const refR2 = await invoke(loadTool.load_skill, { name: 'wde', ref: 'linear.md' })
+    assert(/已在本轮加载/.test(refR2), 'references: 同轮重复 ref 提示无需重复')
+    // 未知 ref → 列出可用,不静默
+    const bad = await invoke(loadTool.load_skill, { name: 'wde', ref: 'nope.md' })
+    assert(/无参考/.test(bad) && /linear\.md/.test(bad), 'references: 未知 ref → 列出可用参考')
+  }
+
   // ============ subagents 预声明(子 agent → use_<id> 委派工具)============
   console.log('\n[subagents 预声明]')
   {

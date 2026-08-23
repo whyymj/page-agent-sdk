@@ -103,4 +103,46 @@ test.describe('图片输入(image-input-vision)', () => {
     // 消息区缩略图行渲染
     await expect(page.locator('.msg-images')).toHaveCount(1)
   })
+
+  test('纯文本主模型 + images.describe → 转述注入 user 上下文,图片不直发(images-demo)', async ({ page }) => {
+    await page.goto('/examples/images-demo/')
+    await page.waitForSelector('.chat-dialog')
+    // describe 走集成方端点:运行时 __VISION_CONFIG 指到 mock 路由(与主模型 /chat/completions 隔离);
+    // mock 返回 analyze 形态 {error_code:0, data:{description}}(与 images-demo 的 describe 协议一致)
+    await page.evaluate(() => {
+      ;(window as any).__VISION_CONFIG = { url: '/mock-vision' }
+    })
+    let describeCalls = 0
+    await page.route('**/mock-vision', async (route) => {
+      describeCalls++
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ error_code: 0, error_msg: '', data: { description: '一张深色背景的网页截图,左上角有导航栏' } }),
+      })
+    })
+    const bodies: string[] = []
+    page.on('request', (r) => {
+      if (r.url().includes('/chat/completions')) bodies.push(r.postData() || '')
+    })
+    const { calls } = await mockLlm(page, [{ text: '根据图片描述回答' }])
+    await page.setInputFiles('[data-test="attach-input"]', { name: 'a.png', mimeType: 'image/png', buffer: await realPng(page) })
+    await fillInput(page, '看这张图')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    // describe 端点被调用一次;主模型请求体:含转述文本段,不含 image_url parts(图片本体不直发)
+    expect(describeCalls).toBe(1)
+    const hit = bodies.map((b) => { try { return JSON.parse(b) } catch { return null } }).find((b: any) => {
+      const msgs = b?.messages ?? []
+      return msgs.some((m: any) => typeof m.content === 'string' && m.content.includes('图片 1 描述'))
+    })
+    expect(hit, '请求含 [图片 1 描述] 转述段').toBeTruthy()
+    const lastUser = hit.messages.filter((m: any) => m.role === 'user').at(-1)
+    expect(lastUser.content).toContain('网页截图')
+    const hasImageParts = hit.messages.some((m: any) => Array.isArray(m.content) || JSON.stringify(m).includes('image_url'))
+    expect(hasImageParts, '图片本体不直发(无 image_url)').toBe(false)
+    expect(calls()).toBe(1) // 主模型恰好一轮(转述注入,无需多轮)
+    // 消息区缩略图行渲染(UI 仍展示图)
+    await expect(page.locator('.msg-images')).toHaveCount(1)
+  })
 })

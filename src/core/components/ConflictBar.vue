@@ -82,23 +82,24 @@ const conflictCurrentPreview = computed(() => {
 </template>
 
 <style scoped>
-.conflict-bar { margin: 8px 12px; padding: 10px 12px; border: 1px solid #dc2626; border-radius: 10px; background: #fef2f2; }
-.conflict-head { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #991b1b; }
+/* 冲突条:危险语义用 --cs-err 色系(两主题适配),表面色随主题变量(深色下不再白底刺眼) */
+.conflict-bar { margin: 8px 12px; padding: 10px 12px; border: 1px solid rgba(var(--cs-err-rgb, 220, 38, 38), 0.45); border-left: 3px solid var(--cs-err, #dc2626); border-radius: 10px; background: rgba(var(--cs-err-rgb, 220, 38, 38), 0.07); }
+.conflict-head { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--cs-err, #dc2626); }
 .conflict-icon { font-size: 15px; }
-.conflict-title code { padding: 1px 6px; border-radius: 4px; background: #fee2e2; color: #7f1d1d; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.conflict-detail { margin: 6px 0 8px; font-size: 12px; color: #7f1d1d; line-height: 1.5; }
+.conflict-title code { padding: 1px 6px; border-radius: 4px; background: rgba(var(--cs-err-rgb, 220, 38, 38), 0.14); color: var(--cs-err, #dc2626); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.conflict-detail { margin: 6px 0 8px; font-size: 12px; color: var(--cs-bg-text); opacity: 0.85; line-height: 1.5; }
 .conflict-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .conflict-actions button { padding: 5px 14px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; transition: opacity 0.2s; }
-.conflict-keep { background: #f3f4f6; color: #6b7280; border: 1px solid #e5e7eb; }
-.conflict-keep:hover { background: #e5e7eb; color: #374151; }
-.conflict-overwrite { background: #dc2626; color: #fff; }
+.conflict-keep { background: transparent; color: var(--cs-bg-muted); border: 1px solid var(--cs-surface-border, #e5e7eb); }
+.conflict-keep:hover { background: rgba(127, 127, 127, 0.1); color: var(--cs-bg-text); }
+.conflict-overwrite { background: var(--cs-err, #dc2626); color: #fff; }
 .conflict-overwrite:hover { opacity: 0.9; }
-.conflict-restore { background: #fff; color: #dc2626; border: 1px solid #dc2626; }
-.conflict-restore:hover { background: #fee2e2; }
-.conflict-toggle { margin: 2px 0 6px; padding: 2px 8px; border: none; background: transparent; color: #991b1b; font-size: 12px; cursor: pointer; border-radius: 4px; }
-.conflict-toggle:hover { background: #fee2e2; }
+.conflict-restore { background: transparent; color: var(--cs-err, #dc2626); border: 1px solid rgba(var(--cs-err-rgb, 220, 38, 38), 0.5); }
+.conflict-restore:hover { background: rgba(var(--cs-err-rgb, 220, 38, 38), 0.1); }
+.conflict-toggle { margin: 2px 0 6px; padding: 2px 8px; border: none; background: transparent; color: var(--cs-err, #dc2626); font-size: 12px; cursor: pointer; border-radius: 4px; }
+.conflict-toggle:hover { background: rgba(var(--cs-err-rgb, 220, 38, 38), 0.1); }
 .conflict-diff { display: flex; gap: 8px; margin: 4px 0 8px; }
 .conflict-diff-col { flex: 1; min-width: 0; }
-.conflict-diff-label { font-size: 11px; color: #7f1d1d; margin-bottom: 2px; }
-.conflict-diff-pre { margin: 0; padding: 6px; max-height: 140px; overflow: auto; border-radius: 6px; background: #fff; border: 1px solid #fecaca; font-size: 11px; color: #57534e; white-space: pre-wrap; word-break: break-all; }
+.conflict-diff-label { font-size: 11px; color: var(--cs-bg-muted); margin-bottom: 2px; }
+.conflict-diff-pre { margin: 0; padding: 6px; max-height: 140px; overflow: auto; border-radius: 6px; background: var(--cs-bubble-ai, #fff); border: 1px solid rgba(var(--cs-err-rgb, 220, 38, 38), 0.3); font-size: 11px; color: var(--cs-bg-text); white-space: pre-wrap; word-break: break-all; }
 </style>

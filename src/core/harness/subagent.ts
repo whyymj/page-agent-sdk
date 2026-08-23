@@ -28,7 +28,7 @@ import { createSummarizationMiddleware, type SummarizationOptions } from './summ
 import type { Focus, VfsFile } from './state'
 import type { ZodType } from 'zod'
 import { normalizeUsage } from '../utils/contentParts'
-import { constructLlmFromConfig, applyThinkingMode } from '../llm/constructLlm'
+import { constructLlmFromConfig, applyThinkingMode, resolveEffectiveThinkingMode } from '../llm/constructLlm'
 import type { ComponentLock, ResolveComponentsResult } from '../sdk/componentLock'
 
 /** 子 agent 转发到主 UI 的进度(tool_call/tool_result 工具级 + reasoning 思考过程增量;text 不转发:是生成内容,经 vfs/data 落地,不进进度) */
@@ -420,7 +420,7 @@ async function runSubagent(
     console.warn('[page-agent-sdk][subagent] thinkingMode 需子 agent 经 LLMConfig 构造方能生效;当前复用预构造实例,已忽略(如需锁定请改用 SubagentLlmConfig 配置 llm)')
     onLog?.({ timestamp: Date.now(), type: 'middleware', data: { stage: 'subagent_thinking_mode_noop', mode: opts.thinkingMode } })
   }
-  const effLlm = !isChatModel(opts.llm) ? applyThinkingMode(opts.llm, opts.thinkingMode) : opts.llm
+  const effLlm = !isChatModel(opts.llm) ? applyThinkingMode(opts.llm, resolveEffectiveThinkingMode(opts.llm, opts.thinkingMode)) : opts.llm
   // provider 透传(fix:主 llm 传 LLMConfig + provider:'anthropic' 时,散字段重建曾丢 provider →
   // 子 agent 被按 OpenAI 协议构造,请求打到 {baseUrl}/chat/completions 404 秒败)。
   // anthropic 走 constructLlmFromConfig 动态构造(runSubagent 是 async,可承载动态 import);

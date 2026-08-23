@@ -1,12 +1,12 @@
 <script setup lang="ts">
 /**
- * 动态组件示例 —— 演示「懒加载、结构各异的组件」如何用单主数据 + edit_data 增量管理 + setSkills 动态注入组件说明。
+ * 动态组件示例 —— 演示「懒加载、结构各异的组件」如何用单主数据 + write(patch)增量管理 + setSkills 动态注入组件说明。
  *
  * 演示能力:
  *  ① 组件懒加载:点击「加载」按钮动态新增不同类型组件(banner/card/stat/chart),结构各异
  *  ② 单主数据:window.app.components 是动态组件容器(record),schema 宽松(z.record),组件结构各异由 skill 描述
  *  ③ 集成方代码直接改 bind:组件挂载/卸载由集成方代码直接改 appObj.components(普通对象),agent 可读可改
- *  ④ agent 增量改:agent 用 edit_data 改 components.<id>.<field>(jsonPath 相对主数据根)
+ *  ④ agent 增量改:agent 用 write 的 patch 意图改 components.<id>.<field>(jsonPath 相对主数据根)
  *  ⑤ setSkills 动态组件说明:每种组件类型对应一个 skill(load_skill comp-<type> 取字段说明),loadComp/unloadComp 后按已加载类型集合 sdk.setSkills 动态注入/移除,agent 操作前按需 load_skill
  *  ⑥ 刷新:bind 用普通对象(非 reactive),agent 改后由 onEvent('data_change') 触发 tick 重渲染
  *
@@ -154,7 +154,7 @@ onUnmounted(() => agent?.unmount())
       <h2>🧩 动态组件(window.app.components)</h2>
       <p class="hint">
         组件<strong>懒加载</strong>:点击下方按钮动态新增不同类型组件(结构各异)。<br />
-        集成方代码直接改主数据 <code>appObj.components</code>(普通对象)→ AI 经 <code>edit_data</code> 按 jsonPath 改子属性,改动经 <code>onEvent('data_change')</code> 触发 tick 重渲染。<br />
+        集成方代码直接改主数据 <code>appObj.components</code>(普通对象)→ AI 经 <code>write</code>(patch)按 jsonPath 改子属性,改动经 <code>onEvent('data_change')</code> 触发 tick 重渲染。<br />
         <strong>setSkills 动态说明</strong>:加载/卸载组件时按已加载类型集合 <code>sdk.setSkills</code> 动态注入对应 <code>comp-&lt;type&gt;</code> skill,AI 操作前 <code>load_skill</code> 取该类型字段说明。
       </p>
 

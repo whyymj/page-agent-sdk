@@ -15,11 +15,16 @@
 import { ChatOpenAI } from '@langchain/openai'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { LLMConfig } from '../sdk/createChatSdk'
+import { resolveModelCaps } from '../utils/modelCaps'
 
-/** 构造选项:覆盖 LLMConfig 的 temperature/maxTokens(summary/title 用不同值) */
+/** 构造选项:覆盖 LLMConfig 的 temperature/maxTokens(summary/title 用不同值);thinkingMode 显式锁定思考深度 */
 export interface ConstructOpts {
   temperature?: number
   maxTokens?: number
+  /** 显式思考深度(子 agent 链路透传 / summary-title 传 'simple' 免思考);缺省走默认 deep 解析 */
+  thinkingMode?: ThinkingMode
+  /** 思考深度兜底(仅在所有显式配置缺省时生效,压过能力表默认):summary/title/decide 传 'simple' 免思考省 token */
+  thinkingFallback?: ThinkingMode
 }
 
 /** 思考深度锁定模式(subagent-thinking-mode-lock):simple=剥思考参数 / deep=注入思考参数 */
@@ -61,6 +66,26 @@ export function applyThinkingMode<C extends { provider?: string; maxTokens?: num
 }
 
 /**
+ * 默认思考深度(default-deep-thinking,质量优先):集成方零配置时按模型能力表注入 deep ——
+ * 优先级:显式 thinkingMode(构造参数/子 agent 链路)> `cfg.thinkingMode`(主模型显式锁定)>
+ * 集成方已自管思考参数(extraBody.thinking / cfg.thinking 存在 → 不叠默认)>
+ * 兜底 thinkingFallback(summary/title 等辅助通道传 'simple')>
+ * 能力表 thinking:true → 'deep' > 不注入(未知模型不猜,防 400)。
+ * 纯函数可单测;网关代理模型名不可辨时集成方 `llm:{ thinkingMode:'deep' }` 或 modelCaps 声明 `thinking:true` 即享默认。
+ */
+export function resolveEffectiveThinkingMode(
+  cfg: { model?: string; thinkingMode?: ThinkingMode; extraBody?: Record<string, unknown>; thinking?: unknown },
+  explicit?: ThinkingMode,
+  fallback?: ThinkingMode,
+): ThinkingMode | undefined {
+  if (explicit) return explicit
+  if (cfg.thinkingMode) return cfg.thinkingMode
+  if ((cfg.extraBody && 'thinking' in cfg.extraBody) || cfg.thinking) return undefined
+  if (fallback) return fallback
+  return resolveModelCaps({ model: cfg.model }).thinking ? 'deep' : undefined
+}
+
+/**
  * 默认 fetch 包装:剥离 openai SDK 自动附加的 `x-stainless-*` 遥测头。
  * 这些头是纯遥测(无功能影响),但严格 CORS 的 OpenAI 兼容代理(如企业网关)白名单常不含它们
  * → 浏览器预检直接失败(ERR_FAILED);默认剥离换开箱兼容(真 LLM 实测:严格 CORS 网关被此头卡死)。
@@ -98,6 +123,7 @@ export function normalizeBaseUrl(baseUrl: string | undefined): string | undefine
  * 仅 openai 分支;Anthropic 无同步构造(动态 import 本质 async)。
  */
 export function constructOpenLlmSync(cfg: LLMConfig, opts: ConstructOpts = {}): BaseChatModel {
+  cfg = applyThinkingMode(cfg, resolveEffectiveThinkingMode(cfg, opts.thinkingMode, opts.thinkingFallback))
   return new ChatOpenAI({
     apiKey: cfg.apiKey,
     model: cfg.model,
@@ -122,6 +148,7 @@ export function constructOpenLlmSync(cfg: LLMConfig, opts: ConstructOpts = {}): 
  * **thinking 开启时 temperature 强制 1**(Anthropic API 硬约束,低温报错)。
  */
 export async function constructLlmFromConfig(cfg: LLMConfig, opts: ConstructOpts = {}): Promise<BaseChatModel> {
+  cfg = applyThinkingMode(cfg, resolveEffectiveThinkingMode(cfg, opts.thinkingMode, opts.thinkingFallback))
   const provider = cfg.provider ?? 'openai'
   if (provider === 'openai') return constructOpenLlmSync(cfg, opts)
 

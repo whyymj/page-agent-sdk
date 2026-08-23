@@ -45,7 +45,7 @@
     createChatSdk({
       container: '#root',
       id: 'plain-demo',                          // ← 稳定 id:刷新后恢复历史(多 agent 共存各自隔离)
-      storage: 'indexed',                        // ← 开启持久化(默认关闭);可选 'session'/'local'/'memory'
+      storage: 'indexed',                        // ← 开启落盘持久化(默认 'memory' 纯内存,3.9+);可选 'session'/'local'
       llm: {
         apiKey: 'YOUR_API_KEY',                   // ← 填你的 key
         baseUrl: 'https://api.deepseek.com/v1',   // ← 兼容 OpenAI 协议的接口

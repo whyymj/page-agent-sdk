@@ -160,7 +160,6 @@ onMounted(() => {
       temperature: cfg.temperature,
       maxTokens: cfg.maxTokens,
     },
-    streaming: true,
     systemPrompt:
       '你是复杂页面构建助手。左侧页面由 window.page 驱动,结构 { title, components[] }(组件数组按顺序拼装)。每个组件 = { type, id?, style?, visible?, className?, props:{...业务字段} };容器组件(container/section/grid)的 props.children 可嵌套任意组件。用户要改左侧页面时,改 page.title 或 page.components(增删改组件、调 props、调 style、容器内改 children),左侧实时更新。组件类型与各字段详见 load_skill("complex-builder")。\n\n' +
       '\n\n【本平台组件路由】本平台含多种组件类型,其中 custom 为纯代码组件(根级 code = 完整自包含 HTML 页面,含 style/script)。路由:custom 的 **code 字段** → 必经 use_html 子 agent 委派(生成/修改/排查,你禁直接 write/edit code);custom 的**其他属性**(name/style/visible 等)+ 所有非 custom 组件(heading/banner/carousel/card/coupon...)→ 你直接 write 改。多组件含 custom 时,write_todos 列出 → 普通 组件直接 write、多个 custom 组件可同轮并行发多个 use_html 委派(每组件一次;同一组件同时只一个委派在途)。',
@@ -180,7 +179,6 @@ onMounted(() => {
     data: { schema: pageSchema, bind: pageObj, resources: [{ path: 'components.0.props.trackId', mode: 'freeze' as const }] },
     // 胜任自动化:agent 能读渲染后 DOM(get_dom,看修改是否生效)+ 触发宿主页面动作(保存/发布,与配置面板同等)
     capabilities: { domInspect: true, draftWrite: true },
-    maxToolRounds: 25,  // custom 组件逐个委派 use_html 耗轮次(同 html-page-demo),抬到 25 防多组件生成被截断
     maxParallelTools: 3,  // 同轮工具并发 >1:多个 use_html 委派可同轮并行(3.13 并行委派;同组件单一在途靠编排禁令)
     actions: {
       save_draft: { description: '保存当前页面为草稿(序列化 page 到 localStorage)。用户要求保存/存草稿时调用,无需参数。', run: saveDraft },
@@ -214,6 +212,11 @@ onMounted(() => {
         }),
         htmlFragmentSkill,  // 内置生成规范(安全底线/可访问性/形态规则),覆盖默认时必须并回
       ],
+      // 独立模型 + 思考分层(output-quality-uplift + default-deep):主编排保持轻量,代码生成换强模型;
+      // thinkingMode:'deep' 显式锁深思考(质量优先,token/耗时约 2-5×)/ 'simple' 剥思考省 token。
+      // 缺省 = 能力表 thinking:true 的模型自动 deep(默认 deep,零配置即质量优先)
+      llm: { apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, model: cfg.model },
+      thinkingMode: 'deep',
     })],
     onEvent: (e) => { if (e.type === 'focus_chip_click') onFocusChipClick(e.path) }, // chip 点击 → 滚动到组件 + 边框闪
     debug: true,

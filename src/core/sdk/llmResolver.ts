@@ -74,7 +74,7 @@ export function buildSummaryLlmInvoke(options: ChatSdkOptions): ((prompt: string
     const timer = setTimeout(() => ac.abort(), timeoutMs)
     try {
       // lazy 构造:首次 invoke(async);失败抛 → useContextManager compress 的 try/catch 回退索引摘要
-      if (!cachedLlm && cfg) cachedLlm = await constructLlmFromConfig(cfg, { temperature, maxTokens })
+      if (!cachedLlm && cfg) cachedLlm = await constructLlmFromConfig(cfg, { temperature, maxTokens, thinkingFallback: 'simple' })
       const res = await cachedLlm!.invoke(
         [
           new SystemMessage('你是对话历史压缩助手。把下面按轮次索引的对话要点,改写成一段连贯、紧凑的中文摘要,保留关键事实、用户意图与已用工具,不要编造。直接输出摘要正文。'),
@@ -112,7 +112,7 @@ export function buildTitleLlmInvoke(options: ChatSdkOptions): ((messages: AgentM
     const timer = setTimeout(() => ac.abort(), 10000)
     try {
       // lazy 构造:首次 invoke(async);失败抛 → 外层 catch return ''(fire-and-forget 容错)
-      if (!cachedLlm && cfg) cachedLlm = await constructLlmFromConfig(cfg, { temperature: 0, maxTokens: 30 })
+      if (!cachedLlm && cfg) cachedLlm = await constructLlmFromConfig(cfg, { temperature: 0, maxTokens: 30, thinkingFallback: 'simple' })
       const res = await cachedLlm!.invoke(
         [
           new SystemMessage(
@@ -219,7 +219,7 @@ export function buildCompressDecisionInvoke(
     const timer = setTimeout(() => ac.abort(), timeoutMs)
     try {
       // lazy 构造(首次 decide;async 承载 Anthropic 动态 import)
-      if (!cachedLlm && cfg) cachedLlm = await constructLlmFromConfig(cfg, { temperature: 0, maxTokens })
+      if (!cachedLlm && cfg) cachedLlm = await constructLlmFromConfig(cfg, { temperature: 0, maxTokens, thinkingFallback: 'simple' })
       const llm = cachedLlm as BaseChatModel & { bindTools?: (tools: unknown[]) => unknown }
       // 能力检测:bindTools 不存在 → null(bindTools 存在≠真支持,真正失败在 API 调用浮现 → 抛错 → catch null)
       if (typeof llm.bindTools !== 'function') return null

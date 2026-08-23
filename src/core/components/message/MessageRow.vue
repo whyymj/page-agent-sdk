@@ -77,7 +77,10 @@ const showCursor = computed(() => isAssistant.value && props.loading && props.is
           <span v-else class="msg-image-lost">🖼️</span>
         </a>
       </div>
+      <!-- 空气泡抑制:assistant 无内容且非占位态(已有思考块/步骤块反馈)→ 整泡不渲染,
+           修「思考/工具调用期间回复框是空框」+ 步骤后叠加紫色呼吸占位点双 loading -->
       <MessageBubble
+        v-if="!isAssistant || !!message.content || isPendingAssistant"
         :messages="ctx.messages"
         :content="message.content"
         :role="message.role"

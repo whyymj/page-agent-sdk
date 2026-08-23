@@ -4,6 +4,43 @@
 
 ## [Unreleased]
 
+## [3.46.0] - 2026-08-24
+
+### Added(默认 deep 思考 / read 多路径引导 / skill 多层级参考)
+
+- **默认 deep 思考(default-deep-thinking,质量优先)**:modelCaps 增 `thinking` 能力表(deepseek-v4/reasoner、claude-3.7+/4 系、glm-5.2 等);集成方零配置时主/子模型命中能力表自动注入 `thinking` deep(OpenAI 兼容 `extraBody.thinking` / Anthropic `thinking`),非思考型模型不注入(防 400)。显式链保留:`llm.thinkingMode` / 子 `thinkingMode` > 自管思考参数 > 兜底;summary/title/压缩决策辅助通道自动 `simple` 免思考省 token。selftest +14 断言
+- **read 多路径机械引导**:同 invoke 单路径 read 连读 ≥2 次,成功结果尾附「jsonPaths 一次取回」提示(仅成功附,失败由 C2 同参提醒接管;jsonPaths 批量读清零)—— 治真 LLM 实测「多次调用 read」烧轮次;usageHints 批量措辞收紧(≥2 路径一律合批,禁连续单读)
+- **skill 多层级参考文档 `references`(浏览器端大 skill 渐进式披露)**:`SkillSpec.references` 挂二级文档(风格配方库等,与磁盘 skill 的 SKILL.md + references/ 形态 1:1);`load_skill(name)` 主文末自动附参考目录,`load_skill(name, ref)` 按需单独取回(独立缓存/同轮重复拦截/未知 ref 列可用);`invalidateSkillCache(name)` 同清主文 + 全部 ref;`SkillRefSpec` 类型导出(主 + headless + 双 d.ts)
+- **新能力示例/文档补齐**:complex-demo `createHtmlSubagent` 显式 `llm`+`thinkingMode:'deep'`(独立模型+思考分层可跑示例);page-demo `page-builder` skill 挂双 `references`(recipes/banner·card)演示多层级按需取回;usage-guide 中/英补 default-deep 与 references 段落
+- **后续任务 OpenSpec 立项 4 项**(评审修订完成待实施,见 openspec/changes/):`reasoning-tokens-observability`(默认 deep 成本可见化)/ `model-offline-guidance`(模型下线友好引导)/ `browser-test-sharding`(E2E 分片提速)/ `config-surface-pruning`(配置面常态收敛)
+
+### Fixed(流式空泡抑制 + 多方案征询先文本,实测驱动)
+
+- **思考/工具期间不再渲染空气泡**:assistant 消息 content 空但已有 reasoning/steps 时,气泡整体不渲染 —— 修「刚开始思考与调用工具期间回复框是空框」;`isPendingAssistant` 判定加 steps 维度,占位泡(呼吸点+思考中)只在首包前无信号阶段显示 —— 修「use_html 步骤后多叠一个紫色呼吸 loading 点」(步骤块自带活跃指示)。e2e 三阶段锁定(占位 → 让位无泡 → 内容到达出泡)
+- **多方案征询先文本(编排意图第三档)**:「出两套方案我来选」类请求,主 agent 本轮只出文本方案 + `request_human_confirmation` options 点选,**选定后才**委派 `use_<id>`;禁并发生成全部方案再挑(真 LLM 实测「出两套方案」被路由成两个子 agent 委派)。`htmlOrchestratorPrompt` 意图判定由「问/生成」二档扩三档
+
+### Changed(对话框 UI 打磨:抽屉合并 / 确认条主题化 / 输入区芯片流式)
+
+- **DebugDrawer 标签合并(6 → 4)**:删「🔀 流程」(与「日志」轮次分组同源冗余);「🌳 Trace」并入「📊 上下文」底部为 Trace 段(耗时归因与 token 构成同属运行态观察)。顺带修一处隐性布局缺陷:原「上下文/子 agent」tab 因 v-if/v-else 链,Agent 信息段会同时渲染在专属面板之下(重复内容)——现信息段改显式 `tab==='info'`
+- **聊天区条带主题化**:ApprovalBar(人工确认)/ ConflictBar(写冲突)/ QueuedBar(排队消息)三组件从写死浅色奶黄/白底改走 `--cs-*` 主题变量 —— 深色主题下不再出现刺眼亮色块;警示语义保留(琥珀=确认、红=冲突、主色=排队)
+- **输入区芯片流式布局**:聚焦标签 / 待发送图片 / 输入错误从绝对定位改流式堆叠在输入容器内顶部,边框上移到容器一体 —— **修「上传图片缩略图遮挡输入文字」**(原 44px 图 + 叠加偏移压在文字区);顺带去掉 :has() 叠加偏移补丁
+
+### Docs(图片输入文档补全 + images-demo 示例,功能本体见既往版本条目)
+
+- **usage-guide 中英 + README 中英 + doc 索引**:补图片输入(image-input-vision)完整章节(§6.17)—— 三分支判定表(多模态直发 / 纯文本模型 `images.describe` 转述旁路 / 诚实拒绝)、压缩闸与错误码、持久化轻形态、`upload`/`describe` 钩子、headless `send(text,{images})` 用法;原仅 CHANGELOG 有条目,指南与 README 均缺章节
+- **新增 `examples/images-demo`**:纯文本主模型 + `images.describe` 识图转述旁路可跑示例(describe 绑 OpenAI 兼容识图端点;`window.__VISION_CONFIG` 运行时端点覆盖,联调/测试不依赖 .env);DevNav 增「图片输入」入口
+- **browser e2e +1 项(102 → 103)**:describe 旁路端到端锁定(describe 端点恰好一次 / 转述文本注入 user 上下文 / 图片本体不直发无 image_url parts / UI 缩略图仍渲染)
+- **images-demo describe 改绑「analyze 形态」识图端点**:POST `{image: base64, mime}` → `{error_code:0, data:{description}}`(实测 CORS 回显 Origin,浏览器可直连);端点地址只进本地 `.env`(`VITE_VISION_URL`,.env.example 留注释占位),代码/文档零内部地址
+
+### Fixed(examples/demo 与指南陈旧配置清扫)
+
+- **`maxToolRounds: 25` 反向降限**:complex-demo/html-page-demo 设 25 时注释称「抬到」(历史默认 10/15),3.43 起默认已是 30 → 25 反而低于默认;complex-demo 删冗余覆盖,html-page-demo 改 30 + 注释更正
+- **storage 注释失真**:page-demo / demo/plain.html「开启持久化(默认关闭)」→ 3.9 起默认 `'memory'`(纯内存),改为「开启落盘持久化(默认 memory)」
+- **dynamic-demo 文案引废弃工具面**:注释/页面文案引导 `edit_data`(deprecated)→ 改 `write`(patch)为推荐口径;usage-guide 中英工具表同步剥「simple 模式隐藏」陈旧表述(3.31 已移除 toolMode,工具面恒全暴露)
+- **minimal-demo preset 注释过时**:「3.7+ preset 默认带 HTML 子 agent」→ 3.9+ 装配期自动注册(与 preset 无关),措辞更正
+- **README 中英指向不存在示例**:`examples/session-history-demo`(已不存在)→ 改指 `examples/page-demo`(storage:'indexed' + 内置历史下拉)
+- **删冗余配置**:三处裸 `streaming: true`(默认值,零信息)
+
 ## [3.45.1] - 2026-08-23
 
 ### Fixed(幻觉工具名报错 + html 子 agent 白名单扩展口,editor 诊断驱动)

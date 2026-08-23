@@ -303,7 +303,7 @@ function clearLogs() {
   emit('clear')
 }
 
-const tab = ref<'logs' | 'flow' | 'trace' | 'context' | 'subagent' | 'info'>('logs')
+const tab = ref<'logs' | 'context' | 'subagent' | 'info'>('logs')
 const agentInfo = ref<AgentInfo | null>(null)
 // skill 全文展开状态:name → { loading, content, error }
 const skillExpanded = ref<Record<string, { loading: boolean; content: string | null; error?: string }>>({})
@@ -333,7 +333,7 @@ function refreshInfo() {
     try { agentInfo.value = props.getInfo() } catch { agentInfo.value = null }
   }
 }
-function switchTab(t: 'logs' | 'flow' | 'trace' | 'context' | 'subagent' | 'info') {
+function switchTab(t: 'logs' | 'context' | 'subagent' | 'info') {
   tab.value = t
   // 切到「子 agent」/「Agent 信息」/「上下文」时实时拉取(含动态 active/history / todos / 上下文快照)
   if (t === 'subagent' || t === 'info' || t === 'context') refreshInfo()
@@ -360,22 +360,6 @@ function srcClass(s?: string) {
   if (s.startsWith('mcp:')) return 'mcp'
   return 'user'
 }
-/** 流程视图:按 round 分组(llm_request/response + tool_call/result 有 round);无 round 的(context/error/middleware)归「准备」 */
-const flowRounds = computed(() => {
-  const map = new Map<number, DebugLog[]>()
-  const pre: DebugLog[] = []
-  for (const lg of logs.value) {
-    const r = (lg.data as any)?.round
-    if (typeof r === 'number' && r > 0) {
-      if (!map.has(r)) map.set(r, [])
-      map.get(r)!.push(lg)
-    } else {
-      pre.push(lg)
-    }
-  }
-  const rounds = [...map.entries()].sort((a, b) => a[0] - b[0]).map(([round, items]) => ({ round, items }))
-  return { pre, rounds }
-})
 function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + '…' : s
 }
@@ -422,20 +406,6 @@ function decisionSummary(d: { keepRounds?: number; windowRatio?: number; summari
   const main = d.windowRatio != null ? `windowRatio=${d.windowRatio}` : `keepRounds=${d.keepRounds ?? '?'}`
   return `${main} · ${d.summarize.mode}${m.value.debugSummaryMode} · ${m.value.debugCtxRecalled}${d.recallTopK ?? '?'}${d.reason ? ' · ' + d.reason : ''}`
 }
-/** 流程节点摘要(每轮流水一览;详情看「日志」tab) */
-function flowNodeDetail(lg: DebugLog): string {
-  const d = (lg.data || {}) as any
-  switch (lg.type) {
-    case 'context': return `${d.tools?.length ?? 0}${m.value.debugToolCountSuffix} · ${d.totalMessages ?? 0}${m.value.debugMsgCountSuffix}`
-    case 'llm_request': return `${(d.messages || []).length}${m.value.debugMsgCountSuffix}${d.tools?.length ? ' · ' + d.tools.length + m.value.debugToolCountSuffix : ''}`
-    case 'llm_response': return d.toolCalls?.length ? `${d.toolCalls.length}${m.value.debugToolCallsSuffix}` : (d.content ? truncate(String(d.content), 50) : '')
-    case 'tool_call': return String(d.name ?? '')
-    case 'tool_result': return `${d.name ?? ''} · ${d.status === 'error' ? '❌' : '✅'}`
-    case 'error': return truncate(String(d.error ?? d.tool ?? ''), 60)
-    case 'middleware': return String(d.stage ?? '')
-    default: return ''
-  }
-}
 </script>
 
 <template>
@@ -446,8 +416,6 @@ function flowNodeDetail(lg: DebugLog): string {
           <div class="drawer-header">
             <div class="tab-group">
               <button class="tab-btn" :class="{ active: tab === 'logs' }" @click="switchTab('logs')">🐛 {{ m.debugTabLogs }}</button>
-              <button class="tab-btn" :class="{ active: tab === 'flow' }" @click="switchTab('flow')">🔀 {{ m.debugTabFlow }}</button>
-              <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'trace' }" @click="switchTab('trace')">🌳 Trace</button>
               <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'context' }" @click="switchTab('context')">📊 {{ m.debugTabContext }}</button>
               <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'subagent' }" @click="switchTab('subagent')">🤖 {{ m.debugTabSubagent }}</button>
               <button v-if="getInfo" class="tab-btn" :class="{ active: tab === 'info' }" @click="switchTab('info')">🧬 {{ m.debugTabInfo }}</button>
@@ -482,30 +450,11 @@ function flowNodeDetail(lg: DebugLog): string {
           <div class="drawer-body" ref="drawerBodyEl">
             <div class="drawer-scroll-viewport" tabindex="-1" ref="drawerViewportEl">
               <div ref="drawerContentsEl">
-            <div v-if="tab === 'trace'" class="trace-panel">
-              <div v-if="!traceMetrics" class="trace-empty">{{ m.debugTraceEmpty }}</div>
-              <template v-else>
-                <div class="trace-metrics">
-                  <div class="metric-card"><span>{{ m.debugMetricRounds }}</span><b>{{ traceMetrics.rounds }}</b></div>
-                  <div class="metric-card"><span>{{ m.debugMetricTotal }}</span><b>{{ traceMetrics.totalDurationMs }}ms</b></div>
-                  <div class="metric-card"><span>{{ m.debugMetricAvg }}</span><b>{{ traceMetrics.avgRoundMs }}ms</b></div>
-                  <div class="metric-card"><span>{{ m.debugMetricTools }}</span><b>{{ traceMetrics.toolCalls }}(✅{{ Math.round(traceMetrics.toolSuccessRate * 100) }}%)</b></div>
-                  <div class="metric-card" v-if="traceMetrics.compressions"><span>{{ m.debugMetricCompressions }}</span><b>{{ traceMetrics.compressions }}</b></div>
-                  <div class="metric-card" v-if="traceMetrics.totalTokens"><span>Token</span><b>{{ traceMetrics.totalTokens.total }}</b></div>
-                </div>
-                <div class="trace-spans">
-                  <div v-for="s in traceSpans" :key="s.id" class="trace-span" :class="[s.type, s.status]">
-                    <span class="span-ico">{{ spanIcon(s.type) }}</span>
-                    <span class="span-name">{{ s.name }}</span>
-                    <span class="span-dur" v-if="s.durationMs">{{ formatDuration(s.durationMs) }}</span>
-                    <span class="span-status" v-if="s.status === 'error'">❌</span>
-                  </div>
-                </div>
-              </template>
-            </div>
+            <!-- 上下文 & 性能(原 上下文 + Trace 两 tab 合并:token 构成与耗时归因同属运行态观察,集中一处) -->
             <div v-if="tab === 'context'" class="context-panel">
-              <div v-if="!contextSnap" class="trace-empty">{{ m.debugCtxEmpty }}</div>
+              <div v-if="!contextSnap && !traceMetrics && !traceSpans.length" class="trace-empty">{{ m.debugCtxEmpty }}</div>
               <template v-else>
+                <template v-if="contextSnap">
                 <div class="ctx-overview">
                   <div class="ctx-occupancy">
                     <div class="ctx-bar-track" :title="`${m.debugCtxOccupancy} ${Math.round(contextSnap.occupancy * 100)}%`">
@@ -533,6 +482,29 @@ function flowNodeDetail(lg: DebugLog): string {
                     <span class="ctx-kv">{{ m.debugCtxRecalled }} {{ contextSnap.compression.roundsRecalled }}</span>
                     <span class="ctx-kv">{{ contextSnap.compression.strategy }}</span>
                     <span class="ctx-kv" v-if="contextSnap.compression.decision">🤖 {{ m.debugCtxAgentDecision }}{{ decisionSummary(contextSnap.compression.decision) }}</span>
+                  </div>
+                </div>
+                </template>
+                <!-- Trace 耗时归因(原独立 tab;metrics 卡片 + span 列表) -->
+                <div v-if="traceMetrics || traceSpans.length" class="ctx-trace">
+                  <div class="ctx-section-title">🌳 Trace</div>
+                  <template v-if="traceMetrics">
+                    <div class="trace-metrics">
+                      <div class="metric-card"><span>{{ m.debugMetricRounds }}</span><b>{{ traceMetrics.rounds }}</b></div>
+                      <div class="metric-card"><span>{{ m.debugMetricTotal }}</span><b>{{ traceMetrics.totalDurationMs }}ms</b></div>
+                      <div class="metric-card"><span>{{ m.debugMetricAvg }}</span><b>{{ traceMetrics.avgRoundMs }}ms</b></div>
+                      <div class="metric-card"><span>{{ m.debugMetricTools }}</span><b>{{ traceMetrics.toolCalls }}(✅{{ Math.round(traceMetrics.toolSuccessRate * 100) }}%)</b></div>
+                      <div class="metric-card" v-if="traceMetrics.compressions"><span>{{ m.debugMetricCompressions }}</span><b>{{ traceMetrics.compressions }}</b></div>
+                      <div class="metric-card" v-if="traceMetrics.totalTokens"><span>Token</span><b>{{ traceMetrics.totalTokens.total }}</b></div>
+                    </div>
+                  </template>
+                  <div v-if="traceSpans.length" class="trace-spans">
+                    <div v-for="s in traceSpans" :key="s.id" class="trace-span" :class="[s.type, s.status]">
+                      <span class="span-ico">{{ spanIcon(s.type) }}</span>
+                      <span class="span-name">{{ s.name }}</span>
+                      <span class="span-dur" v-if="s.durationMs">{{ formatDuration(s.durationMs) }}</span>
+                      <span class="span-status" v-if="s.status === 'error'">❌</span>
+                    </div>
                   </div>
                 </div>
               </template>
@@ -734,32 +706,10 @@ function flowNodeDetail(lg: DebugLog): string {
             </template>
 
             <!-- 执行流程:按轮次分组的流水视图(走到哪个模块 + 结果)-->
-            <template v-else-if="tab === 'flow'">
-              <div v-if="!logs.length" class="empty">{{ m.debugFlowEmpty }}</div>
-              <div v-if="flowRounds.pre.length" class="flow-section">
-                <div class="flow-section-title">⚙️ {{ m.debugFlowPrep }}</div>
-                <div v-for="(lg, i) in flowRounds.pre" :key="'p'+i" class="flow-node" :class="lg.type">
-                  <span class="flow-ico">{{ typeMeta[lg.type]?.icon }}</span>
-                  <span class="flow-label">{{ typeMeta[lg.type]?.label }}</span>
-                  <span class="flow-detail">{{ flowNodeDetail(lg) }}</span>
-                  <span class="flow-time">{{ formatTime(lg.timestamp) }}</span>
-                </div>
-              </div>
-              <div v-for="r in flowRounds.rounds" :key="r.round" class="flow-round">
-                <div class="flow-round-head">🔁 {{ m.debugRoundPrefix }}{{ r.round }}{{ m.debugRoundSuffix }}</div>
-                <div class="flow-round-body">
-                  <div v-for="(lg, i) in r.items" :key="i" class="flow-node" :class="lg.type">
-                    <span class="flow-ico">{{ typeMeta[lg.type]?.icon }}</span>
-                    <span class="flow-label">{{ typeMeta[lg.type]?.label }}</span>
-                    <span class="flow-detail">{{ flowNodeDetail(lg) }}</span>
-                    <span class="flow-time">{{ formatTime(lg.timestamp) }}</span>
-                  </div>
-                </div>
-              </div>
-            </template>
+            <template v-else-if="tab === 'info'">
 
             <!-- Agent 信息 -->
-            <div v-else class="info-body">
+            <div class="info-body">
               <div v-if="!agentInfo" class="empty">{{ m.debugNoInfo }}</div>
               <template v-else>
                 <div class="info-section">
@@ -868,6 +818,7 @@ function flowNodeDetail(lg: DebugLog): string {
                 </div>
               </template>
             </div>
+            </template>
               </div>
             </div>
           </div>
@@ -921,12 +872,12 @@ function flowNodeDetail(lg: DebugLog): string {
 }
 .drawer-mask { z-index: 1; }
 .drawer-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 16px; background: var(--dd-header-bg, linear-gradient(135deg, #1f2937, #111827)); color: #fff;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 14px; background: var(--dd-header-bg, linear-gradient(135deg, #1f2937, #111827)); color: #fff;
 }
 .drawer-title { font-size: 15px; font-weight: 600; }
-.tab-group { display: flex; gap: 4px; }
-.tab-btn { padding: 4px 12px; border: none; border-radius: 6px; background: var(--dd-tab-bg, rgba(255,255,255,0.12)); color: #fff; font-size: 13px; cursor: pointer; transition: background 0.2s; }
+.tab-group { display: flex; gap: 4px; min-width: 0; }
+.tab-btn { padding: 4px 10px; border: none; border-radius: 6px; background: var(--dd-tab-bg, rgba(255,255,255,0.12)); color: #fff; font-size: 12px; cursor: pointer; transition: background 0.2s; white-space: nowrap; }
 .tab-btn:hover { background: var(--dd-tab-hover, rgba(255,255,255,0.22)); }
 .tab-btn.active { background: var(--dd-tab-active, rgba(255,255,255,0.45)); font-weight: 600; }
 .info-body { padding: 4px 0; }
@@ -1055,26 +1006,8 @@ function flowNodeDetail(lg: DebugLog): string {
 .drawer-enter-from, .drawer-leave-to { opacity: 0; }
 .drawer-enter-from .drawer-panel, .drawer-leave-to .drawer-panel { transform: translateX(100%); }
 
-/* 执行流程视图(按轮分组的流水) */
-.flow-section { margin-bottom: 14px; }
-.flow-section-title { font-size: 11px; font-weight: 600; color: var(--dd-muted); margin-bottom: 6px; padding-left: 2px; }
-.flow-round { margin-bottom: 12px; border: 1px solid var(--dd-border); border-radius: 8px; overflow: hidden; }
-.flow-round-head { font-size: 12px; font-weight: 600; color: #fff; background: var(--cs-primary); padding: 5px 10px; }
-.flow-round-body { padding: 6px; display: flex; flex-direction: column; gap: 3px; }
-.flow-node { display: flex; align-items: center; gap: 6px; padding: 5px 8px; background: var(--dd-surface); border-radius: 6px; font-size: 12px; border-left: 3px solid var(--cs-primary); }
-.flow-node.llm_request { border-left-color: #059669; }
-.flow-node.llm_response { border-left-color: #d97706; }
-.flow-node.tool_call { border-left-color: #7c3aed; }
-.flow-node.tool_result { border-left-color: #2563eb; }
-.flow-node.error { border-left-color: #dc2626; background: var(--dd-err-bg); }
-.flow-node.middleware { border-left-color: #0891b2; }
-.flow-ico { font-size: 13px; flex-shrink: 0; }
-.flow-label { font-weight: 600; color: var(--dd-text-2); white-space: nowrap; flex-shrink: 0; }
-.flow-detail { color: var(--dd-muted); font-size: 11px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'SF Mono', Monaco, Consolas, monospace; }
-.flow-time { font-size: 10px; color: var(--dd-faint); font-family: 'SF Mono', Monaco, Consolas, monospace; flex-shrink: 0; }
-
-/* trace 视图(observability-tracing Phase 3):metrics 卡片 + span 列表 */
-.trace-panel { padding: 10px; }
+/* trace 段(并入上下文 tab 的性能归因区):分隔线 + metrics 卡片 + span 列表 */
+.ctx-trace { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--dd-border-soft); }
 .trace-empty { color: var(--dd-faint); font-size: 12px; text-align: center; padding: 30px; line-height: 1.6; }
 .trace-empty code { background: var(--dd-border-soft); padding: 1px 5px; border-radius: 4px; font-size: 11px; }
 .trace-metrics { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }

@@ -34,7 +34,7 @@ export async function run(ctx: TestCtx): Promise<void> {
 
     // ===== Phase 2:面板文案键(DebugDrawer/SkillPanel/CodePreview)在双包中齐备且非空 =====
     const phase2Keys = [
-      'debugTabLogs', 'debugTabFlow', 'debugTabContext', 'debugTabSubagent', 'debugTabInfo',
+      'debugTabLogs', 'debugTabContext', 'debugTabSubagent', 'debugTabInfo',
       'debugFilterAll', 'debugFlowPrep', 'debugLogsEmpty', 'debugCardView', 'debugViewRawJson',
       'debugTodoPending', 'debugSubRunning', 'debugLocksTitle', 'debugSubagentEmpty',
       'debugMetricRounds', 'debugCtxOccupancy', 'debugCtxRecalled', 'debugInfoBasic',

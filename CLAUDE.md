@@ -30,14 +30,14 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2896 项断言)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2919 项断言)
 npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,943 项;tests/e2e/<module>.mjs 按模块拆分)
-npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,102 项;tests/browser/<demo>.spec.ts)
+npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,104 项;tests/browser/<demo>.spec.ts)
 ```
 
 ## 环境配置
 
-AI 配置通过 `.env`(前缀 `VITE_`):`VITE_AI_API_KEY` / `VITE_AI_BASE_URL` / `VITE_AI_MODEL` / `VITE_AI_TEMPERATURE`(操作大 JSON 建议低温 0.3)/ `VITE_AI_MAX_TOKENS` / `VITE_AI_SYSTEM_PROMPT`(必须单行)。Anthropic 协议另用 `VITE_ANTHROPIC_API_KEY` / `VITE_ANTHROPIC_BASE_URL` / `VITE_ANTHROPIC_MODEL`(rag-demo 走此组;dev 缺省经 vite 代理 `location.origin/llm` → modelverse,**baseUrl 必须绝对 URL**—— @anthropic-ai/sdk buildURL 直接 `new URL(baseURL+path)`,相对路径抛 Invalid URL)。凭据只进 `.env`(gitignore),不进代码/仓库。
+AI 配置通过 `.env`(前缀 `VITE_`):`VITE_AI_API_KEY` / `VITE_AI_BASE_URL` / `VITE_AI_MODEL` / `VITE_AI_TEMPERATURE`(操作大 JSON 建议低温 0.3)/ `VITE_AI_MAX_TOKENS` / `VITE_AI_SYSTEM_PROMPT`(必须单行)。Anthropic 协议另用 `VITE_ANTHROPIC_API_KEY` / `VITE_ANTHROPIC_BASE_URL` / `VITE_ANTHROPIC_MODEL`(rag-demo 走此组;dev 缺省经 vite 代理 `location.origin/llm` → modelverse,**baseUrl 必须绝对 URL**—— @anthropic-ai/sdk buildURL 直接 `new URL(baseURL+path)`,相对路径抛 Invalid URL)。识图端点 `VITE_VISION_URL`(images-demo 的 describe 调用,analyze 形态 `{image:base64,mime}` → `{data:{description}}`;**内部接口地址只进本地 .env 勿入库**)。凭据只进 `.env`(gitignore),不进代码/仓库。
 
 上下文压缩策略不经 `.env`,由 `createChatSdk({ contextOptions, summaryLlm, maxMemoryRounds, contextPreset })` 显式配置。
 
@@ -55,7 +55,7 @@ src/core/                       # 通用 SDK 核心(框架无关)
 ├── composables/                # useChat/useContextManager/useMarkdown/contextIndex/chatContext(provide/inject)
 ├── components/                 # ChatDialog(组合容器:provide ctx + 9 区块 slot)+ MessageContent/CodePreview/DebugDrawer/ChatHeader/ChatInput/QueuedBar/ApprovalBar/ConflictBar/FocusBar/SkillPanel/message/*
 └── presets.ts · types/index.ts · index.ts(主入口,注入 UI)· index.headless.ts(headless)
-examples/                       # 各 demo(minimal/page/complex/nested/dynamic/subagent/human-confirm/planner/toolsets/animation/multi-agent/proxy/customize/rag(四模式:memory/子agent mock/子agent+MCP/MCP直连)/html-page/headless)每个自带 index.html + main.ts
+examples/                       # 各 demo(minimal/page/complex/nested/dynamic/subagent/human-confirm/planner/toolsets/animation/multi-agent/proxy/customize/rag(四模式:memory/子agent mock/子agent+MCP/MCP直连)/html-page/images(图片输入:纯文本主模型 describe 转述旁路)/headless)每个自带 index.html + main.ts
 doc/                            # architecture.md(①-⑮ 架构细节)+ README.md(索引)+ usage-guide/context-management/system-prompt
 demo/plain.html                 # 框架无关集成示例
 skills/                         # 分发给使用者的 Agent Skill(入 npm 包 files)
@@ -104,7 +104,7 @@ skills/                         # 分发给使用者的 Agent Skill(入 npm 包 
 - **组件锁 · 同组件单委派互斥(3.13 机制锁,`sdk/componentLock.ts`)**:① 委派互斥 —— 同组件并发第二个 `use_html` 立即回灌 `COMPONENT_BUSY`(零子 agent 消耗);锁目标 = `components` 显式声明(过滤编造名)/ 缺省 task 文本整词唯一命中才锁(0 或 ≥2 命中不锁,宁漏不误);acquire 多组件原子(任一被占全失败不留半套锁),release 幂等。② 主写守卫(`createComponentWriteGuardMiddleware` wrapToolCall)—— 委派在途时主写工具命中锁组件子树回灌 `COMPONENT_LOCKED`(整体 set 拒;dryRun 不拦);**codeField 恒守卫(3.24.1,M4 真 LLM 驱动)**:已存在代码组件的 code 路径恒拒回灌 `CUSTOM_CODE_DELEGATION` 引导委派(`codeFieldIndexPaths` 实时解析;新建元素/整体 set/dryRun 不拦;不配 `getCodeFieldPaths` 零变化)—— flash 实测 3 次无视提示词禁令直写,机制化;**时序注意:守卫检查在工具派发同步段,use_html 的 acquire 在数个 await 之后** —— 并发场景下须有宏任务间隙(真 LLM 流式天然满足;e2e 用 slow_probe 时序锚)。③ commit 人工并发检测(`hashString` 快照比对)—— 在途窗口同组件 code 被外部改 → keep_external 保留人工值 + warn + **组件名经 `state.__pgKeepExternal` → `runSubagent` 的 `decorateSubagentResult` 随委派返回值回流主上下文**(ask-first 文案;否则主 agent 读到人工 stub 误判「子 agent 占位符」后读后写覆盖 —— M4 实测修);组件被删 → 不复活 + vfs 副本清理;索引位移 → 按 `__pgId` commit 不写错位置。观察层 `inspect().subagent.lockedComponents` + DebugDrawer 锁视图。真 LLM 复验(modes 套件,M4 4/4):并行发生 ✓ / 人工并发 keep_external 终态保留 ✓ / 墙钟量化断言待环境(LLM 代理黑洞两杀,deferred 有登记)
 
 ### 其他能力(详见 architecture.md §⑩⑪⑮)
-- MCP 远程工具(**逐 server 渐进注入**:各 server 连接落定即注入工具,坏 server 的 3 次连接重试不再拖累好 server;连接重试 3 次递增退避吸收上游瞬时 502/断连 + 握手 15s 降级 + **callTool 超时闸 60s**(`callTimeoutMs` 可调,3.6+;超时回灌自纠不断连))/ Verify 自检 opt-in(`createWriteBackCheck` + adversarial)/ `get_dom` opt-in / `inspect_env` 默认开 / actions 宿主动作 / SkillSpec.exec(一次性)vs tools(反复查询)勿双轨 / Approval(无响应方 30s 自动拒)/ Checkpoint 每轮存档 / Automation 预算 + `sdk.batch` / **方案确认留痕 `lastPlanConfirmation`**(RHC 带 options 的方案被点选 → `{at,summary,choice,viaOptions}` 记录;仅方案确认记录(允许/拒绝/无 options 不写);随 SessionSnapshot 持久化跨刷新存活;switch/reset 清除;ApprovalBar 上下文提示行不自动跳过;`inspect().planConfirmation` 反射;bulk-change-guard 豁免的公共接口)/ **bulk-change-guard 大批量门禁**(`capabilities.bulkGuard` 默认关 + 须配 approval 才装配(否则 no-op 留痕);量纲 = 现有组件节点数(同组件多 patch 不拦/新增不计/深路径截组件粒度);超阈(默认 4)挂 approval(自带 30s timeoutMs,ctx.emit 通道);拒绝回灌 BULK_CHANGE_REJECTED;`mode:'observe'` 无人值守;豁免:lastPlanConfirmation + 会话级同形态一次 + dryRun;componentWriteGuard 之内装载;`inspect().bulkGuard` 反射;缓解非根治明示)
+- MCP 远程工具(**逐 server 渐进注入**:各 server 连接落定即注入工具,坏 server 的 3 次连接重试不再拖累好 server;连接重试 3 次递增退避吸收上游瞬时 502/断连 + 握手 15s 降级 + **callTool 超时闸 60s**(`callTimeoutMs` 可调,3.6+;超时回灌自纠不断连))/ Verify 自检 opt-in(`createWriteBackCheck` + adversarial)/ `get_dom` opt-in / `inspect_env` 默认开 / actions 宿主动作 / SkillSpec.exec(一次性)vs tools(反复查询)勿双轨 / Approval(无响应方 30s 自动拒)/ Checkpoint 每轮存档 / Automation 预算 + `sdk.batch` / **图片输入 image-input-vision**(三入口 📎/拖/贴 + 压缩闸 ≤1568px/≤4 张/20MB;三分支:多模态主模型(modelCaps 查表或 `llm.vision:true`)直发 content parts / 纯文本 + `images.describe` 转述注入(图不直发)/ 都不配诚实拒绝;`images.upload` 原图换 URL;持久化 thumb+vfsRef 轻形态;详见 usage-guide §6.17)/ **方案确认留痕 `lastPlanConfirmation`**(RHC 带 options 的方案被点选 → `{at,summary,choice,viaOptions}` 记录;仅方案确认记录(允许/拒绝/无 options 不写);随 SessionSnapshot 持久化跨刷新存活;switch/reset 清除;ApprovalBar 上下文提示行不自动跳过;`inspect().planConfirmation` 反射;bulk-change-guard 豁免的公共接口)/ **bulk-change-guard 大批量门禁**(`capabilities.bulkGuard` 默认关 + 须配 approval 才装配(否则 no-op 留痕);量纲 = 现有组件节点数(同组件多 patch 不拦/新增不计/深路径截组件粒度);超阈(默认 4)挂 approval(自带 30s timeoutMs,ctx.emit 通道);拒绝回灌 BULK_CHANGE_REJECTED;`mode:'observe'` 无人值守;豁免:lastPlanConfirmation + 会话级同形态一次 + dryRun;componentWriteGuard 之内装载;`inspect().bulkGuard` 反射;缓解非根治明示)
 
 ### 对话鲁棒性(详见 architecture.md §⑮)
 - **三档错误模型**:recoverable 回灌自纠 / fatal emit+中断 / observable 记录;导出 `routeError`/`asAgentError`/`agentError`
@@ -136,7 +136,7 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test    # tsx 跑 src/core/__tests__/selftest.ts,2896 项断言
+npm test    # tsx 跑 src/core/__tests__/selftest.ts,2919 项断言
 ```
 按模块拆分:`src/core/__tests__/modules/sec-NN.ts`(54+ 个模块)各导出 `run(ctx)`,runner 汇总;共享 `TestCtx` 在 `modules/_ctx.ts`。tsx 跑源码(不经构建),触不到 createChatSdk 顶层 API 作用域。**改任何核心模块后必跑**。
 
@@ -148,9 +148,9 @@ npm run build && npm run test:e2e    # node 跑 dist 产物,906 项
 
 #### 2.5 浏览器 E2E(改 UI/ChatDialog/dataOps 后必跑)
 ```bash
-npm run test:browser  # 102 项;也可 /browser-test 斜杠命令
+npm run test:browser  # 104 项;也可 /browser-test 斜杠命令
 ```
-**原理**:`tests/browser/_helpers.ts` 的 `mockLlm()` 用 `page.route()` 拦截 LLM API 端点,按脚本返回 SSE 流,使 agent ReAct 循环确定性走完,不依赖真 LLM。**双协议**:同时拦截 OpenAI 兼容(`**/chat/completions`)与 Anthropic Messages API(`**/v1/messages`),各返对应格式 SSE,共享 script 计数。spec 按 demo 拆分(complex-demo 23 / page-demo 18 / html-page 8 / customize 7 / i18n 6 / icons 6 / images 6 / header-labels 5 / rag 4 / nested 3 / lifecycle 3 / queue 3 / scrollbar 3 / error-recovery 2 / human-confirm 2 / xss 2)。写新测试模板见 `.claude/skills/browser-e2e-testing/SKILL.md`。
+**原理**:`tests/browser/_helpers.ts` 的 `mockLlm()` 用 `page.route()` 拦截 LLM API 端点,按脚本返回 SSE 流,使 agent ReAct 循环确定性走完,不依赖真 LLM。**双协议**:同时拦截 OpenAI 兼容(`**/chat/completions`)与 Anthropic Messages API(`**/v1/messages`),各返对应格式 SSE,共享 script 计数。spec 按 demo 拆分(complex-demo 23 / page-demo 20 / html-page 8 / customize 7 / i18n 6 / icons 6 / images 7 / header-labels 5 / rag 4 / nested 3 / lifecycle 3 / queue 3 / scrollbar 3 / error-recovery 2 / human-confirm 2 / xss 2)。写新测试模板见 `.claude/skills/browser-e2e-testing/SKILL.md`。
 
 #### 3. 浏览器手动验证(改 UI/示例后跑)
 `npm run dev` 逐个 demo 验证(见目录结构 examples 清单;各 demo 侧重点见 `doc/usage-guide.md`)。
@@ -181,7 +181,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2896/943/102)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2919/943/104)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判)→ `npm run test:size` → `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证
@@ -199,6 +199,7 @@ createChatSdk({
   approval: { tools: ['write'] }, checkpoint: true, middleware: [...],
   dialog: { theme: 'dark', icons: { header: '🦈' } },        // 主题(dark 默认)+ 图标(见 DialogIcons;支持 HTML 片段净化)
   i18n: { locale: 'en-US', messages: { statusDone: '<b style="color:#10b981">Done ✓</b>' } },  // 国际化配置组(顶层 3.22+):locale 切语言 + messages 键级覆盖(富文本位支持行内 HTML 净化)
+  images: { upload?, describe?, describeTimeoutMs? },  // 图片输入:多模态主模型直发(llm.vision 声明/查表)/纯文本模型 describe 转述旁路(见 usage-guide §6.17)
 }).mount()
 // 运行时动态重配置:setTools/addTool/removeTool · setLlm · setMemory · setSubagents
 ```

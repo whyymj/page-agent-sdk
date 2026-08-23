@@ -851,6 +851,9 @@ export function createAgent(options: CreateAgentOptions) {
     const todosStatusAtStart = new Map((state.todos ?? []).map((t) => [t.id, { status: t.status, content: t.content }]))
     // tool-call-economy C2:同工具同参连续失败 streak(每 invoke 新建;成功清零)
     const failStreaks = new Map<string, number>()
+    // read 多路径引导(read-multi-path-nudge):同 invoke 单路径 read 连读计数,≥2 起成功结果尾附
+    // jsonPaths 批量引导(治「多次调用 read」烧轮次;真 LLM 实测高频);jsonPaths 批量读清零。
+    let singleReadCount = 0
     /** writeCapable 标注判定(单一真相源;bulkGuard/componentLock 同口径;标注缺失退 WRITE_TOOL_NAMES 名单) */
     const isWriteToolByName = (name: string): boolean => {
       const t = allTools.find((x) => x.name === name) as { writeCapable?: boolean | ((args: Record<string, unknown>) => boolean) } | undefined
@@ -1059,6 +1062,14 @@ export function createAgent(options: CreateAgentOptions) {
             failStreaks.set(_streakKey, n)
             if (n >= 2) _content = `${r.content}\n(提示:同参数已连续失败 ${n} 次,原样重试大概率仍失败;请检查参数/换路径/换方法,或向用户如实说明困难)`
           } else failStreaks.delete(_streakKey)
+          // read 多路径引导:第 2 次起单路径 read 成功结果尾附批量提示(仅成功附,失败由 C2 同参提醒接管)
+          if (ctxs[i].call.name === 'read' && !_failed) {
+            const _ra = (ctxs[i].call.args ?? {}) as { jsonPath?: unknown; jsonPaths?: unknown[] }
+            if (_ra.jsonPath && !_ra.jsonPaths?.length) {
+              singleReadCount++
+              if (singleReadCount >= 2) _content = `${_content}\n(提示:还需读多个路径时,用 read({jsonPaths:["路径1","路径2",…]}) 一次取回省轮次;多路径单项标错不整批失败)`
+            } else if (_ra.jsonPaths?.length) singleReadCount = 0
+          }
           currentMessages.push(new ToolMessage({ tool_call_id: ctxs[i].id, content: _content }))
         }
         // C2 写失败计数:写工具同路径连续 error +1 / 成功清零(达 ≥2 由 usageHints 注入提醒;纯确定性,零 LLM 成本)

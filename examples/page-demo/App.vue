@@ -92,7 +92,7 @@ onMounted(() => {
   agent = createChatSdk({
     container: root.value!,
     id: 'page-demo',                             // ← 稳定 id:刷新后恢复历史(多 agent 共存各自隔离)
-    storage: 'indexed',                          // ← 开启持久化(默认关闭);可选 'session'/'local'/'memory'
+    storage: 'indexed',                          // ← 开启落盘持久化(默认 'memory' 纯内存,3.9+);可选 'session'/'local'
     llm: {
       apiKey: cfg.apiKey,
       baseUrl: cfg.baseUrl,
@@ -100,7 +100,6 @@ onMounted(() => {
       temperature: cfg.temperature,
       maxTokens: cfg.maxTokens,
     },
-    streaming: true,
     systemPrompt:
       '你是页面构建助手。左侧页面由 window.page 驱动,用户要改左侧页面(改标题/换主题/增删改组件)时,改 page 对应字段,左侧实时更新。组件结构详见 load_skill("page-builder")。',
     // ↓ data 单主对象:schema + bind 直连普通对象(集成方自己挂 window.page 供模板读),schema 的 .describe() 自动注入字段说明到 systemPrompt
@@ -110,6 +109,11 @@ onMounted(() => {
         name: 'page-builder',
         description: '编辑 JSON 驱动的页面(window.page)。用户要求改左侧页面(增删改组件 / 改标题 / 换主题)时使用',
         getContent: () => pageBuilderSkillContent,
+        // 多层级参考文档(skill-references):主文只写索引,二级组件配方按需 load_skill(name, ref) 取回,不整包灌上下文
+        references: [
+          { name: 'recipes/banner.md', description: 'banner 组件字段与文案配方', getContent: () => '# banner\nprops:{ title, subtitle, theme }。文案:主标题 ≤12 字、副标题 ≤24 字。' },
+          { name: 'recipes/card.md', description: 'card 组件字段与排版配方', getContent: () => '# card\nprops:{ title, price, tags[] }。排版:价格强调色、tags ≤3。' },
+        ],
       }),
     ],
     middleware: [analyticsMiddleware], // ← 自定义中间件示例(内置 todos/skills/vfs... 之后执行)

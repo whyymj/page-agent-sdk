@@ -42,14 +42,13 @@ test.describe('国际化(i18n.locale / i18n.messages)', () => {
     await page.click('.chat-dialog .more-btn')
     await page.click('.chat-dialog .more-item:first-child') // Debug / Logs
     await page.waitForSelector('.debug-drawer .tab-btn')
-    // tab 英文(Logs/Flow 固定渲染;其余 tab 需 getInfo,有则断言)
+    // tab 英文(3.46 合并后 4 标签:日志/上下文(含 Trace)/子agent/信息;后三者需 getInfo,有则断言)
     await expect(page.locator('.debug-drawer .tab-btn').first()).toContainText('Logs')
-    await expect(page.locator('.debug-drawer .tab-btn').nth(1)).toContainText('Flow')
     const tabCount = await page.locator('.debug-drawer .tab-btn').count()
-    if (tabCount > 4) {
-      await expect(page.locator('.debug-drawer .tab-btn').nth(3)).toContainText('Context')
-      await expect(page.locator('.debug-drawer .tab-btn').nth(4)).toContainText('Sub-agents')
-      await expect(page.locator('.debug-drawer .tab-btn').nth(5)).toContainText('Agent info')
+    if (tabCount > 1) {
+      await expect(page.locator('.debug-drawer .tab-btn').nth(1)).toContainText('Context')
+      await expect(page.locator('.debug-drawer .tab-btn').nth(2)).toContainText('Sub-agents')
+      await expect(page.locator('.debug-drawer .tab-btn').nth(3)).toContainText('Agent info')
     }
     // 日志过滤器标签(空抽屉也有 chips)
     await expect(page.locator('.debug-drawer .filter-chip').first()).toContainText('Context')

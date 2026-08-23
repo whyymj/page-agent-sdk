@@ -81,26 +81,27 @@ const approvalArgsPreview = computed(() => {
 </template>
 
 <style scoped>
-.approval-bar { margin: 10px 12px; padding: 12px 14px; border: 1px solid #fcd34d; border-left: 4px solid #f59e0b; border-radius: 10px; background: linear-gradient(180deg, #fffbeb 0%, #fffef5 100%); box-shadow: 0 2px 8px rgba(245, 158, 11, 0.08); }
-.approval-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #92400e; }
+/* 人工确认条:警示语义用 --cs-warn 色系(两主题各自适配),表面色随 --cs-* 主题变量 —— 深色主题不再出现刺眼奶黄块 */
+.approval-bar { margin: 10px 12px; padding: 12px 14px; border: 1px solid rgba(var(--cs-warn-rgb, 217, 119, 6), 0.35); border-left: 3px solid var(--cs-warn, #d97706); border-radius: 10px; background: linear-gradient(180deg, rgba(var(--cs-warn-rgb, 217, 119, 6), 0.09) 0%, rgba(var(--cs-warn-rgb, 217, 119, 6), 0.04) 100%); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06); }
+.approval-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--cs-bg-text); }
 .approval-icon { font-size: 18px; }
 .approval-title { flex: 1; min-width: 0; }
-.approval-title code { padding: 2px 7px; border-radius: 5px; background: #fef3c7; color: #78350f; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-.approval-toggle { padding: 3px 10px; border: 1px solid #fde68a; background: #fffbeb; color: #92400e; font-size: 12px; cursor: pointer; border-radius: 6px; transition: all 0.2s; }
-.approval-toggle:hover { background: #fef3c7; border-color: #f59e0b; }
-.approval-args { margin: 10px 0; padding: 10px; max-height: 160px; overflow: auto; border-radius: 8px; background: #fff; border: 1px solid #fde68a; font-size: 12px; color: #57534e; white-space: pre-wrap; word-break: break-all; line-height: 1.5; }
+.approval-title code { padding: 2px 7px; border-radius: 5px; background: rgba(var(--cs-warn-rgb, 217, 119, 6), 0.14); color: var(--cs-warn, #d97706); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.approval-toggle { padding: 3px 10px; border: 1px solid rgba(var(--cs-warn-rgb, 217, 119, 6), 0.4); background: transparent; color: var(--cs-warn, #d97706); font-size: 12px; cursor: pointer; border-radius: 6px; transition: all 0.2s; }
+.approval-toggle:hover { background: rgba(var(--cs-warn-rgb, 217, 119, 6), 0.12); }
+.approval-args { margin: 10px 0; padding: 10px; max-height: 160px; overflow: auto; border-radius: 8px; background: var(--cs-bubble-ai, #fff); border: 1px solid rgba(var(--cs-warn-rgb, 217, 119, 6), 0.25); font-size: 12px; color: var(--cs-bg-text); white-space: pre-wrap; word-break: break-all; line-height: 1.5; }
 .approval-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
 .approval-options { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .approval-options .approval-opt { width: 100%; text-align: left; padding: 9px 14px; white-space: normal; line-height: 1.5; }
 .approval-actions button { padding: 6px 18px; border: none; border-radius: 7px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
-.approval-deny { background: #fff; color: #6b7280; border: 1px solid #e5e7eb; }
-.approval-deny:hover { background: #f3f4f6; color: #374151; border-color: #d1d5db; }
+.approval-deny { background: transparent; color: var(--cs-bg-muted); border: 1px solid var(--cs-surface-border, #e5e7eb); }
+.approval-deny:hover { background: rgba(127, 127, 127, 0.1); color: var(--cs-bg-text); }
 .approval-allow { background: var(--cs-primary); color: #fff; box-shadow: 0 1px 3px rgba(var(--cs-primary-rgb), 0.3); }
 .approval-allow:hover { opacity: 0.92; transform: translateY(-1px); }
-.approval-question { margin: 10px 0; padding: 10px 12px; border-radius: 8px; background: #fff; border: 1px solid #fde68a; font-size: 13px; color: #1f2937; line-height: 1.6; white-space: pre-wrap; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03); }
-.approval-context { margin: 6px 0 10px; padding: 0 2px; font-size: 12px; color: #92400e; line-height: 1.6; }
-.approval-recommend { margin: 8px 0 10px; padding: 8px 12px; border-radius: 8px; background: rgba(var(--cs-primary-rgb), 0.06); border-left: 3px solid var(--cs-primary); font-size: 12px; color: var(--cs-primary); line-height: 1.6; }
-.approval-plan-context { margin: 8px 0 2px; padding: 8px 12px; border-radius: 8px; background: #ecfdf5; border-left: 3px solid #10b981; font-size: 12px; color: #047857; line-height: 1.6; }
-.approval-opt { padding: 6px 16px; border: 1px solid var(--cs-primary); border-radius: 7px; background: #fff; color: var(--cs-primary); font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
-.approval-opt:hover { background: var(--cs-primary); color: #fff; transform: translateY(-1px); }
+.approval-question { margin: 10px 0; padding: 10px 12px; border-radius: 8px; background: var(--cs-bubble-ai, #fff); border: 1px solid rgba(var(--cs-warn-rgb, 217, 119, 6), 0.25); font-size: 13px; color: var(--cs-bg-text); line-height: 1.6; white-space: pre-wrap; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03); }
+.approval-context { margin: 6px 0 10px; padding: 0 2px; font-size: 12px; color: var(--cs-bg-muted); line-height: 1.6; }
+.approval-recommend { margin: 8px 0 10px; padding: 8px 12px; border-radius: 8px; background: rgba(var(--cs-primary-rgb), 0.08); border-left: 3px solid var(--cs-primary); font-size: 12px; color: var(--cs-accent, var(--cs-primary)); line-height: 1.6; }
+.approval-plan-context { margin: 8px 0 2px; padding: 8px 12px; border-radius: 8px; background: rgba(var(--cs-ok-rgb, 22, 163, 74), 0.1); border-left: 3px solid var(--cs-ok, #16a34a); font-size: 12px; color: var(--cs-ok, #16a34a); line-height: 1.6; }
+.approval-opt { padding: 6px 16px; border: 1px solid rgba(var(--cs-primary-rgb), 0.5); border-radius: 7px; background: rgba(var(--cs-primary-rgb), 0.06); color: var(--cs-accent, var(--cs-primary)); font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+.approval-opt:hover { background: var(--cs-primary); border-color: var(--cs-primary); color: #fff; transform: translateY(-1px); }
 </style>

@@ -3,7 +3,8 @@
  * 最简集成 demo:无 schema / 无 data / 无 approval,纯对话对话框。
  * 适合「我只想给页面加个 AI 对话框,不操作页面数据」的最简场景。
  *
- * 想一步得到「页面搭建」能力?把配置换成 preset spread(3.7+ 默认带 HTML 代码子 agent,schema 有 code 字段自动启用):
+ * 想一步得到「页面搭建」能力?schema 含 code 数组字段时装配期自动注册默认 HTML 子 agent(3.9+,零配置);
+ * preset spread 只再补一层场景化身份 prompt:
  *   createChatSdk({ ...presets.pageBuilder, container, llm, data: { schema, bind } })
  */
 import { ref, onMounted, onUnmounted } from 'vue'

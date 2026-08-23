@@ -69,7 +69,7 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
         hints.push('找名字记不清的元素用 search_data(支持 substring/regex/fuzzy 模糊搜索)。')
         hints.push('需要过滤/映射/聚合/批量重写大数组时用 eval_script(沙箱脚本,入参 data);只读探查用 mode=query,批量重写用 mode=transform(返回值经校验后落地)。')
         hints.push('读大数组用 read({jsonPath,offset,limit}) 分页(返回 hasMore=true 时 offset+=limit 续读);一次读多个不相关子路径用 read({jsonPaths});复杂改动先 write({...,dryRun:true}) 预检不落盘。')
-        hints.push('【省轮次·批量】读多个同构子路径(如各组件 props)用 read({jsonPaths:[...]}) 一次取回,勿发多个独立 read;改多处用 write({patches:[{op:"set",jsonPath,value},...]}) 一次提交多改动(原子任一失败回滚),勿逐个 edit_data/write 烧轮次预算。')
+        hints.push('【省轮次·批量】≥2 个路径一律 read({jsonPaths:[...]}) 一次取回(路径互不相关也合批,禁止连续单路径 read);改多处用 write({patches:[{op:"set",jsonPath,value},...]}) 一次提交多改动(原子任一失败回滚),勿逐个 edit_data/write 烧轮次预算。')
         hints.push('对比当前与历史快照(或一段 JSON against)的差异用 diff_data({snapshotId?,against?})(返回结构化 path→from/to,verify 自纠/操作审计/"刚才改了啥");只读查历史快照值用 history_data({id?,jsonPath?})。')
       }
       if (rc.subagent) hints.push('独立子任务可 spawn_agent 委派(过程隔离,不占主上下文):默认只读,需要子 agent 写数据时传 writablePaths(路径前缀白名单,越界 PATH_OUT_OF_SCOPE)。多个独立子任务可 spawn_agents 并行委派(各子互不通信,结论由你汇总;并行委派不可授写权限,写操作由你收尾执行)。')

@@ -151,7 +151,7 @@ onMounted(() => {
       '你是页面搭建助手,管理多个纯代码组件(data.components 数组,每个 custom 组件有 name + code 字段)。\n' +
       '【焦点精修】若当前聚焦某组件,对话默认针对该焦点组件:task 里指明「只改 <焦点组件 name>」,子 agent 受硬约束只能改该组件代码(越界 PATH_DENIED)。聚焦时仍可新建组件(尾部追加放行),但精修类请求优先聚焦。\n' +
       '完成后告知用户预览已更新。',
-    maxToolRounds: 25,  // 多组件逐个委派需更多轮次(每组件≈委派+read 2 轮);默认 10 仅够~5 组件,抬到 25 给 ~10 组件空间
+    maxToolRounds: 30,  // 多组件逐个委派需更多轮次(每组件≈委派+read 2 轮);显式标注防误降(默认即 30,3.43 起)
     storage: 'memory',
     data: { schema: pageSchema, bind: pageBind, description: '页面(components 支持 custom 代码组件;code 字段是资产)' },
     // ★ HTML 代码子 agent 零配置(3.9+):schema 含「数组元素带 code 字段」→ createChatSdk 装配期自动装配默认

@@ -191,6 +191,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     const op = htmlOrchestratorPrompt('html')
     assert(op.includes('新建组件由子 agent 全权创建'), '✓ 编排:新建组件所有权归子 agent(主不替它创建/追加)')
     assert(op.includes('委派返回即已落地') && op.includes('不要再 write/append 一遍'), '✓ 编排:委派返回即已落地,主 agent 禁重复 write(防重复组件)')
+    assert(op.includes('多方案征询') && op.includes('本轮只出文本方案') && op.includes('选定后才'), '✓ 编排:多方案征询先文本描述+用户选定,选定后才委派(禁并发生成全方案)')
   }
   assert(
     typeof systemPromptHelpers.htmlDirectWriteFallback === 'string' &&

@@ -10,7 +10,7 @@
  * C. 边界:未设 mode 原引用返回;无可剥时原引用返回
  */
 import type { TestCtx } from './_ctx'
-import { applyThinkingMode } from '../../llm/constructLlm'
+import { applyThinkingMode, resolveEffectiveThinkingMode, constructOpenLlmSync } from '../../llm/constructLlm'
 
 export async function run(ctx: TestCtx): Promise<void> {
   const { assert } = ctx
@@ -65,5 +65,28 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(applyThinkingMode(cfg, undefined) === cfg, '✓ 边界 → mode 未设原引用返回(零开销)')
     const nothing = { apiKey: 'k' }
     assert(applyThinkingMode(nothing as any, 'simple') === nothing, '✓ 边界 → simple 无思考参数可剥时原引用返回')
+  }
+
+  // ===== D. 默认 deep(default-deep-thinking):优先级链 + 构造层注入 =====
+  {
+    // 能力表驱动:思考型模型零配置 → deep;非思考型 → 不注入(未知模型不猜防 400)
+    assert(resolveEffectiveThinkingMode({ model: 'deepseek-v4-flash' }) === 'deep', '✓ 默认 deep → deepseek-v4-flash 能力表命中零配置 deep')
+    assert(resolveEffectiveThinkingMode({ model: 'glm-5.2' }) === 'deep', '✓ 默认 deep → glm-5.2 命中')
+    assert(resolveEffectiveThinkingMode({ model: 'claude-3-7-sonnet' }) === 'deep', '✓ 默认 deep → claude-3-7 命中')
+    assert(resolveEffectiveThinkingMode({ model: 'gpt-4o' }) === undefined, '✓ 默认 deep → gpt-4o 能力表无 thinking 不注入')
+    assert(resolveEffectiveThinkingMode({ model: 'some-unknown-model' }) === undefined, '✓ 默认 deep → 未知模型不猜(防 400)')
+    // 显式优先链:explicit > cfg.thinkingMode > 自管思考参数 > fallback > 表
+    assert(resolveEffectiveThinkingMode({ model: 'deepseek-v4-flash', thinkingMode: 'simple' }, undefined) === 'simple', '✓ 默认 deep → cfg.thinkingMode simple 压过表默认')
+    assert(resolveEffectiveThinkingMode({ model: 'deepseek-v4-flash' }, 'simple') === 'simple', '✓ 默认 deep → 构造参数 explicit simple 最高')
+    assert(resolveEffectiveThinkingMode({ model: 'deepseek-v4-flash', extraBody: { thinking: { type: 'disabled' } } }) === undefined, '✓ 默认 deep → 集成方自管 extraBody.thinking 不叠默认')
+    assert(resolveEffectiveThinkingMode({ model: 'deepseek-v4-flash' }, undefined, 'simple') === 'simple', '✓ 默认 deep → fallback simple(summary/title 通道免思考)')
+    assert(resolveEffectiveThinkingMode({ model: 'gpt-4o' }, undefined, 'simple') === 'simple', '✓ 默认 deep → fallback 对非思考模型也生效(显式通道语义)')
+    // 构造层落地:deepseek 零配置 → modelKwargs.thinking 注入;gpt 不注入
+    const dsLlm = constructOpenLlmSync({ apiKey: 'sk', model: 'deepseek-v4-flash' })
+    assert(((dsLlm as any).lc_kwargs?.modelKwargs?.thinking as any)?.type === 'enabled', '✓ 默认 deep → 构造层 deepseek 自动注入 modelKwargs.thinking')
+    const gptLlm = constructOpenLlmSync({ apiKey: 'sk', model: 'gpt-4o' })
+    assert(gptLlm && ((gptLlm as any).lc_kwargs?.modelKwargs?.thinking) === undefined, '✓ 默认 deep → 构造层 gpt-4o 不注入 thinking')
+    const simpleLlm = constructOpenLlmSync({ apiKey: 'sk', model: 'deepseek-v4-flash', thinkingMode: 'simple' })
+    assert(((simpleLlm as any).lc_kwargs?.modelKwargs?.thinking) === undefined, '✓ 默认 deep → thinkingMode simple 显式剥除')
   }
 }

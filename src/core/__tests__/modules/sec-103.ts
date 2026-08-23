@@ -197,4 +197,34 @@ export async function run(ctx: TestCtx) {
       assert(!c.includes('未写入') && !c.includes('无需删除'), '✓ C2 红线 → 提醒文案不含「未写入/无需删除」活性词')
     }
   }
+
+  // ===== 3. read 多路径引导(单路径连读 ≥2 → 成功结果尾附 jsonPaths 批量提示)=====
+  {
+    const tools = makeTools()
+    const captured: any[][] = []
+    const captureMw: Middleware = {
+      name: 'capture',
+      wrapModelCall: async (req, next) => { captured.push([...req.messages]); return next(req) },
+    }
+    const agent = createAgent({
+      llm: new ScriptLLM([
+        { tool: { name: 'read', args: { jsonPath: 'theme' } } },        // 单路径 1 次(不提醒)
+        { tool: { name: 'read', args: { jsonPath: 'meta.pageName' } } }, // 单路径 2 次 → 提醒
+        { tool: { name: 'read', args: { jsonPaths: ['theme', 'meta.pageName'] } } }, // 批量 → 清零
+        { tool: { name: 'read', args: { jsonPath: 'theme' } } },        // 清零后单次(不提醒)
+      ]) as any,
+      tools,
+      middleware: [captureMw],
+      maxToolRounds: 10,
+      maxRetries: 0,
+    })
+    await agent.stream([{ role: 'user', content: '读', timestamp: Date.now() }], () => {}, undefined)
+    const lastMsgs = captured[captured.length - 1] ?? []
+    const contents = (lastMsgs.filter((m) => m instanceof ToolMessage) as ToolMessage[]).map((m) => String(m.content))
+    assert(contents.length === 4, `✓ read 引导 → 4 条工具结果(实测 ${contents.length})`)
+    assert(!contents[0].includes('jsonPaths'), '✓ read 引导 → 首次单路径不提醒')
+    assert(contents[1].includes('jsonPaths'), '✓ read 引导 → 第 2 次单路径成功结果附批量提示')
+    assert(!contents[2].includes('一次取回省轮次'), '✓ read 引导 → 批量读本身不附提示')
+    assert(!contents[3].includes('一次取回省轮次'), '✓ read 引导 → 批量后计数清零,单次不再提醒')
+  }
 }

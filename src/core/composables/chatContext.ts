@@ -271,13 +271,16 @@ export function createChatContext(opts: ChatContextOptions = {}): ChatContext {
     removeQueuedTask(idx)
   }
 
-  // 流式占位 assistant 检测(末位 + loading + 无内容 → 三点动画,避免再叠加底部 loading 头像)
+  // 流式占位 assistant 检测(末位 + loading + 无内容/思考/步骤 → 三点动画,避免再叠加底部 loading 头像)。
+  // reasoning/steps 任一到达即让位:思考块/步骤块自带活跃指示,占位泡再叠 = 双 loading 点(用户反馈:
+  // use_html 步骤后多一个紫色呼吸点);content 空但有 reasoning/steps 时整泡不渲染(防空气泡框)。
   const isPendingAssistant = (idx: number): boolean => {
     const msgs = state.messages
     const m = msgs[idx]
     if (!m || m.role !== 'assistant') return false
     const reasoning = 'reasoning' in m ? (m as { reasoning?: string }).reasoning : undefined
-    return state.loading && idx === msgs.length - 1 && !m.content && !reasoning
+    const steps = 'steps' in m ? (m as { steps?: unknown[] }).steps : undefined
+    return state.loading && idx === msgs.length - 1 && !m.content && !reasoning && !(steps && steps.length)
   }
 
   // 上下文聚焦(响应式:infoTick ++ → 重算;ChatInput 多 chip 显示 🎯 path + ✕ 移除单个 + 点 chip 回调)

@@ -553,6 +553,18 @@ export interface SkillSpec {
   exec?: SkillExecSpec;
   /** 附带可调工具工厂;load_skill 后注入工具池(命名空间 <skill>__<tool>,走 dedupeTools);与 exec 正交 */
   tools?: SkillToolFactory[];
+  /** 多层级参考文档(skill-references):主文只写索引,references 挂二级文档;load_skill 主文末自动附参考目录,
+   *  LLM 按需 load_skill(name, ref) 单独取回 —— 大 skill(风格配方库等)渐进式披露不整包灌上下文 */
+  references?: SkillRefSpec[];
+}
+/** skill 二级参考文档(doc/getContent 二选一,doc 优先;来源语义同 SkillSpec.doc) */
+export interface SkillRefSpec {
+  /** 参考名(建议带相对路径形态,如 'style-recipes/linear.md';load_skill 的 ref 参数按此精确匹配) */
+  name: string;
+  /** 一句话说明(进主文尾部参考目录,帮 LLM 选哪个 ref) */
+  description?: string;
+  doc?: string;
+  getContent?: () => string | Promise<string>;
 }
 /** skill 执行钩子:code(内联 JS)/url(远程,仅 sandbox)二选一;context 默认 sandbox,host 需 skillHostScript */
 export interface SkillExecSpec {

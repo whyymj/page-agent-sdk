@@ -70,7 +70,6 @@ onMounted(async () => {
       id: s.id,                  // 不同 id 隔离:各自独立 agent/历史/工具/storage
       storage: 'memory',
       llm: { apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, model: cfg.model, temperature: cfg.temperature, maxTokens: cfg.maxTokens },
-      streaming: true,
       systemPrompt: prompts[s.id],
       appendReliableWriteRules: true,
       data: { schema: schemas[s.id], bind: s.data },   // 各管各 data,无冲突

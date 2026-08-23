@@ -30,6 +30,8 @@
   - [6.14 无人值守自动化](#614-无人值守自动化资源预算--错误恢复--批处理--断点续跑220)
   - [6.14 上下文聚焦 Focus(指定组件精修)](#614-上下文聚焦-focus指定组件精修focus-context)
   - [6.15 UI 定制与国际化(图标 / 主题 / 语言 / 文案覆盖)](#615-ui-定制与国际化图标--主题--语言--文案覆盖317321)
+  - [6.16 跨会话用户偏好记忆](#616-跨会话用户偏好记忆323)
+  - [6.17 图片输入(多模态直发 / 识图转述旁路)](#617-图片输入多模态直发--识图转述旁路)
 - [7. 高级:自定义中间件](#7-高级自定义中间件)
 - [8. 命令式 API](#8-命令式-api)
 - [9. 框架无关 / CDN 集成](#9-框架无关--cdn-集成)
@@ -199,6 +201,7 @@ createChatSdk({
   middleware: [...],            // 自定义中间件(见第 7 节)
   actions: { name: { description, run, params? } },  // 宿主动作(2.20+):SDK 自动包成命名 tool(save_draft/publish 等),agent 直接调触发页面操作;见 §6
   schemaHint: { maxKeys?, maxChars? },               // 大 schema 分层披露阈值(2.20+;默认 15/4000,超阈值转顶层概览省 token);见 §6
+  images: { upload?, describe?, describeTimeoutMs? }, // 图片输入(见 6.17):upload 压缩后原图换 https URL(集成方 OSS,失败回退内联);describe 识图转述(纯文本主模型时逐图转述注入,图不直发)
 
   /* ===== 持久化与会话 ===== */
   storage: 'indexed',           // 'indexed'/'session'/'local'/'memory'/配置对象;3.9+ 默认 'memory'(纯内存多会话,不落盘);false 显式关闭
@@ -271,11 +274,11 @@ Agent 自主调用这些内置工具(无需你写):
 | 工具 | 作用 |
 |---|---|
 | **`read`** / **`write`**(推荐) | 高层读写入口,合并 describe/get 与 set/edit/delete + 自动乐观锁 + 自动快照,LLM 认知负担最低 |
-| `describe_data` | 查看主数据说明 + schema 字段描述(simple 模式隐藏,被 `read` 合并) |
-| `get_data` | 读主数据(支持 `jsonPath` 精确读局部;simple 模式隐藏,被 `read` 合并) |
-| `set_data` | 整体替换主数据(**按 schema 校验**,不合法返回错误不写入;simple 模式隐藏,被 `write` 合并) |
-| `edit_data` | 增量 patch(`op=set/remove/merge/append` + `jsonPath`),避免重传整个大 JSON(simple 模式隐藏,被 `write` 合并) |
-| `delete_data` | 删子路径(simple 模式隐藏,被 `write` 合并) |
+| `describe_data` | 查看主数据说明 + schema 字段描述(底层,推荐 `read`) |
+| `get_data` | 读主数据(支持 `jsonPath` 精确读局部;底层,推荐 `read`) |
+| `set_data` | 整体替换主数据(**按 schema 校验**,不合法返回错误不写入;底层,推荐 `write`) |
+| `edit_data` | 增量 patch(`op=set/remove/merge/append/move` + `jsonPath`),避免重传整个大 JSON(底层,推荐 `write` patch) |
+| `delete_data` | 删子路径(底层,推荐 `write` del) |
 | `query_data` / `search_data` / `eval_script` | 大 JSON 查询(JSONPath)/ 模糊搜索 / 沙箱脚本 |
 | `snapshot_data` / `list_data_snapshots` / `restore_data` | 快照 / 回退 |
 
@@ -660,11 +663,11 @@ sdk.vfsWrite('docs/components/hero.md', 'Hero 组件用于首屏主视觉...')
     })
     ```
   - **`writablePaths` 装配期自动推断(3.6+,可省略)**:未传时 createChatSdk 装配期从 `data.schema` 顶层扫描「数组元素含 `codeField` string 字段」的路径自动回填(`inferWritablePaths`,console.info 留痕;显式传入优先跳过推断)。不支持推断的形态 → warn + throw 提示显式传参:开放 schema(`z.any()`/`z.record`)、嵌套容器(如 `sections[].children[]`)、点路径 codeField(`props.html_code` 嵌套结构)—— 宁失败不猜错路径(错误路径 = 框架扫描区整体落空)
-  - **主 agent 编排自适应注入(零配置)**:装配期自动检测 —— 有 html 子 agent → 主 agent systemPrompt 自动追加委派编排 `htmlOrchestratorPrompt(id)`(custom code 不 read 不 write 全权 `use_<id>` / 多组件委派(不同组件可同轮并行,同组件单一在途)/ task 规格化 4 要素 + ⑤历史偏好转述);无显式 html 子 agent + schema 含 code 数组 → **3.9+ 自动装配默认 `createHtmlSubagent()`**(info 留痕,无开关;显式 `createHtmlSubagent(...)` 优先不重复;推断不出的形态(顶层 code 字段/开放 schema)不装 → `htmlDirectWriteFallback` 主 agent 自己 write code 的降级 + warn);开放 schema(`z.any()`)扫不到时集成方 opt-in spread。**勿手动 spread `htmlPageOrchestrator`**(自动注入已覆盖,双重注入浪费 token);opt-out `orchestratorPrompt:false`
+  - **主 agent 编排自适应注入(零配置)**:装配期自动检测 —— 有 html 子 agent → 主 agent systemPrompt 自动追加委派编排 `htmlOrchestratorPrompt(id)`(custom code 不 read 不 write 全权 `use_<id>` / 多组件委派(不同组件可同轮并行,同组件单一在途)/ task 规格化 4 要素 + ⑤历史偏好转述 / **多方案征询先文本**:「出几套方案我来选」→ 本轮只出文本方案 + 用户点选,选定后才委派,不并发生成全部方案);无显式 html 子 agent + schema 含 code 数组 → **3.9+ 自动装配默认 `createHtmlSubagent()`**(info 留痕,无开关;显式 `createHtmlSubagent(...)` 优先不重复;推断不出的形态(顶层 code 字段/开放 schema)不装 → `htmlDirectWriteFallback` 主 agent 自己 write code 的降级 + warn);开放 schema(`z.any()`)扫不到时集成方 opt-in spread。**勿手动 spread `htmlPageOrchestrator`**(自动注入已覆盖,双重注入浪费 token);opt-out `orchestratorPrompt:false`
   - **组件工匠笔记 `craftNotes`(默认开)**:子 agent 收口回复末尾附 `[note] <一句话实现要点>` 行(htmlSystemPrompt 约定),框架 afterAgent 提取沉淀为组件 `__pgNotes`(FIFO ≤5 条 × 200 字,随 data json 进服务端 DB 跨会话持久);下次委派同组件时经「组件代码文件地图」注入最近 1 条(`📝 笔记×N`)—— 同组件跨委派**设计意图持续**("前任的交接":设计决策/用户偏好/踩坑),状态在数据里不在子 agent 实例里(与 code-as-data-asset 哲学同构)。`__pgNotes` 走 `__pg*` sidecar 机制(agent read 投影隐藏、写不进,框架独占);`craftNotes:false` 关闭(零沉淀零注入)
   - **模型建议(真 LLM 实测)**:html 代码生成推荐强指令遵循模型(deepseek-v4 / claude / gpt-4o);flash 类弱模型放大过度思考(装饰穷举 / token 纠结),高频/批量场景建议非 flash
   - **额外只读工具 `allowedTools`(3.45.1+)**:集成方可把宿主自定义查询工具(如 `rag_component_docs`/`list_components`)并入 html 子 agent 工具池 —— 子 agent 写代码时能自查组件文档/页面结构,委派 task 提及组件名时不再幻觉「工具不存在」;只建议放查询类,写权限仍由 `writablePaths` 管控(与顶层 `subagent.allowedTools` 同名不同面:那是 spawn 链路白名单,这是能力包工厂参数)
-  - **独立模型 + 思考深度锁定(output-quality-uplift)**:主 agent 保持轻量模型编排、代码生成换强模型 —— `createHtmlSubagent({ llm: { apiKey, baseUrl, model }, thinkingMode: 'deep' })`。`thinkingMode` 锁思考深度:`'deep'` 注入思考参数(质量优先,token/耗时约 2-5×)/ `'simple'` 剥除(省 token 加速)/ 缺省继承主;顶层 `subagent.thinkingMode` 作全局缺省(子显式设优先)。OpenAI 兼容走 `extraBody.thinking`,Anthropic 走 `thinking` 字段(budget_tokens 缺省 `min(maxTokens??4096, 8000)`,开启时 temperature 按 API 要求强制 1)。**仅 LLMConfig 构造路径生效**:子 agent 复用预构造 `BaseChatModel` 实例时思考配置钉死构造期 → warn + observable no-op(需改传 `SubagentLlmConfig`)。需模型本身支持思考(deepseek thinking 版 / claude;flash 类传了无效)。生效状态经 `inspect().subagent.subagents[].thinkingApplied` 反射(`applied`/`inherited`/`instance-noop`)
+  - **独立模型 + 思考深度锁定(output-quality-uplift)**:主 agent 保持轻量模型编排、代码生成换强模型 —— `createHtmlSubagent({ llm: { apiKey, baseUrl, model }, thinkingMode: 'deep' })`。`thinkingMode` 锁思考深度:`'deep'` 注入思考参数(质量优先,token/耗时约 2-5×)/ `'simple'` 剥除(省 token 加速)/ 缺省继承主;顶层 `subagent.thinkingMode` 作全局缺省(子显式设优先)。**默认 deep(default-deep-thinking)**:集成方零配置时,主/子模型若能力表标 `thinking:true`(deepseek-v4/reasoner、claude-3.7+/4 系、glm-5.2 等)自动注入 deep 保质量;非思考型模型(gpt-4o 等)不注入(防 400)。主模型可 `llm:{ thinkingMode:'simple' }` 显式剥思考省 token;summary/title/压缩决策等辅助通道自动 simple 免思考。OpenAI 兼容走 `extraBody.thinking`,Anthropic 走 `thinking` 字段(budget_tokens 缺省 `min(maxTokens??4096, 8000)`,开启时 temperature 按 API 要求强制 1)。**仅 LLMConfig 构造路径生效**:子 agent 复用预构造 `BaseChatModel` 实例时思考配置钉死构造期 → warn + observable no-op(需改传 `SubagentLlmConfig`)。需模型本身支持思考(deepseek thinking 版 / claude;flash 类传了无效)。生效状态经 `inspect().subagent.subagents[].thinkingApplied` 反射(`applied`/`inherited`/`instance-noop`)
   - **breaking 迁移(2.x → 3.0)**:① schema:`components[i]` 加 `code:z.string()`(替代 `codeRef`),去 `codeSnapshots` 镜像;② UI:绑 `data.components[i].code`(替代 `codeSnapshots[p]`);③ `createHtmlSubagent`:去 `onComplete`(框架 afterAgent 自动 commit);④ persist:整体 data json 发服务端(含 code + `__pgId`);⑤ 渲染层:遇 `type:'custom'` 读 `data.code` 渲染(不再 `codeRef`→vfs 取)
 - **底层:子 agent 架构扩展**:`SubagentConfig` 加 `allowedTools`(从主 allTools 拿 vfs/draft 工具)/ `middleware`(装规划中间件)/ `summarization`(跨轮压缩);`sdk.vfsWrite(path, content)` 异步注入 vfs。两包都基于这些扩展;集成方亦可直接用 `SubagentConfig` 三字段自配任意专用子 agent
 
@@ -774,6 +777,24 @@ defineSkill({
 - **exec 安全边界**:默认 `sandbox`(复用 eval_script 的 Worker 沙箱:静态扫描 + `lockSandboxGlobal` 锁网络层 + 超时)。`context:'host'` 宿主全权执行(`AsyncFunction`,可读 window/fetch/DOM),需 `capabilities.skillHostScript:true`(opt-in 默认关);**host 仅集成方内联 `code`**(非 LLM 生成、非远程),`url`+`host` 禁止组合(远程不可信)。
 - **exec 失败不缓存**:脚本执行失败(如网络抖动)不阻塞 skill(文本仍可用 + 标注失败原因),且**不写缓存**——下次 `load_skill` 重新执行(动态 skill 韧性);成功才缓存(跨轮跨会话复用)。
 - **exec 大结果**:注入文本 + exec 结果总量超 6000 字符时,走 createAgent 通用 offload(转 vfs + 预览),LLM 按需 `vfs_read` 二次读;「一次读全」仅保证静态文本部分(动态数据本就该按需查,契合渐进式披露)。
+
+**多层级参考文档 `references`(大 skill 渐进式披露)**:浏览器端配置「SKILL.md 索引 + references/ 多文件」形态的大 skill(风格配方库、模式库、评审指南等),主文档只写「何时用 + 怎么用」,二级文档挂 `references` 按需取回 —— 26 个配方式大 skill 不整包灌上下文:
+
+```ts
+defineSkill({
+  name: 'web-design-engineer',
+  description: 'Web 视觉设计:风格选型/排版/评审',
+  doc: 'vfs://skills/wde/SKILL.md',            // 主文:索引 + 方法(或 getContent 内联)
+  references: [
+    { name: 'style-recipes/linear.md', description: 'Linear 极简工具风', doc: 'vfs://skills/wde/style-recipes/linear.md' },
+    { name: 'style-recipes/aesop.md', description: 'Aesop  editorial 质感', getContent: () => AESOP_MD },  // 构建链可 import.meta.glob raw 内联
+  ],
+})
+```
+
+- `load_skill(name)` 主文末**自动附参考目录**(name + description + 「按需 `load_skill(name, ref)`」指引);LLM 选定后 `load_skill(name, ref='style-recipes/linear.md')` 单独取回该参考(独立缓存,同轮重复拦截)。
+- 参考来源语义同主文(`doc` http/vfs / `getContent` 内联);构建链集成方用 `import.meta.glob('.../*.md', { as: 'raw' })` 把整目录打进 bundle 再映射成 references,CDN 无构建链则 `doc` 指静态托管 URL。
+- `sdk.invalidateSkillCache(name)` 同清主文 + 全部 ref 缓存(动态 skill 失效语义一致)。
 - **tools 注入**:`load_skill` 后工具求值 → 注入 agent 工具池(经 dedupeTools 去重,建议命名空间前缀 `<skill>__<tool>` 防重名);source 标 `skill:<name>`;`sdk.setSkills`/`invalidateSkillCache` 卸载。
 
 ### 6.4 Memory(持久指令)
@@ -1247,7 +1268,7 @@ createChatSdk({
 })
 // 运行后:
 // sdk.inspect().trace  → { spans, metrics }(轮次/延迟/工具成功率/重试/压缩/token)
-// DebugDrawer 第 4 tab 🌳 Trace → metrics 卡片 + span 列表(可视化)
+// DebugDrawer「📊 上下文」tab 底部 🌳 Trace 段 → metrics 卡片 + span 列表(可视化)
 ```
 
 - **Span 类型**:`round`(每轮)/ `model`(LLM 调用)/ `tool`(工具执行)/ `compression`(上下文压缩),含 `startTs`/`endTs`/`durationMs`/`status`/`attributes`(round 编号、工具名、usage 等)。
@@ -2078,6 +2099,44 @@ await sdk.clearPreferences()   // 清空
 - **与既有记忆的分工**:`memory` 集成方写死全局指令 / `craftNotes` 组件级交接 / `mission` 会话内目标 / **偏好记忆 = 用户级跨会话**
 - **可观察**:DebugDrawer「Agent 信息」tab「用户偏好」只读小节;捕获/失败留 debugLogs(middleware 类型)
 - **隐私边界**:偏好只存本机(同 skillStore 的 IndexedDB,不随会话快照上传);`preferenceStorage.id` 传同一固定串可跨页面/跨 agent 共享,不传按 agentId 隔离
+
+### 6.17 图片输入(多模态直发 / 识图转述旁路)
+
+对话框内置图片输入:三入口(📎 选择 / 拖拽 / 粘贴截图)→ 压缩闸 → 随下一条消息发送。**图怎么发取决于主模型是否有视觉能力**,三分支自动判定:
+
+| 主模型 | 判定 | 行为 |
+|---|---|---|
+| 多模态(gpt-4o / gpt-4.1 / gpt-5 / claude 系 / qwen-vl / glm-4v…) | 模型名查表 `vision:true`,或 `llm:{ vision:true }` 显式声明 | **零配置直发**:图片组装 content parts(OpenAI 协议 `image_url` / Anthropic 协议 base64 `image` block,按 provider 自动适配) |
+| 纯文本(deepseek-chat 等) | `vision:false` + 配置了 `images.describe` | **识图转述旁路**:发送前逐图调集成方识图端点,转述文本以 `[图片 N 描述]` 拼入该轮 user 上下文,图片本体不发给主模型 |
+| 纯文本 + 未配 describe | `vision:false` 且无 describe | **诚实拒绝**:send 报错引导(换多模态模型 / 声明 `vision:true` / 配 describe),不静默丢图 |
+
+```ts
+createChatSdk({
+  container: '#root',
+  llm: { apiKey, baseUrl, model: 'my-proxy-model', vision: true },  // ① 网关代理模型名不可辨时显式声明多模态
+  // images: {                                                       // ② 纯文本主模型时绑定识图能力(识图归属集成方)
+  //   describe: async (image, { text }) => {
+  //     const res = await fetch('/my-vision-api', {
+  //       method: 'POST', body: JSON.stringify({ image: image.dataUri, question: text }),
+  //     }).then(r => r.json())
+  //     return res.description
+  //   },
+  //   describeTimeoutMs: 15000,   // 默认 15s;超时/失败 → 占位描述 + observable VISION_DESCRIBE_FAILED,对话继续
+  // },
+})
+```
+
+**压缩闸与上限(输入侧,全自动)**:原始文件 >20MB 拒;长边等比缩到 ≤1568px;jpeg q0.85(含透明通道保 png);SVG 经 Image 兜底解码;单轮 ≤4 张。失败为结构化错误码(`IMAGE_TOO_LARGE` / `IMAGE_COUNT_LIMIT` / `IMAGE_DECODE_FAILED` / `IMAGE_COMPRESS_FAILED` / `IMAGE_UNSUPPORTED_TYPE`),UI 输入侧直接提示。
+
+**持久化轻形态**:落盘消息只存缩略图(≤8KB)+ vfs 引用,原图进 vfs `userImages/*` 池(LRU 淘汰;淘汰后刷新仅缩略图降级,不崩);配 `images.upload` 则只存 https URL。
+
+**可选 `images.upload`(原图换 URL,两分支通用)**:有自建 OSS 时,压缩后原图经此上传返回 https URL —— 请求与持久化只走轻 URL(不发大 base64、不占 vfs 池);上传失败自动回退 dataURI 内联直发,留痕不阻塞。
+
+**要点**:
+- `vision` 优先级:显式声明(true/false 均覆盖)> 模型名查表 > 缺省 false(保守:误发 parts 吃 400 比走旁路更糟);`setLlm` 换模型时重判定
+- describe 转述随消息持久化,重发/会话恢复不重复转述
+- headless 自建 UI:`sdk.send(text, { images })`(≤4 张);图片对象用导出的 `compressImage(file)` 制备(浏览器)
+- 完整可跑示例:`examples/images-demo`(describe 绑「analyze 形态」识图端点:POST `{image: base64, mime}` → `{data:{description}}`;端点地址只进本地 `.env` 的 `VITE_VISION_URL`,`window.__VISION_CONFIG` 运行时覆盖联调)
 
 ## 9. 框架无关 / CDN 集成
 

@@ -109,6 +109,9 @@ export interface LLMConfig {
   maxOutputTokens?: number
   /** 显式声明是否多模态识图(image-input-vision;缺省按 model 名查表,再缺省 false 保守)。true = user 消息图片组装 content parts 直发;网关代理模型名不可辨时用 */
   vision?: boolean
+  /** 思考深度锁定(default-deep-thinking):缺省 = 能力表 thinking:true 的模型自动 deep(质量优先,deepseek/claude-3.7+/glm-5.2 等);
+   *  'simple' 显式剥思考参数省 token;'deep' 对网关不可辨模型名强制注入。仅 LLMConfig 构造路径生效(预构造实例钉死构造期) */
+  thinkingMode?: 'simple' | 'deep'
   /** 透传 ChatOpenAI 的 modelKwargs:额外请求 body 参数(如 deepseek thinking: { thinking: { type: 'enabled' } }) */
   extraBody?: Record<string, any>
   /** 透传 ChatOpenAI configuration 的额外字段(如 headers/timeout/customFetch),与 baseUrl 合并 */

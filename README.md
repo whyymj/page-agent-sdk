@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-2896%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-2919%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -28,8 +28,9 @@ Starting point for both humans and AI agents (Claude Code / Cursor): find the fe
 | Old bundler (webpack ≤4 / vue-cli 2-3) | [Bundle size & tree-shaking](#bundle-size--tree-shaking) (legacy subpath, es2017 all-inlined) |
 | HTML/code components (AI writes page blocks) | [Capability packs](#createchatsdk-options-cheat-sheet) (`createHtmlSubagent`, auto-registered 3.9+) · `examples/html-page-demo`, `examples/complex-demo` |
 | RAG / MCP tools | [Capability packs](#createchatsdk-options-cheat-sheet) (`createRagSubagent`, `mcp`) · `examples/rag-demo` |
+| Let the AI see images (paste/drop/pick) | [options cheat sheet](#createchatsdk-options-cheat-sheet) (`images` / `llm.vision`) · [usage-guide §6.17](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md#617-image-input-multimodal-direct--captioning-bypass) · `examples/images-demo` |
 | Customize UI (theme / icons / i18n / button labels) | [`DialogConfig` fields](#dialogconfig-fields) · [usage-guide §6.15](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md#615-ui-customization--i18n-icons--theme--language--message-overrides-317321) · `examples/i18n-demo` |
-| Sessions / persistence (IndexedDB) | [options cheat sheet](#createchatsdk-options-cheat-sheet) (`storage`/`session`) · `examples/session-history-demo` |
+| Sessions / persistence (IndexedDB) | [options cheat sheet](#createchatsdk-options-cheat-sheet) (`storage`/`session`) · `examples/page-demo` (`storage:'indexed'` + built-in history dropdown) |
 | Long conversations / big JSON (context & compression) | [usage-guide §6.8](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md) · [context-management doc](https://github.com/whyymj/page-agent-sdk/blob/master/doc/context-management.md) |
 | Events / audit / token usage | [Configuration](#configuration) (`onEvent`/`onAudit`/`sdk.usage`) · [usage-guide §6.9](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md) |
 | Unattended automation / batch / budget | [options cheat sheet](#createchatsdk-options-cheat-sheet) (`capabilities.automation`, `sdk.batch`) · [usage-guide automation section](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md) |
@@ -166,6 +167,7 @@ CDN zero-config: `<script src="https://unpkg.com/page-agent-sdk"></script>` → 
 | 🎨 Subagent model/thinking tiering | `createHtmlSubagent({ llm, thinkingMode })`: code-gen subagents get their own stronger model (main stays light for orchestration) + thinking-depth lock (`'deep'` injects thinking params for quality / `'simple'` strips them to save tokens; top-level `subagent.thinkingMode` as global default). LLMConfig construction path only (pre-built instance → warn + no-op); requires a thinking-capable model (deepseek-thinking / claude); `inspect().subagent.subagents` reflects the effective state | `createHtmlSubagent({ llm, thinkingMode })` |
 | ⚡ host actions (2.20+) | Register save/publish/preview etc; SDK auto-generates named tools, agent triggers page ops directly (no `trigger_action` indirection) | `actions` |
 | 🧩 schema tiered disclosure (2.20+) | Large schema → systemPrompt injects top-level overview only (no constraints/no recursion); deep constraints via `schema_data` on demand; small schema unaffected (full) | `schemaHint` |
+| 🖼 image input | Built-in three entry points (📎 pick / drag / paste screenshot) → compression gate (long edge ≤1568px, ≤4 per round, >20MB rejected); multimodal main model (gpt-4o/claude/qwen-vl table hit, or `llm.vision:true`) → images sent directly as content parts, zero config; text-only main model (deepseek etc.) → `images.describe` captions each image into the user context (image never sent); neither → honest rejection, never silently dropped; `images.upload` swaps the original for an https URL (integrator OSS); persistence keeps only a thumbnail + vfs reference | `images: { upload?, describe? }` + `llm.vision` |
 | 📌 cross-compress working memory (2.20+) | Pin recent read/query paths + hashes across compression; no re-fetch, correct optimistic-lock hash | `capabilities.workingMemory` |
 | 🤖 unattended automation (2.20+) | Resource budget guard (`tokenBudget`/`timeBudgetMs`) + fatal-error auto-recovery (`maxAutoRetries`: restore checkpoint + retry) + cross-refresh resume + `sdk.batch(tasks)` batch processing | `capabilities.automation` |
 | 📐 context resilience (2.30+) | Hard floor `contextWindow ≥200K` (rejects <200K models like legacy `deepseek`/`gpt-4o`/`glm-4.5` at startup); three gates (compress/trim/offload) thresholds follow the live window after `setLlm`; reactive retry on `context_length_exceeded` (aggressive trim → single retry, never fails raw); vfs large-result refs protected from LRU eviction + OOM 1.5× fallback; system-prompt budget (25% window, drops non-pinned segments, keeps base/mission/workingMemory) | built-in |
@@ -238,6 +240,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `augmentSystem` | `(ctx:{state,data?}) => string \| undefined` | Dynamic system prompt injection hook: called each turn, returns a string injected as a segment based on runtime state/data; return undefined to skip; callback errors degrade to skip (no crash). `ctx.data` is taken from liveData() each turn (auto-syncs after setData), enabling dynamic component descriptions / partial schema hints. Not set = current behavior |
 | **Page data** | `data` | `{schema,bind,description?}` | Single main object: declare zod schema (validation + field descriptions auto-injected into prompt) + bind (reactive/plain object, tools read/write directly, no `window`) + description |
 | | `tools` / `skills` / `memory` | `Tool[]` / `SkillSpec[]` / `string` | Custom tools / skills / AGENTS.md-style directives |
+| | `images` | `{upload?,describe?,describeTimeoutMs?}` | **Image input (image-input-vision)**: built-in three entry points (📎 pick / drag / paste) → compression gate (long edge ≤1568px, ≤4 per round, >20MB rejected). Multimodal main model (table hit or `llm.vision:true`) → images sent directly as content parts, zero config; text-only main model → configure `describe` to caption each image into the context (image never sent); neither → honest rejection, never silently dropped; `upload` swaps the original for an https URL (integrator OSS). See [usage-guide §6.17](doc/usage-guide.en.md#617-image-input-multimodal-direct--captioning-bypass) |
 | **Capability toggles** | `capabilities` | `{planning?,dataOps?,fetch?,skills?,vfs?,summarization?,memory?,subagent?,verify?,focus?,preferences?}` | Default all on (`verify`/`preferences` default off, opt-in; `focus` = context focus for refining one component, default on; `preferences` = cross-session preference memory); `false` to turn off |
 | | `permissions` | `PermissionRule[]` | Scope whitelist (first-match-wins, default off) |
 | | `humanConfirm` | `boolean` · default `true` | Proactive inquiry (AI asks when uncertain/multi-plan) |
@@ -461,6 +464,7 @@ After `npm run dev`, visit the corresponding page:
 | animation-demo | `/examples/animation-demo/` | ChatDialog enter/collapse/unmount animations + inline/drawer + hide/show |
 | multi-agent-demo | `/examples/multi-agent-demo/` | Multi-agent parallel + exclusive switch (3 independent agents, drawer hide/show keeps each history) |
 | proxy-demo | `/examples/proxy-demo/` | LLM connection config: proxy to prevent apiKey leakage (browser holds only userToken, proxy injects real key; auto-refresh on expired token; needs `npm run proxy:mock`) + Provider switch (`provider:'anthropic'` for Claude native protocol, streaming + extended thinking) |
+| images-demo | `/examples/images-demo/` | Image input: text-only main model + `images.describe` captioning bypass (captions injected, image never sent; auto direct-send when the main model is multimodal) |
 
 Framework-agnostic integration: `demo/plain.html` (importmap + esm.sh).
 
@@ -495,7 +499,7 @@ function switchTo(i: number) {
 ## Self-tests
 
 ```bash
-npm test            # 2896 assertions (tsx, source-level; no LLM dependency)
+npm test            # 2894 assertions (tsx, source-level; no LLM dependency)
 npm run test:e2e    # 943 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
