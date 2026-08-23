@@ -37,7 +37,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     }
     // vfs+resources 全开的工具面:补齐 draft/resource 写标注断言
     const full = createDataOps({
-      schema: z.object({ title: z.string(), components: z.array(z.object({ name: z.string(), code: z.string() })), secrets: z.record(z.string()) }),
+      schema: z.object({ title: z.string(), components: z.array(z.object({ name: z.string(), code: z.string() })), secrets: z.record(z.string(), z.string()) }),
       bind: { title: 't', components: [], secrets: {} },
       description: '测试',
       resources: [{ path: 'secrets.k', mode: 'freeze' }],

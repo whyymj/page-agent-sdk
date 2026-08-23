@@ -102,7 +102,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     // P1-6:先正常 capture,集成方收尾 setMission({}) 解除锚定 → 同会话历史含任务型 user 也不再重捕(防过期目标重锚)
     const mw = createMissionMiddleware()
     mw.beforeAgent!(mkState([{ role: 'user', content: '帮我搭建一个活动页面' }]) as any)
-    assert(/帮我搭建一个活动页面/.test(mw.getMission()?.goal), '✓ P1-6 前置:先 capture mission')
+    assert(/帮我搭建一个活动页面/.test(mw.getMission()?.goal ?? ''), '✓ P1-6 前置:先 capture mission')
     mw.setMission({})
     assert(mw.getMission() === undefined, '✓ P1-6 setMission({}) → mission 清空')
     // 同会话再次 beforeAgent(历史仍含任务型 user)→ 不重捕

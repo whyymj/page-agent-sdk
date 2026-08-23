@@ -1,29 +1,14 @@
 /** sec-80:team-review-hardening 阶段 E(E1-E5 行为批) */
 import type { TestCtx } from './_ctx'
-import { createAgent, computeMaxIterations, roundBudgetHintText } from '../../harness/createAgent'
+import { computeMaxIterations, roundBudgetHintText } from '../../harness/createAgent';
 import { createVfs, createVfsTools } from '../../backends/vfs'
 import { createSessionStore } from '../../backends/storage'
 import { asAgentError } from '../../tools/toolError'
-import { BaseChatModel } from '@langchain/core/language_models/chat_models'
-import { AIMessage, AIMessageChunk } from '@langchain/core/messages'
-import { tool } from '@langchain/core/tools'
 
 export async function run(ctx: TestCtx): Promise<void> {
   const { assert } = ctx
   console.log('\n[sec-80:team-review-hardening E1-E5]')
 
-  // Mock LLM for testing
-  class MockLLM extends BaseChatModel {
-    scripts: Array<{ content?: string; toolCalls?: Array<{ id?: string; name: string; args?: any }> }>
-    idx = 0
-    constructor(scripts: any[]) { super({}); this.scripts = scripts }
-    _llmType(): string { return 'mock' }
-    async *_streamResponseChunks(_messages: any, _options: any): AsyncGenerator<any> {
-      const s = this.scripts[this.idx++] ?? { content: '完成。' }
-      const tcc = (s.toolCalls ?? []).map((tc, i) => ({ id: tc.id ?? `c${i}`, name: tc.name, args: JSON.stringify(tc.args ?? {}), index: i }))
-      yield { text: s.content ?? '', message: new AIMessageChunk({ content: s.content ?? '', tool_call_chunks: tcc }), generationInfo: {} }
-    }
-  }
 
   console.log('\nE1:wrapToolCall 异常契约')
   {
@@ -94,7 +79,7 @@ export async function run(ctx: TestCtx): Promise<void> {
 
     // 写一个 3MB 的内容到默认 2MB 的 userFiles 池
     const hugeContent = 'x'.repeat(3 * 1024 * 1024)
-    const result = await writeTool.invoke({ path: 'large.txt', content: hugeContent })
+    const result = await writeTool!.invoke({ path: 'large.txt', content: hugeContent })
 
     assert(result.includes('VFS_POOL_LIMIT_EXCEEDED'), 'E4 应报池超限错误')
     assert(result.includes('3.00MB'), 'E4 错误应显示内容大小')
@@ -102,7 +87,7 @@ export async function run(ctx: TestCtx): Promise<void> {
 
     // 池内正常大小照常写入
     const normalContent = '正常内容'
-    const normalResult = await writeTool.invoke({ path: 'normal.txt', content: normalContent })
+    const normalResult = await writeTool!.invoke({ path: 'normal.txt', content: normalContent })
     assert(normalResult.includes('已写入'), 'E4 正常大小应写入成功')
     assert(!normalResult.includes('VFS_POOL_LIMIT_EXCEEDED'), 'E4 正常大小不应报错')
   }

@@ -205,7 +205,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     const subMw = createSubagentMiddleware({
       llm: {
         provider: 'anthropic', apiKey: 'sk-ant-test', model: 'claude-3-5-sonnet-20241022',
-        baseUrl: 'https://api.anthropic.test', contextWindow: 200000, maxTokens: 64,
+        baseUrl: 'https://api.anthropic.test', ...({ contextWindow: 200000 } as any), maxTokens: 64,
         extraConfig: { fetch: fakeFetch },
       },
       allTools: () => [],

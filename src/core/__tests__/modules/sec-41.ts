@@ -105,7 +105,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 场景 1:autoLock + bind 被改 → 触发 onConflict 介入(keep_external),草稿保留,bind 未被覆盖
     const bindA1 = { title: 'orig', count: 1 }
     const vfsA1 = createVfs()
-    let conflictCalled = false
+    let conflictCalled: boolean = false
     const opsA1 = createDataOps({ schema, bind: bindA1, description: 'A1' }, { conflictWatchFields: ['*'],
       vfsStore: vfsA1 as any,
       onConflict: async () => { conflictCalled = true; return { action: 'keep_external' } },
@@ -114,8 +114,8 @@ export async function run(ctx: TestCtx): Promise<void> {
     await invoke(byNameA1['draft_write'], { draftId: 'c1', chunk: '{"title":"drafted","count":9}', mode: 'start' })
     await invoke(byNameA1['get_data'], {})  // read 拿 hash(autoLock 记 lastReadHash)
     bindA1.count = 999  // 外部改 bind(模拟 draft 累积期间被改)
-    const rc1 = await invoke(byNameA1['draft_commit'], { draftId: 'c1' })
-    assert(conflictCalled === true, 'A1 → draft_commit 乐观锁:bind 被改过 → 触发 onConflict 介入(不静默覆盖整份大 JSON)')
+    await invoke(byNameA1['draft_commit'], { draftId: 'c1' });
+    assert((conflictCalled as boolean) === true, 'A1 → draft_commit 乐观锁:bind 被改过 → 触发 onConflict 介入(不静默覆盖整份大 JSON)')
     assert(bindA1.title === 'orig' && bindA1.count === 999, 'A1 → 冲突 keep_external:bind 保留外部值(未被草稿覆盖)')
     assert('drafts/c1.json' in (vfsA1 as any).files, 'A1 → 冲突时草稿保留(未清,LLM 重 read 后可再 commit)')
 

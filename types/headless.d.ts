@@ -1123,6 +1123,7 @@ export declare function defineTool(opts: {
   description: string;
   schema: any;
   handler: (args: any) => unknown | Promise<unknown>;
+  writeCapable?: boolean | ((args: Record<string, unknown>) => boolean);
 }): any;
 export declare function createDataOps(config: DataConfig, opts?: DataOpsOptions): any[];
 /** 整体 set 写入纯函数:schema 校验 + 快照 + merge/替换 + audit。set_data / write(set) / draft_commit 共用。返回 {ok,hash,data} 或 {ok:false,error} */

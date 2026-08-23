@@ -205,7 +205,7 @@ export async function run(ctx: TestCtx) {
       new AIMessage({ content: '', tool_calls: [
         { name: 'read', args: { jsonPath: 'components.0' }, type: 'tool_call' },
       ] }),
-      new ToolMessage({ content: 'v' }), // 无 tool_call_id
+      new ToolMessage({ content: 'v' } as any), // 无 tool_call_id
       ...mkRound([{ name: 'write', args: {} }], ['ok']),
     ]
     assert(invalidateStaleReads(messages, [W('write', { patch: { op: 'set', jsonPath: 'components.0.title', value: 'x' } })]).invalidatedCount === 1, '✓ 兜底配对 → id 缺失按顺序配对仍识别 read')

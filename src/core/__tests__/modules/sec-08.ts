@@ -1,23 +1,4 @@
-import { z } from 'zod'
-import { createDataOps } from '../../tools/dataOps'
-import { fetchDocTools } from '../../tools/fetchDoc'
-import { selectBuiltinTools, fetchTools, defineDataToolset } from '../../toolsets'
-import { createUsageHintsMiddleware } from '../../harness/usageHints'
-import { offloadLargeResult } from '../../utils/offload'
-import { createVfs, createVfsTools } from '../../backends/vfs'
-import { createTodosMiddleware } from '../../harness/todos'
-import { createSkillsMiddleware, defineSkill, resolveDocKind, normalizeVfsPath, readSkillDoc } from '../../harness/skills'
-import { createPermissionsMiddleware } from '../../harness/permissions'
-import { createMemoryMiddleware } from '../../harness/memory'
-import { applyUpdate, runBeforeAgent, runAfterModel, runBeforeReturn } from '../../harness/middleware'
-import { isAbort, isRetryable, withRetry } from '../../harness/retry'
-import { runPool } from '../../utils/pool'
-import { createSubagentMiddleware, createSubagentsMiddleware } from '../../harness/subagent'
-import { createVerifyMiddleware, createWriteBackCheck, isAdversarialClean } from '../../harness/verify'
-import { createApprovalMiddleware } from '../../harness/approval'
-import { createHumanConfirmTool, createHumanConfirmMiddleware, HUMAN_CONFIRM_TOOL_NAME } from '../../harness/humanConfirm'
-import { createCheckpointManager, createCheckpointMiddleware } from '../../harness/checkpoint'
-import { extractText } from '../../mcp/client'
+import { applyUpdate, runBeforeAgent, runAfterModel } from '../../harness/middleware';
 import { createInitialState as createState } from '../../harness/state'
 import {
   encodeKey,
@@ -30,22 +11,13 @@ import {
   createWebStorageBackend,
 } from '../../backends/storage'
 import { createSkillStore } from '../../backends/skillStore'
-import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from '../../utils/modelCaps'
-import { useContextManager } from '../../composables/useContextManager'
-import { resolveContextOptions } from '../../sdk/contextPreset'
-import { jpEval, searchJson } from '../../tools/dataSlotQuery'
-import { createAgent, trimContextIfNeededImpl } from '../../harness/createAgent'
-import { trimMemoryMessagesImpl } from '../../utils/rounds'
-import type { Middleware } from '../../harness/middleware'
-import { BaseChatModel } from '@langchain/core/language_models/chat_models'
-import { AIMessage, AIMessageChunk, SystemMessage, HumanMessage, ToolMessage } from '@langchain/core/messages'
 
 // tsx 运行时由 node 提供 process;tsc 静态检查无 @types/node,显式声明其类型
 import type { TestCtx } from './_ctx'
 
 // middleware 执行器
 export async function run(ctx: TestCtx): Promise<void> {
-  const { assert, invoke, byName } = ctx
+  const { assert } = ctx;
   console.log('\n[middleware executor]')
   {
     const s = applyUpdate(createState(), { memory: 'x' })
@@ -186,7 +158,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     const sid6 = await s6.createSession('c')
     await Promise.all([
       s6.save('c', sid6, { messages: [{ role: 'user', content: 'm'.repeat(100), timestamp: 1 }] }),
-      s6.save('c', sid6, { todos: [{ content: 't'.repeat(100), status: 'pending' }] }),
+      s6.save('c', sid6, { todos: [{ id: 't-1', content: 't'.repeat(100), status: 'pending' }] }),
       s6.save('c', sid6, { memory: 'M'.repeat(100) }),
     ])
     await s6.flush()

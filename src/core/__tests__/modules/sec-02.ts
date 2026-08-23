@@ -1,42 +1,7 @@
 import { z } from 'zod'
 import { createDataOps } from '../../tools/dataOps'
-import { fetchDocTools } from '../../tools/fetchDoc'
-import { selectBuiltinTools, fetchTools, defineDataToolset } from '../../toolsets'
-import { createUsageHintsMiddleware } from '../../harness/usageHints'
 import { offloadLargeResult } from '../../utils/offload'
 import { createVfs, createVfsTools } from '../../backends/vfs'
-import { createTodosMiddleware } from '../../harness/todos'
-import { createSkillsMiddleware, defineSkill, resolveDocKind, normalizeVfsPath, readSkillDoc } from '../../harness/skills'
-import { createPermissionsMiddleware } from '../../harness/permissions'
-import { createMemoryMiddleware } from '../../harness/memory'
-import { applyUpdate, runBeforeAgent, runAfterModel, runBeforeReturn } from '../../harness/middleware'
-import { isAbort, isRetryable, withRetry } from '../../harness/retry'
-import { runPool } from '../../utils/pool'
-import { createSubagentMiddleware, createSubagentsMiddleware } from '../../harness/subagent'
-import { createVerifyMiddleware, createWriteBackCheck, isAdversarialClean } from '../../harness/verify'
-import { createApprovalMiddleware } from '../../harness/approval'
-import { createHumanConfirmTool, createHumanConfirmMiddleware, HUMAN_CONFIRM_TOOL_NAME } from '../../harness/humanConfirm'
-import { createCheckpointManager, createCheckpointMiddleware } from '../../harness/checkpoint'
-import { extractText } from '../../mcp/client'
-import { createInitialState as createState } from '../../harness/state'
-import {
-  encodeKey,
-  estimateBytes,
-  selectForEviction,
-  isQuotaError,
-  defaultMaxBytesFor,
-  createMemoryBackend,
-  createSessionStore,
-} from '../../backends/storage'
-import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from '../../utils/modelCaps'
-import { useContextManager } from '../../composables/useContextManager'
-import { resolveContextOptions } from '../../sdk/contextPreset'
-import { jpEval, searchJson } from '../../tools/dataSlotQuery'
-import { createAgent, trimContextIfNeededImpl } from '../../harness/createAgent'
-import { trimMemoryMessagesImpl } from '../../utils/rounds'
-import type { Middleware } from '../../harness/middleware'
-import { BaseChatModel } from '@langchain/core/language_models/chat_models'
-import { AIMessage, AIMessageChunk, SystemMessage, HumanMessage, ToolMessage } from '@langchain/core/messages'
 
 import type { TestCtx } from './_ctx'
 
@@ -209,9 +174,9 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 内容寻址去重:相同内容 → 相同文件名,反复外存不新增文件
     const files2: Record<string, { content: string; updatedAt: number }> = {}
     const bigA = 'A'.repeat(10000)
-    const r1 = offloadLargeResult(bigA, { toolName: 'load_skill', vfsAvailable: true, files: files2, threshold: 6000 })
+    offloadLargeResult(bigA, { toolName: 'load_skill', vfsAvailable: true, files: files2, threshold: 6000 });
     const keys1 = Object.keys(files2)
-    const r2 = offloadLargeResult(bigA, { toolName: 'load_skill', vfsAvailable: true, files: files2, threshold: 6000 })
+    offloadLargeResult(bigA, { toolName: 'load_skill', vfsAvailable: true, files: files2, threshold: 6000 });
     const keys2 = Object.keys(files2)
     assert(keys1.length === 1 && keys2.length === 1 && keys1[0] === keys2[0], '内容寻址去重:相同内容 → 相同文件名,反复外存不新增文件')
     assert(files2[keys1[0]].content === bigA, '外存内容完整')

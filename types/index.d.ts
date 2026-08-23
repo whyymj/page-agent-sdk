@@ -1548,6 +1548,8 @@ export declare function defineTool(opts: {
   description: string;
   schema: any;
   handler: (args: any) => unknown | Promise<unknown>;
+  /** 等效写标注:声明本工具会变更宿主数据(如编辑器结构工具);生效于零工具门禁/fact-sheet/stale-read 失效与 evidence 审计账本。布尔或 args 判定函数(条件写);缺省 false */
+  writeCapable?: boolean | ((args: Record<string, unknown>) => boolean);
 }): any;
 export declare function createDataOps(config: DataConfig, opts?: DataOpsOptions): any[];
 /** 整体 set 写入纯函数:schema 校验 + 快照 + merge/替换 + audit。set_data / write(set) / draft_commit 共用。返回 {ok,hash,data} 或 {ok:false,error} */

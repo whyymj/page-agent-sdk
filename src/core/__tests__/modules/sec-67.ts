@@ -17,7 +17,7 @@ export async function run(ctx: TestCtx): Promise<void> {
   const cfg = createRagSubagent({ retriever: stubRetriever })
   assert(cfg.id === 'rag', '✓ createRagSubagent → id 默认 rag')
   assert(cfg.maxToolRounds === 8, '✓ createRagSubagent → maxToolRounds 默认 8')
-  assert(cfg.systemPrompt?.includes('search_docs'), '✓ createRagSubagent → systemPrompt 含 search_docs 引导')
+  assert((cfg.systemPrompt as string | undefined)?.includes('search_docs'), '✓ createRagSubagent → systemPrompt 含 search_docs 引导')
   assert(cfg.allowedTools?.includes('vfs_grep'), '✓ useVfs(默认)→ allowedTools 含 vfs_grep')
   assert(cfg.allowedTools?.includes('vfs_read'), '✓ useVfs → allowedTools 含 vfs_read')
   assert(cfg.skills?.length === 1 && cfg.skills[0].name === 'rag-search', '✓ 默认装 rag-search skill')
@@ -65,19 +65,19 @@ export async function run(ctx: TestCtx): Promise<void> {
   // 提示词与工具面一致(rag-real-llm 修:没配的源不提,防 LLM 调不存在工具烧轮次)
   {
     // useVfs:false + 无 loader → prompt/skill 均不提 vfs_grep / load_doc(只提 search_docs + fetch_document)
-    assert(!cfg6.systemPrompt?.includes('vfs_grep'), '✓ useVfs:false → systemPrompt 不提 vfs_grep(与工具面一致)')
-    assert(!cfg6.systemPrompt?.includes('load_doc'), '✓ 无 loader → systemPrompt 不提 load_doc')
-    assert(cfg6.systemPrompt?.includes('search_docs'), '✓ 有 retriever → systemPrompt 提 search_docs')
-    const skillDoc6 = String(cfg6.skills![0].getContent())
+    assert(!(cfg6.systemPrompt as string | undefined)?.includes('vfs_grep'), '✓ useVfs:false → systemPrompt 不提 vfs_grep(与工具面一致)')
+    assert(!(cfg6.systemPrompt as string | undefined)?.includes('load_doc'), '✓ 无 loader → systemPrompt 不提 load_doc')
+    assert((cfg6.systemPrompt as string | undefined)?.includes('search_docs'), '✓ 有 retriever → systemPrompt 提 search_docs')
+    const skillDoc6 = String((cfg6.skills as any[])[0].getContent())
     assert(!skillDoc6.includes('vfs_grep') && !skillDoc6.includes('load_doc'), '✓ useVfs:false + 无 loader → skill 决策树不含 vfs/load')
     assert(skillDoc6.includes('search_docs'), '✓ 有 retriever → skill 决策树含 search_docs')
     // 全源形态(useVfs + retriever)→ prompt 含 vfs 优先引导
-    assert(cfg.systemPrompt?.includes('vfs_grep') && cfg.systemPrompt?.includes('search_docs'), '✓ 全源(useVfs+retriever)→ systemPrompt 含 vfs+search 引导')
+    assert((cfg.systemPrompt as string | undefined)?.includes('vfs_grep') && (cfg.systemPrompt as string | undefined)?.includes('search_docs'), '✓ 全源(useVfs+retriever)→ systemPrompt 含 vfs+search 引导')
     // loader-only → 不提 search_docs,提 load_doc;自定义工具名同步透传
     const cfgL = createRagSubagent({ loader: stubLoader, useVfs: false, searchToolName: 'lookup', loadToolName: 'fetch_doc_by_id' })
-    assert(!cfgL.systemPrompt?.includes('search_docs') && cfgL.systemPrompt?.includes('fetch_doc_by_id'), '✓ loader-only + 自定义工具名 → prompt 只提存在的源且用自定义名')
+    assert(!(cfgL.systemPrompt as string | undefined)?.includes('search_docs') && (cfgL.systemPrompt as string | undefined)?.includes('fetch_doc_by_id'), '✓ loader-only + 自定义工具名 → prompt 只提存在的源且用自定义名')
     // 收尾纪律:「不要尝试未列出的工具」防 LLM 凭记忆调不存在工具
-    assert(cfg6.systemPrompt?.includes('未列出的工具'), '✓ systemPrompt 含「不要尝试未列出的工具」收尾纪律')
+    assert((cfg6.systemPrompt as string | undefined)?.includes('未列出的工具'), '✓ systemPrompt 含「不要尝试未列出的工具」收尾纪律')
   }
 
   // ===== createHtmlSubagent =====
@@ -93,15 +93,15 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert(hcfg.summarization === true, '✓ summarization 默认开(true,频繁改代码累积快)')
   assert(hcfg.temperature === 0.4, '✓ temperature 默认 0.4(代码生成低温)')
   assert(hcfg.maxToolRounds === 12, '✓ maxToolRounds 默认 12(中等任务)')
-  assert(hcfg.systemPrompt?.includes('html/'), '✓ systemPrompt 含 codeVfsPrefix(html/,工作副本引导)')
-  assert(!hcfg.systemPrompt?.includes('codeRef') && hcfg.systemPrompt?.includes('数据资产'), '✓ systemPrompt 单模式(砍 codeRef;代码作为 data.code 资产 + vfs 工作副本)')
+  assert((hcfg.systemPrompt as string | undefined)?.includes('html/'), '✓ systemPrompt 含 codeVfsPrefix(html/,工作副本引导)')
+  assert(!(hcfg.systemPrompt as string | undefined)?.includes('codeRef') && (hcfg.systemPrompt as string | undefined)?.includes('数据资产'), '✓ systemPrompt 单模式(砍 codeRef;代码作为 data.code 资产 + vfs 工作副本)')
   assert((hcfg as any)._codeAsset?.writablePaths?.length === 1 && (hcfg as any)._codeAsset?.ext === 'html', '✓ _codeAsset 标记设(createChatSdk 装配识别 → checkout/commit + pgIdPaths/largeTextPaths)')
   assert(hcfg.skills?.length === 1 && hcfg.skills[0].name === 'html-fragment', '✓ 默认装 html-fragment skill(单模式完整页面级)')
 
   // 结论落地声明契约(真 LLM 实测:主 agent 见返回 code 又 append 一遍 → 重复组件;子 agent 首行声明已创建 + 不贴代码全文)
-  assert(hcfg.systemPrompt?.includes('结论首行必须是落地声明') && hcfg.systemPrompt?.includes('已创建组件'),
+  assert((hcfg.systemPrompt as string | undefined)?.includes('结论首行必须是落地声明') && (hcfg.systemPrompt as string | undefined)?.includes('已创建组件'),
     '✓ 子 agent 结论首行落地声明(主 agent 据此判定已完成不重复写)')
-  assert(hcfg.systemPrompt?.includes('不要贴代码全文'), '✓ 子 agent 结论不贴代码全文(防诱发主 agent 再写一遍)')
+  assert((hcfg.systemPrompt as string | undefined)?.includes('不要贴代码全文'), '✓ 子 agent 结论不贴代码全文(防诱发主 agent 再写一遍)')
 
   // middleware 含 todos(getPlanPhase 是 createTodosMiddleware 特有)
   assert(!!hcfg.middleware && hcfg.middleware.length > 0, '✓ middleware 默认装(planning:true)')
@@ -117,7 +117,7 @@ export async function run(ctx: TestCtx): Promise<void> {
 
   // codeVfsPrefix 可配
   const hcfg4 = createHtmlSubagent({ writablePaths: ['components'], codeVfsPrefix: 'custom-code/' })
-  assert(hcfg4.systemPrompt?.includes('custom-code/'), '✓ codeVfsPrefix 可配(systemPrompt 含 custom-code/)')
+  assert((hcfg4.systemPrompt as string | undefined)?.includes('custom-code/'), '✓ codeVfsPrefix 可配(systemPrompt 含 custom-code/)')
 
   // writablePaths 可选(writablepaths-infer):未传/空数组不再工厂层抛错,透传 _codeAsset 由装配期推断;
   // 非法类型(非数组)仍在工厂层 fail-fast
@@ -132,25 +132,25 @@ export async function run(ctx: TestCtx): Promise<void> {
   console.log('\n[capability-packs · createHtmlSubagent 提示词参数化]')
   // codeField + 非默认数组路径 → systemPrompt/skill 示例路径全部跟随,不残留 components/code 写死
   const pcfg = createHtmlSubagent({ codeField: 'props.html_code', writablePaths: ['blocks'] })
-  assert(pcfg.systemPrompt?.includes('props.html_code') && pcfg.systemPrompt?.includes('blocks.N'),
+  assert((pcfg.systemPrompt as string | undefined)?.includes('props.html_code') && (pcfg.systemPrompt as string | undefined)?.includes('blocks.N'),
     '✓ codeField+writablePaths 参数化 → systemPrompt 含 props.html_code / blocks.N')
-  assert(!pcfg.systemPrompt?.includes('components.N.code') && !pcfg.systemPrompt?.includes('data 的 code 字段'),
+  assert(!(pcfg.systemPrompt as string | undefined)?.includes('components.N.code') && !(pcfg.systemPrompt as string | undefined)?.includes('data 的 code 字段'),
     '✓ 参数化后 systemPrompt 不残留 components.N.code / 「data 的 code 字段」写死示例')
-  assert(pcfg.skills?.[0].getContent().includes('blocks.N') && pcfg.skills?.[0].getContent().includes('props.html_code'),
+  assert(((pcfg.skills as any[] | undefined)?.[0] as any)?.getContent?.().includes('blocks.N') && ((pcfg.skills as any[] | undefined)?.[0] as any)?.getContent?.().includes('props.html_code'),
     '✓ 默认 skill 内容同参数化(blocks.N + props.html_code)')
-  assert(pcfg.description?.includes('props.html_code'), '✓ 默认 description 含 codeField(props.html_code)')
-  assert(!pcfg.description?.includes('custom'), '✓ 默认 description 不写死 custom(字段名以 codeField 为准)')
+  assert((pcfg.description as string | undefined)?.includes('props.html_code'), '✓ 默认 description 含 codeField(props.html_code)')
+  assert(!(pcfg.description as string | undefined)?.includes('custom'), '✓ 默认 description 不写死 custom(字段名以 codeField 为准)')
 
   // 默认参数快照:不传 → components + code
   const dcfg = createHtmlSubagent({})
-  assert(dcfg.systemPrompt?.includes('components.N') && dcfg.systemPrompt?.includes('data 的 code 字段'),
+  assert((dcfg.systemPrompt as string | undefined)?.includes('components.N') && (dcfg.systemPrompt as string | undefined)?.includes('data 的 code 字段'),
     '✓ 默认未传 writablePaths → 占位示例 components.N + 默认 codeField(向后兼容)')
 
   // 装配期重建钩子:推断回填 root 后 systemPrompt/skill 按新 root 重建(createChatSdk 装配期调用)
   ;(dcfg as any)._rebuildCodeAssetPaths('sections')
-  assert(dcfg.systemPrompt?.includes('sections.N') && !dcfg.systemPrompt?.includes('components.N'),
+  assert((dcfg.systemPrompt as string | undefined)?.includes('sections.N') && !(dcfg.systemPrompt as string | undefined)?.includes('components.N'),
     '✓ _rebuildCodeAssetPaths("sections") → systemPrompt 示例路径重建(不残留占位 components)')
-  assert(dcfg.skills?.[0].getContent().includes('sections.N') && !dcfg.skills?.[0].getContent().includes('components.N'),
+  assert(((dcfg.skills as any[] | undefined)?.[0] as any)?.getContent?.().includes('sections.N') && !((dcfg.skills as any[] | undefined)?.[0] as any)?.getContent?.().includes('components.N'),
     '✓ 默认 skill 同步重建(sections.N)')
 
   // 传自定义 skills → 重建只动 systemPrompt 不覆盖自定义 skill
@@ -162,8 +162,8 @@ export async function run(ctx: TestCtx): Promise<void> {
 
   // buildHtmlFragmentSkill 构造器导出:root/codeField 参数化(默认快照 htmlFragmentSkill 同 3.10.0 契约)
   const bskill = buildHtmlFragmentSkill('sections', 'innerHtml')
-  assert(bskill.getContent().includes('sections.N') && bskill.getContent().includes('innerHtml'),
+  assert((bskill.getContent!() as string).includes('sections.N') && (bskill.getContent!() as string).includes('innerHtml'),
     '✓ buildHtmlFragmentSkill("sections","innerHtml") → 内容参数化')
-  assert(htmlFragmentSkill.getContent() === buildHtmlFragmentSkill().getContent(),
+  assert((htmlFragmentSkill.getContent!() as string) === (buildHtmlFragmentSkill().getContent!() as string),
     '✓ htmlFragmentSkill = buildHtmlFragmentSkill() 默认快照(单一数据源)')
 }

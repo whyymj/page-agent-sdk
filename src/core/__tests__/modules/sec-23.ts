@@ -1,40 +1,8 @@
 import { z } from 'zod'
 import { createDataOps } from '../../tools/dataOps'
-import { fetchDocTools } from '../../tools/fetchDoc'
-import { selectBuiltinTools, fetchTools, defineDataToolset } from '../../toolsets'
-import { createUsageHintsMiddleware } from '../../harness/usageHints'
-import { offloadLargeResult } from '../../utils/offload'
-import { createVfs, createVfsTools } from '../../backends/vfs'
-import { createTodosMiddleware } from '../../harness/todos'
-import { createSkillsMiddleware, defineSkill, resolveDocKind, normalizeVfsPath, readSkillDoc } from '../../harness/skills'
-import { createPermissionsMiddleware } from '../../harness/permissions'
-import { createMemoryMiddleware } from '../../harness/memory'
-import { applyUpdate, runBeforeAgent, runAfterModel, runBeforeReturn } from '../../harness/middleware'
-import { isAbort, isRetryable, withRetry } from '../../harness/retry'
-import { runPool } from '../../utils/pool'
-import { createSubagentMiddleware, createSubagentsMiddleware } from '../../harness/subagent'
-import { createVerifyMiddleware, createWriteBackCheck, isAdversarialClean } from '../../harness/verify'
-import { createApprovalMiddleware } from '../../harness/approval'
-import { createHumanConfirmTool, createHumanConfirmMiddleware, HUMAN_CONFIRM_TOOL_NAME } from '../../harness/humanConfirm'
-import { createCheckpointManager, createCheckpointMiddleware } from '../../harness/checkpoint'
-import { extractText } from '../../mcp/client'
-import { createInitialState as createState } from '../../harness/state'
-import {
-  encodeKey,
-  estimateBytes,
-  selectForEviction,
-  isQuotaError,
-  defaultMaxBytesFor,
-  createMemoryBackend,
-  createSessionStore,
-} from '../../backends/storage'
-import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from '../../utils/modelCaps'
-import { useContextManager } from '../../composables/useContextManager'
-import { resolveContextOptions } from '../../sdk/contextPreset'
-import { jpEval, searchJson } from '../../tools/dataSlotQuery'
+import { createSubagentMiddleware } from '../../harness/subagent';
 import { createAgent, trimContextIfNeededImpl } from '../../harness/createAgent'
 import { estimateTokens } from '../../utils/modelCaps'
-import { trimMemoryMessagesImpl } from '../../utils/rounds'
 import type { Middleware } from '../../harness/middleware'
 import { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { AIMessage, AIMessageChunk, SystemMessage, HumanMessage, ToolMessage } from '@langchain/core/messages'
@@ -180,7 +148,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     let capturedStats: any = undefined
     const compressMw: Middleware = {
       name: 'fake-compress',
-      compressInput: async (msgs) => ({ messages: msgs, stats: { triggered: true, roundsTotal: 4, roundsSummarized: 2, roundsRecalled: 1, originalMessages: 8, compressedMessages: 5, strategy: 'token-window+llm_summary' } }),
+      compressInput: async (msgs: any) => ({ messages: msgs, stats: { triggered: true, roundsTotal: 4, roundsSummarized: 2, roundsRecalled: 1, originalMessages: 8, compressedMessages: 5, strategy: 'token-window+llm_summary' } }),
       afterAgent: (st) => { capturedStats = st.lastCompression },
     }
     const agentC = createAgent({ llm: new MockLLM([{ content: 'ok' }]) as any, middleware: [compressMw], maxToolRounds: 2, maxRetries: 0 })
@@ -198,9 +166,9 @@ export async function run(ctx: TestCtx): Promise<void> {
           yield { text: '完成', message: new AIMessageChunk({ content: '完成' }), generationInfo: {} }
         }
       }
-      const summaryMw: Middleware = {
+      const summaryMw = {
         name: 'p0-1-summary',
-        compressInput: async (msgs) => ({
+        compressInput: async (msgs: any) => ({
           messages: [{ role: 'system', content: '【对话历史摘要】之前讨论了 X 的实现细节' }, ...msgs],
           stats: { triggered: true },
         }),
@@ -244,6 +212,7 @@ export async function run(ctx: TestCtx): Promise<void> {
       class CtxOverflowLLM extends BaseChatModel {
         constructor() { super({}) }
         _llmType(): string { return 'ctx-overflow' }
+        async _generate(): Promise<any> { return { generations: [], llmOutput: {} } }
         bindTools() { return this }
         async *_streamResponseChunks(): AsyncGenerator<any> {
           ctxCalls++
@@ -269,6 +238,7 @@ export async function run(ctx: TestCtx): Promise<void> {
       class CtxOverflowTwiceLLM extends BaseChatModel {
         constructor() { super({}) }
         _llmType(): string { return 'ctx-overflow-2' }
+        async _generate(): Promise<any> { return { generations: [], llmOutput: {} } }
         bindTools() { return this }
         async *_streamResponseChunks(): AsyncGenerator<any> {
           ctxCalls2++

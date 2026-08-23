@@ -8,7 +8,6 @@ import {
 } from '../../harness/preferences'
 import {
   createPreferenceStore,
-  DEFAULT_MAX_PREFERENCES,
   PREFERENCE_TOPICS,
   type PersistedPreference,
 } from '../../backends/preferenceStore'
@@ -80,7 +79,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     const p1 = await store.put({ content: '不用紫色', topic: 'color', sourceSessionId: 's1', sourceRound: 0 })
     assert(p1.id.startsWith('pref-') && p1.content === '不用紫色', 'put 返回完整条目(生成 id)')
     // 同 topic 后说覆盖(保 id)
-    const p2 = await store.put({ content: '可以用紫色了,但要低饱和', topic: 'color', sourceSessionId: 's2', sourceRound: 5 })
+    await store.put({ content: '可以用紫色了,但要低饱和', topic: 'color', sourceSessionId: 's2', sourceRound: 5 });
     const list1 = await store.list()
     assert(list1.length === 1, '同 topic 合并:不新增条目')
     assert(list1[0].id === p1.id && list1[0].content === '可以用紫色了,但要低饱和', '后说覆盖前说(保 id,刷 content)')

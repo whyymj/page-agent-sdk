@@ -126,7 +126,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(po.success && po.data.components[0].__pgId === 'c_o', '✓ ZodObject extend 后 safeParse 不剥 __pgId(原行为保持)')
 
     // ④ element 非 object/union(record 等)→ fallback(不支持,向后兼容)
-    const rSchema = z.object({ meta: z.array(z.record(z.string())) })
+    const rSchema = z.object({ meta: z.array(z.record(z.string(), z.string())) })
     const { fallback: rFb } = extendSchemaWithPgId(rSchema, ['meta'])
     assert(rFb.length === 1 && rFb[0] === 'meta', '✓ record element 落 fallback(不支持,降级)')
   }
@@ -144,7 +144,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     )
     assert(!schemaHasCodeField(z.object({ title: z.string(), list: z.array(z.string()) })), '✓ 无 code 字段 → 不命中(不误注入降级编排)')
     assert(!schemaHasCodeField(z.any()), '✓ z.any() → 不命中(开放 schema 扫不到 → 集成方 opt-in spread htmlDirectWriteFallback)')
-    assert(!schemaHasCodeField(z.record(z.string())), '✓ z.record → 不命中(无 shape)')
+    assert(!schemaHasCodeField(z.record(z.string(), z.string())), '✓ z.record → 不命中(无 shape)')
     assert(!schemaHasCodeField(null), '✓ null/无 schema → 不命中(健壮)')
   }
 

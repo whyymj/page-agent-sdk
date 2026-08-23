@@ -15,10 +15,17 @@ export interface DefineToolOptions<S extends ZodType> {
   schema: S
   /** 工具执行体;返回 string 原样回传,其他值 JSON.stringify */
   handler: (args: z.infer<S>) => unknown | Promise<unknown>
+  /**
+   * 等效写标注(2026-08-23,editor 诊断驱动):声明本工具会变更宿主数据(如编辑器结构工具
+   * delete_component/add_component 走原生流程改页面)。生效面:零工具门禁不再误判「零写谎报」/
+   * fact-sheet 把它计入写入统计 / stale-read 失效与 evidence 审计账本纳入。布尔或 args 判定函数
+   * (条件写);缺省 false(纯读/纯动作工具勿标)。dataOps 内置工具同口径标注(单一真相源 markWrite)。
+   */
+  writeCapable?: boolean | ((args: Record<string, unknown>) => boolean)
 }
 
 export function defineTool<S extends ZodType>(opts: DefineToolOptions<S>): StructuredToolInterface {
-  return tool(
+  const t = tool(
     async (args) => {
       const res = await opts.handler(args as z.infer<S>)
       return typeof res === 'string' ? res : JSON.stringify(res)
@@ -29,4 +36,8 @@ export function defineTool<S extends ZodType>(opts: DefineToolOptions<S>): Struc
       schema: opts.schema,
     },
   )
+  if (opts.writeCapable !== undefined) {
+    ;(t as { writeCapable?: unknown }).writeCapable = opts.writeCapable
+  }
+  return t
 }

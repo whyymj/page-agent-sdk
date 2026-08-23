@@ -75,7 +75,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(!out.includes('[图片 2 描述]'), '转述注入 → 无 description 的图不产段')
     assert(appendImageDescriptions('原文', undefined) === '原文', '无 images → 原样返回')
     assert(appendImageDescriptions('原文', []) === '原文', '空 images → 原样返回')
-    assert(appendImageDescriptions('原文', [{ id: 'a' }]) === '原文', '全部无 description → 原样返回')
+    assert(appendImageDescriptions('原文', [{ id: 'a' } as any]) === '原文', '全部无 description → 原样返回')
   }
 
   console.log('\n[图片输入 · 轻形态持久化 / 恢复重水化]')

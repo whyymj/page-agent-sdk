@@ -19,9 +19,9 @@ export async function run(ctx: TestCtx): Promise<void> {
     }
     // 模拟 dataHintMw 的 augmentPrompt(闭包 liveData)
     let live = data
-    const dataHintMw = {
+    const dataHintMw: any = {
       name: 'dataHint',
-      augmentPrompt: () => {
+      augmentPrompt: (_s?: any) => {
         const hint = hintOf(live.schema)
         return `\n\n## 可操作数据\n${live.description ? live.description + '\n' : ''}${hint}` || undefined
       },
@@ -33,8 +33,8 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 模拟 setData 换 schema 后 liveData 更新 → 下轮 augmentPrompt 反映新 schema
     live = {
       description: '新配置',
-      schema: z.object({ newName: z.string().describe('新字段') }),
-      bind: { newName: 'x' },
+      schema: z.object({ newName: z.string().describe('新字段') }) as any,
+      bind: { newName: 'x' } as any,
     }
     const seg2 = dataHintMw.augmentPrompt(undefined as any)
     assert(!!seg2 && seg2.includes('新字段') && seg2.includes('新配置'), 'dataHint liveData 更新后 → augmentPrompt 反映新 schema(修 setData 不同步 Bug)')
@@ -46,7 +46,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     let live: any = undefined
     const dataHintMw = {
       name: 'dataHint',
-      augmentPrompt: () => (live ? hintOf(live.schema) : undefined),
+      augmentPrompt: (_s?: any) => (live ? hintOf(live.schema) : undefined),
     }
     assert(dataHintMw.augmentPrompt(undefined as any) === undefined, 'dataHint 无 data → augmentPrompt 返 undefined(跳过)')
   }
@@ -73,7 +73,7 @@ export async function run(ctx: TestCtx): Promise<void> {
   {
     const augmentSystemMw = {
       name: 'augmentSystem',
-      augmentPrompt: () => undefined,
+      augmentPrompt: (_s?: any) => undefined,
     }
     assert(augmentSystemMw.augmentPrompt(undefined as any) === undefined, 'augmentSystem 返回 undefined → 跳过该段')
   }
@@ -82,7 +82,7 @@ export async function run(ctx: TestCtx): Promise<void> {
   {
     const augmentSystemMw = {
       name: 'augmentSystem',
-      augmentPrompt: () => { throw new Error('boom') },
+      augmentPrompt: (_s?: any) => { throw new Error('boom') },
     }
     // 中间件实现应包 try/catch;此处验证回调本身抛错时被捕获后返 undefined
     let seg: string | undefined
@@ -102,7 +102,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     let receivedDesc: string | undefined
     const augmentSystemMw = {
       name: 'augmentSystem',
-      augmentPrompt: (s: any) => { receivedDesc = liveData().description; return 'seg' },
+      augmentPrompt: (_s: any) => { receivedDesc = liveData().description; return 'seg' },
     }
     augmentSystemMw.augmentPrompt(state as any)
     assert(receivedDesc === 'old', 'augmentSystem 回调 data 随 liveData 变(初始)')

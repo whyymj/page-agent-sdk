@@ -7,6 +7,7 @@
 import { z } from 'zod'
 import { createDataOps } from '../../tools/dataOps'
 import { pathsOverlap } from '../../harness/readInvalidation'
+import { isZeroEffectiveWrite } from '../../harness/actionGate'
 import { createAgent } from '../../harness/createAgent'
 import type { Middleware } from '../../harness/middleware'
 import { BaseChatModel } from '@langchain/core/language_models/chat_models'
@@ -111,6 +112,21 @@ export async function run(ctx: TestCtx) {
     const r = await invokeTool(tools, 'read', { jsonPath: 'meta.pageNme' })
     const hint = JSON.parse(String(r).slice(7)).hint
     assert(!hint.includes('_hidden') && hint.includes('pageName'), '✓ C2 键集收紧 → 嵌套父级只列声明键(meta.pageName 在,_hidden 不在)')
+  }
+
+  // ===== 1g. defineTool writeCapable 标注(editor 诊断驱动:结构工具不再被零工具门禁误判)=====
+  {
+    const { defineTool } = await import('../../sdk/defineTool')
+    const del = defineTool({ name: 'delete_component', description: '删', schema: z.object({ nodeId: z.string() }), handler: () => 'deleted', writeCapable: true })
+    const cond = defineTool({ name: 'run_script', description: '跑', schema: z.object({ mode: z.string() }), handler: () => 'ok', writeCapable: (a) => a.mode === 'transform' })
+    const rd = defineTool({ name: 'list_x', description: '列', schema: z.object({}), handler: () => '[]' })
+    const { isWriteCapableTool } = await import('../../harness/subagent')
+    assert(isWriteCapableTool(del), '✓ defineTool writeCapable → 布尔标注被 isWriteCapableTool 识别')
+    assert(isWriteCapableTool(cond, { mode: 'transform' }) && !isWriteCapableTool(cond, { mode: 'query' }), '✓ defineTool writeCapable → 条件函数 args-aware 生效')
+    assert(!isWriteCapableTool(rd), '✓ defineTool 缺省 → 不标不算写')
+    // 零工具门禁口径:结构工具计入等效写(不再误判「零写谎报」)
+    const usage = { counts: { delete_component: 1 }, writePaths: [], failures: 0 }
+    assert(!isZeroEffectiveWrite(usage, (n) => n === 'delete_component'), '✓ 结构工具标注 → 零工具门禁不再误伤清空/增删流')
   }
 
   // ===== 1f. 写侧键集建议(C2 延伸:patches PATH_DENIED / SCHEMA_STRIP / move 目标)=====

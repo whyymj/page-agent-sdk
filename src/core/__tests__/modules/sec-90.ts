@@ -19,13 +19,13 @@ export async function run(ctx: TestCtx): Promise<void> {
   // ===== A. OpenAI 兼容路径(extraBody.thinking)=====
   {
     // deep 注入:保留 extraBody 其它键
-    const r1 = applyThinkingMode({ apiKey: 'k', extraBody: { foo: 1 } }, 'deep')
+    const r1 = applyThinkingMode(({ apiKey: 'k', extraBody: { foo: 1 } }) as any, 'deep') as any
     assert((r1.extraBody?.thinking as any)?.type === 'enabled' && r1.extraBody?.foo === 1, '✓ thinkingMode deep → 注入 extraBody.thinking {type:enabled}(保留其它键)')
     // deep 保留已有 thinking 子键(如网关 budget)
     const r2 = applyThinkingMode({ apiKey: 'k', extraBody: { thinking: { budget_tokens: 100 } } }, 'deep')
     assert((r2.extraBody?.thinking as any)?.type === 'enabled' && (r2.extraBody?.thinking as any)?.budget_tokens === 100, '✓ thinkingMode deep → 保留已有 thinking 子键(budget 不丢)')
     // deep 无 extraBody → 新建
-    const r3 = applyThinkingMode({ apiKey: 'k' }, 'deep')
+    const r3 = applyThinkingMode(({ apiKey: 'k' }) as any, 'deep') as any
     assert((r3.extraBody?.thinking as any)?.type === 'enabled', '✓ thinkingMode deep → 无 extraBody 时新建')
     // simple 剥除:保留其它键
     const r4 = applyThinkingMode({ apiKey: 'k', extraBody: { thinking: { type: 'enabled' }, foo: 1 } }, 'simple')
@@ -39,23 +39,23 @@ export async function run(ctx: TestCtx): Promise<void> {
   // ===== B. Anthropic 路径(顶层 thinking 字段)=====
   {
     // deep 注入默认 budget:maxTokens 2000 → budget 2000
-    const r1 = applyThinkingMode({ apiKey: 'k', provider: 'anthropic' as const, maxTokens: 2000 }, 'deep')
+    const r1 = applyThinkingMode(({ apiKey: 'k', provider: 'anthropic' as const, maxTokens: 2000 }) as any, 'deep') as any
     assert(r1.thinking?.type === 'enabled' && r1.thinking?.budget_tokens === 2000, '✓ anthropic deep → 注入 thinking,budget_tokens = maxTokens(≤8000 时)')
     // budget 上限 8000
-    const r2 = applyThinkingMode({ apiKey: 'k', provider: 'anthropic' as const, maxTokens: 20000 }, 'deep')
+    const r2 = applyThinkingMode(({ apiKey: 'k', provider: 'anthropic' as const, maxTokens: 20000 }) as any, 'deep') as any
     assert(r2.thinking?.budget_tokens === 8000, '✓ anthropic deep → budget_tokens 上限 8000')
     // 无 maxTokens → 缺省 4096
-    const r3 = applyThinkingMode({ apiKey: 'k', provider: 'anthropic' as const }, 'deep')
+    const r3 = applyThinkingMode(({ apiKey: 'k', provider: 'anthropic' as const }) as any, 'deep') as any
     assert(r3.thinking?.budget_tokens === 4096, '✓ anthropic deep → 无 maxTokens 缺省 budget 4096')
     // 显式已配不覆盖(同引用返回)
     const preset = { apiKey: 'k', provider: 'anthropic' as const, thinking: { type: 'enabled' as const, budget_tokens: 5000 } }
     const r4 = applyThinkingMode(preset, 'deep')
     assert(r4 === preset && r4.thinking?.budget_tokens === 5000, '✓ anthropic deep → 显式已配 thinking 不覆盖')
     // simple 剥顶层 thinking
-    const r5 = applyThinkingMode({ apiKey: 'k', provider: 'anthropic' as const, thinking: { type: 'enabled' as const, budget_tokens: 5000 } }, 'simple')
+    const r5 = applyThinkingMode(({ apiKey: 'k', provider: 'anthropic' as const, thinking: { type: 'enabled' as const, budget_tokens: 5000 } }) as any, 'simple') as any
     assert(r5.thinking === undefined, '✓ anthropic simple → 剥 thinking 字段')
     // anthropic 路径不动 extraBody.thinking(协议不同,extraBody 对 Claude 无语义)
-    const r6 = applyThinkingMode({ apiKey: 'k', provider: 'anthropic' as const }, 'deep')
+    const r6 = applyThinkingMode(({ apiKey: 'k', provider: 'anthropic' as const }) as any, 'deep') as any
     assert(r6.extraBody === undefined, '✓ anthropic deep → 不污染 extraBody(思考走顶层 thinking)')
   }
 
@@ -64,6 +64,6 @@ export async function run(ctx: TestCtx): Promise<void> {
     const cfg = { apiKey: 'k', extraBody: { foo: 1 } }
     assert(applyThinkingMode(cfg, undefined) === cfg, '✓ 边界 → mode 未设原引用返回(零开销)')
     const nothing = { apiKey: 'k' }
-    assert(applyThinkingMode(nothing, 'simple') === nothing, '✓ 边界 → simple 无思考参数可剥时原引用返回')
+    assert(applyThinkingMode(nothing as any, 'simple') === nothing, '✓ 边界 → simple 无思考参数可剥时原引用返回')
   }
 }

@@ -1,42 +1,7 @@
 import { z } from 'zod'
 import { createDataOps } from '../../tools/dataOps'
-import { fetchDocTools } from '../../tools/fetchDoc'
-import { selectBuiltinTools, fetchTools, defineDataToolset } from '../../toolsets'
-import { createUsageHintsMiddleware } from '../../harness/usageHints'
-import { offloadLargeResult } from '../../utils/offload'
-import { createVfs, createVfsTools } from '../../backends/vfs'
-import { createTodosMiddleware } from '../../harness/todos'
-import { createSkillsMiddleware, defineSkill, resolveDocKind, normalizeVfsPath, readSkillDoc } from '../../harness/skills'
-import { createPermissionsMiddleware } from '../../harness/permissions'
-import { createMemoryMiddleware } from '../../harness/memory'
-import { applyUpdate, runBeforeAgent, runAfterModel, runBeforeReturn } from '../../harness/middleware'
-import { isAbort, isRetryable, withRetry } from '../../harness/retry'
-import { runPool } from '../../utils/pool'
-import { createSubagentMiddleware, createSubagentsMiddleware } from '../../harness/subagent'
-import { createVerifyMiddleware, createWriteBackCheck, isAdversarialClean } from '../../harness/verify'
-import { createApprovalMiddleware } from '../../harness/approval'
-import { createHumanConfirmTool, createHumanConfirmMiddleware, HUMAN_CONFIRM_TOOL_NAME } from '../../harness/humanConfirm'
-import { createCheckpointManager, createCheckpointMiddleware } from '../../harness/checkpoint'
-import { extractText } from '../../mcp/client'
-import { createInitialState as createState } from '../../harness/state'
-import {
-  encodeKey,
-  estimateBytes,
-  selectForEviction,
-  isQuotaError,
-  defaultMaxBytesFor,
-  createMemoryBackend,
-  createSessionStore,
-} from '../../backends/storage'
-import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars } from '../../utils/modelCaps'
-import { useContextManager } from '../../composables/useContextManager'
-import { resolveContextOptions } from '../../sdk/contextPreset'
-import { jpEval, searchJson } from '../../tools/dataSlotQuery'
-import { createAgent, trimContextIfNeededImpl } from '../../harness/createAgent'
 import { trimMemoryMessagesImpl } from '../../utils/rounds'
-import type { Middleware } from '../../harness/middleware'
-import { BaseChatModel } from '@langchain/core/language_models/chat_models'
-import { AIMessage, AIMessageChunk, SystemMessage, HumanMessage, ToolMessage } from '@langchain/core/messages'
+import type { AgentMessage } from '../../types'
 
 // tsx 运行时由 node 提供 process;tsc 静态检查无 @types/node,显式声明其类型
 import type { TestCtx } from './_ctx'
@@ -55,7 +20,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     for (let i = 1; i <= 5; i++) msgs.push(...mk(i))
 
     // 1. 首次裁剪:older=前2轮,生成摘要 system,保留最近3轮
-    const r1 = trimMemoryMessagesImpl(msgs, 3)
+    const r1 = trimMemoryMessagesImpl(msgs, 3) as any
     assert(r1.trimmed === true, '超 maxMemoryRounds → 触发裁剪')
     assert(r1.deleteFrom === 0 && r1.deleteCount === 4, '删除前2轮(4条消息)')
     assert(r1.summary.role === 'system' && /【更早对话摘要\(2 轮\)/.test(r1.summary.content), '生成摘要 system(2 轮)')
@@ -66,7 +31,7 @@ export async function run(ctx: TestCtx): Promise<void> {
 
     // 2. 再加2轮 → 6条+头部摘要,rounds=5轮(头部摘要被 groupRounds 跳过)→ 再次触发
     for (let i = 6; i <= 7; i++) msgs.push(...mk(i))
-    const r2 = trimMemoryMessagesImpl(msgs, 3)
+    const r2 = trimMemoryMessagesImpl(msgs, 3) as any
     assert(r2.trimmed === true, '再次超限 → 再次触发')
     // 关键:新摘要必须含旧摘要正文(累积),否则更早摘要被静默丢弃
     assert(/问题1/.test(r2.summary.content) && /问题2/.test(r2.summary.content), '旧摘要(问题1/2)并入新摘要,不丢累积')
@@ -75,11 +40,11 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(/问题3/.test(r2.summary.content) && /问题4/.test(r2.summary.content), '新 older(问题3/4)也并入')
 
     // 3. 未超限不触发
-    const r3 = trimMemoryMessagesImpl([r1.summary, ...mk(1), ...mk(2), ...mk(3)], 3)
+    const r3 = trimMemoryMessagesImpl([r1.summary, ...mk(1) as any, ...mk(2), ...mk(3)], 3)
     assert(r3.trimmed === false, '未超 maxMemoryRounds → 不触发')
 
     // 4. maxMemoryRounds<=0 关闭
-    const r4 = trimMemoryMessagesImpl(msgs, 0)
+    const r4 = trimMemoryMessagesImpl(msgs, 0) as any
     assert(r4.trimmed === false, 'maxMemoryRounds<=0 → 关闭不裁剪')
   }
 

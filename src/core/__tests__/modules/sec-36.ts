@@ -137,7 +137,7 @@ export async function run(ctx: TestCtx): Promise<void> {
   const elInfo = getElementInfo(el as any, {
     styles: ['display', 'background-color'],
     includeHtml: true,
-    getComputedStyle: () => ({ getPropertyValue: (k: string) => ({ display: 'inline-block', 'background-color': 'rgb(247, 201, 72)' })[k] ?? '' }),
+    getComputedStyle: (() => ({ getPropertyValue: (k: string) => ({ display: 'inline-block', 'background-color': 'rgb(247, 201, 72)' })[k] ?? '' })) as any,
   })
   assert(elInfo?.tag === 'button' && elInfo.text === '抢购' && elInfo.textAll === '立即抢购', '✓ getElementInfo → 直接文本 + 全文本')
   assert(elInfo?.styles?.display === 'inline-block' && elInfo.styles['background-color'] === 'rgb(247, 201, 72)', '✓ getElementInfo → 计算样式(注入 gcs 求值)')

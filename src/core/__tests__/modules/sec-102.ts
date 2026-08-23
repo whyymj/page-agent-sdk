@@ -211,7 +211,7 @@ export async function run(ctx: TestCtx) {
   // ===== 8. usageHints 引导段(A1 引导与机制同 ship)=====
   {
     const mw = createUsageHintsMiddleware(undefined, false)
-    const st = { rounds: 0 } as HarnessState
+    const st = { rounds: 0 } as unknown as HarnessState
     const out = (mw.augmentPrompt as (st: HarnessState) => string | undefined)(st) ?? ''
     assert(out.includes('update_todo 标 completed 时附 evidence'), '✓ A1 引导 → usageHints 无条件段教 evidence(不再被 todoDeps 门控)')
   }

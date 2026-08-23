@@ -87,9 +87,9 @@ export interface RunFinishGatesInput {
   /** 当前 currentMessages(提取最近一条 user 消息,zero_tool/status_query 的触发对象) */
   messages: MsgLike[]
   /** evidence 审计基线:本会话累计成功写路径集(effectiveWritePaths 口径,含 ROOT=整体写;跨 invoke 持续累积) */
-  sessionWritePaths: Iterable<string>
-  /** invoke 起点的 todos 快照(id → {status, content});审计面 = 本 invoke 内翻转为 completed 的项(含 content 比对防 id 复用误判) */
-  todosStatusAtStart: Map<string, { status: string; content: string }>
+  sessionWritePaths?: Iterable<string>
+  /** invoke 起点的 todos 快照(id → {status, content});审计面 = 本 invoke 内翻转为 completed 的项(含 content 比对防 id 复用误判);缺省 = 空集 */
+  todosStatusAtStart?: Map<string, { status: string; content: string }>
 }
 
 /** 各层预算上限(原 createAgent 常量平移;≤2 = 一次回灌即收敛,两次仍异常则放行强收) */

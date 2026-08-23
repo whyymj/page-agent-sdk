@@ -166,7 +166,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     const bind: any = { cfg: { a: 1 }, items: ['x'] }
     const t = byName(createDataOps({ schema, bind, description: 'sec' })
     )
-    const r = await invoke(t['edit_data'], { op: 'merge', jsonPath: '', value: '{"__proto__":{"polluted":true},"b":2}' })
+    await invoke(t['edit_data'], { op: 'merge', jsonPath: '', value: '{"__proto__":{"polluted":true},"b":2}' });
     assert(bind.b === 2, '✓ merge 防污染 → 正常键落地')
     assert(!Object.prototype.hasOwnProperty.call(bind, '__proto__'), '✓ merge 防污染 → 无 __proto__ own 键')
     assert(({} as any).polluted === undefined, '✓ merge 防污染 → Object.prototype 未被污染')

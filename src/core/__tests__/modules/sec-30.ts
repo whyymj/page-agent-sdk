@@ -47,7 +47,7 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert(0 in arr && 1 in arr && !(2 in arr), 'deleteByPath → 数组删除无稀疏空位(索引连续,无 empty 槽)')
   // applyPatchToClone/Live remove 数组分支(edit/eval patches remove 两入口汇聚于此)
   const cArr: any = { items: [1, 2, 3] }
-  assert(applyPatchToClone(cArr, 'remove', 'items.1') === null, 'applyPatchToClone(remove 数组) → 成功返 null')
+  assert(applyPatchToClone(cArr, 'remove', 'items.1', undefined) === null, 'applyPatchToClone(remove 数组) → 成功返 null')
   assert(cArr.items.length === 2 && cArr.items[0] === 1 && cArr.items[1] === 3, 'applyPatchToClone(remove 数组) → splice 删中间项、前移')
   const liveArrDel: any = { items: [1, 2, 3] }
   applyPatchToLive(liveArrDel, 'remove', 'items.0', undefined)
@@ -107,14 +107,14 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert(c1.a.b === 2, 'applyPatchToClone(set) → 值已设')
   assert(applyPatchToClone({}, 'set', '', 1) === 'set 操作需要 jsonPath(整体替换请用 set_data)', 'applyPatchToClone(set 无 path) → 错误提示')
   const c2: any = { a: 1 }
-  assert(applyPatchToClone(c2, 'remove', 'a') === null, 'applyPatchToClone(remove) → 成功')
+  assert(applyPatchToClone(c2, 'remove', 'a', undefined) === null, 'applyPatchToClone(remove) → 成功')
   assert(c2.a === undefined, 'applyPatchToClone(remove) → 已删除')
   // remove 路径不存在(含数组索引越界)→ 显式报错(真 LLM 实测:remove components.8 越界静默 no-op,同批其他 op 生效整体报成功 → agent 以为删掉了)
   const missObj = { items: [1, 2] }
-  const missErr = applyPatchToClone(missObj, 'remove', 'items.5')
+  const missErr = applyPatchToClone(missObj, 'remove', 'items.5', undefined)
   assert(missErr !== null && missErr.includes('remove 路径不存在'), 'applyPatchToClone(remove 越界索引) → 显式报错(不静默 no-op)')
   assert(missObj.items.length === 2, 'applyPatchToClone(remove 越界) → 原数据未动')
-  assert(applyPatchToClone(missObj, 'remove', 'nope') !== null, 'applyPatchToClone(remove 不存在字段) → 显式报错')
+  assert(applyPatchToClone(missObj, 'remove', 'nope', undefined) !== null, 'applyPatchToClone(remove 不存在字段) → 显式报错')
 
   // findStrippedKeys 数组位移误伤(评审 CRITICAL 复现):move/remove 使携带 __pgNotes 的元素换位,
   // 按位置比较会误判「新增被剥离」→ 合法调序/删除被 SCHEMA_STRIP 拒,且 __pg* read 不可见 agent 无法自纠

@@ -43,7 +43,7 @@ function setup(bind: Record<string, unknown>, opts?: { codeField?: string; onWar
 }
 
 /** 模拟子 agent 跑完一轮(beforeAgent → vfs_edit → afterAgent)的 state */
-function runRound(mw: any, vfsEdits: Array<{ path: string; content: string }>, bind: any, vfsStore: any) {
+function runRound(mw: any, vfsEdits: Array<{ path: string; content: string }>, _bind: any, vfsStore: any) {
   const st = applyUpdate(createInitialState(), mw.beforeAgent!(createInitialState()) as any)
   for (const e of vfsEdits) {
     vfsStore.files[e.path] = { content: e.content, updatedAt: 0 }

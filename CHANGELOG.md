@@ -2,6 +2,12 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.45.0] - 2026-08-23
+
+### Added(defineTool 等效写标注,editor 诊断驱动)
+
+- **`defineTool({ writeCapable })`**:集成方自定义工具声明「等效写」—— editor 结构工具(delete_component/add_component 等走原生流程改页面)此前无任何途径标注,零工具门禁把「清空页面」类纯结构操作误判为「零写谎报」连拦两次(editor 实测 2026-08-23 诊断:模型被迫两轮自证)。标注后全链路生效:零工具门禁不再误伤 / fact-sheet 计入写入统计 / stale-read 失效与 evidence 审计账本纳入(结构工具无 jsonPath 参数 → 按整体写 ROOT 口径)。布尔或 args 判定函数(条件写);缺省 false
+
 ## [3.44.2] - 2026-08-23
 
 ### Fixed(evidence 审计 P0,真 LLM 探针 S2 实证)

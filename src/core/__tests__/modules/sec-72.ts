@@ -133,7 +133,7 @@ export async function run(ctx: TestCtx): Promise<void> {
   const cfg4 = createHtmlSubagent({ writablePaths: ['components'] })
   assert(cfg4.skills?.length === 1 && cfg4.skills[0].name === 'html-fragment', '✓ 单模式 → 默认 html-fragment skill')
   assert(cfg4.systemPrompt?.includes('.html'), '✓ 单模式 → systemPrompt 引导 .html 文件')
-  assert(cfg4.skills?.[0].getContent?.().includes('完整、自包含'), '✓ html-fragment skill 含完整页面输出契约')
+  assert(String(cfg4.skills?.[0].getContent?.()).includes('完整、自包含'), '✓ html-fragment skill 含完整页面输出契约')
   const cfg5 = createHtmlSubagent({ writablePaths: ['components'] })
   assert(cfg5.skills?.[0].name === 'html-fragment', '✓ 单模式(去 codeKind/sfc)→ 默认 html-fragment skill')
 }

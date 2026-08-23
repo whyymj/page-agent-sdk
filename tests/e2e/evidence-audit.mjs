@@ -2,7 +2,7 @@
 //  - 编造路径:本 invoke 标 completed + evidence path 形态 + 会话累计写路径零重叠 → 回灌三出口,修正后放行
 //  - 真实路径:零触发零额外轮次
 //  - A1 rider:完结门禁回灌文案追加「已完成但 evidence 为空」项(只搭车,零新触发,轮次结构与旧版一致)
-import { setupEnv, createAssert, createChatSdk, z } from './_helpers.mjs'
+import { setupEnv, createAssert, createChatSdk, z, defineTool } from './_helpers.mjs'
 import { stubModel } from './_stub-model.mjs'
 
 const CAPS = { fetch: false, skills: false, vfs: false, summarization: false, memory: false, subagent: false }
@@ -80,6 +80,26 @@ export async function run() {
     const gateLogs = sdk.debugLogs.value.filter((l) => l.data?.stage === 'completion_gate')
     assert(gateLogs.length === 1, `✓ A1 rider e2e → 完结门禁仍恰 1 次(rider 只搭车不新增触发;实际 ${gateLogs.length})`)
     assert(model.calls === 6, `✓ A1 rider e2e → 轮次结构与旧版一致(实际 ${model.calls})`)
+    sdk.unmount()
+  }
+
+  console.log('[e2e:evidence-audit] defineTool writeCapable → 零工具门禁不误伤结构工具流')
+  {
+    // editor 诊断驱动(2026-08-23):「清空页面」类纯结构操作走宿主 delete_component,旧口径 write×0 被误拦 2 次
+    const del = defineTool({
+      name: 'delete_component', description: '删除组件(原生流程)', writeCapable: true,
+      schema: z.object({ nodeId: z.string() }), handler: () => '已删除',
+    })
+    const model = stubModel(
+      { toolCalls: [{ name: 'delete_component', arguments: { nodeId: 'n1' } }] },
+      { text: '页面已清空。' },
+    )
+    const sdk = createChatSdk({ ui: false, id: 'e2e-writecap', storage: false, llm: model, capabilities: { fetch: false, skills: false, vfs: false, summarization: false, memory: false, subagent: false }, tools: [del] })
+    await sdk.mount()
+    const reply = await sdk.send('清空页面')
+    assert(reply.includes('已清空'), '✓ writeCapable e2e → 结构工具流正常收口')
+    assert(model.calls === 2, `✓ writeCapable e2e → 零工具门禁零误伤(2 次调用即收口;实际 ${model.calls})`)
+    assert(!sdk.debugLogs.value.some((l) => l.data?.stage === 'zero_tool_gate'), '✓ writeCapable e2e → zero_tool_gate 零触发')
     sdk.unmount()
   }
 

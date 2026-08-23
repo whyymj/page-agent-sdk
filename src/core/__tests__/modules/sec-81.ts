@@ -49,7 +49,7 @@ export async function run(ctx: TestCtx): Promise<void> {
   {
     // isIconHtml:首非空白字符 '<' → HTML 片段;纯文本(emoji/字符/空串)→ false
     assert(isIconHtml('<svg width="12"></svg>') === true, 'isIconHtml 内联 svg → true')
-    assert(isIconHtml('  <img src="x">' ) === true, 'isIconHtml 前导空白后 '<' → true(trimStart)')
+    assert(isIconHtml('  <img src="x">' ) === true, 'isIconHtml 前导空白后「<」→ true(trimStart)')
     assert(isIconHtml('🦈') === false && isIconHtml('A') === false, 'isIconHtml 纯文本(emoji/字母)→ false')
     assert(isIconHtml('') === false, 'isIconHtml 空串 → false(隐藏图标,非 HTML)')
     // 白名单形状:不放行脚本/样式/链接标签;不放行事件属性/href/style(净化安全下限,浏览器 spec 锁行为)

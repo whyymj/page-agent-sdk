@@ -146,7 +146,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     const userTool1 = tool(() => 'a', { name: 'tool_a', description: 'A', schema: z.object({}) })
     const userTool2 = tool(() => 'b', { name: 'tool_b', description: 'B', schema: z.object({}) })
     let allTools: StructuredToolInterface[] = [userTool1]
-    let llmWithTools = mockLlm.bindTools(allTools)
+    let llmWithTools = mockLlm.bindTools(allTools); void llmWithTools
     function rebindTools() { llmWithTools = allTools.length > 0 ? (mockLlm.bindTools?.(allTools) ?? mockLlm) : mockLlm }
     function setTools(userTools: StructuredToolInterface[]) {
       allTools = [...userTools]
@@ -165,11 +165,11 @@ export async function run(ctx: TestCtx): Promise<void> {
   // ===== llm 动态化(setLlm rebind) =====
   {
     let bindCalls = 0
-    const mockLlm1: any = { bindTools: (t: any) => { bindCalls++; return { ...mockLlm1, _bound: true } }, stream: async () => { throw new Error('mock') } }
-    const mockLlm2: any = { bindTools: (t: any) => { bindCalls++; return { ...mockLlm2, _bound: true } }, stream: async () => { throw new Error('mock') } }
+    const mockLlm1: any = { bindTools: (_t: any) => { bindCalls++; return { ...mockLlm1, _bound: true } }, stream: async () => { throw new Error('mock') } }
+    const mockLlm2: any = { bindTools: (_t: any) => { bindCalls++; return { ...mockLlm2, _bound: true } }, stream: async () => { throw new Error('mock') } }
     let llm: any = mockLlm1
     let allTools: StructuredToolInterface[] = [tool(() => 'x', { name: 'x', description: 'X', schema: z.object({}) })]
-    let llmWithTools = llm.bindTools(allTools)
+    let llmWithTools = llm.bindTools(allTools); void llmWithTools
     let llmChangeCount = 0
     function rebindTools() { llmWithTools = allTools.length > 0 ? (llm.bindTools?.(allTools) ?? llm) : llm }
     function setLlm(newLlm: any) { llm = newLlm; rebindTools(); llmChangeCount++ }

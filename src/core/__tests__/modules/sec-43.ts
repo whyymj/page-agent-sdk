@@ -4,7 +4,6 @@
  * - renderTodos 递归(有 parentId 缩进 + deps ✓/⏳ 阻塞标注 + evidence)/ 扁平 fallback(无 parentId)
  * - update_todo 改 deps/parentId/criteria/evidence(增量)
  */
-import { z } from 'zod'
 import { createTodosMiddleware, renderTodos } from '../../harness/todos'
 import { runBeforeAgent, runBeforeModel } from '../../harness/middleware'
 import type { TestCtx } from './_ctx'
