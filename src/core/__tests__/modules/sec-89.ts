@@ -36,7 +36,9 @@ export async function run(ctx: TestCtx): Promise<void> {
   // ===== B. buildGateFeedback =====
   {
     const fb = buildGateFeedback(mkTodos('completed', 'pending', 'in_progress'))
-    assert(fb.includes('t-2') && fb.includes('t-3') && !fb.includes('t-1'), '✓ 门禁反馈 → 只列未完成项(排除 completed)')
+    // completed 项不出现在未完成枚举行(`#t-N [status]` 形态);evidence-audit-gate A1 rider 会另列「已完成但
+    // evidence 为空」项(裸 #t-N),属设计内追加(见 sec-102 #7),不算「列入未完成」
+    assert(fb.includes('t-2') && fb.includes('t-3') && !/#t-1 \[/.test(fb), '✓ 门禁反馈 → 只列未完成项(排除 completed;rider 裸 id 另计)')
     assert(fb.includes('update_todo') && fb.includes('继续执行'), '✓ 门禁反馈 → 双出口(标记完成 / 继续执行)')
     assert(fb.includes('2 项'), '✓ 门禁反馈 → 未完成项计数')
     const longContent = '这是一个非常非常长的任务描述'.repeat(20)

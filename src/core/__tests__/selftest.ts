@@ -101,6 +101,9 @@ import { run as run_sec_95 } from './modules/sec-95'
 import { run as run_sec_98 } from './modules/sec-98'
 import { run as run_sec_99 } from './modules/sec-99'
 import { run as run_sec_100 } from './modules/sec-100'
+import { run as run_sec_101 } from './modules/sec-101'
+import { run as run_sec_102 } from './modules/sec-102'
+import { run as run_sec_103 } from './modules/sec-103'
 
 // tsx 运行时由 node 提供 process;tsc 静态检查无 @types/node,显式声明其类型
 declare const process: { exit(code?: number): never }
@@ -226,6 +229,9 @@ await run_sec_95(ctx)
 await run_sec_98(ctx)
 await run_sec_99(ctx)
 await run_sec_100(ctx)
+await run_sec_101(ctx)
+await run_sec_102(ctx)
+await run_sec_103(ctx)
   console.log(`\n==== ${passed}, ${failed} failed ====`)
   if (failed > 0) process.exit(1)
 })()

@@ -88,11 +88,17 @@ export function detectIncompleteFinish(todos: Todo[], finalContent: string): boo
 
 /** 完结门禁回灌文案:双出口 ——「活干完但忘 update_todo」是高频真实场景(flash 实测),
  *  只喊「继续执行」会逼模型把已完成的活再干一遍,故给「已完成→标记 / 未完成→继续」两条路。
- *  列未完成项 id+content(单项截断 60 字防超长)让模型精确定位。 */
+ *  列未完成项 id+content(单项截断 60 字防超长)让模型精确定位。
+ *  evidence-audit-gate A1 rider(2026-08-23):同时列「已完成但 evidence 为空」项 —— 只搭本回灌的车,
+ *  不新增触发/预算(引导与机制同 ship,见 usageHints evidence 段)。 */
 export function buildGateFeedback(todos: Todo[]): string {
   const pending = todos.filter((t) => t.status !== 'completed')
   const lines = pending.map((t) => `#${t.id} [${t.status}] ${t.content.length > 60 ? `${t.content.slice(0, 60)}…` : t.content}`).join('\n')
-  return `⚠️ 任务未完成:待办清单还有 ${pending.length} 项未完成:\n${lines}\n若这些工作实际已完成,请先用 update_todo 把它们全部标记 completed(或一次 write_todos 整表替换)再给出最终总结;若尚未完成,请继续执行剩余任务。不要中途停止。`
+  const noEvidence = todos.filter((t) => t.status === 'completed' && !t.evidence)
+  const rider = noEvidence.length
+    ? `\n另有 ${noEvidence.length} 项已标记完成但 evidence 为空(${noEvidence.map((t) => `#${t.id}`).join('、')}):标记完成时请用 update_todo 附 evidence(本次实际写入的 jsonPath,如 components.2);经委派完成等无主写路径时如实写明完成方式。`
+    : ''
+  return `⚠️ 任务未完成:待办清单还有 ${pending.length} 项未完成:\n${lines}\n若这些工作实际已完成,请先用 update_todo 把它们全部标记 completed(或一次 write_todos 整表替换)再给出最终总结;若尚未完成,请继续执行剩余任务。不要中途停止。${rider}`
 }
 
 export interface TodosMiddlewareOptions {
@@ -148,7 +154,7 @@ export function createTodosMiddleware(
               parentId: z.string().optional().describe('父任务 id(表达层级;structured-todos-tier)'),
               deps: z.array(z.string()).optional().describe('依赖的任务 id 数组(必须先完成)'),
               criteria: z.string().optional().describe('完成标准(可选)'),
-              evidence: z.string().optional().describe('完成证据(可选)'),
+              evidence: z.string().optional().describe('完成证据(标 completed 建议附实际写入的 jsonPath,如 components.2)'),
             }),
           )
           .describe('完整的任务清单(整表替换)'),
@@ -189,7 +195,7 @@ export function createTodosMiddleware(
         parentId: z.string().optional().describe('父任务 id(改层级;不传则不改)'),
         deps: z.array(z.string()).optional().describe('依赖任务 id 数组(不传则不改)'),
         criteria: z.string().optional().describe('完成标准(不传则不改)'),
-        evidence: z.string().optional().describe('完成证据(不传则不改)'),
+        evidence: z.string().optional().describe('完成证据(标 completed 建议附实际写入的 jsonPath,如 components.2;不传则不改)'),
       }),
     },
   )

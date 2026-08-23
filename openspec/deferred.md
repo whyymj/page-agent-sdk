@@ -176,7 +176,7 @@ SDK 定位是**框架无关的轻量页面 JSON 操作 Agent**(自研 Deep Agent
 
 ### 循环/终止面(6 项)
 
-1. ⏸ **工具错误回灌无重复检测**(H17 证实;审计标注「建议优先修」)——【中】LLM 反复以同参重试同工具(schema 误解/前置不满足)烧满 maxToolRounds(~10 轮)token 才 wrap-up;复现:mock LLM 在工具返回 SCHEMA_INVALID 后连续回同参调用。有 wrap-up 收口(非破坏),危害=token 浪费。方向:近错指纹(tool+参数哈希+错误码)连续相同 → 提前换策略提示/终止。
+1. ⏸ **工具错误回灌无重复检测**(H17 证实;审计标注「建议优先修」)——【中】LLM 反复以同参重试同工具(schema 误解/前置不满足)烧满 maxToolRounds(~10 轮)token 才 wrap-up;复现:mock LLM 在工具返回 SCHEMA_INVALID 后连续回同参调用。有 wrap-up 收口(非破坏),危害=token 浪费。方向:近错指纹(tool+参数哈希+错误码)连续相同 → 提前换策略提示/终止。**→ 2026-08-23 并入 [`2026-08-23-tool-call-economy`](./changes/2026-08-23-tool-call-economy/) C2 统一设计(同病灶两面:报错后瞎猜 = 错误即向导治,报错后死磕 = 本项治),随其实施收口。**
 2. ⏸ wrap-up 收口 filter 掉全部 SystemMessage,与 P0-1 修复(排除框架工具保留 SystemMessage)语义矛盾 ——【低】读码级;wrap-up 轮消息过滤丢 system 上下文。
 3. ⏸ send-invoke 吞掉 SYSTEM_PROMPT_OVER_BUDGET 等 error 事件 ——【低】需 systemPrompt 超预算 + 走 send(invoke)路径;onEvent('error') 不触发(stream 路径正常外发)。
 4. ⏸ 被拒写入(SCHEMA_INVALID)也退出 planning 重置预算 ——【中】需 planning 开启 + 首次写即校验失败;规划阶段被提前退出(应仅写成功才退出)。复现:planning + write 传违反 schema 的值。
@@ -438,7 +438,46 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 
 **来源**:editor-local-draft-restore Phase 3 真 LLM 验收(editor 本地 dev + Playwright)。LLM 网关(user-bff-api 代理)返回 **HTTP 200 + 错误 JSON 体**(`{"error_code":6003,...}`,非 SSE)时,流聚合出 null message → `createAgent` 循环层读 `message.tool_calls` 直接 `TypeError: Cannot read properties of null` **未捕获崩溃**(legacy 包 55408 行),未走三档错误模型/重试/observable。与已修的 stream 启动闸(响应头假死)同族不同路径:**响应头已到、body 非事件流、零 chunk 即 end** —— 流停滞看门狗(90s)来不及触发就先崩了。**重启触发**:任何网关/中转层返回 200+JSON 错误体的环境(editor 生产网关 6003 形态实测存在);或下次动 streamer/聚合层时顺手修。修法候选:流结束后校验聚合 message 非空,空/null → 构造 recoverable 错误回灌自纠(或按 body 可解析 JSON 判网关错误归因),禁止裸访问 tool_calls。
 
+## 2026-08-23 stale-read-invalidation 归档登记(数据驱动 fast-follow 决策点)
+
+### [2026-08-23] 委派写失效(v1.5 候选)— ⏸ 暂缓(明示盲区,等数据)
+
+**来源**:[`2026-08-21-stale-read-invalidation`](./changes/archive/2026-08-21-stale-read-invalidation/) 归档时的明示盲区。当前失效面只覆盖 SDK 写工具(write/edit/set/patches 族);**委派写(use_html 子 agent commit 直改 bind)与集成方/宿主直改不在失效面** —— 主 agent 在委派前读过的旧值,委派写完后仍是原文。v1 立项时评审裁定不纳入(委派写路径的 path 归属需按 `writablePaths` + `__pgId` 反解,复杂度独立成期)。**重启触发**:editor 真实会话出现「委派完成后主 agent 引用委派前旧值答非所问」的实际案例,或 v1.5 立项时。**候选方案**:commit 钩子按 `__pgId` → vfs 路径反解,对主历史打同款失效占位。
+
+### [2026-08-23] root 读新鲜骨架(读占位的下一层)— ⏸ 暂缓(等 thrash 数据)
+
+**来源**:同上 change。失效占位当前「钉原读路径引窄读」;若实测模型把窄读做成了整树重读(thrash 超标),下一层是给占位附**新鲜骨架**(path → 类型/子键名列表,不含值),让模型无需重读即可安全引用结构。**重启触发**:thrash 观测数据(写后 re-read 率)超标;2026-08-23 验收实测写后零 re-read(引用 write 结果),未触发。
+
+### [2026-08-23] jsonPaths 行级重写(失效占位体积优化)— ⏸ 暂缓(先验证再决定)
+
+**来源**:同上 change。多路径 read 的失效占位目前整段替换;若占位本身体积可观(几十路径 × 多行),可降为**行级**重写(只动被击中 path 的行)。**重启触发**:诊断日志里 stale 占位条目实测 > 数 KB 常态出现。单行 JSON 结构机械安全,但需先有体积压力数据。
+
+### [2026-08-23] review-agent(干净上下文评审 agent,B of completion-audit-reviewer)— ⏸ 暂缓(等一个真实案例)
+
+**来源**:`2026-08-23-evidence-audit-gate`(原 completion-audit-reviewer)三方评审拆分:B 残项独立留档。**裁决依据**(必要性评审):靶子「写偏了但 schema 全绿、任务意图未达成」在 CHANGELOG 与全部归档条目中**零实测案例**(近亲 3.34 拾取误解/3.35 问句误路由均为无 todos 单指令场景,意图误路由类,B 的成本闸 todos≥2 根本不覆盖);对 editor 是每任务持续税(12 组件任务 12 todos 全命中);收口点「fail 后撤回已见回复」的翻案语义是门禁族从未有过的新形状。本项目每层门禁立项都有实测事故压着(3.35/3.40.0/3.40.3/3.42),不让 B 成为第一个破例。
+
+**底稿**(设计完整,重启即取):收口点起全新上下文评审 subagent —— 只注入 mission + 本次用户消息原文 + todos(criteria)+ fact-sheet(机器事实非转述);只读工具(read/query_data/search_data/history_data)可抽查原始数据;收口强制经 `submit_review` 工具(zod verdict:`{verdict:'pass'|'fail', items:[{todoId?, criterion, expected, actual, evidencePath, pass}]}`);仅 fail 项 + evidencePath 锚点回流主 agent;预算 ≤2 超限放行;`capabilities.review` opt-in + `review:{llm?, minTodos?, timeoutMs?}`(主 flash + 评审 pro 推荐,独立模型避同类盲区);debugLogs `stage:'review_gate'` + `inspect().review`。
+
+**重启须知(机制评审挖出的坑,重启时必读)**:
+1. **组装五件套是真工作量**:`runSubagent` 是 subagent.ts 模块私有未导出 —— signal 继承(主 invoke abort 时评审子流要跟着断,否则继续烧 token 读已 swap 数据)/ `__pgDataScope` 包裹(评审者用主池 read 直读 bind 会污染主 scope 乐观锁基线,P1-13 语义)/ tracker 注册(手搓 createAgent 不会有 `inspect().subagent.history` 条目)/ usage 回传 / temperature 0(config 路径);建议直接导出复用 runSubagent 而非逐项复刻
+2. **无 verdict(含 garbled/超时)→ 放行 + observable `REVIEW_NO_VERDICT`**,不判 fail(否则主 agent 替评审者失职受罚,回灌无真实 evidencePath 可执行);「强制 submit_review」用评审栈自带 beforeReturn 中间件(扫 messages 判 tool_calls 是否出现,无则 feedback 回灌,评审 createAgent `maxVerifyAttempts ≥ 1` —— 注意 garbled 收口会绕过 beforeReturn)
+3. **timeoutMs 缺省应为有限值(60-120s)**,不对齐 opt-in 的 subagent.timeoutMs(评审同步阻塞主收口,理论挂起可达几十分钟)
+4. **定位 = adversarial 的结构化升级**(verify.ts:254-284 已是干净上下文只读评审先例:独立 createAgent + refute 姿态 + 只读工具;真缺口 = 审「产出 vs todos 意图」而非回复文本 + 结构化 verdict 替代 `无问题` 正则 + 挂收口点而非 verify check 后)—— 顺带修 adversarial 自己的组装洞(见 1)
+5. 触发条件补问号豁免(agent 中途向用户征询不该烧评审);与 evidence-audit-gate 的 A 是互补层(A 落地后观察触发率数据再判 B)
+6. wrap-up 旁路(轮次耗尽强制收口不走 beforeReturn)对 B 同样失明,proposal 需明示
+
+**重启触发**:editor 生产出现「schema/校验全绿但任务意图未达成、且非意图误路由类」的用户反馈(真实案例 ≥1);或 evidence-audit-gate A 运行数据显示谎报率高到本地判定不够。
+
+### [2026-08-23] query_data 多 expr(C3 of tool-call-economy)— ⏸ 暂缓(零数据支持)
+
+**来源**:`2026-08-23-tool-call-economy` 评审裁决:query→read 配对率无任何数据支持,最可能白做的一项。**重启须知**(回归面评审):复活时必须同步扩 `readInvalidation.ts` `readReadPaths` 的 expr 通道(现只认字符串 `expr`,C3 加 `exprs` 数组后走旧逻辑 → 空 expr 按 ROOT 定界 → 写后过度失效/漏失效)+ workingMemory.ts:96 的 query 路径捕获;结果分组返回单项失败不整批(照 read jsonPaths 先例)。
+
+### [2026-08-23] C1 read 结构预告(tool-call-economy)— ⏸ 暂缓(数据不支持)
+
+**来源**:`2026-08-23-tool-call-economy` Phase 0 挖掘裁决(mining-report.md):读→读邻接 11.1%、同 path 重复读 0、root 读 40% 是新会话首查需要 —— 探路二连读浪费信号不成立,骨架行的 token 反向风险不划算。**重启触发**:后续真 LLM 数据显示探路式二连读显著(如新集成方 schema 复杂交错场景)。**重启须知(评审红线已沉淀)**:骨架行严禁 `hash=` 字样(workingMemory 首匹配提取会吃脏值);必须从投影后的值计算(freeze/verbatim 占位符、`<code Nkb>` 摘要之后 —— 安全面);offload 外存大结果骨架须在预览头部存活;验收带 S1/S5 prompt token ±15% 反向门禁。
+
 ## 维护约定
+
 
 - 暂缓项**不进** `project.md`「进行中的 change」(避免占心智);本文件是唯一索引。
 - 🔄 **定位升级后**(2026-08-01):5 项全部重启授权,分期落地(见 `doc/archive/complex-agent-roadmap.md` + 上方覆盖块)。重启以 `revive-*` / 调整后新 change 推进(不直接 apply 旧 proposal —— 默认策略 / 依赖绑定 / 已实现部分需调整);旧详情段保留作"当初为何暂缓"的溯源,不删。

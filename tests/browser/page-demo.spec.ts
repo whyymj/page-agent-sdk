@@ -152,11 +152,12 @@ test.describe('page-demo: read → write → read', () => {
       }
     })
 
-    // mock LLM:write_todos(拆 1 步,不传 id → 框架生成 t-1)→ update_todo(按 t-1 标完成)→ write 落地 → 完成
+    // mock LLM:write_todos(拆 1 步,不传 id → 框架生成 t-1)→ update_todo(按 t-1 标完成,evidence-audit
+    // 时代:completion 后正常收口 —— evidence 附实际写入路径 title,避免 A1 rider/A2 审计多烧回灌轮)→ write 落地 → 完成
     await mockLlm(page, [
       { tool_calls: [{ name: 'write_todos', arguments: { todos: [{ content: '把标题改成「规划落地」', status: 'in_progress' }] } }] },
-      { tool_calls: [{ name: 'update_todo', arguments: { id: 't-1', status: 'completed' } }] },
       { tool_calls: [{ name: 'write', arguments: { value: '规划落地', patch: { op: 'set', jsonPath: 'title' } } }] },
+      { tool_calls: [{ name: 'update_todo', arguments: { id: 't-1', status: 'completed', evidence: 'title' } }] },
       { text: '已按计划完成:标题改为「规划落地」。' },
     ])
 

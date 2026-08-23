@@ -1,3 +1,5 @@
+import { pathsOverlap } from './readInvalidation'
+
 /**
  * imperative-zero-tool-gate 纯函数 —— 操作指令零工具收尾门禁(防「谎报完成」)
  *
@@ -147,4 +149,63 @@ export function buildStatusQueryFeedback(factSheet: string): string {
     '数据可能已被刷新回退或外部修改,凭对话记忆断言状态不可靠。',
     '请先用 read / list 类工具核实实际数据再据实回答;若实际未写入,如实说明并继续完成,不要凭印象回复「已完成」。',
   ].join('\n')
+}
+
+// ===== 过渡性收口 / 行动叙述检测(原 createAgent 纯函数,evidence-audit-gate Phase 0 随 gateChain 抽取迁入本家族) =====
+
+/** 过渡性收口模式:模型中途输出计划性表态就停(实测 deepseek-v4-flash:「好的,我先看看…再委派生成」调研完即收口)。 */
+const TRANSITIONAL_RE = /(我先|让我先|我先看|先看看|先了解|先加载|先查阅|稍后|接下来我|我将先|等我|查完.{0,12}再|看完.{0,12}再|了解.{0,8}再)/
+/** 完成标记:含这些视为真实收口(总结/汇报),不回灌 */
+const DONE_VERB_RE = /(已完成|已生成|已修改|已创建|已添加|已删除|已更新|已调整|已处理|已委派|已配置|已切换|成功|完成[。!?]|搞定了|做好了)/
+/**
+ * 检测「过程性收口」:本轮已执行过工具(说明任务进行中)但最终文本是过渡性计划表态而非完成汇报 ——
+ * 回灌让模型继续执行,防「调研完说稍后就停」(flash 实测:委派编排任务被「我先看看…再委派生成」收口,任务零落地)。
+ * 保守判定:短文本(≤160 字)+ 命中过渡模式 + 无完成动词;误判代价仅一轮回灌(有界 ≤2 次)。
+ */
+export function detectTransitionalReply(content: string): boolean {
+  if (!content) return false
+  const text = content.trim()
+  if (text.length > 160) return false  // 长文多为真总结
+  if (DONE_VERB_RE.test(text)) return false
+  return TRANSITIONAL_RE.test(text)
+}
+
+/** 第 0 轮「行动叙述」模式:点名已知工具 + 第一人称行动动词(实测 flash 粒子任务 2782 字纯叙述)。 */
+const NARRATION_TOOL_RE = /(add_component|delete_component|move_component|list_components|select_component|load_skill|use_[a-z]+|rag_[a-z]+|request_human_confirmation|\bwrite\b|\bread\b)/
+const NARRATION_VERB_RE = /(我来|让我|我先|现在|开始|先加载|先添加|先写|先删|先看看|执行|添加|写入|加载|删除)/
+/**
+ * 检测「第 0 轮行动叙述」:首回合纯文本、零 tool_calls,但文本点名工具并表态要执行
+ * (「我来添加 / 先加载 page-tools / 用 add_component_tree…」)—— ReAct 见无 tool_calls 会当最终回答结束,
+ * 用户看到「我要做…做完了」但零执行(幻觉叙述,实测 deepseek-v4-flash)。
+ * 与 detectTransitionalReply 区别:① 不限长度(叙述常为长文)② 不豁免完成动词 —— 第 0 轮没有任何工具执行,
+ *   文本里的「已添加/成功」只能是幻觉,反而是叙述的铁证;③ 仅在 rounds===0 且无 tool_calls 时调用(上下文消歧,
+ *   真实完成汇报必有 tool_calls 不会落到这里)。误判代价仅一轮回灌(有界 ≤2)。
+ */
+export function detectActionNarration(content: string): boolean {
+  if (!content) return false
+  const text = content.trim()
+  return NARRATION_TOOL_RE.test(text)
+    && NARRATION_VERB_RE.test(text)
+}
+
+// ===== evidence-audit-gate A2(锚点核对纯函数,2026-08-23)=====
+// 审计面与比对基线见 gateChain.ts「evidence 审计门禁」段;本组只管机械化可判部分:
+// evidence 里的 path 形态提取 + 与会话累计写路径集的重叠判定(宁漏勿误:描述性文本零路径形态 → 不核对)。
+
+/** evidence 内嵌 path 形态片段(如「已写入 components.2.title」→ ['components.2.title'])。
+ *  归一:`$.`/`$` 前缀剥除、`[0]` → `.0`(对齐 effectiveWritePaths 的点分形态);提取不到多段路径 → 空(描述性证据)。 */
+export function extractEvidencePaths(evidence: string): string[] {
+  if (!evidence) return []
+  const flat = String(evidence).replace(/\$\.?/g, ' ').replace(/\[(\d+)\]/g, '.$1')
+  const out: string[] = []
+  for (const m of flat.matchAll(/[A-Za-z_][\w-]*(?:\.[A-Za-z_][\w-]*|\.\d+)+/g)) out.push(m[0])
+  return [...new Set(out)]
+}
+
+/** evidence 路径是否被会话累计写路径覆盖(任一重叠即覆盖;重叠判定复用 stale-read 的 pathsOverlap:
+ *  相等/ROOT/祖先-后代 + 分隔符纪律。基线含 ROOT(整体写)= 全覆盖)。 */
+export function isEvidenceCovered(evidencePaths: string[], sessionWritePaths: Iterable<string>): boolean {
+  const sess = Array.from(sessionWritePaths)
+  if (!sess.length) return false
+  return evidencePaths.some((ep) => sess.some((sp) => pathsOverlap(ep, sp)))
 }

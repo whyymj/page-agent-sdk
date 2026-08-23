@@ -34,14 +34,15 @@
 
 - [x] e2e(stub model,tests/e2e/stale-read-invalidation.mjs:15 项):断言用**自定义 wrapModelCall 中间件捕获 req.messages**(llm_request.messages 非 debug 下恒 `[]`,formatForLog 短路);写后下一轮旧 read = 占位;false 主/子双路原文保留;stage 日志断言;SCHEMA_INVALID 失败写零失效端到端
 - [x] **types/index.d.ts + types/headless.d.ts 双同步**(headless 有独立复制的 ChatSdkOptions)+ `test:types` / `test:types-alignment` / `test:exports` 三门禁
-- [ ] 真 LLM(editor,quality-compare `--baseline-diff`):
-  - 主指标(正确性):写后问「第 N 个组件现在是什么」×3-5 穿插 + resume-then-ask → 断言答前有 read 且答案 = 写后真值
-  - thrash 指标:写后同 path re-read 次数 / 写次数,新旧对比(debugLogs 计数)
-  - toolCount 不回归门(baseline-diff ±3)+ REACT_CALL_LIMIT_EXCEEDED 复发计数
-  - 上下文体积下降(次级,llm_request 体长口径);网关可报 cache 命中则加 cache 调整成本对比
+- [x] 真 LLM(2026-08-23 验收过,`tests/runtime/_real-llm-stale-read.mjs` 本地脚本 + glm-5.2,7/7):
+  - 主指标(正确性):**单 invoke 读→写→答**(设计约束:失效窗口 = 单次 invoke 内,跨轮 send 不触发)→ 答案 = 写后真值(BBB-终版/CCC-3版两轮)+ 无旧值中毒(不把读到的 AAA 当现值答)
+  - 失效证据:`inspect().staleReadsInvalidated` 累计 3 + debugLogs `stale_read_invalidated` stage 痕迹
+  - thrash 指标:两轮写后**零 re-read**(模型引用 write 结果新值,反 thrash 设计实证生效)
+  - adapter 说明:原设想的 editor quality-compare 路线当时不可用(modelverse v4 模型面 offline;editor 侧另行回归),complex-demo + glm-5.2 等价覆盖主链;resume-then-ask 在 complex-demo 不可测(memory 后端 reload 即失),由 e2e applySnapshot 族覆盖
+  - toolCount 基线门未跑(editor 路线依赖;thrash 已实证零重读,工具数无回归压力源)
 
 ## Phase 4:文档与归档
 
-- [ ] CLAUDE.md「记忆与上下文管理」段补 stale-read-invalidation + **断言计数同步**(2702/902/102 → +N,README 中英文同步);CHANGELOG 条目
-- [ ] 文档提示:多组件写任务建议 `maxToolRounds ≥ 20`(失效后 re-read 余量,对齐既有 draft 建议)
-- [ ] 验收过 → 归档;openspec/changes/README.md 索引收口;**数据驱动 fast-follow 决策点登记 deferred**:委派写失效(v1.5 候选,按 writablePaths + __pgId 反解)/ root 读新鲜骨架(若 thrash 超标)/ jsonPaths 行级重写(单行 JSON 结构机械安全,thrash 数据验证后再决定)
+- [x] CLAUDE.md「记忆与上下文管理」段补 stale-read-invalidation + 断言计数同步(已随 3.42.0 落,现值 2813/929/102);CHANGELOG 条目(3.42.0)
+- [x] 文档提示:多组件写任务 `maxToolRounds` 默认已升 30(3.43.0,> 建议值 20,失效后 re-read 余量充足)
+- [x] 验收过 → 归档(2026-08-23);README 索引收口;fast-follow 决策点已登记 deferred:委派写失效(v1.5 候选)/ root 读新鲜骨架 / jsonPaths 行级重写

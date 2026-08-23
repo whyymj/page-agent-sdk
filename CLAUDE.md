@@ -30,8 +30,8 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2813 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,929 项;tests/e2e/<module>.mjs 按模块拆分)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,2873 项断言)
+npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,940 项;tests/e2e/<module>.mjs 按模块拆分)
 npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,102 项;tests/browser/<demo>.spec.ts)
 ```
 
@@ -86,7 +86,8 @@ skills/                         # 分发给使用者的 Agent Skill(入 npm 包 
 
 ### 规划与任务锚定
 - `write_todos`(整表替换)+ `update_todo`(增量),一轮内不可混用;`maxPlanRevisions`(默认 5,只计 write_todos 修订次数、调研轮不计)防反复改计划死循环,超限后 update_todo 仅拒改计划形态(content/parentId/deps/criteria)、status/evidence 进度跟踪放行;复杂度判断由 LLM 做
-- **完结门禁**(默认开,无开关):todos 有未完成项却欲纯文本收尾 → 回灌「双出口」反馈(已完成→update_todo 标记 / 未完成→继续)续跑,≤2 次防死循环;豁免问号收尾(向用户征询)与空 todos;挂循环条件层(transitional 后;beforeReturn 因 maxVerifyAttempts 默认 0 不跑被否决);防「拆 3 项做 1 项就收口」的莫名中断
+- **evidence 审计门禁**(evidence-audit-gate,默认开,收口门禁链 gateChain.ts 内):A1 = usageHints 无条件教「标 completed 附 evidence: 实际写入 jsonPath」+ 完结门禁回灌文案追加「已完成但 evidence 空」rider(只搭车零新触发);A2 = 本 invoke 内翻转 completed 的 todos × evidence 含 path 形态 × 会话累计写路径集(effectiveWritePaths 全量展开,整体写=ROOT 全覆盖)零重叠 → 三出口回灌(改真路径/改回 pending/如实说明),预算 ≤2 独立池超限放行 + `AUDIT_GATE_EXHAUSTED`;wrap-up 轮次耗尽路径零 LLM 补跑(`AUDIT_EVIDENCE_SUSPECT`);描述性证据不核(宁漏勿误);委派流明示盲区
+- **完结门禁**(默认开,无开关):todos 有未完成项却欲纯文本收尾 → 回灌「双出口」反馈(已完成→update_todo 标记 / 未完成→继续)续跑,≤2 次防死循环;豁免问号收尾(向用户征询)与空 todos;挂循环条件层(transitional 后;beforeReturn 因 maxVerifyAttempts 默认 0 不跑被否决);防「拆 3 项做 1 项就收口」的莫名中断。**收口门禁族已抽 gateChain.ts**(transitional→完结→evidence 审计→零工具→状态询问→EXHAUSTED 五层判定/文案/预算集中一处);完结门禁豁免子 agent 栈(html 子 agent planning=true 装 todos,旧「子栈无 todos」假设不成立)
 - **零工具收尾门禁**(imperative-zero-tool-gate,默认开无开关):完结门禁只盯 todos,「拆 0 说做完」(不建 todos 直接谎报已完成)绕过它 —— 三要素 AND(操作祈使句〔首子句 16 字窗口动词锚定 + 只读反例/问句/免操作词豁免〕+ 本轮零等效写〔writeCapable 口径 + use_/spawn 委派计等效写〕+ 纯文本非问句收尾)→ 回灌**事实清单**(harness 本地统计:工具计数/成功写路径/write×0/todos 完成度,机制供给事实防嘴硬)+ 三出口;出口①机械化(收口含 jsonPath/组件 id 不二次回灌);预算 ≤2 超限放行 + `ZERO_TOOL_GATE_EXHAUSTED` observable;子 agent 不装(`CreateAgentOptions.__pgIsSubagent`);debugLogs `stage:'zero_tool_gate'`;与 resumeNotice 双保险
 - **问句意图守卫**(默认开,无开关):正则三档启发式(句尾问号 / 疑问词+吗呢 / 查询词「是什么|怎么用|有哪些」)逐消息定性,命中注入「先答勿做」pin 段(`PIN_SEGMENT_NAMES` 白名单保跨压缩/预算裁剪存活);只递信号不阻断工具,裁决归 LLM(文案带「除非同条消息明确要求操作」逃生门);防长对话问句被历史轨迹拖着误路由成操作(「这是啥组件」→ use_html 事故)
 - **Mission**(默认开):会话级目标锚定,启发式 capture(宁漏不误)+ `send({mission})`;pin 段天然跨压缩
@@ -135,7 +136,7 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test    # tsx 跑 src/core/__tests__/selftest.ts,2813 项断言
+npm test    # tsx 跑 src/core/__tests__/selftest.ts,2873 项断言
 ```
 按模块拆分:`src/core/__tests__/modules/sec-NN.ts`(54+ 个模块)各导出 `run(ctx)`,runner 汇总;共享 `TestCtx` 在 `modules/_ctx.ts`。tsx 跑源码(不经构建),触不到 createChatSdk 顶层 API 作用域。**改任何核心模块后必跑**。
 
@@ -180,7 +181,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2813/929/102)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(2873/940/102)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判)→ `npm run test:size` → `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证

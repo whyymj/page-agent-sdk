@@ -2,6 +2,21 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.44.0] - 2026-08-23
+
+### Added(工具调用收敛 C2:错误即向导 + 同参重复检测,tool-call-economy)
+
+- **read 缺失路径错误即向导**:读不存在路径从「= (undefined)」静默文本升级为 `PATH_NOT_FOUND` 结构化错误 + 父级实况建议(数组 → 有效索引范围;对象 → 实际键集;非容器 → 引导 read 顶层)—— 省「读→猜→再读」试错轮;建议从 bind 实时取不硬编码;失败读早于 setBaseline(不再吸收宿主改动);read 的 `PATH_DENIED`(键不在 schema)同步追加父级实际键集(键打错场景)。`ERROR: {json}` 单行契约不变(建议走既有 hint 字段)
+- **同参重复失败提醒**:同工具同参连续失败 ≥2 → 工具结果尾附「同参数已连续失败 N 次,原样重试大概率仍失败;请检查参数/换路径/换方法,或向用户如实说明困难」(成功即清零)—— 治「报错后原样死磕」烧轮次(deferred 循环/终止面 H17 并入收口);追加不破坏 `ERROR:` 前缀首位
+- Phase 0 离线挖掘(36 调用/3 invoke):C1 read 骨架预告、C3 query 多 expr、并行轴引导均数据不支持转留档,红线设计沉淀 deferred
+
+### Added(evidence 审计门禁 + 收口门禁链抽取,evidence-audit-gate)
+
+- **gateChain 抽取**:createAgent 收口分支五层门禁(transitional → 完结 → 零工具 → 状态询问 → EXHAUSTED observable)+ 三个独立重试预算抽到独立 `gateChain.ts`(判定/文案/预算集中一处,主循环 -60 行只消费 `runFinishGates` 结果);零行为变化(既有 2813 断言全绿)。**附带修存量缺陷**:完结门禁原无子 agent 栈豁免(靠「子栈无 todos」假设),而 html 子 agent `planning=true` 默认装 todos 中间件 —— 子栈「todos 完成 + 写 + 文本收口」会被误回灌;现按零工具门禁先例统一豁免
+- **A1 evidence 引导与 rider**:usageHints 无条件段教「`update_todo` 标 completed 附 evidence: 实际写入的 jsonPath」(此前唯一引导被 `todoDeps` 默认 false 门控,schema 自标「可选」—— 默认面下模型规范行为就是不填);write_todos/update_todo 的 evidence schema describe 同步引导文案;完结门禁回灌文案追加「已完成但 evidence 为空」项 rider(只搭既有回灌的车,零新触发/零新预算)
+- **A2 锚点核对(机制主体)**:本 invoke 内翻转为 completed 的 todos × evidence 含 path 形态 × 会话累计写路径集零重叠 → 三出口回灌(修正路径 / 改回 pending / 如实说明完成方式);预算 ≤2 独立池,超限放行 + `AUDIT_GATE_EXHAUSTED` observable;wrap-up 轮次耗尽路径零 LLM 补跑审计(`AUDIT_EVIDENCE_SUSPECT` observable);比对基线复用 stale-read 的 `effectiveWritePaths`(全量 patches 展开,防「批写只记首个 jsonPath」误伤)+ `pathsOverlap`(祖先/后代/分隔符纪律;整体写 = ROOT 全覆盖);描述性证据(无路径形态)不核对,宁漏勿误;委派流(主 agent 全程 use_*/spawn)明示盲区
+- 三方怀疑论评审(机制正确性/回归面/必要性)驱动收窄:评审 agent(B,干净上下文收口评审)拆出转 deferred 等真实案例;详见 `openspec/changes/2026-08-23-evidence-audit-gate/`
+
 ## [3.43.2] - 2026-08-23
 
 ### Fixed(诊断日志误导)

@@ -1290,9 +1290,27 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       const jp = jsonPath || ''
       if (isUnsafePath(jp)) return toolError({ code: 'PATH_UNSAFE', message: `jsonPath "${jp}" 含非法段(__proto__/constructor/prototype)`, hint: '使用正常属性路径,如 components.0.text(数组索引数字)' })
       if (!isPathAllowed(jp, schema, allowKeys)) {
-        return toolError({ code: 'PATH_DENIED', message: `read @ "${jp}" 不在 schema 声明字段内`, hint: '主数据仅暴露 schema 声明的字段;若需操作该字段,集成方需在 schema 中声明它' })
+        // C2 错误即向导:键打错/拼错时附父级实际键集(从 bind 实时取不硬编码),省「读→猜→再读」试错轮
+        const parentJp0 = /[.[]/.test(jp) ? jp.replace(/[.[][^.[]*$/, '') : ''
+        const parent0 = parentJp0 ? getByPath(bindRef, parentJp0) : bindRef
+        const keysHint = parent0 && typeof parent0 === 'object' && !Array.isArray(parent0)
+          ? `;父级 "${parentJp0 || '(root)'}" 的实际字段:${Object.keys(parent0).slice(0, 12).join(', ')}${Object.keys(parent0).length > 12 ? ' …' : ''}`
+          : ''
+        return toolError({ code: 'PATH_DENIED', message: `read @ "${jp}" 不在 schema 声明字段内`, hint: `主数据仅暴露 schema 声明的字段;若需操作该字段,集成方需在 schema 中声明它${keysHint}` })
       }
       let target = jp ? getByPath(bindRef, jp) : bindRef
+      // tool-call-economy C2 错误即向导:读不存在路径 → 附父级实况(键集/数组长度),省「读→猜→再读」试错轮。
+      // 早于 setBaseline(失败读不吸收宿主改动);ERROR 结果走 toolError 单行契约(hint 字段带建议,零格式变化)
+      if (jp && target === undefined) {
+        const parentJp = /[.[]/.test(jp) ? jp.replace(/[.[][^.[]*$/, '') : ''
+        const parent = parentJp ? getByPath(bindRef, parentJp) : bindRef
+        const suggest = Array.isArray(parent)
+          ? `父级 "${parentJp || '(root)'}" 是 ${parent.length} 元数组,有效索引 0-${Math.max(parent.length - 1, 0)};先 read({jsonPath:"${parentJp}"}) 确认现状,追加元素走 write 的 append`
+          : parent && typeof parent === 'object'
+            ? `父级 "${parentJp || '(root)'}" 的可用字段:${Object.keys(parent).slice(0, 12).join(', ')}${Object.keys(parent).length > 12 ? ' …' : ''};先 read({jsonPath:"${parentJp}"}) 确认`
+            : `父级 "${parentJp || '(root)'}" 不存在或不是容器;先 read() 不传 jsonPath 查看顶层字段`
+        return toolError({ code: 'PATH_NOT_FOUND', path: jp, message: `路径 "${jp}" 不存在`, hint: suggest })
+      }
       // 投影隐藏未声明字段:统一深投影口径(fix-data-integrity P1-19:整体读也递归投影,与子路径读一致,防嵌套未声明字段泄露)
       if (!jp && allowKeys) target = projectBySchemaDeep(target, schema)
       else if (allowKeys) {

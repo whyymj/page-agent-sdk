@@ -52,6 +52,9 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
         hints.push('  · 简单/明确任务(改单字段、调样式、查值)→ 直接 read/write 执行,不必 write_todos。')
         hints.push('  · 复杂任务(多步、大改、有歧义、不可逆)→ 先 write_todos 拆解,首个任务标 in_progress,逐项推进。')
         hints.push('  · 执行中发现步骤要改/补/细分 → 用 update_todo({id, content?, status?}) 按 id 增量改单项,不必重传整个清单。')
+        // evidence-audit-gate A1:evidence 引导无条件注入(与机制同 ship)——收口审计会核对 evidence 路径与写入记录,
+        // 不教引导会让「规范完成任务」因缺 evidence 被系统性回灌(2026-08-23 评审阻断 A-1)
+        hints.push('  · update_todo 标 completed 时附 evidence: 本次实际写入的 jsonPath(如 "components.2"),供收口对账;工作经委派子 agent 完成等无主写路径时,如实写明完成方式(勿编造路径)。')
         // request_human_confirmation 仅 humanConfirm 能力开时装载;关闭时改引导文字征询,勿教调不存在的工具
         if (caps?.humanConfirm) hints.push('  · 规划出多步方案若需用户拍板 → 先 request_human_confirmation 给方案选项,确认后再执行。')
         else hints.push('  · 规划出多步方案若需用户拍板 → 以文字列出方案选项等用户回复,勿自行拍板。')

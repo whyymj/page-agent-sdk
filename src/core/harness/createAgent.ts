@@ -32,10 +32,10 @@ import { createInitialState, type HarnessState, type LoopProgress } from './stat
 import { withRetry, isAbort, type RetryOptions } from './retry'
 import { withStallTimeout, StreamStalledError, StreamMaxDurationError, EmptyLLMResponseError, DEFAULT_STREAM_STALL_MS, DEFAULT_STREAM_MAX_DURATION_MS } from '../utils/stallTimeout'
 import { isContextLengthError } from './errors'
-import { detectIncompleteFinish, buildGateFeedback } from './todos'
-import { detectActionImperative, isZeroEffectiveWrite, buildTurnFactSheet, buildZeroToolFeedback, mentionsLocation, detectStatusQuery, assertsCompletion, isZeroToolCalls, buildStatusQueryFeedback, type TurnToolUsage } from './actionGate'
+import { type TurnToolUsage } from './actionGate'
 import { isSuccessfulWriteResult } from './writeGate'
-import { invalidateStaleReads, type StaleWriteRecord } from './readInvalidation'
+import { invalidateStaleReads, effectiveWritePaths, type StaleWriteRecord } from './readInvalidation'
+import { runFinishGates, createGateChainState, auditEvidenceOffenders } from './gateChain'
 import {
   type Middleware,
   type ModelRequest,
@@ -83,39 +83,8 @@ export function sanitizeGarbledContent(content: string): string {
   return (m >= 0 ? content.slice(0, m) : content).trim()
 }
 
-/** 过渡性收口模式:模型中途输出计划性表态就停(实测 deepseek-v4-flash:「好的,我先看看…再委派生成」调研完即收口)。导出供测试 */
-const TRANSITIONAL_RE = /(我先|让我先|我先看|先看看|先了解|先加载|先查阅|稍后|接下来我|我将先|等我|查完.{0,12}再|看完.{0,12}再|了解.{0,8}再)/
-/** 完成标记:含这些视为真实收口(总结/汇报),不回灌 */
-const DONE_VERB_RE = /(已完成|已生成|已修改|已创建|已添加|已删除|已更新|已调整|已处理|已委派|已配置|已切换|成功|完成[。!?]|搞定了|做好了)/
-/**
- * 检测「过程性收口」:本轮已执行过工具(说明任务进行中)但最终文本是过渡性计划表态而非完成汇报 ——
- * 回灌让模型继续执行,防「调研完说稍后就停」(flash 实测:委派编排任务被「我先看看…再委派生成」收口,任务零落地)。
- * 保守判定:短文本(≤160 字)+ 命中过渡模式 + 无完成动词;误判代价仅一轮回灌(有界 ≤2 次)。
- */
-export function detectTransitionalReply(content: string): boolean {
-  if (!content) return false
-  const text = content.trim()
-  if (text.length > 160) return false  // 长文多为真总结
-  if (DONE_VERB_RE.test(text)) return false
-  return TRANSITIONAL_RE.test(text)
-}
-
-/** 第 0 轮「行动叙述」模式:点名已知工具 + 第一人称行动动词(实测 flash 粒子任务 2782 字纯叙述)。导出供测试 */
-const ACTION_TOOL_RE = /(add_component|delete_component|move_component|list_components|select_component|load_skill|use_[a-z]+|rag_[a-z]+|request_human_confirmation|\bwrite\b|\bread\b)/
-const ACTION_VERB_RE = /(我来|让我|我先|现在|开始|先加载|先添加|先写|先删|先看看|执行|添加|写入|加载|删除)/
-/**
- * 检测「第 0 轮行动叙述」:首回合纯文本、零 tool_calls,但文本点名工具并表态要执行
- * (「我来添加 / 先加载 page-tools / 用 add_component_tree…」)—— ReAct 见无 tool_calls 会当最终回答结束,
- * 用户看到「我要做…做完了」但零执行(幻觉叙述,实测 deepseek-v4-flash)。
- * 与 detectTransitionalReply 区别:① 不限长度(叙述常为长文)② 不豁免完成动词 —— 第 0 轮没有任何工具执行,
- *   文本里的「已添加/成功」只能是幻觉,反而是叙述的铁证;③ 仅在 rounds===0 且无 tool_calls 时调用(上下文消歧,
- *   真实完成汇报必有 tool_calls 不会落到这里)。误判代价仅一轮回灌(有界 ≤2)。
- */
-export function detectActionNarration(content: string): boolean {
-  if (!content) return false
-  const text = content.trim()
-  return ACTION_TOOL_RE.test(text) && ACTION_VERB_RE.test(text)
-}
+// 过渡性收口/行动叙述检测已迁 actionGate.ts(evidence-audit-gate Phase 0 随 gateChain 抽取);此处 re-export 保持既有导出面(sec-25 / index.ts)
+export { detectTransitionalReply, detectActionNarration } from './actionGate'
 
 /** 强守卫标记(DeepSeek 内部 token,模型正文不会随意产生)—— fix-write-safety-bypass P0-2:
  *  parseGarbledToolCalls 仅当 content 匹配到强守卫标记才自动解析执行;纯伪 XML `<invoke>`(无守卫)→ 返回 null,
@@ -439,6 +408,10 @@ export function createAgent(options: CreateAgentOptions) {
   const debugLogs = shallowRef<DebugLog[]>([])
   // stale-read-invalidation 会话累计(跨 invoke;inspect().staleReadsInvalidated 反射,类比 debugLogs 闭包真相源)
   let staleReadsInvalidated = 0
+  // evidence-audit-gate A2 会话级累计写路径集(每成功写并入 effectiveWritePaths 全量展开;整体写 = ROOT = 全覆盖)。
+  // 跨 invoke 持续累积 —— 「上一轮写入、本轮标 completed」是正常节奏,只对本轮核对必误伤(评审 A-5)。
+  // 陈旧性说明:集合只增不清(resetSession 后残留旧路径只会造成「漏报」方向的退化,宁漏勿误,可接受)
+  const auditWritePaths = new Set<string>()
   function log(type: DebugLog['type'], data: any) {
     // 始终记录到 debugLogs(供日志抽屉查看请求上下文历史);debug 时额外输出到 console
     const entry: DebugLog = { timestamp: Date.now(), type, data }
@@ -865,8 +838,12 @@ export function createAgent(options: CreateAgentOptions) {
 
     // imperative-zero-tool-gate:本轮工具用量(事实清单原料;每 invoke 新建,门禁局部消费)
     const turnUsage: TurnToolUsage = { counts: {}, writePaths: [], failures: 0 }
-    let zeroToolRetries = 0           // 门禁回灌预算(≤2,同完结门禁;超限放行 + observable 留痕)
-    const maxZeroToolRetries = 2
+    // 收口门禁链预算(gateChain,evidence-audit-gate Phase 0 抽取;每 invoke 新建,transitional/completion/zeroTool/audit 四独立池由门禁内部自增)
+    const gateChainState = createGateChainState()
+    // evidence-audit-gate A2 审计面锚点:invoke 起点 todos status 快照(收口时 diff 出「本 invoke 翻转 completed」的项)
+    const todosStatusAtStart = new Map((state.todos ?? []).map((t) => [t.id, t.status]))
+    // tool-call-economy C2:同工具同参连续失败 streak(每 invoke 新建;成功清零)
+    const failStreaks = new Map<string, number>()
     /** writeCapable 标注判定(单一真相源;bulkGuard/componentLock 同口径;标注缺失退 WRITE_TOOL_NAMES 名单) */
     const isWriteToolByName = (name: string): boolean => {
       const t = allTools.find((x) => x.name === name) as { writeCapable?: boolean | ((args: Record<string, unknown>) => boolean) } | undefined
@@ -881,11 +858,6 @@ export function createAgent(options: CreateAgentOptions) {
     let formatRetries = 0 // 格式异常自纠计数:模型把工具调用写成文本(伪 XML/标签)时回灌反馈重生成,限次防死循环
     let pendingFormatRetry = false // 上一轮触发了格式自纠(已 push feedback 待 LLM 重发):让 while 暂时绕过 rounds 预算给重试机会——重试是格式修正、非工具轮次,不该被 maxToolRounds 挡。实测痛点:DSML 在 rounds 耗尽后出现,重试被 while 挡致未发生 → 仍静默死亡。maxIterations(maxToolRounds*3) 仍作死循环硬上限
     const maxFormatRetries = 2
-    const maxTransitionalRetries = 2  // 过程性收口回灌上限(flash 提前收口实测;误判代价仅一轮回灌)
-    let transitionalRetries = 0
-    // 完结门禁(instruction-adherence A):todos 有未完成项却欲纯文本收尾 → 回灌「双出口」反馈续跑。独立预算,与 transitional 正交
-    const maxGateRetries = 2
-    let gateRetries = 0
     try {
       while ((rounds < maxToolRounds || pendingFormatRetry) && iterations < maxIterations) {
         iterations++ // 总循环计数(含自纠轮),触顶 maxIterations 强制退出防死循环
@@ -974,71 +946,27 @@ export function createAgent(options: CreateAgentOptions) {
               log('error', { stage: 'garbled_exhausted', retries: formatRetries, content: response.content.slice(0, 200) })
               onEvent({ type: 'error', message: msg, severity: 'observable', code: 'GARBLED_TOOL_CALL_EXHAUSTED', context: { content: response.content.slice(0, 200) } } as any)
             }
-            // 过程性收口回灌(flash 实测):最终文本是计划/行动叙述而非完成汇报时回灌让模型继续执行,限次防死循环。
-            //  - rounds>0:短文本过渡性收口(detectTransitionalReply,「我先看看…稍后委派」调研完即停)
-            //  - rounds===0:第 0 轮零 tool_calls 长文行动叙述(detectActionNarration,修「中途停止」:
-            //    模型把「我来添加/先加载」当正文吐、不走 function calling,ReAct 误当最终回答结束、零执行)
-            // pendingFormatRetry=true 同款语义:绕过 rounds 预算给重试机会(此轮非工具轮次)
-            const transitional = rounds > 0 ? detectTransitionalReply(response.content) : detectActionNarration(response.content)
-            if (!garbled && transitionalRetries < maxTransitionalRetries && transitional) {
-              transitionalRetries += 1
+            // 收口门禁链(gateChain,evidence-audit-gate Phase 0 抽取):transitional(过程性收口/行动叙述)→
+            // 完结门禁(todos 未完成项双出口)→ 零工具门禁(操作指令零写收尾,fact-sheet 对账)→ 状态询问门禁
+            // (零核实断言)→ EXHAUSTED observable(预算耗尽谎报放行留痕)。判定/文案/三预算池(transitional/
+            // completion/zeroTool 独立池,zeroTool 与 status_query 共用防连环)集中 gateChain.ts,主循环只消费结果;
+            // 回灌统一 pendingFormatRetry 语义(绕过 rounds 预算给补完机会;maxIterations 硬闸兜底)。
+            // 行为与抽取前逐条等价,除:完结门禁补子栈豁免(html 子 agent planning=true 装 todos,旧「子栈无
+            // todos」假设不成立,2026-08-23 评审修 —— 子 agent 正常收口曾被误回灌)。
+            const gateOutcome = runFinishGates({
+              state: gateChainState, garbled, rounds, finalContent: response.content,
+              todos: state.todos, isSubagent: !!state.__pgIsSubagent,
+              turnUsage, isWriteToolByName, messages: currentMessages,
+              sessionWritePaths: auditWritePaths, todosStatusAtStart,
+            })
+            if (gateOutcome?.kind === 'feedback') {
               pendingFormatRetry = true
-              log('middleware', { stage: 'transitional_retry', attempt: transitionalRetries, rounds, content: response.content.slice(0, 160) })
-              currentMessages.push(new HumanMessage('⚠️ 你刚才只输出了计划/行动叙述(如「我先看看」「开始添加」),没有发起任何工具调用,因此什么都未执行。请立即用标准 function calling 调用所需工具把任务做完,全部完成后再给出总结回复。'))
+              log('middleware', { stage: gateOutcome.gate.stage, attempt: gateOutcome.gate.attempt, ...(gateOutcome.gate.logData ?? {}), content: response.content.slice(0, 160) })
+              currentMessages.push(new HumanMessage(gateOutcome.gate.feedback))
               continue
             }
-            // 完结门禁(instruction-adherence A):todos 有未完成项却以纯文本收尾 → 回灌「双出口」反馈(已完成→update_todo 标记 / 未完成→继续)续跑。
-            // 同 transitional 模式:pendingFormatRetry 绕过 rounds 预算(补完任务不是新工具轮;maxIterations 总闸兜底)。
-            // 预算 2:「忘标 completed」一次回灌即收敛;两次仍收口 = 模型异常 → 放行强收防死循环烧 token。
-            // rounds > 0 前置(修跨轮陈旧 todos 误报):todos 随会话持久化,上一轮遗留的未完成清单不该在
-            // 本轮纯问答轮(零工具调用)发难 ——「计划了没做完」必然发生在工具轮之后,与 transitional 的 rounds 分支同款模式。
-            // 位置在 transitional 之后(先治「光说不做」再治「做了一半」)、beforeReturn 之前(verify 是写后回查 opt-in,语义无关)。
-            // 豁免问句收尾/空 todos 在 detectIncompleteFinish 内(宁漏勿误);子 agent 无 planning 工具 todos 恒空,天然不触发。
-            if (!garbled && rounds > 0 && gateRetries < maxGateRetries && detectIncompleteFinish(state.todos, response.content)) {
-              gateRetries += 1
-              pendingFormatRetry = true
-              log('middleware', { stage: 'completion_gate', attempt: gateRetries, pending: state.todos.filter((t) => t.status !== 'completed').map((t) => t.id), content: response.content.slice(0, 160) })
-              currentMessages.push(new HumanMessage(buildGateFeedback(state.todos)))
-              continue
-            }
-            // imperative-zero-tool-gate(操作指令零工具收尾门禁,防谎报完成):完结门禁只盯 todos,「拆 0 说做完」
-            // (不建 todos 直接纯文本谎报「已完成」)绕过它。三要素 AND:①用户消息为操作祈使 ②本轮零写/零委派
-            // ③纯文本收尾且非问句。回灌带事实清单(D5:机制供给事实,LLM 对账复述,与清单不符无处嘴硬);
-            // 预算 ≤2 超限放行 + observable 留痕(对齐 garbled 耗尽模式 —— 谎报放行是最该让集成方感知的时刻)。
-            // 无 rounds 前置(谎报第 1 路恰发生在 rounds===0);intentGuard 命中最新 user 消息时跳过
-            // (双信号对冲:pin 段说别做、本门禁说快做会打架);出口①机械化:收口文本含位置说明 → 不再二次回灌。
-            // 子 agent 不触发:装配期只装主栈,子栈 state.__pgIsSubagent 标记。
-            const lastHumanContent = (() => { for (let mi = currentMessages.length - 1; mi >= 0; mi--) { const m = currentMessages[mi]; if ((m as unknown as { _getType?: () => string })._getType?.() === 'human') return String((m as unknown as { content?: unknown }).content ?? '') } return '' })()
-            if (!garbled && !state.__pgIsSubagent && zeroToolRetries < maxZeroToolRetries
-              && isZeroEffectiveWrite(turnUsage, isWriteToolByName)
-              && detectActionImperative(lastHumanContent)
-              && !mentionsLocation(response.content)
-              && !/[?？]\s*$/.test(response.content.trim())) {
-              zeroToolRetries += 1
-              pendingFormatRetry = true
-              log('middleware', { stage: 'zero_tool_gate', attempt: zeroToolRetries, factSheet: buildTurnFactSheet(turnUsage, state.todos, isWriteToolByName), content: response.content.slice(0, 160) })
-              currentMessages.push(new HumanMessage(buildZeroToolFeedback(buildTurnFactSheet(turnUsage, state.todos, isWriteToolByName))))
-              continue
-            }
-            // status-query-zero-verify-gate(状态询问零核实断言门禁,editor 实测 2026-08-21):「写到了哪里/
-            // 完成了吗」类状态询问,agent 本轮连 read 都没调却断言「已写入/已完成」(凭对话记忆编状态表)→
-            // 回灌先核实。触发场景:委派失败(keep_external/轮次上限)+ 页面刷新回退后记忆全陈旧,
-            // resumeNotice 纯提示词管不住。与 imperative gate 共用回灌预算(zeroToolRetries,防死循环);
-            // 调过任何工具(含 read)= 至少核实过,不触发;断言词不命中(如实说「未写入」)不触发。
-            if (!garbled && !state.__pgIsSubagent && zeroToolRetries < maxZeroToolRetries
-              && isZeroToolCalls(turnUsage)
-              && detectStatusQuery(lastHumanContent)
-              && assertsCompletion(response.content)) {
-              zeroToolRetries += 1
-              pendingFormatRetry = true
-              log('middleware', { stage: 'status_query_gate', attempt: zeroToolRetries, factSheet: buildTurnFactSheet(turnUsage, state.todos, isWriteToolByName), content: response.content.slice(0, 160) })
-              currentMessages.push(new HumanMessage(buildStatusQueryFeedback(buildTurnFactSheet(turnUsage, state.todos, isWriteToolByName))))
-              continue
-            }
-            // 预算耗尽仍零工具收尾:observable 留痕(评审 1-10;谎报放行恰是最该让集成方知晓的时刻,不能零感知)
-            if (!garbled && !state.__pgIsSubagent && zeroToolRetries >= maxZeroToolRetries && isZeroEffectiveWrite(turnUsage, isWriteToolByName)
-              && detectActionImperative(lastHumanContent)) {
-              onEvent({ type: 'error', message: '操作指令经 2 次回灌后仍以零工具纯文本收尾(疑似谎报完成),已放行;最终回复可能不实', severity: 'observable', code: 'ZERO_TOOL_GATE_EXHAUSTED', context: { factSheet: buildTurnFactSheet(turnUsage, state.todos, isWriteToolByName) } } as any)
+            if (gateOutcome?.kind === 'observable') {
+              onEvent({ type: 'error', message: gateOutcome.obs.message, severity: 'observable', code: gateOutcome.obs.code, context: gateOutcome.obs.context } as any)
             }
             // beforeReturn 钩子(正序):agent 返回前可拦截自纠(回灌 user 消息继续循环)。
             // garbled 时不跑 verify(garbled content 跑 verify 无意义);预算检查前置(verifyAttempts < maxVerifyAttempts):避免预算耗尽仍跑钩子(尤其 adversarial 子 agent 烧 token),框架级防御不靠中间件自觉
@@ -1107,7 +1035,19 @@ export function createAgent(options: CreateAgentOptions) {
         for (let i = 0; i < ctxs.length; i++) {
           const r = results[i]
           if (!r) continue
-          currentMessages.push(new ToolMessage({ tool_call_id: ctxs[i].id, content: r.content }))
+          // tool-call-economy C2 同参重复检测(deferred 循环/终止面 #1 并入):同工具同参连续失败 ≥2 →
+          // 结果尾附提醒,治「报错后原样死磕」烧轮次(schema 误解/前置不满足时 LLM 常见行为,实测可烧满 maxToolRounds)。
+          // 追加在 content 尾部:ERROR: 前缀首位不动(writeGate 判定兼容);成功即清零 streak;文案不含
+          // 「未写入/无需删除」活性词(防写成功结果被误判为失败)
+          const _streakKey = `${ctxs[i].call.name}|${JSON.stringify(ctxs[i].call.args ?? {})}`
+          const _failed = r.status === 'error' || (typeof r.content === 'string' && r.content.startsWith('ERROR:'))
+          let _content = r.content
+          if (_failed) {
+            const n = (failStreaks.get(_streakKey) ?? 0) + 1
+            failStreaks.set(_streakKey, n)
+            if (n >= 2) _content = `${r.content}\n(提示:同参数已连续失败 ${n} 次,原样重试大概率仍失败;请检查参数/换路径/换方法,或向用户如实说明困难)`
+          } else failStreaks.delete(_streakKey)
+          currentMessages.push(new ToolMessage({ tool_call_id: ctxs[i].id, content: _content }))
         }
         // C2 写失败计数:写工具同路径连续 error +1 / 成功清零(达 ≥2 由 usageHints 注入提醒;纯确定性,零 LLM 成本)
         for (let i = 0; i < ctxs.length; i++) {
@@ -1134,6 +1074,10 @@ export function createAgent(options: CreateAgentOptions) {
             const p = extractWriteTargetPath(ctxs[i].call.args)
             turnUsage.writePaths.push(p || '(整体)')
             batchWrites.push({ name, args: ctxs[i].call.args, callIndex: i })
+            // evidence-audit-gate A2:会话累计写路径集 —— 用 effectiveWritePaths 全量展开(patches 批写不只记
+            // 首个 jsonPath,评审 P0-1:turnUsage.writePaths 是有损记录不能做核对基线)
+            const eff = effectiveWritePaths({ name, args: ctxs[i].call.args, callIndex: i })
+            if (eff) for (const wp of eff.paths) auditWritePaths.add(wp)
           }
         }
         // stale-read-invalidation(写驱动过期读失效):本批成功写 → 此前被击中路径的旧 read/query/search
@@ -1167,6 +1111,14 @@ export function createAgent(options: CreateAgentOptions) {
       const limitNote = `\n\n(提示:工具调用次数已达上限(${maxToolRounds} 轮 / ${maxIterations} 次迭代),以上为基于已完成操作的阶段性结果,任务可能未完成。回复「继续」或告诉我下一步重点,即可接着做。)`
       log('error', { stage: 'react_call_limit_exceeded', rounds, maxToolRounds, iterations, maxIterations })
       onEvent({ type: 'error', message: `ReAct 循环达到调用上限(rounds=${rounds}/${maxToolRounds},iterations=${iterations}/${maxIterations}),已强制收口,可回复「继续」。`, severity: 'observable', code: 'REACT_CALL_LIMIT_EXCEEDED', context: { rounds, maxToolRounds, iterations, maxIterations } } as any)
+      // evidence-audit-gate A2 wrap-up 补跑(2026-08-23):轮次耗尽强制收口不走收口门禁(直接 return),
+      // 而预算压力下的收口恰是谎报高发区 —— 此处零 LLM 本地补跑审计,违例 observable 留痕(不回灌:循环已尽)
+      const wrapOffenders = auditEvidenceOffenders(state.todos ?? [], todosStatusAtStart, auditWritePaths)
+      if (wrapOffenders.length) {
+        const offenders = wrapOffenders.map((t) => ({ id: t.id, evidence: t.evidence }))
+        log('middleware', { stage: 'evidence_audit_flagged', offenders })
+        onEvent({ type: 'error', message: `轮次耗尽收口:${wrapOffenders.length} 项已完成任务的 evidence 路径与写入记录不符,最终回复中的完成声明可能不实`, severity: 'observable', code: 'AUDIT_EVIDENCE_SUSPECT', context: { offenders } } as any)
+      }
       // 自纠耗尽 rounds 预算 → 优先返回最近一次缓存的有效最终答
       if (lastFinalContent != null) {
         const c = lastFinalContent + limitNote
