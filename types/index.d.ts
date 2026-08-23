@@ -2059,6 +2059,8 @@ export interface CreateRagSubagentOptions {
 export interface CreateHtmlSubagentOptions {
   /** 可选:未传时装配期从 schema 顶层自动推断(z.array 元素含 codeField string 的路径);推断不出(开放 schema/嵌套容器/点路径 codeField)须显式传 */
   writablePaths?: string[];
+  /** 子 agent 额外可用工具名(并入只读白名单;传集成方只读查询类工具如 rag_component_docs/list_components —— 委派 task 提及组件时模型常幻觉宿主工具名,进白名单免「不存在」白烧轮);写类工具勿传 */
+  allowedTools?: string[];
   codeVfsPrefix?: string;
   id?: string;
   description?: string;

@@ -129,6 +129,14 @@ export async function run(ctx: TestCtx) {
     assert(!isZeroEffectiveWrite(usage, (n) => n === 'delete_component'), '✓ 结构工具标注 → 零工具门禁不再误伤清空/增删流')
   }
 
+  // ===== 1h. 幻觉工具名报错附可用清单 + createHtmlSubagent allowedTools 透出(editor 诊断驱动)=====
+  {
+    const { createHtmlSubagent } = await import('../../sdk/htmlSubagent')
+    const sub = createHtmlSubagent({ writablePaths: ['components'], allowedTools: ['rag_component_docs', 'list_components'] })
+    const raw = JSON.stringify(sub)
+    assert(raw.includes('rag_component_docs') && raw.includes('list_components'), '✓ createHtmlSubagent allowedTools → 只读扩展进子池配置')
+  }
+
   // ===== 1f. 写侧键集建议(C2 延伸:patches PATH_DENIED / SCHEMA_STRIP / move 目标)=====
   {
     const tools = makeTools() as any[]

@@ -2,6 +2,15 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [Unreleased]
+
+## [3.45.1] - 2026-08-23
+
+### Fixed(幻觉工具名报错 + html 子 agent 白名单扩展口,editor 诊断驱动)
+
+- **「工具 X 不存在」报错附当前可用工具清单**(C2 错误即向导补漏):模型幻觉工具名 / 子 agent 调白名单外宿主工具(委派 task 提及组件时 flash 常幻觉 list_components)→ 报错只说「不存在」不说「有什么」,模型还得猜名再试烧一轮;现附完整可用清单,一眼改用
+- **`createHtmlSubagent({ allowedTools })`**:子 agent 额外只读工具扩展口(并入白名单进子池)—— 集成方可传 rag_component_docs/list_components 等查询类工具,子 agent 写代码时能自查组件文档,不再碰「不存在」;写类工具仍由 writablePaths 管控
+
 ## [3.45.0] - 2026-08-23
 
 ### Added(defineTool 等效写标注,editor 诊断驱动)

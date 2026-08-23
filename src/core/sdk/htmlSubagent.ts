@@ -78,6 +78,12 @@ export interface CreateHtmlSubagentOptions {
   formatCheck?: boolean
   /** 代码字段相对组件的 jsonPath(开放 schema 适配;默认 'code',支持嵌套如 'props.html_code')。「是否代码组件」= 该路径下有 string 值 */
   codeField?: string
+  /**
+   * 子 agent 额外可用工具名(并入只读白名单;2026-08-23,editor 诊断驱动:委派 task 提及组件时
+   * flash 常幻觉 list_components → 子池外报「不存在」白烧一轮)。传集成方只读查询类工具
+   * (如 rag_component_docs/list_components);写类工具勿传(子 agent 写面仍由 writablePaths 管控)
+   */
+  allowedTools?: string[]
   /** 自动注入主 agent 委派编排段(htmlOrchestratorPrompt(id),含正确 use_<id>);默认 true。false=不注入(高级用户自定义编排) */
   orchestratorPrompt?: boolean
   /**
@@ -317,7 +323,7 @@ export function createHtmlSubagent(options: CreateHtmlSubagentOptions = {}): Sub
     writablePaths, codeVfsPrefix = 'html/', id = 'html', description, planning = true,
     summarization = true, maxToolRounds = 12, temperature = 0.4, skills, extraTools,
     formatCheck = true, codeField = 'code', orchestratorPrompt = true, craftNotes = true,
-    llm, thinkingMode,
+    llm, thinkingMode, allowedTools,
   } = options
   if (writablePaths !== undefined && !Array.isArray(writablePaths)) {
     throw new Error('[page-agent-sdk][createHtmlSubagent] writablePaths 须为字符串数组(代码组件 data 区,如 ["components"])/ 省略以从 schema 自动推断')
@@ -345,7 +351,7 @@ export function createHtmlSubagent(options: CreateHtmlSubagentOptions = {}): Sub
     ...(llm ? { llm } : {}),
     ...(thinkingMode ? { thinkingMode } : {}),
     writablePaths: writablePaths ?? [],                      // 写 data(代码字段 + 元信息,path guard);空=装配期推断回填
-    allowedTools: ['vfs_write', 'vfs_edit', 'vfs_rm', 'vfs_grep', 'vfs_read'],  // 代码工作副本 写/改/删/搜/读
+    allowedTools: ['vfs_write', 'vfs_edit', 'vfs_rm', 'vfs_grep', 'vfs_read', ...(allowedTools ?? [])],  // 代码工作副本 写/改/删/搜/读 + 集成方扩展(只读查询类,如 rag_component_docs/list_components;经白名单进入子池)
     middleware: middleware.length ? middleware : undefined,  // 装 todos 规划 + 格式校验链(架构扩展)
     summarization: summarization === false ? undefined : summarization,  // 默认开跨轮压缩(架构扩展)
     maxVerifyAttempts: formatCheck ? FORMAT_CHECK_MAX_ATTEMPTS : undefined,  // verify 门禁自纠上限(beforeReturn)

@@ -697,7 +697,12 @@ export function createAgent(options: CreateAgentOptions) {
   /** 核心工具执行(洋葱最内层):find + invoke */
   async function coreExecTool(ctx: ToolCallContext): Promise<{ content: string; status: 'done' | 'error' }> {
     const target = allTools.find((t) => t.name === ctx.name)
-    if (!target) return { content: `工具 "${ctx.name}" 不存在`, status: 'error' }
+    if (!target) {
+      // C2 错误即向导(2026-08-23 补漏):幻觉工具名/子 agent 白名单外工具 → 附当前可用工具清单,
+      // 模型一眼改用正确工具(省「猜名再试」轮;子栈委派 task 提到组件时 flash 常幻觉 list_components)
+      const names = allTools.map((t) => t.name).filter((n) => !n.startsWith('__'))
+      return { content: `工具 "${ctx.name}" 不存在(当前上下文可用工具:${names.join(', ')})`, status: 'error' }
+    }
     try {
       // per-call config 通道(CA 并发修复):中间件经 ctx.callConfig 注入的键值透传到工具 fn 第二参
       // (config.configurable.__pgXxx);zod 校验会重建 args 对象,这是唯一的 per-call 干净通道。

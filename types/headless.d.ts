@@ -1582,6 +1582,8 @@ export interface CreateRagSubagentOptions {
 }
 export interface CreateHtmlSubagentOptions {
   writablePaths: string[];
+  /** 子 agent 额外可用工具名(并入只读白名单;集成方只读查询类工具);写类工具勿传 */
+  allowedTools?: string[];
   codeVfsPrefix?: string;
   id?: string;
   description?: string;
