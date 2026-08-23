@@ -88,8 +88,8 @@ export interface RunFinishGatesInput {
   messages: MsgLike[]
   /** evidence 审计基线:本会话累计成功写路径集(effectiveWritePaths 口径,含 ROOT=整体写;跨 invoke 持续累积) */
   sessionWritePaths: Iterable<string>
-  /** invoke 起点的 todos status 快照(id → status);审计面 = 本 invoke 内翻转为 completed 的项 */
-  todosStatusAtStart: Map<string, string>
+  /** invoke 起点的 todos 快照(id → {status, content});审计面 = 本 invoke 内翻转为 completed 的项(含 content 比对防 id 复用误判) */
+  todosStatusAtStart: Map<string, { status: string; content: string }>
 }
 
 /** 各层预算上限(原 createAgent 常量平移;≤2 = 一次回灌即收敛,两次仍异常则放行强收) */
@@ -219,13 +219,16 @@ export function runFinishGates(i: RunFinishGatesInput): GateOutcome {
  */
 export function auditEvidenceOffenders(
   todos: Todo[],
-  todosStatusAtStart: Map<string, string>,
+  todosStatusAtStart: Map<string, { status: string; content: string }>,
   sessionWritePaths: Iterable<string>,
 ): Todo[] {
   const sess = Array.from(sessionWritePaths ?? [])
   return todos.filter((t) => {
     if (t.status !== 'completed') return false
-    if (todosStatusAtStart?.get(t.id) === 'completed') return false // 非本 invoke 翻转(评审 P0-2:跨轮遗留不审计)
+    const start = todosStatusAtStart?.get(t.id)
+    // 非本 invoke 翻转(评审 P0-2:跨轮遗留不审计);content 比对防 id 复用 —— write_todos 按位置重生成
+    // t-N,新任务撞旧 id 时仅凭 status 会漏审(2026-08-23 真 LLM 探针 S2 实证)
+    if (start && start.status === 'completed' && start.content === t.content) return false
     const eps = extractEvidencePaths(t.evidence ?? '')
     if (!eps.length) return false // 描述性证据不含路径形态,不核(宁漏勿误)
     return !isEvidenceCovered(eps, sess)

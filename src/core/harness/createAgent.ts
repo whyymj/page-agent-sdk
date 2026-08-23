@@ -841,7 +841,9 @@ export function createAgent(options: CreateAgentOptions) {
     // 收口门禁链预算(gateChain,evidence-audit-gate Phase 0 抽取;每 invoke 新建,transitional/completion/zeroTool/audit 四独立池由门禁内部自增)
     const gateChainState = createGateChainState()
     // evidence-audit-gate A2 审计面锚点:invoke 起点 todos status 快照(收口时 diff 出「本 invoke 翻转 completed」的项)
-    const todosStatusAtStart = new Map((state.todos ?? []).map((t) => [t.id, t.status]))
+    // 值含 content:id 复用防线 —— write_todos 不传 id 时框架按位置重生成 t-N,新任务会撞旧 id,
+    // 只比 status 会把「同 id 新任务」误判为跨轮遗留(2026-08-23 真 LLM 探针 S2 实证:审计面被清空)
+    const todosStatusAtStart = new Map((state.todos ?? []).map((t) => [t.id, { status: t.status, content: t.content }]))
     // tool-call-economy C2:同工具同参连续失败 streak(每 invoke 新建;成功清零)
     const failStreaks = new Map<string, number>()
     /** writeCapable 标注判定(单一真相源;bulkGuard/componentLock 同口径;标注缺失退 WRITE_TOOL_NAMES 名单) */

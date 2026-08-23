@@ -196,9 +196,16 @@ export async function run(ctx: TestCtx) {
         { id: 't-new', content: '新任务', status: 'completed' },        // 本 invoke 翻转 → 列
         { id: 't-p', content: '待办', status: 'pending' },
       ] as any[],
-      new Map([['t-old', 'completed']]),
+      new Map([['t-old', { status: 'completed', content: '旧任务' }]]),
     )
     assert(!fb3.includes('#t-old') && fb3.includes('#t-new'), '✓ A1 rider(F2)→ 只列本 invoke 翻转的空 evidence 项,跨轮遗留不发难')
+    // id 复用防线(真 LLM 探针 S2 实证):同 id 新任务撞旧 completed 记录,仅凭 status 会漏审 —— content 不同 = 本轮翻转
+    const offenders2 = auditEvidenceOffenders(
+      [{ id: 't-1', content: '新任务BBB', status: 'completed', evidence: 'components.9' }] as any[],
+      new Map([['t-1', { status: 'completed', content: '旧任务AAA' }]]),
+      ['components.0.props.title'],
+    )
+    assert(offenders2.length === 1, `✓ A2 id 复用 → 同 id 新任务(content 不同)不因旧 completed 记录漏审(实测 ${offenders2.length} 项)`)
   }
 
   // ===== 8. usageHints 引导段(A1 引导与机制同 ship)=====
@@ -220,7 +227,7 @@ export async function run(ctx: TestCtx) {
     assert(!isEvidenceCovered(['components2.x'], ['components.0']), '✓ isEvidenceCovered → components ≠ components2 分隔符纪律')
     assert(!isEvidenceCovered(['components.9'], []), '✓ isEvidenceCovered → 空基线不覆盖')
     // auditEvidenceOffenders:审计面 = 本 invoke 翻转(跨轮遗留不审,P0-2)
-    const startMap = new Map([['t-old', 'completed']])
+    const startMap = new Map([['t-old', { status: 'completed', content: '旧完成' }]])
     const todos = [
       { id: 't-old', content: '旧完成', status: 'completed', evidence: 'nowhere.9' },  // 跨轮遗留:不在审计面
       { id: 't-new', content: '新完成', status: 'completed', evidence: 'nowhere.9' },  // 本轮翻转 + 编造路径:违例

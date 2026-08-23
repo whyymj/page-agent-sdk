@@ -2,6 +2,16 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [3.44.2] - 2026-08-23
+
+### Fixed(evidence 审计 P0,真 LLM 探针 S2 实证)
+
+- **todo id 复用致审计面清空**:`write_todos` 不传 id 时框架按位置重生成 t-N,新任务撞旧 id;起点快照仅按 id 比 status,「同 id 新任务」被误判为跨轮遗留不审计(真 LLM 探针实测:模型按指示填编造路径 components.9,审计零触发)。修:快照值改 `{status, content}` 复合,翻转判定加 content 比对 —— 同 id 不同内容 = 本轮新任务,照审;rider 过滤同款修正
+
+### Added(C2 延伸:写侧键集建议)
+
+- **写路径报错也带可用键集**:patches 路径键打错(PATH_DENIED)/ 整体 set 含未声明键(SCHEMA_STRIP)/ move 目标键错,三处 hint 均附父级 schema 声明键集 —— 与 read 侧同款「错误即向导」;键集从 schema 取(未声明键名不因报错泄露)
+
 ## [3.44.1] - 2026-08-23
 
 ### Fixed(C2 缺点自查修补)

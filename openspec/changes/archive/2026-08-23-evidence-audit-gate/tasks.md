@@ -28,5 +28,9 @@
 
 - [x] tests/e2e/evidence-audit.mjs(11 项):A2 编造路径拦→修正放行(6 次调用)/ 真实路径零触发(4 次)/ A1 rider 轮次结构与旧版一致;usageHints 引导段在 selftest sec-102 #8 覆盖
 - [x] tests/browser/page-demo.spec.ts 规划端到端剧本补 evidence 参数(write 先行 + evidence 附实际路径;实测旧剧本本就不触发 A2 —— rider 无独立触发面,补 evidence 为对齐新引导防将来漂移)
-- [ ] 真 LLM:探针「标 completed 附编造路径」被拦 / 正常完成零额外轮次;`--baseline-update` + 基线迁移说明
+- [x] 真 LLM(2026-08-23,`tests/runtime/_real-llm-evidence-audit.mjs` 本地脚本 + glm-5.2,语义 6/6):
+  - S1 引导生效:模型按新引导填真实路径 evidence + 审计零触发(零误伤、零额外轮次)
+  - S2 编造路径被拦:模型按指示填 components.9 → A2 回灌 → 终态修正(探针挖出 **P0:todo id 复用致审计面清空**,已修 + 回归锁,见 CHANGELOG [Unreleased])
+  - S3 描述性证据:被审计 offender 全为路径形态(描述文本零进审计面);模型被前轮历史带偏先填假路径也被正确拦下改描述放行
+- [x] ~~随 change `--baseline-update` + 基线迁移说明~~ → **deferred 注记**:基线系 deepseek-v4-flash 时代采集,网关 flash offline 无法重采;A1 rider 轮次影响已由确定性测试锁零漂移(e2e 计数断言),真 LLM 探针零额外轮次实证;网关恢复后随下次 uispec 采集补
 - [x] 文档:CLAUDE.md(架构要点门禁族 + gateChain)+ README 中英文 + usage-guide 中英文(evidence 审计门禁条目)+ CHANGELOG [Unreleased];计数同步 2813→2853 / 929→940(browser 102 不变)

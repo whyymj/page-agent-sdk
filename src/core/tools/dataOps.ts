@@ -25,6 +25,21 @@ import {
   UNSAFE_KEYS,
   type EditOp,
 } from './jsonUtils'
+
+// ===== C2 错误即向导 · 写侧键集建议(tool-call-economy,3.44.x)=====
+/** schema 声明键集(开放节点/取不到返回 null —— 不回落 bind,未声明键名不因报错泄露;与 read 深投影同口径) */
+function declaredKeysAt(schema: ZodType | undefined, parentJp: string): string[] | null {
+  if (!schema) return null
+  const sub = parentJp ? getSchemaAtPath(schema, parentJp) : schema
+  const shape = (sub as unknown as { shape?: Record<string, unknown> } | null | undefined)?.shape
+  return shape && typeof shape === 'object' ? Object.keys(shape) : null
+}
+/** 键集建议后缀(截断 12 个防超长;空/null = 无后缀) */
+const keysHintSuffix = (keys: string[] | null): string =>
+  keys && keys.length ? `(可用字段:${keys.slice(0, 12).join(', ')}${keys.length > 12 ? ' …' : ''})` : ''
+/** 取父路径(components.0.title → components.0;无分隔 → 根'') */
+const parentPathOf = (jp: string): string => (/[.[]/.test(jp) ? jp.replace(/[.[][^.[]*$/, '') : '')
+
 import {
   getSchemaTopKeys, isPathAllowed, getSchemaAtPath, projectBySchemaDeep, describeSchemaNode, extendSchemaWithPgId,
   validateAtPath, resolveSchemaPath, schemaHasRefinement, arrayMinLength, elementSchemaCandidates,
@@ -180,7 +195,7 @@ export function validateRootValueLocally(args: {
           // 键不在 schema 声明:bind 已有 → 宿主自管字段,跳过保留原值(与旧 strip+safeMerge 行为一致);
           // bind 没有 → 本次新增未声明键 → 拒(fix-silent-strip)
           if (k in beforeObj) continue
-          return { ok: false, error: toolError({ code: 'SCHEMA_STRIP', message: `字段 ${k} 不在 schema 声明内,写入被拒绝(防静默丢失)`, hint: '该数据结构不支持这些字段;请只用 schema 声明的字段,或在 data.schema 中声明后重试', path: k, details: { stripped: [k] } }), notices }
+          return { ok: false, error: toolError({ code: 'SCHEMA_STRIP', message: `字段 ${k} 不在 schema 声明内,写入被拒绝(防静默丢失)`, hint: `该数据结构不支持这些字段;请只用 schema 声明的字段,或在 data.schema 中声明后重试${keysHintSuffix(declaredKeysAt(schema, ''))}`, path: k, details: { stripped: [k] } }), notices }
         }
         return { ok: false, error: zodError(k, vr.issues ?? []), notices }
       }
@@ -188,7 +203,7 @@ export function validateRootValueLocally(args: {
       // per-key strip 检测(值内新增的未声明嵌套键)
       const stripped = findStrippedKeys(beforeObj[k], v, vr.data, k)
       if (stripped.length) {
-        return { ok: false, error: toolError({ code: 'SCHEMA_STRIP', message: `字段 ${stripped.join(', ')} 不在 schema 声明内,写入被拒绝(防静默丢失)`, hint: '该数据结构不支持这些字段;请只用 schema 声明的字段,或在 data.schema 中声明后重试', path: stripped[0], details: { stripped } }), notices }
+        return { ok: false, error: toolError({ code: 'SCHEMA_STRIP', message: `字段 ${stripped.join(', ')} 不在 schema 声明内,写入被拒绝(防静默丢失)`, hint: `该数据结构不支持这些字段;请只用 schema 声明的字段,或在 data.schema 中声明后重试${keysHintSuffix(declaredKeysAt(schema, parentPathOf(String(stripped[0]))))}`, path: stripped[0], details: { stripped } }), notices }
       }
       parsedKeys[k] = vr.data
     }
@@ -539,7 +554,7 @@ export function applyPatchesToBind(args: {
     const p = patches[i]
     const jp = p.jsonPath || ''
     if (isUnsafePath(jp)) return { ok: false, error: toolError({ code: 'PATH_UNSAFE', message: `patches[${i}] jsonPath "${jp}" 含非法段`, hint: '使用正常属性路径,如 components.0.text' }) }
-    if (!isPathAllowed(jp, schema, allowKeys)) return { ok: false, error: toolError({ code: 'PATH_DENIED', message: `patches[${i}] @ "${jp}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可写' }) }
+    if (!isPathAllowed(jp, schema, allowKeys)) return { ok: false, error: toolError({ code: 'PATH_DENIED', message: `patches[${i}] @ "${jp}" 不在 schema 声明字段内`, hint: `仅 schema 声明的 key 可写${keysHintSuffix(declaredKeysAt(schema, parentPathOf(jp)))}` }) }
     const op: EditOp = p.op ?? 'set'
     let pVal: unknown
     if (op !== 'remove') {
@@ -551,7 +566,7 @@ export function applyPatchesToBind(args: {
       pVal = pr.parsed
       // move 的 value 是目标路径:同样过白名单(防经 move 把元素移进 schema 未声明路径)
       if (op === 'move' && typeof pVal === 'string' && !isPathAllowed(pVal, schema, allowKeys)) {
-        return { ok: false, error: toolError({ code: 'PATH_DENIED', message: `patches[${i}] move 目标 "${pVal}" 不在 schema 声明字段内`, hint: 'move 的 value(目标路径)也须在 schema 声明字段内' }) }
+        return { ok: false, error: toolError({ code: 'PATH_DENIED', message: `patches[${i}] move 目标 "${pVal}" 不在 schema 声明字段内`, hint: `move 的 value(目标路径)也须在 schema 声明字段内${keysHintSuffix(declaredKeysAt(schema, parentPathOf(String(pVal))))}` }) }
       }
     }
     if (op === 'append') appendCaptures.push({ jp, elems: Array.isArray(pVal) ? [...(pVal as unknown[])] : [pVal] })
@@ -1292,12 +1307,9 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       // C2 错误即向导 · 建议键集来源(3.44.1 收紧):schema 声明键优先 —— 正常读路径有深投影(未声明键名不泄露),
       // 错误分支提前返回绕过投影,键集若从原始 bind 取会泄露未声明键名(即使只有名字);开放节点(record/any 等
       // 正常读本就放行)无 shape 可枚举时才回落 bind 实际键
-      const suggestKeysOf = (parentJp: string, parent: unknown): string[] => {
-        const sub = parentJp ? getSchemaAtPath(schema, parentJp) : schema
-        const shape = (sub as unknown as { shape?: Record<string, unknown> } | null | undefined)?.shape
-        if (shape && typeof shape === 'object') return Object.keys(shape)
-        return parent && typeof parent === 'object' && !Array.isArray(parent) ? Object.keys(parent) : []
-      }
+      const suggestKeysOf = (parentJp: string, parent: unknown): string[] =>
+        declaredKeysAt(schema, parentJp)  // schema 声明键优先(未声明键名不泄露)
+        ?? (parent && typeof parent === 'object' && !Array.isArray(parent) ? Object.keys(parent) : [])  // 开放节点回落 bind
       if (!isPathAllowed(jp, schema, allowKeys)) {
         // C2 错误即向导:键打错/拼错时附父级键集(省「读→猜→再读」试错轮)
         const parentJp0 = /[.[]/.test(jp) ? jp.replace(/[.[][^.[]*$/, '') : ''

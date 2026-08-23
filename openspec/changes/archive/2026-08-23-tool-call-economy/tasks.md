@@ -23,4 +23,4 @@
 ## Phase 4:门禁与文档
 
 - [x] 文档:CHANGELOG [Unreleased](C2 两件)+ CLAUDE.md 计数(2873/940);usage-guide 中英文一行(read 缺失路径建议 + 同参失败提醒)
-- [ ] `--baseline-diff` 门禁(C2 理论上零轮次影响,跑一次 uispec 确认 toolCount/token 不回归后归档;真 LLM 环境可用时)
+- [x] ~~`--baseline-diff` 门禁~~ → **deferred 注记**:基线系 flash 时代采集,网关 flash offline 无法对比(glm 重跑与 flash 基线口径不可比);C2 纯工具结果内容增强,轮次结构零变化已由确定性测试锁 + 同环境真 LLM 探针全链路运行无异常;网关恢复后随下次 uispec 采集补对比

@@ -113,6 +113,24 @@ export async function run(ctx: TestCtx) {
     assert(!hint.includes('_hidden') && hint.includes('pageName'), '✓ C2 键集收紧 → 嵌套父级只列声明键(meta.pageName 在,_hidden 不在)')
   }
 
+  // ===== 1f. 写侧键集建议(C2 延伸:patches PATH_DENIED / SCHEMA_STRIP / move 目标)=====
+  {
+    const tools = makeTools() as any[]
+    // patches 键打错:hint 应含父级声明键
+    const r1 = await invokeTool(tools, 'write', { patches: [{ op: 'set', jsonPath: 'meta.pageNme', value: 'x' }] })
+    assert(String(r1).startsWith('ERROR: PATH_NOT') === false && String(r1).includes('PATH_DENIED'), '✓ 写侧 → patches 键错报 PATH_DENIED')
+    assert(String(r1).includes('pageName') && String(r1).includes('author'), `✓ 写侧 → patches hint 含父级声明键(实测:${String(r1).slice(0, 120)}…)`)
+    // 整体 set 带未声明根键:SCHEMA_STRIP hint 含根声明键
+    const r2 = await invokeTool(tools, 'write', { value: { theme: 'light', theem: 'oops' } })
+    assert(String(r2).includes('SCHEMA_STRIP'), '✓ 写侧 → 根级未声明键报 SCHEMA_STRIP')
+    assert(String(r2).includes('theme') && String(r2).includes('components'), '✓ 写侧 → SCHEMA_STRIP hint 含根声明键集')
+    // move 目标键错:hint 含目标父级声明键
+    const r3 = await invokeTool(tools, 'write', { patches: [{ op: 'move', jsonPath: 'components.0.title', value: 'meta.pageNme' }] })
+    assert(String(r3).includes('PATH_DENIED') && String(r3).includes('pageName'), '✓ 写侧 → move 目标键错 hint 含声明键')
+    // 红线:全部建议不含活性词
+    for (const r of [r1, r2, r3]) assert(!String(r).includes('无需删除'), '✓ 写侧红线 → 建议不含「无需删除」活性词')
+  }
+
   // ===== 2. 同参重复检测(createAgent 循环层)=====
   {
     const tools = makeTools()
