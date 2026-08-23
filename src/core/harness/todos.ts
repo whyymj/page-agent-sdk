@@ -90,11 +90,16 @@ export function detectIncompleteFinish(todos: Todo[], finalContent: string): boo
  *  只喊「继续执行」会逼模型把已完成的活再干一遍,故给「已完成→标记 / 未完成→继续」两条路。
  *  列未完成项 id+content(单项截断 60 字防超长)让模型精确定位。
  *  evidence-audit-gate A1 rider(2026-08-23):同时列「已完成但 evidence 为空」项 —— 只搭本回灌的车,
- *  不新增触发/预算(引导与机制同 ship,见 usageHints evidence 段)。 */
-export function buildGateFeedback(todos: Todo[]): string {
+ *  不新增触发/预算(引导与机制同 ship,见 usageHints evidence 段)。
+ *  3.44.1 误伤修复:rider 只列「本 invoke 内翻转/新建」的项(todosStatusAtStart 快照 diff)—— todos 跨轮
+ *  持久化,上一任务遗留的 completed-空-evidence 项不该在本轮回灌里发难(与 A2 审计面同款口径)。 */
+export function buildGateFeedback(todos: Todo[], todosStatusAtStart?: Map<string, string>): string {
   const pending = todos.filter((t) => t.status !== 'completed')
   const lines = pending.map((t) => `#${t.id} [${t.status}] ${t.content.length > 60 ? `${t.content.slice(0, 60)}…` : t.content}`).join('\n')
-  const noEvidence = todos.filter((t) => t.status === 'completed' && !t.evidence)
+  const noEvidence = todos.filter(
+    (t) => t.status === 'completed' && !t.evidence
+      && (!todosStatusAtStart || todosStatusAtStart.get(t.id) !== 'completed'), // 跨轮遗留不列(无快照 = 兼容旧行为全列)
+  )
   const rider = noEvidence.length
     ? `\n另有 ${noEvidence.length} 项已标记完成但 evidence 为空(${noEvidence.map((t) => `#${t.id}`).join('、')}):标记完成时请用 update_todo 附 evidence(本次实际写入的 jsonPath,如 components.2);经委派完成等无主写路径时如实写明完成方式。`
     : ''

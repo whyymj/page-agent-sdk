@@ -6,6 +6,7 @@
  */
 import { z } from 'zod'
 import { createDataOps } from '../../tools/dataOps'
+import { pathsOverlap } from '../../harness/readInvalidation'
 import { createAgent } from '../../harness/createAgent'
 import type { Middleware } from '../../harness/middleware'
 import { BaseChatModel } from '@langchain/core/language_models/chat_models'
@@ -39,6 +40,7 @@ const SCHEMA = z.object({
   theme: z.string(),
   components: z.array(z.object({ type: z.string(), title: z.string() })),
   meta: z.object({ pageName: z.string(), author: z.string() }),
+  subtitle: z.string().optional(),   // 可选字段:缺值是合法状态(F3 豁免面)
 })
 
 function makeTools() {
@@ -78,6 +80,39 @@ export async function run(ctx: TestCtx) {
     assert(String(r4).includes('dark') && !String(r4).startsWith('ERROR:'), '✓ C2 read 正常路径 → 照旧返回值(hash 语义不变)')
   }
 
+  // ===== 1d. F3 可选字段缺值 = 合法状态,不报 PATH_NOT_FOUND(不进失败计数/streak)=====
+  {
+    const tools = makeTools() as any[]
+    const r = await invokeTool(tools, 'read', { jsonPath: 'subtitle' })
+    assert(!String(r).startsWith('ERROR:') && String(r).includes('(undefined)'), `✓ F3 → optional 字段缺值保持温和输出(实测前 30 字:${String(r).slice(0, 30)}`)
+  }
+
+  // ===== 1e. F1 路径形态归一:components[0] ≡ components.0(写括号/证据点分不再误伤)=====
+  {
+    assert(pathsOverlap('components[0]', 'components.0'), '✓ F1 → 括号与点分下标归一后重叠')
+    assert(pathsOverlap('$.components[1].title', 'components.1'), '✓ F1 → $ 前缀 + 括号形态归一')
+    assert(!pathsOverlap('components[0]', 'components.1'), '✓ F1 → 归一不误合并不同下标')
+  }
+
+  // ===== 1b. 键集来源收紧:bind 有 schema 未声明的运行时键 → 建议只列声明键,未声明键名不因报错泄露 =====
+  {
+    const bind: any = { theme: 'dark', components: [{ type: 'card', title: 'a' }], meta: { pageName: 'p', author: 'u' }, _runtimeSecret: 'x' }
+    const tools = createDataOps({ schema: SCHEMA, bind, description: '组件' }, {}) as any[]
+    const r = await invokeTool(tools, 'read', { jsonPath: 'theem' })
+    const hint = JSON.parse(String(r).slice(7)).hint
+    assert(!hint.includes('_runtimeSecret'), '✓ C2 键集收紧 → schema 未声明键名不因报错泄露(与正常读深投影同口径)')
+    assert(hint.includes('theme') && hint.includes('meta'), '✓ C2 键集收紧 → 声明键照常建议')
+  }
+
+  // ===== 1c. 对象父级键集同样只列声明键(嵌套层)=====
+  {
+    const bind: any = { theme: 'dark', components: [{ type: 'card', title: 'a' }], meta: { pageName: 'p', author: 'u', _hidden: 1 } }
+    const tools = createDataOps({ schema: SCHEMA, bind, description: '组件' }, {}) as any[]
+    const r = await invokeTool(tools, 'read', { jsonPath: 'meta.pageNme' })
+    const hint = JSON.parse(String(r).slice(7)).hint
+    assert(!hint.includes('_hidden') && hint.includes('pageName'), '✓ C2 键集收紧 → 嵌套父级只列声明键(meta.pageName 在,_hidden 不在)')
+  }
+
   // ===== 2. 同参重复检测(createAgent 循环层)=====
   {
     const tools = makeTools()
@@ -89,11 +124,12 @@ export async function run(ctx: TestCtx) {
     const badRead = { jsonPath: 'components.9' }   // 同参失败 ×3
     const agent = createAgent({
       llm: new ScriptLLM([
-        { tool: { name: 'read', args: badRead } },
-        { tool: { name: 'read', args: badRead } },
-        { tool: { name: 'read', args: badRead } },
-        { tool: { name: 'read', args: { jsonPath: 'theme' } } },  // 成功 → 清零
-        { tool: { name: 'read', args: badRead } },                 // streak 重启(1 次,无提醒)
+        { tool: { name: 'read', args: { depth: 2, jsonPath: 'components.9' } } },  // 同参失败(键序 A)
+        { tool: { name: 'read', args: { jsonPath: 'components.9', depth: 2 } } },  // 同参失败(键序 B —— 3.44.1 规范化后仍算同参)
+        { tool: { name: 'read', args: badRead } },                                 // 参数变了(去掉 depth)→ 新 streak 首次
+        { tool: { name: 'read', args: badRead } },                                 // 同参第二次 → 提醒
+        { tool: { name: 'read', args: { jsonPath: 'theme' } } },                   // 成功 → 清零
+        { tool: { name: 'read', args: badRead } },                                 // streak 重启(1 次,无提醒)
       ]) as any,
       tools,
       middleware: [captureMw],
@@ -106,13 +142,14 @@ export async function run(ctx: TestCtx) {
     // 末次请求包含全部工具结果(captured 是逐轮累积快照,直接 flat 会重复计数)
     const lastMsgs = captured[captured.length - 1] ?? []
     const contents = (lastMsgs.filter((m) => m instanceof ToolMessage) as ToolMessage[]).map((m) => String(m.content))
-    assert(contents.length === 5, `✓ C2 streak → 5 条工具结果(实测 ${contents.length})`)
+    assert(contents.length === 6, `✓ C2 streak → 6 条工具结果(实测 ${contents.length})`)
     assert(!contents[0].includes('同参数已连续失败'), '✓ C2 streak → 首次失败不提醒(给正常自纠机会)')
-    assert(contents[1].includes('同参数已连续失败 2 次'), '✓ C2 streak → 第 2 次同参失败附提醒')
-    assert(contents[2].includes('同参数已连续失败 3 次'), '✓ C2 streak → 第 3 次持续附提醒(计数递增)')
-    assert(contents[1].startsWith('ERROR:'), '✓ C2 streak → 追加不破坏 ERROR: 前缀首位(writeGate 兼容)')
-    assert(!contents[3].includes('同参数已连续失败'), '✓ C2 streak → 成功调用零提醒')
-    assert(!contents[4].includes('同参数已连续失败 2'), '✓ C2 streak → 成功后 streak 清零(第 5 次失败是新 streak 首 次)')
+    assert(contents[1].includes('同参数已连续失败 2 次'), '✓ C2 streak(3.44.1)→ 字段重排的同参仍算同参(规范化键序)')
+    assert(!contents[2].includes('同参数已连续失败'), '✓ C2 streak → 参数实质变化(去掉 depth)是新 streak 首次,不提醒')
+    assert(contents[3].includes('同参数已连续失败 2 次'), '✓ C2 streak → 第 2 次同参失败附提醒')
+    assert(contents[3].startsWith('ERROR:'), '✓ C2 streak → 追加不破坏 ERROR: 前缀首位(writeGate 兼容)')
+    assert(!contents[4].includes('同参数已连续失败'), '✓ C2 streak → 成功调用零提醒')
+    assert(!contents[5].includes('同参数已连续失败 2'), '✓ C2 streak → 成功后 streak 清零(第 6 次失败是新 streak 首次)')
     // 红线:提醒文案不含活性词(仅对带提醒的结果检查)
     for (const c of contents.filter((x) => x.includes('同参数已连续失败'))) {
       assert(!c.includes('未写入') && !c.includes('无需删除'), '✓ C2 红线 → 提醒文案不含「未写入/无需删除」活性词')

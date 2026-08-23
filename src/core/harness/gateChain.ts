@@ -132,7 +132,7 @@ export function runFinishGates(i: RunFinishGatesInput): GateOutcome {
       gate: {
         stage: 'completion_gate',
         attempt: g.completionRetries,
-        feedback: buildGateFeedback(i.todos),
+        feedback: buildGateFeedback(i.todos, i.todosStatusAtStart),
         logData: { pending: i.todos.filter((t) => t.status !== 'completed').map((t) => t.id) },
       },
     }

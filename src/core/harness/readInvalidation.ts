@@ -58,6 +58,10 @@ function normalizePath(p: string): string {
   if (s === '(root)' || s === '$') return ROOT
   if (s.startsWith('$.')) s = s.slice(2)
   else if (s.startsWith('$')) s = s.slice(1)
+  // 3.44.1 误伤修复:数组下标形态归一(components[0] ≡ components.0)—— query expr 路径产出已是点分形态
+  // (jpTokenize),裸 jsonPath 的括号形态此前不归一 → 「写用 components[0] / 证据或读用 components.0」
+  // 会被判不重叠(stale-read 失效漏配 + evidence 审计误伤同根);中心归一,三侧(读/写/证据)同口径
+  s = s.replace(/\[(\d+)\]/g, '.$1')
   return s
 }
 

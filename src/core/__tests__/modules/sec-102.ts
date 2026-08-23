@@ -189,6 +189,16 @@ export async function run(ctx: TestCtx) {
     assert(fb.includes('evidence 为空') && fb.includes('#t-2'), '✓ A1 rider → 追加已完成空 evidence 项(只搭车不新增触发)')
     const fb2 = buildGateFeedback([{ id: 't-1', content: 'x', status: 'pending' }, { id: 't-2', content: 'y', status: 'completed', evidence: 'components.0' }] as any[])
     assert(!fb2.includes('evidence 为空'), '✓ A1 rider → 全部有 evidence 不追加')
+    // F2 误伤修复:快照标记「跨轮已 completed」的遗留项不进 rider(与本 invoke 翻转项区分)
+    const fb3 = buildGateFeedback(
+      [
+        { id: 't-old', content: '旧任务', status: 'completed' },        // 跨轮遗留(快照已 completed)→ 不列
+        { id: 't-new', content: '新任务', status: 'completed' },        // 本 invoke 翻转 → 列
+        { id: 't-p', content: '待办', status: 'pending' },
+      ] as any[],
+      new Map([['t-old', 'completed']]),
+    )
+    assert(!fb3.includes('#t-old') && fb3.includes('#t-new'), '✓ A1 rider(F2)→ 只列本 invoke 翻转的空 evidence 项,跨轮遗留不发难')
   }
 
   // ===== 8. usageHints 引导段(A1 引导与机制同 ship)=====

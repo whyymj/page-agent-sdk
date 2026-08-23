@@ -1038,8 +1038,13 @@ export function createAgent(options: CreateAgentOptions) {
           // tool-call-economy C2 同参重复检测(deferred 循环/终止面 #1 并入):同工具同参连续失败 ≥2 →
           // 结果尾附提醒,治「报错后原样死磕」烧轮次(schema 误解/前置不满足时 LLM 常见行为,实测可烧满 maxToolRounds)。
           // 追加在 content 尾部:ERROR: 前缀首位不动(writeGate 判定兼容);成功即清零 streak;文案不含
-          // 「未写入/无需删除」活性词(防写成功结果被误判为失败)
-          const _streakKey = `${ctxs[i].call.name}|${JSON.stringify(ctxs[i].call.args ?? {})}`
+          // 「未写入/无需删除」活性词(防写成功结果被误判为失败)。
+          // 3.44.1 收紧:参数键排序后再序列化 —— 模型把同参字段重排即绕过检测的口子堵上(数组顺序保留:顺序不同语义确不同)
+          const _canonArgs = (v: unknown): unknown =>
+            v && typeof v === 'object' && !Array.isArray(v)
+              ? Object.fromEntries(Object.keys(v as Record<string, unknown>).sort().map((k) => [k, _canonArgs((v as Record<string, unknown>)[k])]))
+              : v
+          const _streakKey = `${ctxs[i].call.name}|${JSON.stringify(_canonArgs(ctxs[i].call.args ?? {}))}`
           const _failed = r.status === 'error' || (typeof r.content === 'string' && r.content.startsWith('ERROR:'))
           let _content = r.content
           if (_failed) {
