@@ -62,7 +62,7 @@ export async function run(ctx: TestCtx) {
     assert(invalidateStaleReads(mk('components'), [W('write', { patch: { op: 'set', jsonPath: 'components2', value: 1 } })]).invalidatedCount === 0, '✓ 重叠 → components2 不误配 components')
   }
 
-  // 3. remove/move/del/delete_data 兄弟失效(父数组前缀)
+  // 3. remove/move/del 兄弟失效(父数组前缀)
   {
     const mkMsg = () => [
       ...mkRound([{ name: 'read', args: { jsonPath: 'components.1' } }], ['v']),
@@ -71,7 +71,6 @@ export async function run(ctx: TestCtx) {
     assert(invalidateStaleReads(mkMsg(), [W('write', { patch: { op: 'remove', jsonPath: 'components.0' } })]).invalidatedCount === 1, '✓ 位移 → remove 兄弟失效(索引错位)')
     assert(invalidateStaleReads(mkMsg(), [W('write', { patch: { op: 'move', jsonPath: 'components.0', value: 'components.3' } })]).invalidatedCount === 1, '✓ 位移 → move 兄弟失效')
     assert(invalidateStaleReads(mkMsg(), [W('write', { patch: { jsonPath: 'components.0' }, del: true })]).invalidatedCount === 1, '✓ 位移 → write del 兄弟失效')
-    assert(invalidateStaleReads(mkMsg(), [W('delete_data', { jsonPath: 'components.0' })]).invalidatedCount === 1, '✓ 位移 → delete_data 兄弟失效')
     // move 目标路径也入失效面:读 target 后代失效、target 兄弟失效;路径外不失效
     const moveW = W('write', { patch: { op: 'move', jsonPath: 'components.0', value: 'settings.list.2' } })
     assert(invalidateStaleReads([...mkRound([{ name: 'read', args: { jsonPath: 'settings.list.2' } }], ['v']), ...mkRound([{ name: 'write', args: {} }], ['ok'])], [moveW]).invalidatedCount === 1, '✓ 位移 → move 目标路径失效')
@@ -86,7 +85,6 @@ export async function run(ctx: TestCtx) {
     assert(invalidateStaleReads(rootRead, [W('write', { patch: { op: 'set', jsonPath: 'settings.title', value: 'x' } })]).invalidatedCount === 1, '✓ root → root 读被任意写失效')
     const subRead = [...mkRound([{ name: 'read', args: { jsonPath: 'components.0' } }], ['v']), ...mkRound([{ name: 'write', args: {} }], ['ok'])]
     assert(invalidateStaleReads(subRead, [W('write', { value: { a: 1 } })]).invalidatedCount === 1, '✓ root → root 写(整体 set)失效一切')
-    assert(invalidateStaleReads(subRead, [W('set_data', { value: { a: 1 } })]).invalidatedCount === 1, '✓ root → set_data 整体写失效一切')
   }
 
   // 5. jsonPaths 全量提取(不误判 root)
@@ -94,11 +92,6 @@ export async function run(ctx: TestCtx) {
     const mkMsg = () => [...mkRound([{ name: 'read', args: { jsonPaths: ['components.0', 'meta.x'] } }], ['多路径读取(共 2 项)']), ...mkRound([{ name: 'write', args: {} }], ['ok'])]
     assert(invalidateStaleReads(mkMsg(), [W('write', { patch: { op: 'set', jsonPath: 'meta', value: 1 } })]).invalidatedCount === 1, '✓ jsonPaths → 多路径任一命中(祖先重叠)即失效')
     assert(invalidateStaleReads(mkMsg(), [W('write', { patch: { op: 'set', jsonPath: 'settings.z', value: 1 } })]).invalidatedCount === 0, '✓ jsonPaths → 全不命中不失效(修复:不误判 root)')
-    // get_data 同口径
-    const g = [...mkRound([{ name: 'get_data', args: { jsonPaths: ['components.0'] } }], ['v']), ...mkRound([{ name: 'write', args: {} }], ['ok'])]
-    assert(invalidateStaleReads(g, [W('write', { patch: { op: 'set', jsonPath: 'settings.z', value: 1 } })]).invalidatedCount === 0, '✓ jsonPaths → get_data jsonPaths 非空不判 root')
-    const g2 = [...mkRound([{ name: 'get_data', args: {} }], ['v']), ...mkRound([{ name: 'write', args: {} }], ['ok'])]
-    assert(invalidateStaleReads(g2, [W('write', { patch: { op: 'set', jsonPath: 'settings.z', value: 1 } })]).invalidatedCount === 1, '✓ jsonPaths → get_data 无参 = root 读')
   }
 
   // 6. query_data expr 前缀定界;search_data 恒 root;分语文案
@@ -214,7 +207,7 @@ export async function run(ctx: TestCtx) {
   // 13. 纯函数单元:effectiveWritePaths / extractReadPaths 直测
   {
     const e1 = effectiveWritePaths(W('write', { patch: { op: 'remove', jsonPath: 'components.2' } }))
-    // op=remove 在 write edit 内:结果仍带「当前值+新 hash」→ hasPostValue true;仅 del:true/delete_data 无值
+    // op=remove 在 write edit 内:结果仍带「当前值+新 hash」→ hasPostValue true;仅 del:true 无值
     assert(e1 !== null && e1.paths.includes('components') && e1.paths.includes('components.2') && e1.hasPostValue === true, '✓ 展开单元 → remove 登记 [path, 父数组](write edit 结果仍带新值)')
     const e2 = effectiveWritePaths(W('write', { value: { a: 1 } }))
     assert(e2 !== null && e2.paths.length === 1 && e2.paths[0] === '', '✓ 展开单元 → 整体 set = ROOT')

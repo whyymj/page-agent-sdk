@@ -82,7 +82,7 @@ export async function run(ctx: TestCtx): Promise<void> {
 
     // 焦点本身 === → 放行
     const selfWrite = await mw.wrapToolCall!(
-      { name: 'edit_data', args: { jsonPath: 'components.1', value: {} } } as any,
+      { name: 'write', args: { patch: { jsonPath: 'components.1', op: 'set', value: {} } } } as any,
       callNext,
     )
     assert(selfWrite.status === 'done', 'focus 写焦点本身(components.1)→ 放行')
@@ -97,14 +97,14 @@ export async function run(ctx: TestCtx): Promise<void> {
 
     // 前缀边界:components.10 不误匹配 components.1(用 . 分隔判,非 startsWith 裸前缀)
     const idx10 = await mw.wrapToolCall!(
-      { name: 'edit_data', args: { jsonPath: 'components.10.props.title' } } as any,
+      { name: 'write', args: { patch: { jsonPath: 'components.10.props.title', op: 'set', value: 'x' } } } as any,
       callNext,
     )
     assert(idx10.status === 'error', 'focus 前缀边界:components.10 不误匹配 components.1 → 拒绝')
 
     // 非焦点顶层字段(title)→ 越界拒绝
     const topField = await mw.wrapToolCall!(
-      { name: 'set_data', args: { jsonPath: 'title', value: 'x' } } as any,
+      { name: 'write', args: { patch: { jsonPath: 'title', op: 'set', value: 'x' } } } as any,
       callNext,
     )
     assert(topField.status === 'error', 'focus 写非焦点顶层字段(title)→ 拒绝')
@@ -112,12 +112,10 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 整体写(无 jsonPath)→ PATH_DENIED(P1-22 fix-authorization-surface:strict 下整体写无法校验子树归属 = 越界)
     const whole = await mw.wrapToolCall!({ name: 'write', args: { value: { title: 'x' } } } as any, callNext)
     assert(whole.status === 'error' && whole.content.includes('PATH_DENIED'), 'focus 整体写(无 jsonPath)→ PATH_DENIED(P1-22)')
-    const wholeSet = await mw.wrapToolCall!({ name: 'set_data', args: { value: { title: 'x' } } } as any, callNext)
-    assert(wholeSet.status === 'error', 'focus set_data 整体写 → PATH_DENIED(P1-22)')
     const wholeDraft = await mw.wrapToolCall!({ name: 'draft_commit', args: { draftId: 'd1' } } as any, callNext)
     assert(wholeDraft.status === 'error', 'focus draft_commit(整体写)→ PATH_DENIED(P1-22)')
-    const mergeNoPath = await mw.wrapToolCall!({ name: 'edit_data', args: { op: 'merge', value: { title: 'x' } } } as any, callNext)
-    assert(mergeNoPath.status === 'error', 'focus edit_data merge 无 jsonPath(改根)→ PATH_DENIED(P1-22)')
+    const mergeNoPath = await mw.wrapToolCall!({ name: 'write', args: { patch: { op: 'merge', value: { title: 'x' } } } } as any, callNext)
+    assert(mergeNoPath.status === 'error', 'focus write patch 无 jsonPath(merge 改根)→ PATH_DENIED(P1-22)')
 
     // eval_script(P1-21):transform 整体(无 jsonPath)→ 拒;transform 子树内 → 放行;子树外 → 拒;query 只读 → 放行
     const evalWhole = await mw.wrapToolCall!({ name: 'eval_script', args: { script: 'return data', mode: 'transform' } } as any, callNext)

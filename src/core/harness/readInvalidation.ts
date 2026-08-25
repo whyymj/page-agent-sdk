@@ -25,7 +25,7 @@ const ROOT_DISPLAY = '根(整体)'
 export const STALE_PLACEHOLDER_MARK = '⏱[过期快照]'
 
 /** 读工具集(需要失效判定的;describe/schema 是静态说明、history 读快照非现值,不在内) */
-const READ_TOOLS = new Set(['read', 'get_data', 'query_data', 'search_data'])
+const READ_TOOLS = new Set(['read', 'query_data', 'search_data'])
 /** 不触发失效的写工具:资源池 path 非主数据 jsonPath(resource_update 换资源不改 read 输出,rdelete 不动 bind) */
 const EXCLUDED_WRITE_TOOLS = new Set(['resource_update', 'resource_delete'])
 /** 会引起数组位移的 op(remove 删元素/move 搬元素):兄弟索引位移必须失效 */
@@ -108,7 +108,7 @@ export function extractReadPaths(name: string, args: Record<string, unknown> | u
   const a = args || {}
   if (name === 'query_data') return [queryPrefixPath(String(a.expr || ''))]
   if (name === 'search_data') return [ROOT]
-  // read / get_data:jsonPath ∪ jsonPaths(jsonPaths 不收集会误判 root,任意写整条击穿)
+  // read:jsonPath ∪ jsonPaths(jsonPaths 不收集会误判 root,任意写整条击穿)
   const out: string[] = []
   if (typeof a.jsonPath === 'string' && a.jsonPath) out.push(a.jsonPath)
   if (Array.isArray(a.jsonPaths)) for (const p of a.jsonPaths) if (typeof p === 'string' && p) out.push(p)
@@ -118,7 +118,7 @@ export function extractReadPaths(name: string, args: Record<string, unknown> | u
 interface EffectiveWrite {
   /** op 感知展开后的失效面(set/merge/append = 自身;remove/move/del = 自身+父数组;move = +目标+目标父) */
   paths: string[]
-  /** 写结果是否带新值/新 hash(write edit/set 带;del/delete_data 只说「已删除」——占位不引用防撒谎) */
+  /** 写结果是否带新值/新 hash(write edit/set 带;del 只说「已删除」——占位不引用防撒谎) */
   hasPostValue: boolean
   callIndex?: number
 }
@@ -127,7 +127,7 @@ interface EffectiveWrite {
 export function effectiveWritePaths(rec: StaleWriteRecord): EffectiveWrite | null {
   if (EXCLUDED_WRITE_TOOLS.has(rec.name)) return null
   const args = (rec.args || {}) as Record<string, any>
-  const isDelete = args.del === true || rec.name === 'delete_data'
+  const isDelete = args.del === true
   // 统一为 (path, op, value) 列表:del / patches / patch / jsonPath 直传 / 其余(整体 set / root transform)= ROOT
   const pairs: Array<{ path: string; op: string; value?: unknown }> = []
   if (isDelete) {
@@ -139,12 +139,12 @@ export function effectiveWritePaths(rec: StaleWriteRecord): EffectiveWrite | nul
   } else if (args.patch && typeof args.patch === 'object') {
     pairs.push({ path: String(args.patch.jsonPath || ''), op: String(args.patch.op || 'set'), value: args.patch.value })
   } else if (typeof args.jsonPath === 'string' && args.jsonPath) {
-    // edit_data(op 顶层或 patch 容错)/ eval_script transform 子树(set 语义)
-    pairs.push({ path: args.jsonPath, op: rec.name === 'edit_data' ? String(args.op || 'set') : 'set' })
+    // eval_script transform 子树(jsonPath 顶层直传,set 语义;edit_data 顶层形态已随工具移除)
+    pairs.push({ path: args.jsonPath, op: 'set' })
   } else if (typeof args.path === 'string' && args.path) {
     pairs.push({ path: args.path, op: 'set' })
   } else {
-    pairs.push({ path: ROOT, op: 'set' }) // 整体 set_data / write(value) / eval transform 根 / restore
+    pairs.push({ path: ROOT, op: 'set' }) // 整体 write(value) / eval transform 根 / restore
   }
   const paths = new Set<string>()
   for (const { path, op, value } of pairs) {

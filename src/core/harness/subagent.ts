@@ -197,7 +197,6 @@ function isChatModel(v: unknown): v is BaseChatModel {
 /** 子 agent 默认可用的只读工具(不含写工具 —— 子 agent 只读探查,写回交主 agent) */
 const DEFAULT_READONLY_TOOLS = [
   'describe_data',
-  'get_data',
   'read',
   'query_data',
   'search_data',

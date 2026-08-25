@@ -13,10 +13,10 @@ export async function run(ctx: TestCtx): Promise<void> {
       { operations: ['write'], scopes: ['secret'], mode: 'deny' },
     ])
     const next = async () => ({ content: 'ok', status: 'done' as const })
-    let r = await mw.wrapToolCall!({ id: '1', name: 'set_data', args: { jsonPath: 'secret' }, state: createState() }, next)
+    let r = await mw.wrapToolCall!({ id: '1', name: 'write', args: { jsonPath: 'secret' }, state: createState() }, next)
     assert(/权限拒绝/.test(r.content) && r.status === 'error', 'permissions deny 命中')
 
-    r = await mw.wrapToolCall!({ id: '2', name: 'set_data', args: { jsonPath: 'theme' }, state: createState() }, next)
+    r = await mw.wrapToolCall!({ id: '2', name: 'write', args: { jsonPath: 'theme' }, state: createState() }, next)
     assert(r.content === 'ok', 'permissions 未命中规则默认 allow')
 
     r = await mw.wrapToolCall!({ id: '3', name: 'custom_tool', args: {}, state: createState() }, next)
@@ -45,8 +45,6 @@ export async function run(ctx: TestCtx): Promise<void> {
     ])
     r = await mwGlobal.wrapToolCall!({ id: '9', name: 'write', args: { value: { a: 1 } }, state: createState() }, next)
     assert(/权限拒绝/.test(r.content) && r.status === 'error', 'P1-22 同型: permissions 整体写(无 jsonPath)按根 scope 校验 → 全局 deny 命中(原:空 scopes 跳过被绕过)')
-    r = await mwGlobal.wrapToolCall!({ id: '10', name: 'set_data', args: { value: { a: 1 } }, state: createState() }, next)
-    assert(r.status === 'error', 'P1-22 同型: permissions set_data 整体写 → 根 scope 命中全局 deny')
     r = await mwGlobal.wrapToolCall!({ id: '11', name: 'draft_commit', args: { draftId: 'd1' }, state: createState() }, next)
     assert(r.status === 'error', 'permissions draft_commit(整体写)纳入写校验 → 全局 deny 命中')
     r = await mwGlobal.wrapToolCall!({ id: '12', name: 'eval_script', args: { script: 'return data', mode: 'transform' }, state: createState() }, next)
@@ -60,14 +58,14 @@ export async function run(ctx: TestCtx): Promise<void> {
 
     // audit-five-dimensions SE-P1:glob 单星按 `.` 分段(对齐 scope 段分隔符,非 `/`);单星精确单段,双星跨段
     const mwStar = createPermissionsMiddleware([{ operations: ['write'], scopes: ['secret.*'], mode: 'deny' }])
-    r = await mwStar.wrapToolCall!({ id: 's1', name: 'set_data', args: { jsonPath: 'secret.key' }, state: createState() }, next)
+    r = await mwStar.wrapToolCall!({ id: 's1', name: 'write', args: { jsonPath: 'secret.key' }, state: createState() }, next)
     assert(/权限拒绝/.test(r.content) && r.status === 'error', 'SE-P1: glob 单星 secret.* 拦单段子 secret.key')
-    r = await mwStar.wrapToolCall!({ id: 's2', name: 'set_data', args: { jsonPath: 'secret.a.b' }, state: createState() }, next)
+    r = await mwStar.wrapToolCall!({ id: 's2', name: 'write', args: { jsonPath: 'secret.a.b' }, state: createState() }, next)
     assert(r.content === 'ok', 'SE-P1: glob 单星 secret.* 不跨段(深层 secret.a.b 不匹配单星 → allow;修复前 [^/]* 全吞 → 误 deny)')
-    r = await mwStar.wrapToolCall!({ id: 's3', name: 'set_data', args: { jsonPath: 'public.key' }, state: createState() }, next)
+    r = await mwStar.wrapToolCall!({ id: 's3', name: 'write', args: { jsonPath: 'public.key' }, state: createState() }, next)
     assert(r.content === 'ok', 'SE-P1: glob 单星 secret.* 不误伤其他根 public.key')
     const mwStar2 = createPermissionsMiddleware([{ operations: ['write'], scopes: ['secret.**'], mode: 'deny' }])
-    r = await mwStar2.wrapToolCall!({ id: 's4', name: 'set_data', args: { jsonPath: 'secret.a.b.c' }, state: createState() }, next)
+    r = await mwStar2.wrapToolCall!({ id: 's4', name: 'write', args: { jsonPath: 'secret.a.b.c' }, state: createState() }, next)
     assert(/权限拒绝/.test(r.content) && r.status === 'error', 'SE-P1: glob 双星 secret.** 跨段拦深层 secret.a.b.c(.*)')
   }
 }

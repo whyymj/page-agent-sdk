@@ -6,7 +6,7 @@
  * hash / A4 子路径 hash / 快照 / clone / checkpoint / 乐观锁全部零干扰。
  *
  * 三层:
- *  - 读侧(结构化读 read/get_data):受保护路径值 → 占位符(精确值不入 LLM 消息流)
+ *  - 读侧(结构化读 read):受保护路径值 → 占位符(精确值不入 LLM 消息流)
  *    · freeze   → ⟦frozen:<path>⟧(值完全不可改,精确值不泄露)
  *    · verbatim → ⟦res:<handle>⟧(懒注册:首次 read 当前 bind 值入库 → 句柄)
  *  - 写侧强制(commitSetToBind / applyPatchesToBind / eval 整体替换 三处调用,§7c F1):
@@ -206,7 +206,7 @@ export interface ProtectedCtx {
 }
 
 /**
- * 读侧占位符替换:在结构化读(read/get_data)结果上,把受保护路径值替换为占位符。
+ * 读侧占位符替换:在结构化读(read)结果上,把受保护路径值替换为占位符。
  * 仅结构化读调用 —— query/search/eval 返真值,由写侧强制兜底(§7c A1)。
  * 无受保护路径或 read 不涉受保护子树时直接返回原值(零 clone 零开销)。
  * @param jp read 的 jsonPath(相对 bind 根,'' = 整体)

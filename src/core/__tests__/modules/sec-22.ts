@@ -42,16 +42,16 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(parsed.results.some((x: any) => x.value.id === 4), '树查询: 最深 card#4 值完整返回(id=4)')
 
     // 增量改深层节点文本(jsonPath 相对主数据根)
-    r = await invoke(t['edit_data'], { op: 'set', jsonPath: 'components.0.children.0.children.0.text', value: '"A1-改"' })
-    assert(/已 edit/.test(r) && pageObj.components[0].children[0].children[0].text === 'A1-改', 'edit: jsonPath 深层定位改子节点文本')
+    r = await invoke(t['write'], { patch: { op: 'set', jsonPath: 'components.0.children.0.children.0.text', value: '"A1-改"' } })
+    assert(/已 write\(edit\)/.test(r) && pageObj.components[0].children[0].children[0].text === 'A1-改', 'write(edit): jsonPath 深层定位改子节点文本')
 
     // 递归 schema 校验:append 缺 id 的非法节点被拒
-    r = await invoke(t['edit_data'], { op: 'append', jsonPath: 'components.0.children', value: '{"type":"bad"}' })
-    assert(/SCHEMA_INVALID/.test(r), 'edit: 递归 schema 拒绝非法节点(缺 id),校验穿透到 children')
+    r = await invoke(t['write'], { patch: { op: 'append', jsonPath: 'components.0.children', value: '{"type":"bad"}' } })
+    assert(/SCHEMA_INVALID/.test(r), 'write(edit): 递归 schema 拒绝非法节点(缺 id),校验穿透到 children')
 
     // passthrough:节点可有未声明字段(extra/style)
-    r = await invoke(t['edit_data'], { op: 'merge', jsonPath: 'components.1', value: '{"extra":"ok","style":{"color":"red"}}' })
-    assert(pageObj.components[1].extra === 'ok' && pageObj.components[1].style?.color === 'red', 'edit: passthrough 保留未声明的额外字段')
+    r = await invoke(t['write'], { patch: { op: 'merge', jsonPath: 'components.1', value: '{"extra":"ok","style":{"color":"red"}}' } })
+    assert(pageObj.components[1].extra === 'ok' && pageObj.components[1].style?.color === 'red', 'write(edit): passthrough 保留未声明的额外字段')
 
     // 修复 1:read 子路径应按子 schema 递归投影,隐藏 child 不可见字段(components.1 有 extra,read 应不含 extra)
     r = await invoke(t['read'], { jsonPath: 'components.1' })

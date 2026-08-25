@@ -110,11 +110,113 @@ export async function run() {
     })
     const byName = (xs) => Object.fromEntries(xs.map((t) => [t.name, t]))
     const t = byName(tools)
-    await t.delete_data.invoke({ jsonPath: 'components.0' })
-    assert(bind.components.length === 2 && bind.components[0].id === 2 && bind.components[1].id === 3, 'delete_data 删数组首项 → length 3→2、元素前移([1,2,3]→[2,3]),无 empty 槽')
-    await t.delete_data.invoke({ jsonPath: 'components.0' })
-    await t.delete_data.invoke({ jsonPath: 'components.0' })
-    assert(bind.components.length === 0, 'delete_data 连续删 → 2→1→0,length 一路递减无残留空位')
+    await t.write.invoke({ patch: { jsonPath: 'components.0' }, del: true })
+    assert(bind.components.length === 2 && bind.components[0].id === 2 && bind.components[1].id === 3, '✓ write del 删数组首项 → length 3→2、元素前移([1,2,3]→[2,3]),无 empty 槽(delete_data 等价迁移)')
+    await t.write.invoke({ patch: { jsonPath: 'components.0' }, del: true })
+    await t.write.invoke({ patch: { jsonPath: 'components.0' }, del: true })
+    assert(bind.components.length === 0, '✓ write del 连续删 → 2→1→0,length 一路递减无残留空位')
+  }
+
+  console.log('[e2e:data] subtree-summary:大子树摘要泛化四路(主占位/窄读全文/聚焦全文/子 scope 全文)+ 轻量零变化锁')
+  {
+    const { createDataOps } = await import('../../dist/page-agent-sdk.js')
+    const bigStyle = { bg: 'x'.repeat(3200), fg: 'y' }
+    const smallStyle = { bg: 'g', fg: 'w' }
+    const schema = z.object({
+      title: z.string(),
+      components: z.array(z.object({ name: z.string(), props: z.object({ style: z.object({ bg: z.string(), fg: z.string() }), note: z.string() }) })),
+    })
+    const mkBind = () => ({
+      title: '页',
+      components: [
+        { name: 'a', props: { style: bigStyle, note: 'n' } },
+        { name: 'b', props: { style: smallStyle, note: 'm' } },
+      ],
+    })
+    const t = Object.fromEntries(createDataOps({ schema, bind: mkBind(), description: 'd' }).map((x) => [x.name, x]))
+    // ① 主 scope 占位:read 父级 → 内层大子树 <subtree …>(小兄弟 b 完整)
+    const r1 = String(await t.read.invoke({ jsonPath: 'components.0' }))
+    const ph = (r1.match(/<subtree [^>]*>/) ?? [''])[0]
+    assert(/<subtree [\d.]+KB keys:\[bg,fg\] #[0-9a-z]+>/.test(r1) && ph !== '' && !ph.includes('hash='), '✓ 主 scope 大子树 → <subtree keys #指纹> 占位(占位符无 hash= 字面量;read 尾部 hash= 乐观锁标识保留)')
+    const r1b = String(await t.read.invoke({ jsonPath: 'components.1' }))
+    assert(!/<subtree/.test(r1b) && /"name":"b"/.test(r1b), '✓ 轻量组件零变化(阈值下原样,零变化锁)')
+    // ② 窄读全文:read 该子树自身(结果根豁免)
+    const r2 = String(await t.read.invoke({ jsonPath: 'components.0.props.style' }))
+    assert(!/<subtree/.test(r2) && r2.includes('x'.repeat(60).slice(0, 60)), '✓ 窄读全文:结果根豁免(击穿通道①)')
+    // ③ 聚焦全文:__pgFullTextPaths 任意深度豁免前缀(focus 通道;焦点子树内部嵌套大子树也全文)
+    const r3 = String(await t.read.invoke({ jsonPath: 'components.0' }, { configurable: { __pgFullTextPaths: ['components.0'] } }))
+    assert(!/<subtree/.test(r3) && r3.includes('x'.repeat(60).slice(0, 60)), '✓ 聚焦全文:豁免前缀内任意深度全文(击穿通道②,仅根豁免不够的回归锁)')
+    // ④ 子 scope 全文:__pgDataScope 切子 scope(isMain=false)
+    const r4 = String(await t.read.invoke({ jsonPath: 'components.0' }, { configurable: { __pgDataScope: 'sub-1' } }))
+    assert(!/<subtree/.test(r4) && r4.includes('x'.repeat(60).slice(0, 60)), '✓ 子 scope 全文(击穿通道③,子 agent 改 code 需全文)')
+    // ⑤ query 不豁免(占位+path 检索形态)+ search 维持现状不摘要
+    const r5 = String(await t.query_data.invoke({ expr: '$.components[?(@.name=="a")].props.style' }))
+    assert(/"path":"components\.0\.props\.style"/.test(r5) && /<subtree/.test(r5), '✓ query 命中值不豁免:占位 + path(LLM 钉路径窄读)')
+    const r6 = String(await t.search_data.invoke({ query: 'zzz-not-found', mode: 'substring' }))
+    assert(!/<subtree/.test(r6), '✓ search 维持现状不摘要(既有片段截断口径)')
+  }
+
+  console.log('[e2e:data] read-before-write 守卫:占位子树直写被拦 → 窄读后放行(subtree-summary Phase 1)')
+  {
+    const { StubChatModel } = await import('./_stub-model.mjs')
+    const bigStyle = { bg: 'x'.repeat(3200), fg: 'y' }
+    const bind = {
+      title: '页',
+      components: [
+        { name: 'a', props: { style: bigStyle, note: 'n' } },
+      ],
+    }
+    const model = new StubChatModel([
+      { toolCalls: [{ name: 'read', args: { jsonPath: 'components' } }] },                                // 骨架读 → style 占位
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.0.props.style.bg', value: 'red' } } }] },  // 直写占位子树 → 拦
+      { toolCalls: [{ name: 'read', args: { jsonPath: 'components.0.props.style' } }] },                  // 窄读全文
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.0.props.style.bg', value: 'red' } } }] },  // 复写 → 放行
+      { text: '改完了' },
+    ])
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-subtree-guard', storage: 'memory', llm: model, capabilities: MIN_CAPS,
+      data: {
+        schema: z.object({
+          title: z.string(),
+          components: z.array(z.object({ name: z.string(), props: z.object({ style: z.object({ bg: z.string(), fg: z.string() }), note: z.string() }) })),
+        }),
+        bind,
+        description: '守卫场景',
+      },
+    })
+    await sdk.mount()
+    await sdk.send('把 a 的背景改成红色')
+    const trs = sdk.debugLogs.value.filter((l) => l.type === 'tool_result').map((l) => ({ name: l.data?.name, result: String(l.data?.result ?? '') }))
+    assert(trs.some((x) => x.name === 'read' && x.result.includes('<subtree')), '✓ 骨架读返回 <subtree> 占位(内容未见)')
+    const writes = trs.filter((x) => x.name === 'write')
+    assert(writes.length === 2 && writes[0].result.startsWith('NEED_NARROW_READ') && /read\(\{jsonPath/.test(writes[0].result),
+      '✓ 直写占位子树 → NEED_NARROW_READ 拦截(带窄读指令,ask-first)')
+    assert(/已 write\(edit\)/.test(writes[1].result) && bind.components[0].props.style.bg === 'red',
+      '✓ 窄读后复写放行(bg=red 落地;引导重试而非禁止)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:data] 旧 CRUD 四件已移除(legacy-crud-dedup):调旧名 → C2「工具不存在+可用清单」引导,一轮自纠走 write')
+  {
+    const { StubChatModel } = await import('./_stub-model.mjs')
+    const bind = { title: '旧标题' }
+    const model = new StubChatModel([
+      { toolCalls: [{ name: 'set_data', args: { value: { title: '新标题' } } }] },  // 旧名 → C2 回灌
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'title', value: '新标题' } } }] },  // 一轮自纠
+      { text: '已把标题改成「新标题」。' },
+    ])
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-legacy-crud-c2', storage: 'memory', llm: model, capabilities: MIN_CAPS,
+      data: { schema: z.object({ title: z.string() }), bind, description: 'C2 引导' },
+    })
+    await sdk.mount()
+    await sdk.send('把标题改成「新标题」')
+    const tr = sdk.debugLogs.value.filter((l) => l.type === 'tool_result' && l.data?.name === 'set_data')
+    assert(tr.length === 1 && String(tr[0].data?.result).includes('工具 "set_data" 不存在')
+      && /当前上下文可用工具[::]/.test(String(tr[0].data?.result)) && String(tr[0].data?.result).includes('write')
+      && tr[0].data?.status === 'error', '✓ 旧名 set_data → C2「工具不存在 + 完整可用清单」回灌(清单含 write,非静默)')
+    assert(bind.title === '新标题', '✓ C2 引导后一轮自纠改走 write(title 写入生效,write/read 零变化)')
+    sdk.unmount()
   }
 
   console.log('[e2e:data] 空 schema + 非空 bind → read 返回空投影/ write 全拒(SCHEMA_INVALID 或 PATH_DENIED)')
@@ -125,9 +227,9 @@ export async function run() {
     const sdk = createChatSdk({
       ui: false, id: 'e2e-empty-schema', storage: 'memory', llm: stubModel(
         // 第1轮:read → 返回空投影(空 schema 白名单,无字段可读)
-        { toolCalls: [{ name: 'read', arguments: {} }] },
+        { toolCalls: [{ name: 'read', args: {} }] },
         // 第2轮:write 任意路径(title/items/meta) → SCHEMA_INVALID 或 PATH_DENIED 拒绝
-        { toolCalls: [{ name: 'write', arguments: { value: '新', patch: { op: 'set', jsonPath: 'title' } } }] },
+        { toolCalls: [{ name: 'write', args: { value: '新', patch: { op: 'set', jsonPath: 'title' } } }] },
         { text: '操作完成' },
       ),
       capabilities: MIN_CAPS,
@@ -150,7 +252,7 @@ export async function run() {
     const bind = { x: 1, y: { nested: 'deep' } }
     const sdk = createChatSdk({
       ui: false, id: 'e2e-empty-schema-read', storage: 'memory', llm: stubModel(
-        { toolCalls: [{ name: 'read', arguments: { jsonPaths: ['x', 'y'] } }] },
+        { toolCalls: [{ name: 'read', args: { jsonPaths: ['x', 'y'] } }] },
         { text: '读完' },
       ),
       capabilities: MIN_CAPS,
@@ -170,7 +272,7 @@ export async function run() {
     const bind = { a: 1, b: 2 }
     const sdk = createChatSdk({
       ui: false, id: 'e2e-empty-schema-patches', storage: 'memory', llm: stubModel(
-        { toolCalls: [{ name: 'write', arguments: { value: { patches: [
+        { toolCalls: [{ name: 'write', args: { value: { patches: [
           { op: 'set', jsonPath: 'a', value: 10 },
           { op: 'set', jsonPath: 'b', value: 20 },
         ] } } }] },

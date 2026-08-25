@@ -57,17 +57,19 @@ export async function run() {
 
   console.log('[e2e:inspect] inspect().tools 反映 dataOps 开关 + 工具集完整性')
   {
-    // 恒全暴露(14 个数据工具;simplify-toolset 移除 snapshot_data/list_data_snapshots;toolMode 已移除)
+    // 恒全暴露(10 个数据工具;legacy-crud-dedup 移除 get/set/edit/delete_data 四件;simplify-toolset 早已移除 snapshot_data/list_data_snapshots;toolMode 已移除)
     const sdkOn = createChatSdk({
       ui: false, id: 'e2e-tools-on', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
       data: { schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'x' },
     })
     await sdkOn.mount()
     const toolsOn = sdkOn.inspect().tools.map((t) => t.name)
-    const expectedDataTools = ['describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data', 'restore_data', 'history_data', 'query_data', 'search_data', 'eval_script', 'read', 'write', 'schema_data', 'diff_data']
+    const expectedDataTools = ['describe_data', 'restore_data', 'history_data', 'query_data', 'search_data', 'eval_script', 'read', 'write', 'schema_data', 'diff_data']
     for (const name of expectedDataTools) {
       assert(toolsOn.includes(name), `dataOps 开启 → 含 ${name}(恒全暴露)`)
     }
+    assert(toolsOn.includes('describe_data'), '✓ describe_data 保留(与 schema_data 不同义:业务说明 vs 约束树)')
+    assert(['get_data', 'set_data', 'edit_data', 'delete_data'].every((n) => !toolsOn.includes(n)), '✓ 旧 CRUD 四件已移除(legacy-crud-dedup,14→10)')
     assert(toolsOn.includes('fetch_document') === false, 'MIN_CAPS(fetch:false) → 不含 fetch_document')
     sdkOn.unmount()
 
@@ -85,7 +87,7 @@ export async function run() {
         await sdkDep.mount()
         const hit = warns.filter((w) => w.includes('[page-agent-sdk][capabilities.'))
         assert(hit.length === 4, `✓ 4 项 deprecation 键各 warn 一次(实际 ${hit.length})`)
-        assert(hit.every((w) => w.includes('3.48.0 移除')), '✓ warn 含移除目标版本 3.48.0(warn 期明确)')
+        assert(hit.every((w) => w.includes('4.1.0 移除')), '✓ warn 含移除目标版本 4.1.0(warn 期明确)')
         assert(hit.some((w) => w.includes('capabilities.preferences') && w.includes('getPreferences')), '✓ warn 含迁移指引(preferences → 同批移除方法说明)')
         sdkDep.unmount()
         const before = warns.length
@@ -108,7 +110,7 @@ export async function run() {
     })
     await sdkDefault.mount()
     const toolsDefault = sdkDefault.inspect().tools.map((t) => t.name)
-    assert(['schema_data', 'diff_data', 'describe_data', 'get_data', 'set_data', 'edit_data', 'delete_data'].every((n) => toolsDefault.includes(n)), '默认 → 含 schema_data/diff_data 等底层工具(恒全暴露)')
+    assert(['schema_data', 'diff_data', 'describe_data', 'restore_data', 'history_data'].every((n) => toolsDefault.includes(n)), '默认 → 含 schema_data/diff_data 等数据工具(恒全暴露)')
     assert(toolsDefault.includes('clear_focus'), '默认 → focus 工具族装载(clear_focus)')
     sdkDefault.unmount()
 

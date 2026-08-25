@@ -8,7 +8,7 @@ export async function run(ctx: TestCtx): Promise<void> {
   const { assert } = ctx;
   console.log('\n[approval 中间件]')
   {
-    const mw = createApprovalMiddleware({ tools: ['set_data'] })
+    const mw = createApprovalMiddleware({ tools: ['write'] })
     assert(mw.name === 'approval', '中间件 name=approval')
 
     let captured: any = null
@@ -21,14 +21,14 @@ export async function run(ctx: TestCtx): Promise<void> {
 
     // 1. 不需确认的工具 → 直接 next,不发事件
     let nextCalled = false
-    await mw.wrapToolCall!(mkCtx('get_data', { path: 'a' }), async () => { nextCalled = true; return { content: 'ok', status: 'done' } })
+    await mw.wrapToolCall!(mkCtx('read', { path: 'a' }), async () => { nextCalled = true; return { content: 'ok', status: 'done' } })
     assert(nextCalled && !captured, '非确认工具 → 放行 next,不发 approval_request')
 
     // 2. 需确认 → 发 approval_request,resolve(true) → 执行 next
     captured = null
     let execResult = { content: 'written', status: 'done' as const }
-    let p = mw.wrapToolCall!(mkCtx('set_data', { path: 'a', value: 1 }), async () => execResult)
-    assert(captured?.type === 'approval_request' && captured.toolName === 'set_data', '确认工具 → 发 approval_request 事件')
+    let p = mw.wrapToolCall!(mkCtx('write', { path: 'a', value: 1 }), async () => execResult)
+    assert(captured?.type === 'approval_request' && captured.toolName === 'write', '确认工具 → 发 approval_request 事件')
     captured.resolve(true)
     let r = await p
     assert(r.content === 'written' && r.status === 'done', 'resolve(true) → 执行工具,返回真实结果')
@@ -36,19 +36,19 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 3. resolve(false) → 返回 error(不执行 next)
     captured = null
     let denied = false
-    let p2 = mw.wrapToolCall!(mkCtx('set_data', { path: 'b', value: 2 }), async () => { denied = true; return { content: 'x', status: 'done' } })
+    let p2 = mw.wrapToolCall!(mkCtx('write', { path: 'b', value: 2 }), async () => { denied = true; return { content: 'x', status: 'done' } })
     captured.resolve(false)
     let r2 = await p2
     assert(r2.status === 'error' && !denied, 'resolve(false) → 返回 error 且不执行工具')
 
     // M7: 拒绝消息含被拒 scope(兼容 vfs path / 数据 jsonPath / write patch.jsonPath;原 bug:只显 args.path,write 嵌套结构路径不显)
     captured = null
-    let pM7 = mw.wrapToolCall!(mkCtx('set_data', { jsonPath: 'secret.field', value: 1 }), async () => ({ content: 'x', status: 'done' }))
+    let pM7 = mw.wrapToolCall!(mkCtx('write', { jsonPath: 'secret.field', value: 1 }), async () => ({ content: 'x', status: 'done' }))
     captured.resolve(false)
     let rM7 = await pM7
     assert(rM7.status === 'error' && /path=.*secret\.field/.test(rM7.content), 'M7: 拒绝消息含 jsonPath(原:只显 args.path)')
     captured = null
-    let pM7b = mw.wrapToolCall!(mkCtx('set_data', { patch: { jsonPath: 'a.b' } }), async () => ({ content: 'x', status: 'done' }))
+    let pM7b = mw.wrapToolCall!(mkCtx('write', { patch: { jsonPath: 'a.b' } }), async () => ({ content: 'x', status: 'done' }))
     captured.resolve(false)
     let rM7b = await pM7b
     assert(/path=.*a\.b/.test(rM7b.content), 'M7: 拒绝消息含 patch.jsonPath(write 嵌套结构路径)')
@@ -56,25 +56,25 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 4. abort 联动:signal 已 aborted → 自动拒绝
     const ac = new AbortController(); ac.abort()
     captured = null
-    let p3 = mw.wrapToolCall!(mkCtx('set_data', { path: 'c' }, ac.signal), async () => ({ content: 'x', status: 'done' }))
+    let p3 = mw.wrapToolCall!(mkCtx('write', { path: 'c' }, ac.signal), async () => ({ content: 'x', status: 'done' }))
     let r3 = await p3
     assert(r3.status === 'error', 'signal 已 abort → 自动拒绝')
 
     // 5. 超时自动拒绝
-    const mwT = createApprovalMiddleware({ tools: ['set_data'], timeoutMs: 30 })
+    const mwT = createApprovalMiddleware({ tools: ['write'], timeoutMs: 30 })
     captured = null
-    let p4 = mwT.wrapToolCall!(mkCtx('set_data', { path: 'd' }), async () => ({ content: 'x', status: 'done' }))
+    let p4 = mwT.wrapToolCall!(mkCtx('write', { path: 'd' }), async () => ({ content: 'x', status: 'done' }))
     let r4 = await p4
     assert(r4.status === 'error', 'timeoutMs 超时 → 自动拒绝')
 
     // 6. confirm 自定义判定(优先于 tools)
-    const mwC = createApprovalMiddleware({ tools: ['set_data'], confirm: (n) => n === 'edit_data' })
+    const mwC = createApprovalMiddleware({ tools: ['write'], confirm: (n) => n === 'draft_commit' })
     captured = null
-    await mwC.wrapToolCall!(mkCtx('set_data', { path: 'e' }), async () => ({ content: 'ok', status: 'done' }))
-    assert(!captured, 'confirm 优先于 tools:set_data 不在 confirm 命中 → 放行不发事件')
+    await mwC.wrapToolCall!(mkCtx('write', { path: 'e' }), async () => ({ content: 'ok', status: 'done' }))
+    assert(!captured, 'confirm 优先于 tools:write 不在 confirm 命中 → 放行不发事件')
     captured = null
-    let p5 = mwC.wrapToolCall!(mkCtx('edit_data', { path: 'f' }), async () => ({ content: 'ok', status: 'done' }))
-    assert(captured?.type === 'approval_request', 'confirm 命中 edit_data → 发确认事件')
+    let p5 = mwC.wrapToolCall!(mkCtx('draft_commit', { draftId: 'd1' }), async () => ({ content: 'ok', status: 'done' }))
+    assert(captured?.type === 'approval_request', 'confirm 命中 draft_commit → 发确认事件')
     captured.resolve(true)
     assert((await p5).content === 'ok', 'confirm 命中后 resolve(true) → 执行')
 

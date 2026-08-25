@@ -118,19 +118,18 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert((wrapped as any).name === 'fake', '✓ wrapWithScope 其他属性透传(name)')
   }
 
-  // ===== N1:同 scope 连续写(跨工具类型)永不互相冲突 =====
+  // ===== N1:同 scope 连续写(跨写形态 patch/整体)永不互相冲突 =====
   {
     const bind: Record<string, unknown> = { title: 'w', count: 0 }
     const tools = makeOps(bind)
     const t = byName(tools)
     await invoke(t['read'], {})  // 基线 H0
     const r1 = await invoke(t['write'], { patch: { op: 'set', jsonPath: 'count', value: 1 } })   // 写后基线刷 H1
-    const r2 = await invoke(t['edit_data'], { op: 'set', jsonPath: 'count', value: 2 })           // 用 H1 → 通过 → 刷 H2
-    const r3 = await invoke(t['set_data'], { value: { title: 'w', count: 3 } })                   // 用 H2 → 通过
-    const r4 = await invoke(t['write'], { value: { title: 'w2', count: 4 } })                     // 整体写 → 通过
+    const r2 = await invoke(t['write'], { patch: { op: 'set', jsonPath: 'count', value: 2 } })   // 用 H1 → 通过 → 刷 H2
+    const r4 = await invoke(t['write'], { value: { title: 'w2', count: 4 } })                    // 整体写(用 H2)→ 通过
     assert(
-      [r1, r2, r3, r4].every((r) => !/VERSION_CONFLICT/.test(r)) && bind.count === 4 && bind.title === 'w2',
-      '✓ N1 同 scope 连续写(write/edit_data/set_data 混合)永不互相冲突(每次写成功即刷基线)',
+      [r1, r2, r4].every((r) => !/VERSION_CONFLICT/.test(r)) && bind.count === 4 && bind.title === 'w2',
+      '✓ N1 同 scope 连续写(write patch 连续 + 整体 set)永不互相冲突(每次写成功即刷基线)',
     )
   }
 }

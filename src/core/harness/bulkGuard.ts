@@ -50,7 +50,7 @@ export interface WriteScaleResult {
  * 度量单次写调用触达的现有组件节点数(纯函数,可单测):
  * - write({patches[]}) / write({patch}):distinct 组件级路径首段(components.N → components.N;
  *   同组件 8 条 patch = 1);后段路径截到「数组索引」层(组件粒度)
- * - write({del:true, patch:{jsonPath}}) / delete_data:同口径
+ * - write({del:true, patch:{jsonPath}}):同口径
  * - write({value})(整体 set,merge 语义触碰全部):现有组件节点总数(全量白名单模式按顶层声明数组计)
  * 新增内容不计破坏面:路径在 bind 不存在(append 到数组/新键 set)→ 不计。
  */

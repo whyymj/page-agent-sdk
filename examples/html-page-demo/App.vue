@@ -165,6 +165,9 @@ onMounted(() => {
     },
   })
 
+  // 调试/测试反射(render-check e2e 用 debugLogs 实证门禁触发;不承载业务)
+  ;(window as unknown as Record<string, unknown>).__htmlDemoSdk = agent
+
   // hook:① validate_code 校验状态(辅助展示)② focus_change 同步 🎯 镜像(对话框 chip ✕ 移除焦点也同步)
   agent.hook((e) => {
     const ev = e as any

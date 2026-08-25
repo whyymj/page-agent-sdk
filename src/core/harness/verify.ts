@@ -24,6 +24,8 @@ export interface VerifyCheckContext {
   messages: BaseMessage[]
   /** harness 状态;含 verifyAttempts(check 可读,但预算兜底已在 createAgent 层) */
   state: HarnessState
+  /** 结构化日志(debugLogs;render-check 类环境降级留痕用,可缺省) */
+  log?: (type: string, data: unknown) => void
 }
 
 /** verify check 结果 */
@@ -62,7 +64,7 @@ export function createVerifyMiddleware(opts: VerifyMiddlewareOptions): Middlewar
   return {
     name: 'verify',
     async beforeReturn({ messages, state, log }) {
-      const res = await opts.check({ messages, state })
+      const res = await opts.check({ messages, state, log })
       if (!res.ok) return res.feedback ?? '结果未通过验证,请复查。'
       // check 通过 + 对抗验证开启:spawn 找茬子 agent(refute 姿态)再审,突破自审 confirmation bias
       if (opts.adversarial) {
@@ -78,14 +80,17 @@ export function createVerifyMiddleware(opts: VerifyMiddlewareOptions): Middlewar
 
 // ===== 内置 domain check:写后读回验证(期三)=====
 
-/** 写数据的工具名(set/edit/delete + 高层 write) */
-const WRITE_DATA_TOOLS = new Set(['set_data', 'edit_data', 'delete_data', 'write'])
+/** 写数据的工具名(write 唯一入口;set_data/edit_data/delete_data 已随 legacy-crud-dedup 移除) */
+const WRITE_DATA_TOOLS = new Set(['write'])
 
-/** dataOps 写工具的拒绝文案(校验失败/范围拒绝/不存在等);ToolMessage content 命中则视为合法拒绝,读回无值是预期 */
-const WRITE_REJECTED_RE = /校验失败|SCHEMA_INVALID|未注册|不存在|仅支持|必须是|NOT_OBJECT|PATH_UNSAFE|VERSION_CONFLICT|WRITE_INTERCEPT/
+/** dataOps 写工具的拒绝文案(校验失败/范围拒绝/不存在等);ToolMessage content 命中则视为合法拒绝,读回无值是预期。
+ * 含守卫族拒绝码(NEED_NARROW_READ=subtreeGuard 凭占位印象写拦截 / PLACEHOLDER_LEAK=占位夹带值拒收 /
+ * CUSTOM_CODE_DELEGATION=codeField 恒守卫 / COMPONENT_LOCKED=委派在途主写守卫)—— 这些写按设计不该生效,
+ * verify 不应把它们当「疑似未生效」回灌(否则与守卫 hint 的自救指引互相打架)。 */
+const WRITE_REJECTED_RE = /校验失败|SCHEMA_INVALID|未注册|不存在|仅支持|必须是|NOT_OBJECT|PATH_UNSAFE|VERSION_CONFLICT|WRITE_INTERCEPT|NEED_NARROW_READ|PLACEHOLDER_LEAK|CUSTOM_CODE_DELEGATION|COMPONENT_LOCKED/
 
 /**
- * 扫描整个会话的写操作(非仅最近一轮):所有 AIMessage 中 set/edit/delete 的 tool_call。
+ * 扫描整个会话的写操作(非仅最近一轮):所有 AIMessage 中 write 的 tool_call。
  * 按 path 去重,保留每个 path 的最后一次操作(后写覆盖先写,如 set 后 delete 以 delete 为准)。
  * 保留 callId 供 createWriteBackCheck 关联 ToolMessage 判断写是否被合法拒绝。
  */
@@ -98,8 +103,8 @@ function extractWrites(messages: BaseMessage[]): Array<{ path: string; op: strin
       if (!WRITE_DATA_TOOLS.has(tc.name)) continue
       const callId = tc.id
       const args = (tc?.args ?? {}) as Record<string, any>
-      if (tc.name === 'write') {
-        // write 高层工具:jsonPath 嵌在 patch/patches,展开逐条;op 归一化为 set_data/edit_data/delete_data,
+      {
+        // write(唯一数据写入口):jsonPath 嵌在 patch/patches,展开逐条;op 归一化为 set_data/edit_data/delete_data 内部语义标签,
         // 复用 createWriteBackCheck 现有判断(op==='delete_data' → 删后读回应空;否则读回应有值 + schema 校验)
         if (args.del && args.patch?.jsonPath) {
           byPath.set(args.patch.jsonPath, { path: args.patch.jsonPath, op: 'delete_data', callId })
@@ -115,10 +120,6 @@ function extractWrites(messages: BaseMessage[]): Array<{ path: string; op: strin
           // write({value}) 整体 set → path ''
           byPath.set('', { path: '', op: 'set_data', callId })
         }
-      } else {
-        // set_data/edit_data/delete_data:扁平 jsonPath(整体写不传 → '')
-        const p = typeof args.jsonPath === 'string' ? args.jsonPath : ''
-        byPath.set(p, { path: p, op: tc.name, callId })
       }
     }
   }
@@ -265,7 +266,7 @@ async function runAdversarial(
     `用户需求:${lastUser || '(未明确)'}`,
     `助手回复:${lastReply}`,
     hasTools
-      ? '重点检查主数据修改:① jsonPath 是否正确(是否误写不存在的子路径);② 值类型是否符合主数据 schema;③ 语义是否符合字段 description。可用只读工具(read / get_data / describe_data 等)读回实际值实证。'
+      ? '重点检查主数据修改:① jsonPath 是否正确(是否误写不存在的子路径);② 值类型是否符合主数据 schema;③ 语义是否符合字段 description。可用只读工具(read / describe_data 等)读回实际值实证。'
       : '只报告具体、可验证的问题。',
     '若确实无问题,只回复"无问题"。',
   ].join('\n')

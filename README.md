@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-2938%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-3052%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -51,7 +51,7 @@ At its core, it gives the AI a **standardized, safe JSON-operation channel**. AI
 |---|---|---|
 | **Scope control** | Declared schema fields (`data`) — only declared keys are writable; schema shape auto-whitelist (top-level + sub-path recursively projected by sub-schema; undeclared fields hidden/denied; whole-set becomes merge to prevent accidental deletion) | AI touching undeclared fields → `PATH_DENIED` |
 | **Validity check** | zod schema — `write`/`set`/`edit` validated against schema | Invalid type/enum/structure → structured error, no write |
-| **Incremental op** | `write` with `patch`/`patches` (batch, atomic rollback) or advanced `edit_data` patches by `jsonPath` (set/remove/merge/append) | Avoid re-sending the whole large JSON; precise local edits; use `patches` to edit many at once |
+| **Incremental op** | `write` with `patch` (set/remove/merge/append/move) or `patches` (batch, atomic rollback) by `jsonPath` | Avoid re-sending the whole large JSON; precise local edits; use `patches` to edit many at once |
 | **Large-object retrieval** | `read` supports `fields` (projection) + `depth` (truncation) to shrink payload; `query_data` (JSONPath)/`search_data` (text)/`eval_script` (sandboxed JS) | Efficient retrieval + pinpoint location in large JSON |
 | **Rollbackable** | per-path snapshots (auto-stacked) + session checkpoint | Bad edit → one-click restore to the last good state |
 | **Optimistic lock** | `conflictWatchFields` opt-in optimistic lock + conflict human-in-the-loop (3.29+ `conflictPolicy` declares auto-adjudication: overwrite / keep_external) | Concurrent external edits detected → suspend, user picks keep/overwrite/restore |
@@ -95,7 +95,7 @@ At its core, it gives the AI a **standardized, safe JSON-operation channel**. AI
 |---|---|---|---|---|---|
 | Framework-agnostic, UI bundled | ✅ Vue bundled, host-agnostic | ❌ React-only | ✅ (no UI) | ✅ (no UI) | ✅ (no UI) |
 | Schema-validated JSON ops | ✅ zod, whitelist + merge-safe | ⚠️ partial (tool args) | ⚠️ tool args only | ⚠️ tool args only | ❌ |
-| Incremental patch (jsonPath) | ✅ `write` patch / `edit_data` | ❌ | ❌ | ❌ | ❌ |
+| Incremental patch (jsonPath) | ✅ `write` patch / `patches` | ❌ | ❌ | ❌ | ❌ |
 | Optimistic lock + conflict HITL | ✅ `conflictWatchFields` | ❌ | ❌ | ❌ | ❌ |
 | Snapshot rollback + checkpoint | ✅ per-path + session | ❌ | ❌ | ❌ | ❌ |
 | Proactive human-confirm | ✅ built-in | ⚠️ manual | ❌ | ❌ | ❌ |
@@ -308,7 +308,7 @@ createChatSdk({ subagents: [
 
 ### Built-in tools (Agent-callable)
 
-- **data ops** (all 14 tools always exposed): `read` (list/get/describe merged) / `write` (set/edit/delete merged + auto optimistic lock + auto snapshot) — recommended; `restore_data` / `history_data` (snapshot rollback/history); low-level `describe_data` / `get_data` (@deprecated, use read) / `set_data` / `edit_data` (jsonPath patch) / `delete_data` / `schema_data` / `diff_data` / focus tools
+- **data ops** (all 10 tools always exposed): `read` (list/get/describe merged) / `write` (set/edit/delete merged + auto optimistic lock + auto snapshot) — recommended; `restore_data` / `history_data` (snapshot rollback/history); `describe_data` / `schema_data` / `diff_data` / focus tools (low-level CRUD `get_data`/`set_data`/`edit_data`/`delete_data` removed in 4.0 — `read`/`write` cover everything)
 - **window query**: `query_data` (JSONPath) / `search_data` (fuzzy) / `eval_script` (sandboxed)
 - **fetch**: `fetch_document`
 - **vfs**: `vfs_read` / `vfs_write` / `vfs_edit` / `vfs_ls` / `vfs_glob` / `vfs_grep`

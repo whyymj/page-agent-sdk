@@ -78,28 +78,33 @@ test.describe('图片输入(image-input-vision)', () => {
   test('多模态主模型(setLlm gpt-4.1)→ content parts 直发(image_url 形态)', async ({ page }) => {
     await page.goto('/examples/complex-demo/')
     await page.waitForSelector('.chat-dialog')
-    // 表命中 gpt-4.1(vision true + ≥200K 窗口过最小窗口校验)→ 直发通道
+    // 表命中 gpt-4.1(vision true + ≥200K 窗口过最小窗口校验)→ 直发通道。
+    // complex-demo 默认 Anthropic 协议组(setLlm 部分覆盖保留 provider)→ 图片走 {type:'image',source:base64} 块;
+    // 断言双协议:image_url(OpenAI)或 image(Anthropic)任一形态命中即直发成立
     await page.evaluate(() => (window as any).__sdk.setLlm({ apiKey: 'sk-test', model: 'gpt-4.1' }))
     const bodies: string[] = []
     page.on('request', (r) => {
-      if (r.url().includes('/chat/completions')) bodies.push(r.postData() || '')
+      if (r.url().includes('/chat/completions') || r.url().includes('/v1/messages')) bodies.push(r.postData() || '')
     })
     await mockLlm(page, [{ text: '收到图片' }])
     await page.setInputFiles('[data-test="attach-input"]', { name: 'a.png', mimeType: 'image/png', buffer: await realPng(page) })
     await fillInput(page, '看这张图')
     await clickSend(page)
     await waitForAgentIdle(page)
-    // 请求体:最后一条 user 消息 content 为 parts 数组(text + image_url dataURI)
+    // 请求体:最后一条 user 消息 content 为 parts 数组(text + 图片 part,双协议形态)
     const hit = bodies.map((b) => { try { return JSON.parse(b) } catch { return null } }).find((b: any) => {
       const msgs = b?.messages ?? []
-      return msgs.some((m: any) => Array.isArray(m.content) && m.content.some((p: any) => p?.type === 'image_url'))
+      return msgs.some((m: any) => Array.isArray(m.content) && m.content.some((p: any) => p?.type === 'image_url' || p?.type === 'image'))
     })
-    expect(hit, '请求含 image_url content parts').toBeTruthy()
+    expect(hit, '请求含图片 content part(image_url / image 双协议)').toBeTruthy()
     const userParts = hit.messages.filter((m: any) => Array.isArray(m.content)).at(-1).content
     const textPart = userParts.find((p: any) => p?.type === 'text')
-    const imgPart = userParts.find((p: any) => p?.type === 'image_url')
+    const imgPart = userParts.find((p: any) => p?.type === 'image_url' || p?.type === 'image')
     expect(textPart?.text).toContain('看这张图')
-    expect(String(imgPart?.image_url?.url)).toMatch(/^data:image\//)
+    // OpenAI: image_url.url = data: URI;Anthropic: source{type:base64, media_type, data} → 还原成 data: 形态校验
+    const payload = imgPart?.image_url?.url
+      ?? (imgPart?.source?.type === 'base64' ? `data:${imgPart.source.media_type};base64,${imgPart.source.data}` : '')
+    expect(payload).toMatch(/^data:image\//)
     // 消息区缩略图行渲染
     await expect(page.locator('.msg-images')).toHaveCount(1)
   })

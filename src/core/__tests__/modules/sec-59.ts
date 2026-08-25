@@ -1,6 +1,6 @@
 /**
  * sec-59:placeholder-protected-read-write Phase 2(freeze 接入 dataOps)
- * createDataOps 配 data.resources(freeze)→ read/get_data 占位符 + write/delete/eval 强制层 + C3 + C1 回显。
+ * createDataOps 配 data.resources(freeze)→ read 占位符 + write(del)/eval 强制层 + C3 + C1 回显。
  * 覆盖:结构化读占位替换 / write set 改 freeze 拒 / 回显放行(C1 不落占位符串)/ patch 改 freeze 拒 /
  *      delete freeze C3 / merge 保留 / query 返真值(A1)/ eval transform F1 / getResourcesSnapshot /
  *      未配 resources 零影响 / 无 vfsStore 降级。
@@ -35,8 +35,6 @@ export async function run(ctx: TestCtx) {
   assert(/⟦frozen:components\.0\.verification⟧/.test(r1), '✓ read 整体 → 嵌套 freeze 路径占位符')
   const r2 = await invoke(t.read, { jsonPath: 'id' })
   assert(/⟦frozen:id⟧/.test(r2), '✓ read 子路径(id)→ 占位符')
-  const r3 = await invoke(t.get_data, {})
-  assert(/⟦frozen:id⟧/.test(r3), '✓ get_data 整体 → freeze 占位符')
 
   // ===== 写侧强制:freeze 拒 =====
   const w1 = await invoke(t.write, { value: { id: 'changed', title: '页面', components: [] } })
@@ -57,8 +55,8 @@ export async function run(ctx: TestCtx) {
   // ===== C3:delete 受保护路径拒 =====
   const w5 = await invoke(t.write, { patch: { jsonPath: 'id' }, del: true })
   assert(/FROZEN_FIELD/.test(w5), '✓ write delete freeze 路径 → FROZEN_FIELD(C3)')
-  const d1 = await invoke(t.delete_data, { jsonPath: 'components.0.verification' })
-  assert(/FROZEN_FIELD/.test(d1), '✓ delete_data freeze 路径 → FROZEN_FIELD(C3)')
+  const d1 = await invoke(t.write, { patch: { jsonPath: 'components.0.verification' }, del: true })
+  assert(/FROZEN_FIELD/.test(d1), '✓ write del freeze 路径 → FROZEN_FIELD(C3)')
 
   // ===== query/search 返真值(A1:不占位替换,写侧强制兜底)=====
   const q1 = await invoke(t.query_data, { expr: '$.id' })

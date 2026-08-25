@@ -12,6 +12,92 @@ export async function run() {
   setupEnv()
   const ctx = createAssert(); const { assert } = ctx
 
+  console.log('[e2e:main-sub-isolation] section-orchestrator Phase 1:编排段数据规模动态注入(大数据注入/小数据零税)')
+  {
+    const mkBind = (n) => ({ title: '页', components: Array.from({ length: n }, (_, i) => ({ name: `c${i}`, note: `n${i}` })) })
+    const schema = z.object({ title: z.string(), components: z.array(z.object({ name: z.string(), note: z.string() })) })
+    const runSeg = async (n) => {
+      const llm = stubModel({ text: '收到' })
+      const sdk = createChatSdk({
+        ui: false, id: `e2e-orch-seg-${n}`, storage: false, llm,
+        capabilities: { ...CAPS, vfs: false },
+        subagent: { maxParallel: 1 },
+        data: { schema, bind: mkBind(n), description: 'd' },
+      })
+      await sdk.mount()
+      await sdk.send('看下数据')
+      const prompts = llm.systemPrompts
+      sdk.unmount()
+      return prompts
+    }
+    const big = await runSeg(15)
+    assert(big.some((p) => p.includes('分段编排') && p.includes('段规格四要素') || p.includes('jsonPath 范围')), '✓ 大数据(15 组件 ≥ 阈 12)→ system 注入编排段(三步职责 + 段规格四要素)')
+    assert(big.some((p) => p.includes('不经过组件锁')), '✓ S6 弱点随编排段注入(spawn_* 无组件锁,段不相交靠规划 + 乐观锁兜底)')
+    const small = await runSeg(2)
+    assert(small.every((p) => !p.includes('分段编排')), '✓ 小数据(2 组件 < 阈)→ 零注入零税(不为分段而分段)')
+  }
+
+  console.log('[e2e:main-sub-isolation] section-orchestrator S7 保底:委派失败×2 → 主 agent 回退单干完成(回退条款,不傻等)')
+  {
+    // 委派两次失败(子 LLM 挂)→ 主 agent 接手段内工作自己写(spawn 失败不阻塞主循环,单干是一等路径);
+    // 已委派(spawn_agent 出现)→ 欠委派 nudge 抑制(write 结果无「委派提示」)
+    const llm = stubModel(
+      { toolCalls: [{ name: 'spawn_agents', args: { tasks: [{ prompt: '把标题改成新标题' }] } }] },
+      { throw: '子 LLM 故障(第一次)' },
+      { toolCalls: [{ name: 'spawn_agents', args: { tasks: [{ prompt: '把标题改成新标题(重试)' }] } }] },
+      { throw: '子 LLM 故障(第二次)' },
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'title', value: '单干完成' } } }] },
+      { text: '委派两次失败,已自行完成修改' },
+    )
+    const toolResults = []
+    const bind = { title: '旧标题', items: ['a'] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-orch-s7-fallback', storage: false, llm,
+      capabilities: { ...CAPS, vfs: false },
+      subagent: { maxParallel: 1 },
+      data: { schema: z.object({ title: z.string(), items: z.array(z.string()) }), bind, description: 'd' },
+    })
+    await sdk.mount()
+    const reply = await sdk.stream([{ role: 'user', content: '把标题改成新标题', timestamp: Date.now() }], (e) => {
+      if (e.type === 'tool_result') toolResults.push(e)
+    })
+    const writes = toolResults.filter((r) => r.name === 'write')
+    assert(bind.title === '单干完成' && writes.length === 1, '✓ S7:委派×2 失败 → 主 agent 回退单干写完成(能力不被委派失败阉割)')
+    const spawnFails = toolResults.filter((r) => r.name === 'spawn_agents')
+    assert(spawnFails.length === 2 && spawnFails.every((r) => String(r.result).includes('故障')), '✓ S7:两次委派失败 error result 隔离回灌(不静默不中断)')
+    assert(writes.every((r) => !String(r.result).includes('委派提示')), '✓ S7:已委派 → 欠委派 nudge 抑制(不再提示委派,与回退单干不冲突)')
+    assert(/单干|自行/.test(reply), '✓ S7:主 agent 如实收口(委派失败 + 自行完成)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:main-sub-isolation] section-orchestrator 0b:小步 grind 累计超阈 → 欠委派 nudge 一次性尾附(装配链实证)')
+  {
+    // 13 次小写(components.N.note)累计 13 组件触达 ≥ 阈 12 → 第 12 次成功写结果尾附「委派提示」(一次性 advisory)
+    const N = 13
+    const bind = { title: '页', components: Array.from({ length: N }, (_, i) => ({ name: `c${i}`, note: `n${i}` })) }
+    const responses = Array.from({ length: N }, (_, i) => ({ toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: `components.${i}.note`, value: `v${i}` } } }] }))
+    responses.push({ text: '改完了' })
+    const llm = stubModel(...responses)
+    const toolResults = []
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-orch-nudge', storage: false, llm,
+      capabilities: { ...CAPS, vfs: false },
+      subagent: { maxParallel: 1 },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ name: z.string(), note: z.string() })) }), bind, description: 'd' },
+    })
+    await sdk.mount()
+    await sdk.stream([{ role: 'user', content: '逐个改 note', timestamp: Date.now() }], (e) => {
+      if (e.type === 'tool_result') toolResults.push(e)
+    })
+    const nudged = toolResults.filter((r) => String(r.result).includes('委派提示'))
+    assert(nudged.length === 1 && toolResults[11].name === 'write' && String(toolResults[11].result).includes('委派提示'),
+      `✓ 累计 12 组件 → 第 12 次写尾附一次性 nudge(实际 ${nudged.length} 次,命中位次 ${toolResults.findIndex((r) => String(r.result).includes('委派提示')) + 1})`)
+    assert(String(nudged[0]?.result ?? '').startsWith('已 write'), '✓ nudge 是尾附不改写结果语义(写入照常成功)')
+    assert(/单干同样是一等路径|失败 2 次/.test(String(nudged[0]?.result ?? '')), '✓ 文案含回退条款(失败 2 次自己做 / 单干一等路径)')
+    assert(bind.components.every((c, i) => c.note === `v${i}`), '✓ 全部写入生效(advisory 不阻断)')
+    sdk.unmount()
+  }
+
   console.log('[e2e:main-sub-isolation] P1-14 spawn_agents allSettled(一失败一成功,各自结算)')
   {
     // maxParallel=1 保证队列消费顺序:主 spawn → 子1 → 子2(throw)→ 主收口

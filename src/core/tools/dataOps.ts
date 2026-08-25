@@ -4,13 +4,13 @@
  * 设计:低代码页面通常只有一个主 JSON(如 page),本工具集围绕「唯一主对象」操作:
  *  - 集成方声明 { schema, bind, description? };bind 为 reactive/普通对象,工具直接读写 bind(不挂 window)
  *  - 工具无 path/name 参数:Agent 直接操作唯一主对象,降低认知负担
- *  - 增量编辑 edit_data:按 op(set/remove/merge/append)+ jsonPath 改局部,避免 LLM 重传整个大 JSON
- *  - 快照回退:set/edit/delete 前自动存快照;snapshot/list/restore_data 支持手动检查点与快速回退
+ *  - 增量编辑 write({patch}):按 op(set/remove/merge/append)+ jsonPath 改局部,避免 LLM 重传整个大 JSON
+ *  - 快照回退:write 前自动存快照;restore_data 支持快速回退
  *  - 就地写回:edit/restore 改子属性,绝不替换 bind 根引用 → 兼容 Vue reactive
  *  - 审计:每次 set/edit/delete/restore 记日志(可选 onAudit 回调)
  *
  * 注:大结果的外存/截断由 createAgent 的 coreExecTool 经 offloadLargeResult 处理;
- *     get_data 返回完整安全序列化(不截断),交由 offload 决定外存 vfs 或截断。
+ *     read 返回完整安全序列化(不截断),交由 offload 决定外存 vfs 或截断。
  */
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
@@ -155,6 +155,14 @@ export interface DataOpsController {
   hasBaselines?(): boolean
   /** 受保护资源清单快照(供 resourcesPin 中间件每轮 augmentPrompt 注入「受保护资源」段;freeze 无 handle,verbatim 有) */
   getResourcesSnapshot?(): { path: string; mode: 'freeze' | 'verbatim'; handle?: string }[]
+  /**
+   * 本次 invoke 内被摘要(主 scope read/query 返回占位)的子树绝对路径集(subtree-summary Phase 1:
+   * read-before-write 守卫判定基础 —— 写路径落入摘要子树且无窄读记录 → 拦下引导窄读)。
+   * 含 <subtree …> 体积占位与 <field Nkb> 标记占位两类;invoke 边界由守卫 beforeAgent 清空。
+   */
+  getSummarizedPaths?(): string[]
+  /** 清空摘要路径集(守卫 beforeAgent 调,invoke 级口径) */
+  clearSummarizedPaths?(): void
   /** 资源池操作(经 controller 同闭包;有 vfsStore 时可用) */
   createResource?(path: string, value?: unknown): string
   getResource?(pathOrHandle: string): { path: string; mode: string; value: unknown; handle: string } | undefined
@@ -442,7 +450,7 @@ export function validateWriteLocally(args: {
 }
 
 /**
- * 整体 set 写入纯函数:schema 校验 + 快照 + merge/替换 + audit。set_data / write(set) / draft_commit 共用。
+ * 整体 set 写入纯函数:schema 校验 + 快照 + merge/替换 + audit。write(set) / draft_commit 共用(set_data 已移除)。
  * 调用方负责:maybeParseValue(前,字符串→对象)+ handleConflict(前,乐观锁)+ setBaseline(后)+ 成功/dryRun message 构造。
  * 在 bindRef 就地写(经校验,失败不写不入快照)。返回 {ok,hash,data}(dryRun 不写 hash='')或 {ok:false,error}。
  * path-scoped-validation:校验经 validateRootValueLocally(只校验 value 出现的顶层 key;缺必填不再拒)。
@@ -457,7 +465,7 @@ export function commitSetToBind(args: {
   audit: (e: DataAuditEntry) => void
   dryRun?: boolean
   op?: 'set' | 'draft_commit'  // 默认 'set';draft_commit 用 'draft_commit'(快照/审计标记区分)
-  /** 成功写入 bind 后回调(供 checkpoint 脏标记:dryRun 不触发,因 dryRun 在写入前早 return)。set_data/write(set)/draft_commit 共用此收敛点 */
+  /** 成功写入 bind 后回调(供 checkpoint 脏标记:dryRun 不触发,因 dryRun 在写入前早 return)。set_data/write(set)/draft_commit 共用此收敛点;set_data 已移除,现 write(set)/draft_commit) */
   onWrite?: () => void
   /** B __pgId 补齐回调(code-as-data-asset):成功写入后调,第二参为写前 bind 深快照(按位置回填原 __pgId 用);
    * 参数化注入,无 codeAsset 场景 no-op(快照也只在回调存在时捕获,零成本开关) */
@@ -473,6 +481,12 @@ export function commitSetToBind(args: {
   let value = args.value
   // B __pgId:写前深快照(仅配 internalAfterWrite 的 codeAsset 场景捕获,零成本开关)
   const beforeBind = args.internalAfterWrite ? deepClone(bindRef) : null
+  // 占位符夹带防线(subtree-summary 值防线):**enforceSet 之前**检 LLM 原始值 —— 与 patches 路径同口径
+  // (团队审查 P1-1:enforceSet 会把 bind 既有受保护字段值/展开后的资源内容回填进 value,若那些内容本就含
+  //  `<subtree ` 字面量(如 verbatim 保护的 SDK 文档文本),后置检查会把 LLM 从未写过的值当夹带 → 全部
+  //  whole-set 写永久阻塞且无逃生门;bind 侧内容属集成方信任边界,不检)
+  const leak = findPlaceholderLeak(value)
+  if (leak) return { ok: false, error: placeholderLeakError(leak) }
   // 强制层(§7c F1):normalize(C1 回显 + verbatim 展开 + D1)+ freeze/verbatim 比对,先于 schema 校验
   if (protectedCtx) {
     const er = enforceSet({ value, ctx: protectedCtx })
@@ -511,7 +525,7 @@ export function commitSetToBind(args: {
  * 增量 patch 写入纯函数(p2-refactor 子项 3 装饰器):clone + 逐 patch 校验(isUnsafePath/isPathAllowed/maybeParseValue)
  * + applyPatchToClone + **逐目标局部校验**(path-scoped-validation:validateWriteLocally,只校验写入内容,兄弟脏数据不株连)
  * + (dryRun 预检) + snapshot + 外科手术式写回(局部 parse 值按 patch 序重放)+ markDataDirty。
- * edit_data / write(edit) / eval-patches / eval-subtree 共用 —— 消除四处 clone+循环+校验+snapshot+applyLive 重复
+ * edit_data / write(edit) / eval-patches / eval-subtree 共用(edit_data 已移除,现 write(edit)/eval 共用)
  * (乐观锁×dryRun 组合的 bug 高发区,单一真相源防不一致)。
  * 调用方负责:bindRef 类型守卫(NOT_OBJECT/LEAF_BIND,错误码各异)+ audit(detail/value 差异)+ setBaseline + 成功 message。
  * 返回 {ok,applied,clone,notices}(dryRun 返回 clone 供预览,不落盘/不入快照) 或 {ok:false,error}。
@@ -524,7 +538,7 @@ export function applyPatchesToBind(args: {
   snapshots: DataSnapshotEntry[]
   maxSnapshots: number
   markDataDirty?: () => void
-  /** schema 校验失败错误模式:'zod'(zodError,edit_data/write 用) / 'schema_invalid'(toolError + details,eval 用);默认 'zod' */
+  /** schema 校验失败错误模式:'zod'(zodError,edit_data/write 用) / 'schema_invalid'(toolError + details,eval 用);默认 'zod'(edit_data 已移除,现 write 用 'zod') */
   schemaErrorMode?: 'zod' | 'schema_invalid'
   /** snapshot label(eval_transform_subtree / eval_transform;默认无) */
   snapshotLabel?: string
@@ -564,6 +578,11 @@ export function applyPatchesToBind(args: {
       const pr = maybeParseValue(p.value)
       if (pr.parseError) return { ok: false, error: jsonParseError(`patches[${i}]`, p.value, pr.parseError) }
       pVal = pr.parsed
+      // 占位符夹带防线(move 的 value 是目标路径字符串非数据,跳过)
+      if (op !== 'move') {
+        const leak = findPlaceholderLeak(pVal)
+        if (leak) return { ok: false, error: placeholderLeakError(leak, `patches[${i}] @ "${jp}"`) }
+      }
       // move 的 value 是目标路径:同样过白名单(防经 move 把元素移进 schema 未声明路径)
       if (op === 'move' && typeof pVal === 'string' && !isPathAllowed(pVal, schema, allowKeys)) {
         return { ok: false, error: toolError({ code: 'PATH_DENIED', message: `patches[${i}] move 目标 "${pVal}" 不在 schema 声明字段内`, hint: `move 的 value(目标路径)也须在 schema 声明字段内${keysHintSuffix(declaredKeysAt(schema, parentPathOf(String(pVal))))}` }) }
@@ -619,6 +638,39 @@ export function applyPatchesToBind(args: {
   return { ok: true, applied, clone, notices: plan.notices }
 }
 
+/**
+ * 写入值占位符夹带检测(subtree-summary 值防线):read/query 摘要产生的占位字符串若被 LLM 原样写回,
+ * 会以脏文本形态进 bind(schema 若放行)。两条匹配规则刻意收窄防误伤:
+ * ① `<subtree ` 子串 —— SDK 专属词,正常业务值不含;② `<name SIZE>` **整串**匹配(标记字段占位如 `<code 2.3KB>`;
+ * 整串才拦 —— HTML 混合内容里 `<div 3KB>` 之类子串不命中)。受保护资源句柄 `⟦frozen:…⟧`/`⟦res:…⟧` 前缀不同
+ * 且是 verbatim 回传的合法流,零重叠不在此列。返回首个命中的样例串(供错误消息定位),未命中返回 null。
+ */
+export function findPlaceholderLeak(v: unknown): string | null {
+  // 整串 = 标记字段占位形态:<字段名 空白 体积串>;<subtree 恒子串拦,不必整串
+  const MARKER_RE = /^<[A-Za-z_][\w.-]*\s[\d.]+[KMG]?B>$/
+  const walk = (node: unknown): string | null => {
+    if (typeof node === 'string') {
+      if (node.includes('<subtree ')) return node.slice(0, 60)
+      if (MARKER_RE.test(node)) return node.slice(0, 60)
+      return null
+    }
+    if (Array.isArray(node)) { for (const x of node) { const hit = walk(x); if (hit) return hit } return null }
+    if (node && typeof node === 'object') {
+      for (const val of Object.values(node)) { const hit = walk(val); if (hit) return hit }
+    }
+    return null
+  }
+  return walk(v)
+}
+
+/** 占位夹带统一错误(值防线;path 为定位用可空) */
+const placeholderLeakError = (sample: string, jp?: string): string =>
+  toolError({
+    code: 'PLACEHOLDER_LEAK', path: jp || undefined,
+    message: `写入值包含摘要占位符 "${sample}"(read/query 为省上下文返回的体积占位,非真实数据),已拒绝写入`,
+    hint: `占位符子树的真实内容需先窄读获取:read({jsonPath:"<该子树路径>"}) 结果根豁免返回全文;聚焦该区域可用 set_focus。基于真实值重新构造写入内容`,
+  })
+
 /** 基于单主对象配置构建数据操作工具集 */
 /** 格式化字符数为字节串(B/KB/MB;read 大文本摘要占位用,如 `2.3KB`) */
 function formatBytes(n: number): string {
@@ -631,30 +683,100 @@ function formatBytes(n: number): string {
 export interface LargeTextSpec { arrayPath: string; field: string }
 
 /**
- * read 大文本字段摘要(code-as-data-asset):**仅主 scope**(isMain)对"名为标记字段 + 长度≥阈值"的 string
- * 替换为 `<field Nkb>` 占位(如 `<code 2.3KB>`),防代码正文灌主 agent 上下文。双重过滤挡误伤:
- * ① 字段名 ∈ specs.field(集成商业务长文本如 description 不在标记集 → 不受影响)② 长度≥阈值(短 code 原样保信息)。
- * 标记驱动,read 整体 / 子路径(components.0)均生效。深拷贝后改,bind 原值不动;isMain=false(子 scope)原样返回 —— 子 agent 改 code 需全文。纯函数,可单测。
+ * 子树体积摘要阈值(字符估算,≈3KB;经验初值,Phase 1 真 LLM 反校准 —— 门禁数据裁决只升阈值,机制不回退)。
+ * 主 scope 下「有效序列化体积 ≥ 阈值」的 object/array 子树降为 `<subtree NKB keys:[…]/children:N #指纹>` 占位。
+ * 零配置:不进 DataOpsOptions(校准走常量调整,不暴露集成面)。
  */
-export function summarizeLargeText<T>(val: T, isMain: boolean, specs: LargeTextSpec[], threshold: number): T {
-  if (!isMain || !specs.length || val == null || typeof val !== 'object') return val
+export const SUBTREE_SUMMARY_THRESHOLD = 3072
+
+/** 摘要器泛化选项(subtree-summary Phase 0) */
+export interface SubtreeSummarizeOptions {
+  /** 结果根豁免:true 时结果根自身不摘要(read 单/多路径窄读通道 —— 不豁免即黑洞且分页静默失效);query 命中值不豁免(占位+path 正是检索形态) */
+  rootExempt?: boolean
+  /** 结果根的绝对路径(read jsonPath;豁免前缀按绝对路径匹配,'' = 整体读) */
+  rootPath?: string
+  /** 任意深度豁免前缀(绝对路径;聚焦态全文通道 __pgFullTextPaths:焦点子树内(含嵌套大子树)读全文) */
+  fullTextPrefixes?: string[]
+  /** 占位产出回调(子树/标记两类占位的绝对路径;subtree-summary Phase 1:read-before-write 守卫判定基础) */
+  onSummarized?: (absPath: string) => void
+}
+
+/** 叶子/标量的序列化体积估算(字符口径;O(1),不 stringify) */
+function estLeafSize(v: unknown): number {
+  if (typeof v === 'string') return v.length + 2
+  if (typeof v === 'number' || typeof v === 'boolean') return 8
+  return 4 // null/undefined
+}
+
+/**
+ * read 大文本/大子树摘要(subtree-summary 泛化;**仅主 scope**,isMain=false 子 scope 原样返回 —— 子 agent 改 code 需全文):
+ * - **标记字段形态(兼容既有)**:specs 命中的 string 叶子 ≥ marker threshold → `<field Nkb>`(短 code 原样保信息;集成商业务长文本不在标记集不受此形态影响)
+ * - **体积形态(泛化新增)**:自底向上聚合有效序列化体积,O(n) 估算不逐节点 stringify;子树 ≥ `SUBTREE_SUMMARY_THRESHOLD` → `<subtree NKB keys:[k1,k2,…] #指纹>`(数组记 children:N)。
+ *   内层优先:孩子先判(小兄弟节点保持可见),父按「孩子已占位后的有效体积」再判(500 小元素数组整树摘要、4KB style 内层单独摘要互不干扰)。
+ * - **豁免**(`#` 前缀指纹,**禁用 `hash=` 字面量** —— workingMemory 从 read 结果捕获 `hash=` 会污染 lastHashes):前缀命中的子树(含内部)原样保留,
+ *   且其有效体积按占位计(父不因全文孩子被连带摘要);rootExempt 时结果根不摘要(窄读通道)。
+ * - 键名取**投影后**的值(调用点在投影/占位符替换之后,天然满足);小标量(叶子)永不单独摘要。深拷贝后改,bind 原值不动。纯函数,可单测。
+ */
+export function summarizeLargeText<T>(val: T, isMain: boolean, specs: LargeTextSpec[], threshold: number, sub?: SubtreeSummarizeOptions): T {
+  if (!isMain || val == null) return val
   const fieldSet = new Set(specs.map((s) => s.field))
+  const markerThreshold = threshold
+  const subtreeThreshold = SUBTREE_SUMMARY_THRESHOLD
+  const rootExempt = sub?.rootExempt ?? false
+  const rootPath = sub?.rootPath ?? ''
+  const prefixes = sub?.fullTextPrefixes ?? []
   const out = deepClone(val) as any
-  ;(function walk(node: any) {
+  const PLACEHOLDER_EFF = 40
+  const note = sub?.onSummarized  // 占位路径上报(守卫判定基础;豁免前缀内的不报 —— 全文已见)
+  const isExempt = (absPath: string): boolean =>
+    prefixes.some((pfx) => pfx && (absPath === pfx || absPath.startsWith(pfx + '.') || absPath.startsWith(pfx + '[')))
+  const placeholderOf = (node: unknown, eff: number): string => {
+    // `#` 前缀指纹:仅供 LLM 比对内容新旧(改后重读指纹变);不接乐观锁(锁 hash 是整 bind 域)/不接 stale-read(纯路径重叠)
+    const fp = '#' + String(hashValue(node)).slice(0, 8)
+    if (Array.isArray(node)) return `<subtree ${formatBytes(eff)} children:${node.length} ${fp}>`
+    const keys = Object.keys(node as Record<string, unknown>)
+    const shown = keys.slice(0, 6).join(',') + (keys.length > 6 ? ',…' : '')
+    return `<subtree ${formatBytes(eff)} keys:[${shown}] ${fp}>`
+  }
+  /** 自底向上:返回 {替换后的 node, 有效体积};父按孩子有效体积决定自身摘要(内层优先) */
+  const walk = (node: any, absPath: string, isRoot: boolean): { node: unknown; eff: number } => {
+    if (node == null || typeof node !== 'object') return { node, eff: estLeafSize(node) }
+    if (isExempt(absPath)) return { node, eff: PLACEHOLDER_EFF }  // 豁免区:原样保留;有效体积按占位计(父不因全文孩子被摘要)
     if (Array.isArray(node)) {
-      for (const item of node) walk(item)
-    } else if (node && typeof node === 'object') {
-      for (const k of Object.keys(node)) {
-        const v = node[k]
-        if (typeof v === 'string' && fieldSet.has(k) && v.length >= threshold) {
-          node[k] = `<${k} ${formatBytes(v.length)}>`       // 标记字段名 + 大文本 → 占位(标记驱动;read 整体/子路径 components.0 均生效)
-        } else {
-          walk(v)                                           // 非标记字段 → 继续递归
-        }
+      let eff = 2
+      for (let i = 0; i < node.length; i++) {
+        const r = walk(node[i], `${absPath}.${i}`, false)
+        node[i] = r.node
+        eff += r.eff
+      }
+      if (!(isRoot && rootExempt) && eff >= subtreeThreshold) {
+        note?.(absPath)
+        return { node: placeholderOf(node, eff), eff: PLACEHOLDER_EFF }
+      }
+      return { node, eff }
+    }
+    let eff = 2
+    for (const k of Object.keys(node)) {
+      const v = node[k]
+      const childPath = absPath ? `${absPath}.${k}` : k
+      if (typeof v === 'string' && fieldSet.has(k) && v.length >= markerThreshold && !isExempt(childPath)) {
+        node[k] = `<${k} ${formatBytes(v.length)}>`   // 标记字段兼容形态(code-as-data-asset;豁免前缀内不摘要 —— 聚焦态全文)
+        note?.(childPath)
+        eff += node[k].length + k.length + 2
+      } else {
+        const r = walk(v, childPath, false)
+        node[k] = r.node
+        eff += r.eff + k.length + 2
       }
     }
-  })(out)
-  return out as T
+    if (!(isRoot && rootExempt) && eff >= subtreeThreshold) {
+      note?.(absPath)
+      return { node: placeholderOf(node, eff), eff: PLACEHOLDER_EFF }
+    }
+    return { node, eff }
+  }
+  const res = walk(out, rootPath, true)
+  return res.node as T
 }
 
 /** 生成稳定唯一 __pgId(c_ + 随机 + 计数防同毫秒冲突);code-as-data-asset 组件映射键(vfs 文件名 / commit 反查) */
@@ -793,6 +915,19 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   // (wrapWithScope 经 RunnableConfig 注入,并发交错各读各的 scope),ambient activeScope 降为兜底(无 config 旧路径)
   const scopeOf = (config?: unknown): string =>
     ((config as { configurable?: Record<string, unknown> } | undefined)?.configurable?.__pgDataScope as string | undefined) ?? activeScope
+  // subtree-summary 聚焦全文通道:focus 中间件 wrapToolCall 经 ctx.callConfig → coreExecTool 透传的任意深度豁免前缀
+  // (同 __pgDataScope 通道先例;焦点子树内(含嵌套大子树)读全文,范围外读不受影响)
+  const fullTextPrefixesOf = (config?: unknown): string[] | undefined => {
+    const v = (config as { configurable?: Record<string, unknown> } | undefined)?.configurable?.__pgFullTextPaths
+    return Array.isArray(v) ? v.map(String) : undefined
+  }
+  // subtree-summary Phase 1 占位路径集(invoke 级;守卫 beforeAgent 清空):主 scope read/query 产出的
+  // <subtree>/<field Nkb> 占位绝对路径 —— 写路径落入且无窄读记录 = 凭印象写,守卫拦下引导窄读
+  const summarizedPaths = new Set<string>()
+  const noteSummarized = (p: string): void => {
+    summarizedPaths.add(p)
+    while (summarizedPaths.size > 500) summarizedPaths.delete(summarizedPaths.values().next().value as string)  // FIFO 防无界
+  }
   const getBaseline = (scope?: string): string | undefined => baselines.get(scope ?? activeScope)
   const setBaseline = (h: string | undefined, scope?: string): void => { const s = scope ?? activeScope; if (h === undefined) baselines.delete(s); else baselines.set(s, h) }
   // 冲突检测 opt-in(3.32 翻转,autoLock 已废弃):conflictWatchFields 为唯一旋钮 ——
@@ -834,6 +969,8 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     // baseline-guard:非 dataOps 工具改 bind 后全 scope 基线一次刷新(bind 共享,一次 hash 更新全部)
     recomputeAllBaselines: () => { const h = hashBind(); for (const k of baselines.keys()) baselines.set(k, h) },
     hasBaselines: () => baselines.size > 0,
+    getSummarizedPaths: () => [...summarizedPaths],
+    clearSummarizedPaths: () => summarizedPaths.clear(),
     getResourcesSnapshot: () => {
       const out: { path: string; mode: 'freeze' | 'verbatim'; handle?: string }[] = []
       for (const [path, spec] of resourcesByPath) {
@@ -923,156 +1060,22 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   const describeData = tool(
     async () => [
       `说明: ${description}`,
-      `格式: 写入值需为 JSON,且通过声明的 schema 校验(校验失败时 set_data/edit_data 会返回结构化错误,含具体字段与期望类型)。`,
+      `格式: 写入值需为 JSON,且通过声明的 schema 校验(校验失败时 write 会返回结构化错误,含具体字段与期望类型)。`,
     ].join('\n'),
     { name: 'describe_data', description: '获取主数据的说明与格式要求。', schema: z.object({}) },
   )
 
-  const getData = tool(
-    async ({ jsonPath }, config) => {
-      const scope = scopeOf(config)  // CA 并发修复:per-call scope token
-      const jp = jsonPath || ''
-      if (isUnsafePath(jp)) return toolError({ code: 'PATH_UNSAFE', message: `jsonPath "${jp}" 含非法段(__proto__/constructor/prototype)`, hint: '使用正常属性路径,如 components.0.text(数组索引用数字)' })
-      if (!isPathAllowed(jp, schema, allowKeys)) {
-        return toolError({ code: 'PATH_DENIED', message: `get_data @ "${jp}" 不在 schema 声明字段内(仅 schema 声明的 key 可读)`, hint: '主数据仅暴露 schema 声明的字段;若需操作该字段,集成方需在 schema 中声明它' })
-      }
-      let val = jp ? getByPath(bindRef, jp) : bindRef
-      // 整体读按 schema 深投影(递归隐藏未声明字段;fix-data-integrity P1-19:原浅投影仅顶层 key,嵌套未声明字段泄露)
-      if (!jp && allowKeys) val = projectBySchemaDeep(val, schema)
-      // 受保护路径占位符替换(结构化读;精确值不入 LLM 消息流)
-      if (protectedCtx) val = renderReadPlaceholders({ jp, resolved: val, resourcesByPath: protectedCtx.resourcesByPath, resourceStore: protectedCtx.resourceStore })
-      const h = hashBind()
-      setBaseline(h, scope)
-      if (val === undefined) return `主数据${jp ? ` @ ${jp}` : ''} = (undefined) (hash=${h})`
-      // 大文本摘要(rv-core F2):read 有 <code Nkb> 摘要而 get_data 没有 → advanced 主 agent 换工具即可确定性击穿;
-      // 与 read 同 isMain 语义(主 scope 摘要 / 子 scope 全文)
-      val = summarizeLargeText(val, scope === MAIN_SCOPE, largeTextSpecs, largeTextThreshold)
-      return `主数据${jp ? ` @ ${jp}` : ''} = ${safeStringify(val)} (hash=${h})`
-    },
-    {
-      name: 'get_data',
-      description:
-        '@deprecated(改用 read,等价且支持 fields/depth/分页)。读取主数据当前值(返回含 hash 供乐观锁);jsonPath 可选读子路径。大结果自动外存 vfs。',
-      schema: z.object({ jsonPath: z.string().optional().describe('相对主数据根的点号路径(如 components.0.text);不传则读整个主数据') }),
-    },
-  )
-
-  const setData = tool(
-    async ({ value }, config) => {
-      const scope = scopeOf(config)  // CA 并发修复:per-call scope token
-      const effHash = lockOn ? getBaseline(scope) : undefined
-      const conflict = await handleConflict('set', effHash)
-      if (conflict !== null) return conflict
-      const pr = maybeParseValue(value)
-      if (pr.parseError) return jsonParseError('', value, pr.parseError)
-      const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit, onWrite: markDataDirty, internalAfterWrite, protectedCtx, hashFn: hashBind })
-      if (!r.ok) return r.error
-      setBaseline(r.hash, scope)
-      return `已设置主数据 = ${safeStringify(r.data, 600)} (新 hash=${r.hash})${allowKeys ? '(白名单模式:仅更新 schema 声明字段,未声明字段保留)' : ''}`
-    },
-    {
-      name: 'set_data',
-      description:
-        '@deprecated(改用 write,等价)。整体设置主数据(value 需过 schema 校验)。白名单模式:set 为根级浅合并,深层整体替换(未传字段丢失);保留深层字段用 edit_data({op:"merge"})。',
-      schema: z.object({
-        value: z.unknown().describe('JSON 对象(推荐直传,如 {title:"x"}),或 JSON 字符串;需符合 schema'),
-      }),
-    },
-  )
-  markWrite(setData)
-
-  const editData = tool(
-    async (args, config) => {
-      const scope = scopeOf(config)  // CA 并发修复:per-call scope token
-      // M2 容错:advanced 模式 edit_data 与 write 并存,LLM 可能误传 write 的 patch 形式({patch:{op,jsonPath,value}});
-      // 从 patch 补全 op/jsonPath/value(顶层优先,patch 兜底)。op 仍语义必填(顶层或 patch 至少一个,缺则 MISSING_VALUE)
-      const op = args.op ?? args.patch?.op
-      const jsonPath = args.jsonPath ?? args.patch?.jsonPath
-      const value = args.value ?? args.patch?.value
-      if (!op) return toolError({ code: 'MISSING_VALUE', message: 'edit_data 需要 op(set/remove/merge/append)', hint: '顶层 op 或 patch.op 至少传一个' })
-      const jp = jsonPath || ''
-      if (isUnsafePath(jp)) {
-        return toolError({ code: 'PATH_UNSAFE', message: `jsonPath "${jp}" 含非法段(__proto__/constructor/prototype)`, hint: '使用正常的属性路径,如 components.0.text(数组索引用数字)' })
-      }
-      if (!isPathAllowed(jp, schema, allowKeys)) {
-        return toolError({ code: 'PATH_DENIED', message: `edit_data @ "${jp}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可写;若需操作该字段,集成方需在 schema 中声明它' })
-      }
-      const effHash = lockOn ? getBaseline(scope) : undefined
-      const conflict = await handleConflict('edit', effHash)
-      if (conflict !== null) return conflict
-      if (bindRef == null || typeof bindRef !== 'object') {
-        return toolError({ code: 'NOT_OBJECT', message: `edit 仅适用于对象/数组主数据,当前是 ${bindRef === undefined ? 'undefined' : typeof bindRef}`, hint: '叶子(原始类型)请用 set_data 整体设置' })
-      }
-      const r = applyPatchesToBind({ bindRef, patches: [{ op, jsonPath: jp, value }], schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'zod', internalAfterWrite, protectedCtx })
-      if (!r.ok) return r.error
-      const a = r.applied[0]
-      audit({ op: 'edit', detail: `${a.op}${jp ? '@' + jp : ''}`, value: a.value, timestamp: Date.now() })
-      const h = commitBaseline(scope)
-      return `已 edit 主数据(${a.op}${jp ? ' @ ' + jp : ''})。当前值:${safeStringify(bindRef, 600)} (新 hash=${h})`
-    },
-    {
-      name: 'edit_data',
-      description:
-        '增量编辑主数据(advanced;simple 用 write 等价)。op:set/remove/merge/append/move;jsonPath 相对根(数组索引用数字);value 对象或 JSON 字符串。schema 校验失败不写。大对象优先增量改。',
-
-      schema: z.object({
-        op: z.enum(['set', 'remove', 'merge', 'append', 'move']).optional().describe('增量操作(顶层或 patch.op 至少一个):set 设值/remove 删/merge 合并/append 追加/move 移动数组元素(value=目标路径字符串,数组本身=追加/数组内下标=插入;同数组即重排,目标下标按移除源后解释)'),
-        jsonPath: z.string().optional().describe('相对主数据根的点号路径(如 components.0.text);顶层或 patch.jsonPath。set/remove 必填,merge/append 不填则作用于根'),
-        value: z.unknown().optional().describe('JSON 对象(推荐直传,如 {text:"x"})或 JSON 字符串;顶层或 patch.value(set/merge/append 必填)'),
-        patch: z
-          .object({
-            op: z.enum(['set', 'remove', 'merge', 'append']).optional(),
-            jsonPath: z.string().optional(),
-            value: z.unknown().optional(),
-          })
-          .optional()
-          .describe('容错:误传 write 的 {patch:{op,jsonPath,value}} 形式时从此取值(顶层优先)。正常用顶层 op/jsonPath/value 即可'),
-      }),
-    },
-  )
-  markWrite(editData)
-
-  const deleteData = tool(
-    async ({ jsonPath }, config) => {
-      const scope = scopeOf(config)  // CA 并发修复:per-call scope token
-      if (!jsonPath) return toolError({ code: 'MISSING_VALUE', message: 'delete_data 需要 jsonPath 指定要删的子路径(主数据整体不可删,用 set_data 整体替换)', hint: '如 jsonPath:"components.0" 删数组首项' })
-      if (isUnsafePath(jsonPath)) return toolError({ code: 'PATH_UNSAFE', message: `jsonPath "${jsonPath}" 含非法段`, hint: '使用正常属性路径' })
-      if (!isPathAllowed(jsonPath, schema, allowKeys)) {
-        return toolError({ code: 'PATH_DENIED', message: `delete_data @ "${jsonPath}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可删' })
-      }
-      if (protectedCtx) {
-        const hit = matchProtectedEither(jsonPath, protectedCtx.resourcesByPath)
-        if (hit) {
-          return toolError({ code: hit.spec.mode === 'freeze' ? 'FROZEN_FIELD' : 'VERBATIM_PROTECTED', message: `delete_data @ "${jsonPath}" 命中受保护字段 "${hit.protectedPath}"(${hit.spec.mode}),不可删除`, hint: hit.spec.mode === 'freeze' ? '冻结字段不可删;如需移除请联系集成方调整 data.resources' : 'verbatim 字段不可直接删;先 resource_delete({path}) 释放资源保护后再删' })
-        }
-      }
-      const effHash = lockOn ? getBaseline(scope) : undefined
-      const conflict = await handleConflict('delete', effHash)
-      if (conflict !== null) return conflict
-      pushSnapshot('delete')
-      const ok = deleteByPath(bindRef, jsonPath)
-      markDataDirty()
-      audit({ op: 'delete', detail: jsonPath, timestamp: Date.now() })
-      setBaseline(hashBind(), scope)
-      return ok ? `已删除主数据 @ ${jsonPath}` : `主数据 @ ${jsonPath} 不存在(无需删除)`
-    },
-    {
-      name: 'delete_data',
-      description: '删除主数据的某个子路径(jsonPath)。主数据整体不可删(用 set_data 整体替换)。',
-      schema: z.object({
-        jsonPath: z.string().describe('要删除的子路径(相对主数据根,如 components.0)'),
-      }),
-    },
-  )
-  markWrite(deleteData)
-
-  // snapshot_data / list_data_snapshots 已移除(simplify-toolset):被 history_data({ list: true }) 吸收;
-  // 手动检查点改靠 set/edit/delete 自动快照(set/edit/delete 前自动存,restore_data 可回退)。
+  // get_data/set_data/edit_data/delete_data 已移除(legacy-crud-dedup,4.0):read/write 全覆盖且为唯一入口
+  // (uispec 实测主 agent 调用 get/set/edit_data 均 0 次;删除后数据工具面 14→10)。
+  // 等价迁移:get_data({p}) → read({jsonPath:p});set_data({value}) → write({value});
+  // edit_data({op,p,value}) → write({patch:{op,jsonPath:p,value}});delete_data({p}) → write({patch:{jsonPath:p},del:true})。
+  // snapshot_data / list_data_snapshots 亦早前移除(simplify-toolset):被 history_data({ list: true }) 吸收;
+  // 手动检查点靠 write 自动快照(write 前自动存,restore_data 可回退)。
 
   const restoreData = tool(
     async ({ id }, config) => {
       const scope = scopeOf(config)  // CA 并发修复:per-call scope token
-      if (!snapshots.length) return toolError({ code: 'NO_SNAPSHOT', message: '无快照可回退', hint: 'set/edit/delete 会自动存快照;或 history_data({list:true}) 查看可用快照' })
+      if (!snapshots.length) return toolError({ code: 'NO_SNAPSHOT', message: '无快照可回退', hint: 'write 各写意图会自动存快照;或 history_data({list:true}) 查看可用快照' })
       const entry = id !== undefined ? snapshots.find((s) => s.id === id) : snapshots[snapshots.length - 1]
       if (!entry) return toolError({ code: 'SNAPSHOT_NOT_FOUND', message: `未找到快照 #${id}`, hint: '用 history_data({list:true}) 查看可用快照序号' })
       const chk = schema.safeParse(entry.value)
@@ -1135,7 +1138,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     async ({ expr, limit }, config) => {
       const qScope = scopeOf(config)  // 大文本摘要的 isMain 语义用(主 scope 摘要 / 子 scope 全文)
       if (bindRef == null || typeof bindRef !== 'object') {
-        return toolError({ code: 'NOT_OBJECT', message: `主数据不是对象/数组,无法查询(当前为 ${bindRef === undefined ? 'undefined' : typeof bindRef})`, hint: 'query 仅适用于对象/数组;叶子用 get_data 读' })
+        return toolError({ code: 'NOT_OBJECT', message: `主数据不是对象/数组,无法查询(当前为 ${bindRef === undefined ? 'undefined' : typeof bindRef})`, hint: 'query 仅适用于对象/数组;叶子用 read 读' })
       }
       const queryTarget = allowKeys ? projectBySchemaDeep(bindRef, schema) : bindRef
       let nodes
@@ -1144,9 +1147,11 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       }
       const cap = limit ?? 50
       const sliced = nodes.slice(0, cap)
-      // 大文本摘要(rv-core F2):query_data(simple 默认可用)原样回灌命中 value → codeAsset 场景大 code
-      // 绕过 read 的 <code Nkb> 机制直灌主上下文;与 read 同 isMain 语义
-      const parts = sliced.map((n) => `{"path":${JSON.stringify(n.path)},"index":${n.index === undefined ? 'null' : n.index},"value":${safeStringify(summarizeLargeText(n.value, qScope === MAIN_SCOPE, largeTextSpecs, largeTextThreshold))}}`)
+      // 大文本摘要(rv-core F2 + subtree-summary 泛化):query_data(simple 默认可用)原样回灌命中 value → codeAsset 场景大 code
+      // 绕过 read 的 <code Nkb> 机制直灌主上下文;与 read 同 isMain 语义。命中值**不做结果根豁免**(占位+path 正是检索形态:
+      // LLM 钉 path 窄读);聚焦态命中值按焦点前缀全文(focus __pgFullTextPaths)
+      const qFullText = fullTextPrefixesOf(config)
+      const parts = sliced.map((n) => `{"path":${JSON.stringify(n.path)},"index":${n.index === undefined ? 'null' : n.index},"value":${safeStringify(summarizeLargeText(n.value, qScope === MAIN_SCOPE, largeTextSpecs, largeTextThreshold, { rootExempt: false, rootPath: String(n.path ?? ''), fullTextPrefixes: qFullText, onSummarized: noteSummarized }))}}`)
       return `{"matched":${nodes.length},"returned":${sliced.length},"truncated":${nodes.length > cap},"results":[${parts.join(',')}]}`
     },
     {
@@ -1233,6 +1238,10 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         // 整体替换模式:脚本返回完整新值 —— 走 validateRootValueLocally(path-scoped-validation:
         // 只校验出现的顶层 key,缺必填不再拒;strip/原型污染防线平移到 per-key;错误码 SCHEMA_INVALID 保持)
         let evalResult: unknown = result
+        // 占位符夹带防线(独立落地路径不经 commitSetToBind,单点补):enforceSet 之前检 LLM 原始返回值
+        // (口径同 commitSetToBind:bind 既有受保护内容/展开后资源内容不检,防永久误阻塞 —— 团队审查 P1-1)
+        const evalLeak = findPlaceholderLeak(evalResult)
+        if (evalLeak) return placeholderLeakError(evalLeak)
         // 强制层(§7c F1):eval transform 整体替换是独立落地路径(不走 commitSetToBind),单独调 enforceSet
         if (protectedCtx) {
           const er = enforceSet({ value: evalResult, ctx: protectedCtx })
@@ -1277,9 +1286,10 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   const readSlot = tool(
     async ({ jsonPath, jsonPaths, fields, depth, offset, limit }, config) => {
       const scope = scopeOf(config)  // CA 并发修复:per-call scope token(基线归属 + 大文本摘要主/子判定)
-      const h = hashBind()  // 整体 hash(与 get_data 一致,乐观锁比对整体);多路径/分页/单路径统一取一次
+      const fullTextPrefixes = fullTextPrefixesOf(config)  // 聚焦态全文豁免前缀(subtree-summary 通道 ②)
+      const h = hashBind()  // 整体 hash(整 bind 域,乐观锁比对整体);多路径/分页/单路径统一取一次
       // 基线刷新时机(rv-core F3):原在路径校验前 setBaseline → PATH_DENIED/UNSAFE 失败读也刷基线,
-      // 可构造「失败读吸收宿主改动 → 后续 autoLock 静默覆盖」;下移到校验通过后(与 get_data 同序,
+      // 可构造「失败读吸收宿主改动 → 后续 autoLock 静默覆盖」;下移到校验通过后(保持同序,
       // 多路径至少一个合法路径才刷)
       // 多路径模式:一次读多个不相关子路径(各路径独立投影/拦截/裁剪;非法路径单项标错,不整批失败),省多轮往返
       if (jsonPaths && jsonPaths.length) {
@@ -1295,7 +1305,8 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           if (protectedCtx) resolved = renderReadPlaceholders({ jp, resolved, resourcesByPath: protectedCtx.resourcesByPath, resourceStore: protectedCtx.resourceStore })
           if (fields && fields.length) resolved = projectFields(resolved, fields)
           if (depth !== undefined && depth !== null) resolved = limitDepth(resolved, depth)
-          resolved = summarizeLargeText(resolved, scope === MAIN_SCOPE, largeTextSpecs, largeTextThreshold)
+          // subtree-summary:多路径每条路径各自为结果根(根豁免 —— 不豁免即黑洞且分页静默失效);聚焦前缀全文
+          resolved = summarizeLargeText(resolved, scope === MAIN_SCOPE, largeTextSpecs, largeTextThreshold, { rootExempt: true, rootPath: jp, fullTextPrefixes, onSummarized: noteSummarized })
           if (resolved === undefined) return `- ${jp} = (undefined)`
           return `- ${jp} = ${safeStringify(resolved)}`
         })
@@ -1351,7 +1362,8 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       setBaseline(h, scope)  // 校验通过才刷基线(失败读不吸收宿主改动,防构造静默覆盖)
       if (fields && fields.length) resolved = projectFields(resolved, fields)
       if (depth !== undefined && depth !== null) resolved = limitDepth(resolved, depth)
-      resolved = summarizeLargeText(resolved, scope === MAIN_SCOPE, largeTextSpecs, largeTextThreshold)
+      // subtree-summary:结果根豁免(窄读通道 —— 根不摘要,内部大子树照占位);聚焦前缀全文(__pgFullTextPaths 任意深度豁免)
+      resolved = summarizeLargeText(resolved, scope === MAIN_SCOPE, largeTextSpecs, largeTextThreshold, { rootExempt: true, rootPath: jp, fullTextPrefixes, onSummarized: noteSummarized })
       const constraintGuide = '字段约束(类型/min/max/enum/必填/默认)见 systemPrompt「可操作数据」段,或用 schema_data({ jsonPath }) 按需查。'
       const desc = !jsonPath ? `主数据说明: ${description}\n格式: 写入值需为 JSON,且通过声明的 schema 校验(校验失败时 write 会返回结构化错误)。${constraintGuide}\n\n` : ''
       const proj = fields && fields.length ? `(字段裁剪:${fields.join(',')})` : ''
@@ -1447,7 +1459,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         return `已 write(edit) 主数据(${r.applied.length} 个 patch)。当前值:${safeStringify(r.clone, 600)} (新 hash=${h})`
       }
 
-      // set 整体(commitSetToBind 纯函数:校验+快照+merge+audit,与 set_data/draft_commit 共用)
+      // set 整体(commitSetToBind 纯函数:校验+快照+merge+audit,与 draft_commit 共用)
       const pr = maybeParseValue(payload)
       if (pr.parseError) return jsonParseError('', payload, pr.parseError)
       const conflict = await handleConflict('set', effHash)
@@ -1456,10 +1468,15 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (!r.ok) return r.error
       if (dryRun) return `dryRun(set): schema 校验通过。预览新值:${safeStringify(r.data, 600)}。未实际写入、未入快照。`
       // B __pgId 补齐已由 internalAfterWrite 在 commitSetToBind 成功路径处理
-      const __postHash = hashBind()
+      // hash 复用 commitSetToBind 返回值(写路径成本收敛契约:同调用禁二次全量 hash;团队审查 P2-1)
+      const __postHash = (r as { hash?: string }).hash ?? hashBind()
       setBaseline(__postHash, scope)
-      redactPgInPlace(r.data)
-      return `已 write(set) 主数据 = ${safeStringify(r.data, 600)} (新 hash=${__postHash})${allowKeys ? '(白名单模式:仅更新 schema 声明字段,未声明字段保留)' : ''}`
+      // 回显净化只作用于副本(legacy-crud-dedup 实测暴露的 P1:codeAsset 场景 assembly 元素与 bind 共享引用,
+      // 原地剥 __pg* 会连带抹掉刚回填的映射键,checkout/commit 按 __pgId 定位断链);非 codeAsset 数据无 __pg 键,
+      // 直用原值零拷贝零开销
+      const disp = pgIdPaths.length ? deepClone(r.data) : r.data
+      redactPgInPlace(disp)
+      return `已 write(set) 主数据 = ${safeStringify(disp, 600)} (新 hash=${__postHash})${allowKeys ? '(白名单模式:仅更新 schema 声明字段,未声明字段保留)' : ''}`
     },
     {
       name: 'write',
@@ -1478,7 +1495,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           jsonPath: z.string().optional().describe('相对主数据根的点号路径;set/remove 必填,merge/append 不填则作用于根'),
           value: z.unknown().optional().describe('JSON 值(推荐直传)或 JSON 字符串;set/merge/append 必填,remove 不需'),
         })).optional().describe('批量增量编辑:一次原子应用多个 patch(任一失败则整体不写入,clone 试跑全部 + schema 校验通过才落 live)。适合一次改多处,减少多轮往返'),
-        del: z.boolean().optional().describe('true 则删除 patch.jsonPath 指定的子路径(等价 delete_data)'),
+        del: z.boolean().optional().describe('true 则删除 patch.jsonPath 指定的子路径'),
         dryRun: z.boolean().optional().describe('预检模式:走完整校验链(schema + 白名单 + patch 应用到 clone)但不落盘、不入快照,返回预览。四意图(value/patch/patches/del)均支持;乐观锁冲突照常检测(返回 VERSION_CONFLICT 不挂起)'),
       }),
     },
@@ -1501,7 +1518,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       let base: unknown
       let label: string
       if (useAgainst) {
-        // against 可能是 JSON 字符串(LLM 直传),走 maybeParseValue 与 set_data/write 的 value 处理对齐(parse 失败保留原串)
+        // against 可能是 JSON 字符串(LLM 直传),走 maybeParseValue 与 write 的 value 处理对齐(parse 失败保留原串)
         let v: unknown = against
         if (typeof v === 'string') {
           const pr = maybeParseValue(v)
@@ -1527,7 +1544,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
 
   // ============ draft_write / draft_commit(分块构建超大 JSON;opt-in:opts.vfsStore 提供时装配,capabilities.draftWrite 控制)============
   // 场景:几百 K JSON 逼近 LLM max_tokens,单次 write 装不下。LLM 分块 draft_write 累积 → draft_commit 原子校验+写 bind
-  // draft_commit 复用 commitSetToBind(与 write(set)/set_data 共用校验+快照+乐观锁链)
+  // draft_commit 复用 commitSetToBind(与 write(set) 共用校验+快照+乐观锁链)
   const draftTools: StructuredToolInterface[] = []
   if (opts.vfsStore) {
     const store = opts.vfsStore
@@ -1570,7 +1587,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         const effHash = lockOn ? getBaseline(scope) : undefined
         const conflict = await handleConflict('set', effHash)
         if (conflict !== null) return conflict  // 冲突:草稿保留(未删),LLM 重 read 拿最新 hash 后再 commit
-        // 复用 commitSetToBind(与 write(set)/set_data 共用:schema 校验 + 快照 + merge + audit);op='draft_commit' 标记快照/审计
+        // 复用 commitSetToBind(与 write(set) 共用:schema 校验 + 快照 + merge + audit);op='draft_commit' 标记快照/审计
         const r = commitSetToBind({ bindRef, value: parsed, schema, allowKeys, snapshots, maxSnapshots, audit, op: 'draft_commit', onWrite: markDataDirty, internalAfterWrite, protectedCtx, hashFn: hashBind })
         if (!r.ok) return r.error  // schema 校验失败:草稿保留(不删),LLM 据错误修后重 commit
         setBaseline(r.hash, scope)
@@ -1682,7 +1699,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   }
 
   const tools: StructuredToolInterface[] = [
-    describeData, getData, setData, editData, deleteData,
+    describeData,
     restoreData, historyData,
     queryData, searchData, evalScript,
     readSlot, writeSlot, schemaData, diffData,

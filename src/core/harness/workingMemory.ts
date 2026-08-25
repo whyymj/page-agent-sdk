@@ -20,7 +20,7 @@ const MAX_ENTRIES = 10
 /** read/query/search 之外的工具不捕获(只 pin 定位类) */
 const CAPTURE_TOOLS = new Set(['read', 'query_data', 'search_data'])
 /** 结果含「新 hash=」的写工具家族(stale-read-invalidation 联动:写成功刷新 lastHashes) */
-const WRITE_HASH_TOOLS = new Set(['write', 'set_data', 'edit_data', 'draft_commit'])
+const WRITE_HASH_TOOLS = new Set(['write', 'draft_commit'])
 
 /** lastHashes 键归一(read 侧 args.jsonPath 与写侧 extractWritePaths 输出统一:剥 '$.'/'$' 前缀,防同路径两键并存) */
 function normalizeWmKey(p: string): string {

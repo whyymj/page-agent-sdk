@@ -112,7 +112,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     })
     const byNameA1 = Object.fromEntries(opsA1.map((t) => [t.name, t])) as Record<string, any>
     await invoke(byNameA1['draft_write'], { draftId: 'c1', chunk: '{"title":"drafted","count":9}', mode: 'start' })
-    await invoke(byNameA1['get_data'], {})  // read 拿 hash(autoLock 记 lastReadHash)
+    await invoke(byNameA1['read'], {})  // read 拿 hash(autoLock 记 lastReadHash)
     bindA1.count = 999  // 外部改 bind(模拟 draft 累积期间被改)
     await invoke(byNameA1['draft_commit'], { draftId: 'c1' });
     assert((conflictCalled as boolean) === true, 'A1 → draft_commit 乐观锁:bind 被改过 → 触发 onConflict 介入(不静默覆盖整份大 JSON)')
@@ -125,7 +125,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     const opsA2 = createDataOps({ schema, bind: bindA2, description: 'A2' }, { vfsStore: vfsA2 as any, conflictWatchFields: ['*'] })
     const byNameA2 = Object.fromEntries(opsA2.map((t) => [t.name, t])) as Record<string, any>
     await invoke(byNameA2['draft_write'], { draftId: 'c2', chunk: '{"title":"drafted","count":9}', mode: 'start' })
-    await invoke(byNameA2['get_data'], {})
+    await invoke(byNameA2['read'], {})
     bindA2.count = 888  // 外部改
     const rc2 = await invoke(byNameA2['draft_commit'], { draftId: 'c2' })
     assert(rc2.includes('VERSION_CONFLICT'), 'A1 → 无 onConflict:autoLock 检测 bind 被改 → VERSION_CONFLICT 回灌(不静默覆盖)')
@@ -137,7 +137,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     const opsA3 = createDataOps({ schema, bind: bindA3, description: 'A3' }, { vfsStore: vfsA3 as any })
     const byNameA3 = Object.fromEntries(opsA3.map((t) => [t.name, t])) as Record<string, any>
     await invoke(byNameA3['draft_write'], { draftId: 'c3', chunk: '{"title":"ok","count":3}', mode: 'start' })
-    await invoke(byNameA3['get_data'], {})  // 设 lastReadHash(bind 未变,后续匹配)
+    await invoke(byNameA3['read'], {})  // 设 lastReadHash(bind 未变,后续匹配)
     const rc3 = await invoke(byNameA3['draft_commit'], { draftId: 'c3' })
     assert(rc3.includes('已 draft_commit'), 'A1 → bind 未变:autoLock hash 匹配,无冲突正常写')
     assert(bindA3.title === 'ok' && bindA3.count === 3, 'A1 → 无冲突:bind 正常更新')

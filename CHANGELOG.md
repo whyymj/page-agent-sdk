@@ -4,6 +4,90 @@
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-08-25
+
+### ⚠️ Major 升级要点(为什么是破坏性版本)
+
+- **移除旧 CRUD 四工具 `get_data`/`set_data`/`edit_data`/`delete_data`**(legacy-crud-dedup;真实使用数据:主 agent 零调用,`read`/`write` 全覆盖且为唯一入口,等价迁移表见下 Removed 段)。存量 prompt 写死旧名会被「工具不存在(可用工具:…)」回灌一轮自纠(实测误调率 ~1.5%)
+- **subtree-summary 声明行为**:主 scope 数据 ≥3KB 的存量集成,read/query 输出变 `<subtree>` 占位(键名/体积可见、内容未见;窄读/聚焦/子 scope 三击穿通道)。轻量数据零变化;守卫 + 占位防线自动装配
+- **deprecation 延期说明**:`tracing`/`skillHostScript`/`preferences`/`bulkGuard` 四项 warn 期**延续**(3.47.0 曾预告 3.48.0 移除;因本版升 major,移除顺延至 **4.1.0**,warn 文案已同步)。四项行为本版零变化
+- 其余全部为增量能力(render-check 渲染自检 / section-orchestrator 编排 / subtree-summary 三件套)与修复,升级即得
+
+
+### Added(complex-demo 对齐 editor_fangzhou 真实用法 + 调整/修改操作全覆盖用例)
+
+- **LLM 切 Anthropic 协议组**:`useAgentConfig` 优先 `VITE_ANTHROPIC_*`(provider:'anthropic',deepseek-v4-flash 经 vite 同源代理 `/llm` → modelverse;缺省回退 `VITE_AI_*` OpenAI 兼容组);html 子 agent 同组透传,thinkingMode 仅 thinking-capable 模型注 deep(flash 类不注参,对齐 editor 网关实测)
+- **page-tools 结构工具 skill(editor 式渐进披露)**:`load_skill("page-tools")` 后注入工具池 —— `list_components`(递归组件清单,path 即 write jsonPath)/ `move_component`(跨容器移动,reactive 原生操作 + `writeCapable` 等效写标注)/ `delete_component`(删除,挂 approval);同容器调序引导 write move op
+- **MCP 知识库 RAG(`?rag=1` 开启)**:`VITE_RAG_MCP_URL` 经 `mcp:[{transport:'http'}]` 注入 rag_search/rag_ask/rag_documents(握手 15s/调用 60s 超时降级);URL 参数门控,默认与 browser 测试面零真实网络
+- **动态 systemPrompt 实况段**:`augmentSystem` 注入运行时页面实况(标题/顶层组件数/最深嵌套深度,`ctx.data` 每轮 liveData 同步)+ 既有三档判档段
+- **approval 机制级确认**:`delete_component` 挂确认条(UI 允许/拒绝,无响应 30s 自动拒)
+- **调整/修改操作 browser 用例 +7(111→118)**:write move op 同数组重排 / query→窄读→写检索闭环 / 跨组件批量 patches / restore_data 回退 / page-tools load_skill→list→跨容器移动 / delete_component approval 拒绝保留→批准删除双向 / `?deep=1` 深嵌套页 DFS 最深 card 10+ 段 jsonPath 写入;两处请求体断言改双协议解析(demo 切 Anthropic `/v1/messages` 后 system 顶层字段 + tool_result 块形态)
+
+### Fixed(团队审查回改 —— 3 agent 并行审查:回归风险 / 并发冲突链 / 场景遗漏)
+
+- **占位防线×受保护字段顺序(P1)**:set/eval 整体替换路径的 `findPlaceholderLeak` 移到 `enforceSet` **之前**(检 LLM 原始值)—— 原顺序会把 enforceSet 回填的 bind 既有受保护字段值(如 verbatim 保护的含 `<subtree ` 字面量文本)当夹带,**全部 whole-set 写永久阻塞且无逃生门**,且与 patches 路径口径相反;sec-105 增回归锁(freeze 字段含字面量不阻塞 + LLM 真夹带照拦)
+- **守卫窄读引导补分页(P1)**:`NEED_NARROW_READ` 文案对大数组/大内容形态补「offset/limit 分页 / fields 裁剪 / 只读子路径,勿整灌」—— 原引导整读大数组(children:500)可反灌数十 K token,与 subtree-summary 省上下文初衷相悖
+- **verify 拒绝码同步**:`WRITE_REJECTED_RE` 补 `NEED_NARROW_READ|PLACEHOLDER_LEAK|CUSTOM_CODE_DELEGATION|COMPONENT_LOCKED` 四守卫族拒绝码 —— 原缺失时 verify 把守卫拦截当「疑似未生效」回灌,与守卫 hint 自救指引互相打架;sec-18 增 4 断言
+- **nudge 写成功口径对齐 writeGate**:keep_external 冲突裁决(「未写入」普通字符串、status done)与 no-op 删除(「无需删除」)不再计触达 —— 原口径 12 次保留外部值即误触发 nudge;sec-107 增 16 断言(含真成功对照)
+- **write(set) hash 双算(P2)**:复用 `commitSetToBind` 返回的 `r.hash`(写路径成本收敛契约:同调用禁二次全量 hash,1MB ~10ms/次)
+- **更正记录**:「offload 吞 delegate-nudge advisory 尾巴」观察**证伪**(4a3539a commit message 结论有误)—— offload 在 coreExecTool 洋葱最内层,nudge 尾附在外层 wrapToolCall 追加,advisory 恒可见;且写结果 safeStringify 封顶 600 字符根本触不到 offload 阈值。真实残余 = 历史轮压缩的「保首砍尾」(一次性 advisory 生命周期内可接受)
+
+### Added(section-orchestrator Phase 1,编排段数据规模动态注入)
+
+- **编排段按 liveData 实测注入(delegate-nudge 中间件 `augmentPrompt`,与 nudge 同阈值同源)**:主数据顶层「数组元素全为对象」的数组元素总数 ≥12 → 每轮 system 注入三步职责(**规划 → 分段委派 → 验收收口**)+ **段规格四要素**(jsonPath 范围 / 改动目标 / 共享 tokens / 验收标准;html 五要点的新造平移,非复用结论);小数据零注入零税,`setData` 后自动跟随(闭包读 live bind);不走 htmlOrchestratorPrompt 静态装配(其条件对纯 JSON 既过宽又过窄)
+- **S6 明示弱点随段注入 + 文档**:纯 JSON 委派(`spawn_*`)不经组件锁,段不相交由编排规划保证、越段写冲突由乐观锁(per-scope 基线)兜底;`spawn_agents` task 不带写授权,并行写委派须逐个 `spawn_agent` 各带 writablePaths(usage-guide 中英「分段编排」段明示)
+- 段含单干优先裁决(「中小任务直接做,不必为分段而分段」)与回退条款(同一委派失败 2 次自己做)—— 回退保底不变量贯穿
+- 测试:sec-107 扩展(两态注入/四要素/S6/setData 跟随)+ e2e 装配断言(大数据 system 含编排段、小数据零税);门禁 3017/0 · 978/0 · 111/111
+
+### Added(section-orchestrator Phase 0,欠委派 nudge + 预算文案能力感知)
+
+- **`createDelegateNudgeMiddleware`(自动装配,dataOps + subagent 开即装)**:invoke 内累计写触达(逐次 `measureWriteScale` union 组件级 scopes;整体 set 特判取 count)超阈(常量 `DELEGATE_NUDGE_THRESHOLD`=12)且本 invoke 零委派(spawn_agent/spawn_agents/use_*)→ 随该次成功写结果**尾附一次性 advisory**(不阻断、不改结果语义);文案 ask-first:教「分段并行委派(多个 spawn_agent 各带 writablePaths)」+ 回退条款「同一委派失败 2 次就自己做,单干同样是一等路径」;dryRun/失败写不度量;logSink 留痕 `stage:'delegate_nudge'`。补齐「过度委派已修(3.46 多方案先文本)、欠委派零机制」的另一半
+- **`roundBudgetHintText` 增第三参 `hasSubagent`**(createChatSdk 装配期按 `useSubagent` 能力传入;默认只读 spawn_agent 也算):70% 档文案按能力感知 —— 有委派能力时教「并行分段委派」形态,无能力时泛化措辞不点名不存在的工具(告急档不受影响);`CreateAgentOptions.hasSubagent` 新增可选字段
+- 测试:sec-107 nudge 三态/whole-set/dryRun/失败写/一次性/invoke 重置 + sec-80 预算文案两态;e2e S7 保底(委派×2 失败 → 主 agent 回退单干完成 + 已委派抑制)+ grind 累计 nudge 装配链实证;门禁 3010/0 · 975/0 · 111/111
+
+### Added(subtree-summary Phase 1,read-before-write 守卫 —— 防「凭占位印象写」)
+
+- **dataOps 占位路径出口(invoke 级)**:`controller.getSummarizedPaths()/clearSummarizedPaths()` —— 主 scope read/query 产出的 `<subtree>`/`<field Nkb>` 占位绝对路径集(FIFO ≤500 防无界);守卫 beforeAgent 清空(invoke 边界,上轮占位不株连本轮)
+- **`createSubtreeWriteGuardMiddleware`(自动装配,dataOps 开即装,非 codeAsset 门控)**:写路径落入摘要子树 S × 本轮 invoke 无 S 自身/后代的窄读记录 × S 无成功写 → 回灌 `NEED_NARROW_READ` 窄读指令(ask-first 带具体 jsonPath,一轮后可写 —— 引导重试而非禁止);工具不执行不落盘。恒放行四态:dryRun / 已窄读 / 已写过(S 打开)/ 未落入摘要面(S1 骨架直写小标量);同子树第二次拦放行(防嘴硬死循环烧轮次);整体 set(无 jsonPath)不拦(S4 一把梭形态明示不覆盖)
+- **usageHints 教学行**:读到 `<subtree>`/`<code Nkb>` 占位 = 内容未见,先窄读或 set_focus,勿凭键名印象猜路径/猜值直写
+- 浏览器用例「read 全量→直写深路径」按新闭环更新(拦 → 窄读 → 复写);selftest sec-106 四态 + e2e stub 集成(骨架读占位 → 直写拦 → 窄读 → 复写落地);门禁 2984/0 · 967/0 · 111/111
+- **占位符夹带值防线(补口)**:`findPlaceholderLeak` 深检写入值 —— `<subtree ` 子串(SDK 专属词)/ `<字段名 Nkb>` 整串(HTML 混合内容子串不误伤)→ `PLACEHOLDER_LEAK` 拒收并引导窄读;收口三写路径 `commitSetToBind`(set/draft_commit)+ `applyPatchesToBind`(patch/patches/eval transform)+ eval 整体替换独立落地路径;dryRun 预检同样暴露;verbatim 句柄 `⟦res:…⟧` 前缀不同零误伤;move 的 value(目标路径)跳过;宿主 `importData` 命令式入口不拦(开发者非 LLM)。selftest sec-105 增 12 断言(纯函数两态 + 三写入口拒收 + 原子性 + dryRun + 句柄不误伤),门禁 3029/0
+
+### Changed(subtree-summary Phase 0,大子树摘要泛化 —— 复杂任务上下文经济地基)
+
+- **主 scope read/query 大子树自动摘要**(零配置,阈值 `SUBTREE_SUMMARY_THRESHOLD` 常量 ≈3KB):泛化既有「标记字段 `<code Nkb>`」为**体积判定** —— 自底向上聚合子树有效序列化体积(O(n) 估算),≥阈值的 object/array 子树降为 `<subtree NKB keys:[k1,…] #指纹>`(数组记 `children:N`;键名取投影后的值;小标量/叶子永不单独摘要;内层优先 —— 孩子先判,父按占位后有效体积再判,小兄弟节点保持可见)。指纹 `#` 前缀(**占位符禁用 `hash=` 字面量**,防 workingMemory lastHashes 捕获污染);仅供 LLM 比对内容新旧,不接乐观锁/stale-read
+- **三条击穿通道(全部无子 agent 可用)**:①**窄读** —— read 单/多路径**结果根豁免**(每路径各自为根;原「读标记字段返全文」是非 object 根早退的结构性意外,现为显式契约);②**聚焦全文(新机制)** —— 聚焦态 read 经 focus 中间件 `ctx.callConfig.__pgFullTextPaths`(per-call 通道,同 `__pgDataScope` 先例)传任意深度豁免前缀,焦点子树内(含嵌套大子树)读全文;③**子 scope** —— `isMain=false` 既有通道不动。query 命中值**不做根豁免**(占位+path 正是检索形态);search 维持现状不摘要
+- **⚠️ 声明行为(非零副作用)**:泛化拆除「无 largeTextPaths 集成不摘要」早退 —— **所有主 scope 数据 ≥阈值的存量集成** read/query 输出变占位;轻量数据(处处低于阈值)零变化(e2e 锁);既有标记形态兼容(`<code Nkb>`)
+- `summarizeLargeText` 签名增可选第 5 参 `SubtreeSummarizeOptions { rootExempt, rootPath, fullTextPrefixes }`(内部 API,未在公共导出面);阈值校准走常量(Phase 1 真 LLM 反校准,数据裁决只升阈值不回退机制)
+- 测试:selftest sec-105(体积两态/键名投影后值/内层优先/根豁免两态/豁免前缀含嵌套与「父不因全文孩子被摘要」/标记兼容/无 hash= 断言)+ e2e 四路断言(主占位/窄读/聚焦/子 scope)+ 轻量零变化锁
+
+### Added(render-check,渲染级自检 —— 纯 H5 质量闭环)
+
+- **沙箱 iframe 渲染自检**(随 `formatCheck` 生效,零新配置):结构检通过后,本轮触达面(vfs touched 文件 + 本轮 write 新建组件,天然 ≤2)逐个放 `srcdoc` + `sandbox="allow-scripts"` 沙箱(无 same-origin/forms/top-navigation)独立渲染,采集 console.error / window.onerror(带行号)/ unhandledrejection / 资源加载失败(捕获相)/ 白屏指标(`body.scrollHeight`<10)→ 回灌自纠(归因到组件 + 修复指引);单组合 VerifyCheck(结构不过短路渲染,不加第二中间件);子 agent 不提供渲染工具
+- **降级三态(诚实,防假绿)**:①node/headless 无 DOM(含 e2e 桩 document)→ 跳渲染段保留结构段 + debugLogs `render_check_skip` 留痕;②宿主 CSP 拦沙箱内联脚本 → collector 握手缺失 → 「检查不可用」**不算通过**,引导 validate_code 兜底 + 收口如实说明;③收集窗超时(活动静默启发式 + ~4s 硬上限)→ 原因返回
+- **沙箱假阳性治理**:storage 类 SecurityError(opaque origin 访问 localStorage/cookie)降观察不判失败;CSP 违规降观察(宿主责任不株连组件);离屏定位(`visibility:hidden` + fixed,display:none 度量失真)+ iframe 用后销毁(lifecycle 计数可观测)
+- **新导出**:`createHtmlRenderCheck` / `composeStructureThenRender` / `normalizeRenderResult` / `renderInSandbox` / `buildSandboxSrcdoc` / `buildCollectorJs` / `getSandboxLifecycle` + 类型(`RenderSignal`/`RenderMetrics`/`RenderVerdict`/`RawRenderResult` 等);`VerifyCheckContext` 增可选 `log`(结构化留痕通道)
+- **明示残余**:沙箱 ≠ 宿主环境(结论是「能否独立跑」);异步晚到错误可能漏报;修复预算与结构自纠共享 `maxVerifyAttempts:2`(复杂链可能提前耗尽);最坏 +3~5s/次(复检只查失败组件)
+- 测试:selftest sec-104(归一三态/注入位置/检查面组装/结构短路/node 守卫/截断)+ browser render-check.spec ×7(真沙箱好/坏/异步/404/白屏/销毁/CSP 降级 + demo 集成闭环 fail→回灌→修复→pass);node e2e 存量 capability-packs 坏代码链零回归
+
+### Removed(legacy-crud-dedup,主池去重旧 CRUD 四件)
+
+- **移除旧 CRUD 四工具 `get_data` / `set_data` / `edit_data` / `delete_data`**(第一代遗留,与 `read`/`write` 同职能重复;数据工具面 14→10,恒定上下文税 ~250 tok/轮下降,弱模型误选率下降)。真实使用挖掘(uispec 回归报告)背书:主 agent 调用 get/set/edit_data 均 **0 次**,delete_data 4 次(write del 等价);`describe_data` **保留**(12 次全在 html 子 agent,与 `schema_data` 不同义:业务说明 vs 约束树)。edit_data 的 M2 patch 补全容错块随工具一并删除;`write`/`read` 语义零变化(四意图/多路径/摘要/乐观锁全不动)
+- **等价迁移表**(集成方一眼改写):
+
+  | 旧调用 | 等价新调用 |
+  |---|---|
+  | `get_data({ jsonPath: p })` | `read({ jsonPath: p })` |
+  | `set_data({ value })` | `write({ value })` |
+  | `edit_data({ op, jsonPath: p, value })` | `write({ patch: { op, jsonPath: p, value } })` |
+  | `delete_data({ jsonPath: p })` | `write({ patch: { jsonPath: p }, del: true })` |
+
+- 存量 prompt 写死旧名 / 弱模型首调旧名 → 回灌「工具 X 不存在(当前上下文可用工具:…)」一轮自纠(实测误调率 ~1.5%);恢复的会话历史里旧工具名只是文本,渲染与回放无碍
+
+### Fixed(legacy-crud-dedup 移植测试暴露的存量 P1)
+
+- **write(set) 整体替换的回显净化误伤 `__pgId` 回填**:`redactPgInPlace(r.data)` 原地剥 `__pg*` 键,而 codeAsset 场景 assembly 元素与 bind **共享引用** → 净化连带抹掉 live bind 上刚回填的组件映射键,checkout/commit 按 `__pgId` 定位断链(editor 类宿主任何整体 set 写都会触发;write(edit) 路径净化的是 applyPatchesToBind 的真 clone 无此问题)。修复:净化只作用于副本(`pgIdPaths` 场景才 deepClone;非 codeAsset 数据无 `__pg` 键,直用原值零拷贝零开销)。测试向 set_data 移植到 write(set) 时暴露(B2「整体替换 __pgId 按位置保留」5 断言红),自测覆盖
+
 ## [3.47.0] - 2026-08-24
 
 ### Removed + Changed(config-surface-pruning 第一轮,配置面收敛)

@@ -5,12 +5,12 @@ import { createVfs, createVfsTools } from '../../backends/vfs'
 
 import type { TestCtx } from './_ctx'
 
-// dataOps:edit + 快照(单主对象)
+// dataOps:write(edit)+ 快照(单主对象)
 export async function run(ctx: TestCtx): Promise<void> {
   const { assert, invoke, byName } = ctx
   console.log('\n[dataOps edit + snapshot]')
   {
-    // 主数据:含对象/数组/叶子字段(edit 仅作用于对象/数组;叶子用 set_data 整体替换)
+    // 主数据:含对象/数组/叶子字段(edit 仅作用于对象/数组;叶子用 write(value) 整体替换)
     const appObj: any = {
       cfg: { a: 1, name: 'x' },
       list: [{ id: 1, text: 'a' }, { id: 2, text: 'b' }],
@@ -28,29 +28,29 @@ export async function run(ctx: TestCtx): Promise<void> {
     const t = byName(tools)
     let r: string
 
-    // edit set 子字段(jsonPath 相对主数据根)
-    r = await invoke(t['edit_data'], { op: 'set', jsonPath: 'cfg.a', value: '99' })
-    assert(appObj.cfg.a === 99 && /已 edit/.test(r), 'edit set 子字段生效')
+    // write(edit) set 子字段(jsonPath 相对主数据根)
+    r = await invoke(t['write'], { patch: { op: 'set', jsonPath: 'cfg.a', value: '99' } })
+    assert(appObj.cfg.a === 99 && /已 write\(edit\)/.test(r), 'edit set 子字段生效')
 
-    // edit merge 合并
-    r = await invoke(t['edit_data'], { op: 'merge', jsonPath: 'cfg', value: '{"extra":"hi"}' })
+    // write(edit) merge 合并
+    r = await invoke(t['write'], { patch: { op: 'merge', jsonPath: 'cfg', value: '{"extra":"hi"}' } })
     assert(appObj.cfg.extra === 'hi', 'edit merge 合并字段')
 
-    // edit append 追加
-    r = await invoke(t['edit_data'], { op: 'append', jsonPath: 'list', value: '{"id":3,"text":"c"}' })
+    // write(edit) append 追加
+    r = await invoke(t['write'], { patch: { op: 'append', jsonPath: 'list', value: '{"id":3,"text":"c"}' } })
     assert(appObj.list.length === 3 && appObj.list[2].id === 3, 'edit append 追加元素')
 
-    // edit remove 删字段
-    r = await invoke(t['edit_data'], { op: 'remove', jsonPath: 'cfg.extra' })
+    // write(edit) remove 删字段
+    r = await invoke(t['write'], { patch: { op: 'remove', jsonPath: 'cfg.extra' } })
     assert(!('extra' in appObj.cfg), 'edit remove 删字段')
 
-    // edit schema 失败 → live 不变(校验在副本,失败不入栈不落地)
+    // write(edit) schema 失败 → live 不变(校验在副本,失败不入栈不落地)
     const beforeA = appObj.cfg.a
-    r = await invoke(t['edit_data'], { op: 'set', jsonPath: 'cfg.a', value: '"not a number"' })
+    r = await invoke(t['write'], { patch: { op: 'set', jsonPath: 'cfg.a', value: '"not a number"' } })
     assert(/SCHEMA_INVALID/.test(r) && appObj.cfg.a === beforeA, 'edit 校验失败 live 未变(结构化错误码)')
 
-    // edit 不安全路径:PATH_UNSAFE
-    r = await invoke(t['edit_data'], { op: 'set', jsonPath: '__proto__.x', value: '1' })
+    // write(edit) 不安全路径:PATH_UNSAFE
+    r = await invoke(t['write'], { patch: { op: 'set', jsonPath: '__proto__.x', value: '1' } })
     assert(/PATH_UNSAFE/.test(r), 'edit __proto__ → PATH_UNSAFE')
 
     // 自动快照:set/edit 前自动入栈 → history_data list 有记录(吸收已移除的 list_data_snapshots)
@@ -66,13 +66,13 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(t['history_data'], { list: true })
     assert(/#1/.test(r), 'restore 不入栈(history_data list 仍列出已有快照)')
 
-    // get_data 支持读后代子路径(精确读局部,而非整体)
-    r = await invoke(t['get_data'], { jsonPath: 'cfg.a' })
-    assert(/cfg\.a = 1/.test(r), 'get_data 读后代子路径(局部)')
+    // read 支持读后代子路径(精确读局部,而非整体)
+    r = await invoke(t['read'], { jsonPath: 'cfg.a' })
+    assert(/cfg\.a = 1/.test(r), 'read 读后代子路径(局部)')
 
-    // get_data 读整个主数据
-    r = await invoke(t['get_data'], {})
-    assert(/cfg/.test(r) && /list/.test(r), 'get_data 不传 jsonPath 读整个主数据')
+    // read 读整个主数据
+    r = await invoke(t['read'], {})
+    assert(/cfg/.test(r) && /list/.test(r), 'read 不传 jsonPath 读整个主数据')
   }
 
   // ============ 工具报错机制(结构化 ERROR:{json},供 LLM 排查)============
@@ -91,23 +91,23 @@ export async function run(ctx: TestCtx): Promise<void> {
     const t = byName(tools)
 
     // schema 失败:details 含 zod issues(path/expected/received)
-    let r = await invoke(t['set_data'], { value: '{ "theme":"dark","count":"x","cfg":{"a":1} }' })
+    let r = await invoke(t['write'], { value: '{ "theme":"dark","count":"x","cfg":{"a":1} }' })
     assert(/"error":\s*"SCHEMA_INVALID"/.test(r), 'schema 失败 → error=SCHEMA_INVALID')
     const detailMatch = r.match(/"details":\s*(\[[^\]]*\])/)
     assert(detailMatch && /expected/.test(detailMatch[1]) && /received/.test(detailMatch[1]), 'schema 失败 details 含 zod issue 的 expected/received')
 
     // JSON 解析失败:带原解析错误 + 预览
-    r = await invoke(t['set_data'], { value: '{bad' })
+    r = await invoke(t['write'], { value: '{bad' })
     assert(/"error":\s*"JSON_PARSE"/.test(r) && /预览|bad/.test(r), 'JSON 解析失败 → error=JSON_PARSE + 预览')
 
     // edit 非对象(叶子 theme):NOT_OBJECT + hint 指向 set
-    r = await invoke(t['edit_data'], { op: 'set', jsonPath: 'theme.x', value: '1' })
+    r = await invoke(t['write'], { patch: { op: 'set', jsonPath: 'theme.x', value: '1' } })
     // theme 是叶子字符串,edit jsonPath 'theme.x' 在叶子下设子属性 → path-scoped-validation 下
     // 'theme.x' 路径 schema 不可解析(叶子无子路径)→ 键未声明语义 → SCHEMA_STRIP 拒(叶子不可有子属性,语义等价)
     assert(/SCHEMA_INVALID|SCHEMA_STRIP|NOT_OBJECT/.test(r), 'edit 在叶子上设子属性 → schema 失败(叶子不可有子属性)')
 
     // edit 不安全路径:PATH_UNSAFE
-    r = await invoke(t['edit_data'], { op: 'set', jsonPath: 'cfg.__proto__.x', value: '1' })
+    r = await invoke(t['write'], { patch: { op: 'set', jsonPath: 'cfg.__proto__.x', value: '1' } })
     assert(/"error":\s*"PATH_UNSAFE"/.test(r), 'edit __proto__ → PATH_UNSAFE')
 
     // query 语法错误:JSONPATH_SYNTAX + details.expr
@@ -115,7 +115,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(/"error":\s*"JSONPATH_SYNTAX"/.test(r) && /"expr"/.test(r), 'query 语法错 → JSONPATH_SYNTAX + details.expr')
 
     // 正常成功:不是 ERROR 前缀
-    r = await invoke(t['get_data'], { jsonPath: 'theme' })
+    r = await invoke(t['read'], { jsonPath: 'theme' })
     assert(!/^ERROR:/.test(r) && /dark/.test(r), '正常读不返回 ERROR 前缀')
   }
 

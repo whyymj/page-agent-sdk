@@ -17,9 +17,8 @@ export interface PermissionRule {
   mode: 'allow' | 'deny'
 }
 
-const WRITE_TOOLS = new Set(['set_data', 'edit_data', 'delete_data', 'write', 'vfs_write', 'vfs_edit', 'draft_commit', 'eval_script'])
+const WRITE_TOOLS = new Set(['write', 'vfs_write', 'vfs_edit', 'draft_commit', 'eval_script'])
 const READ_TOOLS = new Set([
-  'get_data',
   'describe_data',
   'read',
   'query_data',
@@ -70,7 +69,7 @@ function decideAccess(rules: PermissionRule[], op: PermissionOp, scope: string):
 /**
  * 提取一次工具调用涉及的所有 scope(点号路径)。
  * 兼容 `write` 高层工具的嵌套结构:jsonPath 可能在 `patch.jsonPath` 或 `patches[].jsonPath`(批量逐条独立判断)。
- * 整体操作(write({value}) 整体 set / set_data / draft_commit 无 jsonPath)返回空数组 → wrapToolCall 按根 scope '' 校验(fix-authorization-surface,修原「空 scopes 跳过」绕过口子)。
+ * 整体操作(write({value}) 整体 set / draft_commit 无 jsonPath)返回空数组 → wrapToolCall 按根 scope '' 校验(fix-authorization-surface,修原「空 scopes 跳过」绕过口子)。
  */
 function extractScopes(args: unknown): string[] {
   const a = (args ?? {}) as Record<string, any>

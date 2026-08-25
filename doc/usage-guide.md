@@ -275,22 +275,19 @@ Agent 自主调用这些内置工具(无需你写):
 |---|---|
 | **`read`** / **`write`**(推荐) | 高层读写入口,合并 describe/get 与 set/edit/delete + 自动乐观锁 + 自动快照,LLM 认知负担最低 |
 | `describe_data` | 查看主数据说明 + schema 字段描述(底层,推荐 `read`) |
-| `get_data` | 读主数据(支持 `jsonPath` 精确读局部;底层,推荐 `read`) |
-| `set_data` | 整体替换主数据(**按 schema 校验**,不合法返回错误不写入;底层,推荐 `write`) |
-| `edit_data` | 增量 patch(`op=set/remove/merge/append/move` + `jsonPath`),避免重传整个大 JSON(底层,推荐 `write` patch) |
-| `delete_data` | 删子路径(底层,推荐 `write` del) |
 | `query_data` / `search_data` / `eval_script` | 大 JSON 查询(JSONPath)/ 模糊搜索 / 沙箱脚本 |
-| `snapshot_data` / `list_data_snapshots` / `restore_data` | 快照 / 回退 |
+| `restore_data` / `history_data` | 快照回退 / 查历史快照列表与值 |
 
 **要点**:
-- **schema 校验(path 级局部)**:`set`/`edit`/`write` 校验**被写子树**的结构合法性(不是全量数据)—— 单点写入不会被其他节点的历史脏数据拦死;被写值不合法才拦截,返回只含写入路径的结构化错误给 Agent 自纠。整体 set 只校验 value 中出现的顶层 key(merge 语义,缺省字段保留);根级 refine/superRefine 等跨节点约束不在写时执行(需要全局校验用 `capabilities.verify`)。
-- **快照回退**:每次 `set`/`edit`/`delete` 前自动存快照,`restore_data` 一键回退。
+- **大子树摘要与击穿通道(4.0+)**:主 agent 侧 read/query 对「有效序列化体积 ≥ ~3KB」的子树自动降为 `<subtree NKB keys:[k1,…] #指纹>` 占位(数组记 `children:N`;标记字段形态 `<code Nkb>` 兼容)—— 键名/体积可见,**内容未见**。三条击穿通道(全部不依赖子 agent):①**窄读** `read({jsonPath:"该子树路径"})`(结果根豁免返回全文);②**聚焦全文** `set_focus` 后焦点子树内(含嵌套大子树)读全文;③**子 agent scope**(委派场景子 agent 读全文)。query 命中大值返回占位+path(钉路径窄读);search 不摘要。**read-before-write 守卫(自动装配)**:写路径落入占位子树且本轮未窄读 → 回灌 `NEED_NARROW_READ` 窄读指令(ask-first,一轮后可写;dryRun/已读/已写过/未落入摘要面恒放行;同子树只拦一次防死循环;整体 set 不拦)。**占位符夹带值防线**:write 写入值含占位字符串(`<subtree …>` 子串 / `<字段名 Nkb>` 整串)→ `PLACEHOLDER_LEAK` 拒收并引导窄读(防凭占位印象拼 value 把脏文本写进 bind;dryRun 预检同样暴露;verbatim 句柄 `⟦res:…⟧` 前缀不同不受影响;检查只针对 LLM 提交的原始值 —— enforceSet 回填的受保护字段既有值不检,集成方 bind 里合法存的占位样文本不会阻塞 whole-set 写;确需把占位样文本写进数据走集成侧 `importData`(agent 写通道无 override,防 LLM 把占位当真值的收益大于极端误伤);注意整串规则的字段名是任意 `[A-Za-z_]` 开头词(如 `<div 3KB>` 整串也会拦,HTML 混合内容子串不拦)。另注意 read 的占位/守卫面不覆盖 query/search/eval —— 这三个通道对受 freeze/verbatim 保护的字段返回真实值(写侧强制兜底,精确值不入 LLM 消息流的承诺在这三个通道上是弱化的,设计内边界)。轻量数据(处处低于阈值)零变化;**声明行为**:主 scope 数据 ≥ 阈值的存量集成 read/query 输出变占位(阈值常量 `SUBTREE_SUMMARY_THRESHOLD`,随版本按真 LLM 数据校准,只升不降)。
+- **分段编排与欠委派 nudge(4.0+,自动装配,零配置)**:①**欠委派 nudge** —— 同一任务内累计写触达 ≥12 个组件且尚未委派 → 下一次成功写结果尾附一次性提示(教「多个 spawn_agent 各带 writablePaths 分段并行」+ 回退条款「同一委派失败 2 次就自己做,单干同样是一等路径」;advisory 不阻断,裁决归 LLM);②**编排段数据规模动态注入** —— 主数据顶层数组元素总数 ≥12 时每轮 system 注入三步职责(规划→分段委派→验收收口)+ 段规格四要素(jsonPath 范围/改动目标/共享 tokens/验收标准),小数据零注入零税,`setData` 后自动跟随;③轮次预算 70% 档提醒按能力感知教「并行分段委派」形态。**明示弱点(纯 JSON 委派)**:`spawn_*` 不经组件锁(锁仅 codeAsset use_<id> 路径),段不相交由编排规划保证、越段写冲突由乐观锁(per-scope 基线)兜底;`spawn_agents` 的 task 不带写授权,并行**写**委派须逐个 `spawn_agent` 各带 writablePaths。
+- **schema 校验(path 级局部)**:`write` 校验**被写子树**的结构合法性(不是全量数据)—— 单点写入不会被其他节点的历史脏数据拦死;被写值不合法才拦截,返回只含写入路径的结构化错误给 Agent 自纠。整体 set 只校验 value 中出现的顶层 key(merge 语义,缺省字段保留);根级 refine/superRefine 等跨节点约束不在写时执行(需要全局校验用 `capabilities.verify`)。
+- **快照回退**:每次 `write` 前自动存快照,`restore_data` 一键回退。
   - 自动快照:写操作前自动入栈(默认 20,FIFO 丢最旧)
-  - 手动检查点:`snapshot_data(label?)` 命名快照
-  - 查看时间线:`list_data_snapshots()` —— 序号 / op / 标签 / 大小
+  - 查看时间线:`history_data({list:true})` —— 序号 / op / 标签;`history_data({id,jsonPath?})` 读指定快照值
   - 回退:`restore_data(id?)` —— 不传 id 回退最近一次,传 id 回退指定;就地还原保留响应式、不入栈
   - 例:Agent 误改 `theme`,对话「回退最近一次修改」→ Agent 调 `restore_data()`
-- **Vue 响应式友好**:`edit` 就地改子属性、不替换根引用 → 你的 `reactive()` 页面能正常响应更新。
+- **Vue 响应式友好**:`write` 增量就地改子属性、不替换根引用 → 你的 `reactive()` 页面能正常响应更新。
 - **解耦 window**:`bind` 直连对象,工具直接读写 bind,SDK 不再自动挂 window(集成方按需自己挂 `window.app = app` 供页面读取)。
 
 ### 高层读写工具 `read`/`write`(推荐)
@@ -395,7 +392,7 @@ const sdk = createChatSdk({
 
 #### 乐观锁(防"基于过期值覆盖")与冲突人工介入
 
-当主数据可能被**外部代码 / 其他 agent / 用户手动**并发修改时,启用乐观锁:声明 `conflictWatchFields`(白名单或 `['*']`);`get_data`/`read` 返回值末尾附 `hash=xxx`(整体 bind 的 hash)作乐观锁标识,声明后写入自动比对。
+当主数据可能被**外部代码 / 其他 agent / 用户手动**并发修改时,启用乐观锁:声明 `conflictWatchFields`(白名单或 `['*']`);`read` 返回值末尾附 `hash=xxx`(整体 bind 的 hash)作乐观锁标识,声明后写入自动比对。
 
 ```ts
 // Agent 工作流(由 LLM 自动执行,集成方无需写)
@@ -467,7 +464,7 @@ createChatSdk({ /* ... */ conflictPolicy: 'overwrite' })
 
 显式 `expectedHash` 优先于自动检测的共享基线 hash,跨并发工具可重现、可推理。
 
-> **hash 算法**:2.16+ 起 `hashValue` 升级为 **cyrb53(53-bit)**,替代旧 djb2(32-bit),显著降低碰撞概率。`expectedHash` 直接取 `read`/`get_data` 返回值里的 `hash` 字段即可,无需集成方自己算。
+> **hash 算法**:2.16+ 起 `hashValue` 升级为 **cyrb53(53-bit)**,替代旧 djb2(32-bit),显著降低碰撞概率。`expectedHash` 直接取 `read` 返回值里的 `hash` 字段即可,无需集成方自己算。
 
 ### 自动化闭环与规模化:`get_dom` / `actions` / `schemaHint` / `workingMemory`(2.20+)
 
@@ -556,7 +553,7 @@ draft_write({draftId:"p1", chunk:']}', mode:"append"})
 draft_commit({draftId:"p1"})  // 合并 + 校验 + 写主数据 + 清草稿
 ```
 
-> 小改仍用 `write` patch;draft 只在大 JSON 从零生成。`draft_commit` 走 `commitSetToBind`(与 write(set)/set_data 共用校验+快照+乐观锁链,单一真相源)。
+> 小改仍用 `write` patch;draft 只在大 JSON 从零生成。`draft_commit` 走 `commitSetToBind`(与 write(set) 共用校验+快照+乐观锁链,单一真相源)。
 
 #### 宿主动作 `actions`(触发保存/发布等页面操作)
 
@@ -652,6 +649,7 @@ sdk.vfsWrite('docs/components/hero.md', 'Hero 组件用于首屏主视觉...')
   - **`__pgId` 框架无感注入**:集成商 schema 不声明;read 投影自动隐藏(`__pg*` 前缀);agent 写不进(path guard);persist 透明带(跨会话/跨设备稳定);vfs 文件名 = `codeVfsPrefix+__pgId+ext`
   - **输出形态(单模式)**:生成**完整、自包含的 HTML 页面**(可独立成页);交互逻辑默认 `<script>`(仅当用户明确「不要 script」时不写)、CSS 集中放 `<style>` 块、可引外部 JS/CSS;改造(抽 body/包组件/片段化)由下游插件/tool 做,html agent 不关注宿主渲染方式(v-html/SFC/iframe)
   - **输出格式校验**(`formatCheck`,默认开):① `validate_code` 自检工具(子 agent 生成/修改后自主调用;标签配对闭合等结构合法性,带行号报错)② verify beforeReturn 门禁(返回前确定性扫 vfs 工作副本,不通过回灌 feedback 自纠,`maxVerifyAttempts:2` 兜底防循环)。校验器为纯函数 `validateHtmlFormat`(已导出,集成方渲染层可复用做纵深防御);`formatCheck:false` 关闭整条校验链
+  - **渲染自检(render-check,4.0+,随 `formatCheck` 生效零配置)**:结构检通过后,把**本轮触达面**(vfs touched 文件 + 本轮 write 新建组件)逐个放沙箱 iframe(`srcdoc` + `sandbox="allow-scripts"`,无 same-origin/forms/top-navigation)独立渲染,采集 ①`console.error`/`window.onerror`(带行号)②`unhandledrejection`(异步)③资源加载失败(捕获相 error,跨源无关)④白屏指标(`body.scrollHeight`<10)→ 任一命中即回灌自纠(定位到组件+行号);子 agent 不提供渲染工具(检查不交 LLM 自决,防双轨烧轮次)。**边界与残余(明示)**:沙箱 ≠ 宿主环境(结论是「能否独立跑」非「长啥样」);异步晚到错误可能漏报(活动静默启发式 + 硬上限 ~4s);storage 类 SecurityError 降为观察不判失败(opaque origin 沙箱假阳性);宿主 CSP 拦内联脚本 → 握手缺失「检查不可用」诚实返回(**不算通过,防假绿**,此时引导 validate_code 兜底);node/headless 无 DOM 环境自动跳渲染段保留结构段(debugLogs `render_check_skip` 留痕);修复预算与结构自纠**共享** `maxVerifyAttempts:2` 池(复杂修复链可能提前耗尽);最坏 +3~5s/次检查(复检只查失败组件)。导出 `createHtmlRenderCheck`/`normalizeRenderResult`/`renderInSandbox` 等供集成方自管复用
   - **主 scope read 摘要**:主 agent read data 时,标记字段(`code`)摘要为 `<code Nkb>`(防代码正文灌主上下文);子 agent read 完整(改 code 需全文);集成方业务长文本不受影响
   - **`codeField` 可配置(开放 schema 适配)**:code 字段位置默认 `'code'`(组件顶层),开放 schema 平台可配嵌套 jsonPath(如 `'props.html_code'`);「是否代码组件」= 该路径有 string(非代码组件自然跳过);装配期命中校验(组件数>0 且全员未命中 → console.warn,防填错路径静默失败)。例:`createHtmlSubagent({ writablePaths:['components'], codeField:'props.html_code' })`
   - **UI 规范 skill 双挂模式(真 LLM 实测验证)**:规范类 skill 同时挂主 agent 与 html 子 agent —— 主 agent 知规范才能在委派 task 里给准确视觉锚(hex 取自规范而非凭页面观察自造近似色);子 agent 照规范生成。只挂子会导致主 agent 锚与规范冲突:
@@ -1095,7 +1093,7 @@ createChatSdk({
 - **乐观锁基线隔离(2.40+)**:子 agent 的 read/write 使用**独立的 autoLock 基线**(per-scope),子 read 不再刷新主的基线 —— 父委派前 read、期间数据被外部改过、委派回来再写 → 照常触发冲突(修前:子 read 掩盖外部修改 → 父过期写静默覆盖)。
 - **spawn_agents 逐项结算(2.40+)**:单个子任务失败不再拖垮整批 —— 各子任务独立成功/失败,聚合结果按 `【子任务 N】✓/✗` 逐条标注,失败带错误摘要,由主 LLM 决策如何处理。
 - **同轮并行委派与失败隔离(3.13+)**:预声明 `use_<id>` 委派支持**同轮并行** —— 主 agent 可在一轮里对**不同**目标同时发多个委派(需 `maxParallelTools > 1`,默认 1 串行;html 编排 prompt 已自动引导)。**失败隔离**:无关联的并行任务一个出错**不批量回退** —— 失败委派以错误结果单独回灌主 agent,其余委派照常执行落地;代码资产 commit 按组件逐个容错(单组件 commit 失败跳过并留痕,不影响其他组件)。与单次 `write({ patches })` 的「任一失败整体回滚」是两类语义:后者是**一次逻辑写**的原子意图(关联任务),并行多委派是多次独立逻辑写(无关联),按任务关联性区分。
-- **组件锁 · 同组件单委派互斥(3.13+ 机制锁)**:同一组件同一时间只允许一个在途委派,不再只靠 prompt 引导 —— ① **委派互斥**:同轮/并发对同一组件的第二个 `use_html` 立即回灌 `COMPONENT_BUSY`(recoverable,零子 agent 消耗,主 agent 下轮重委派即可);锁目标 = `components` 显式声明(过滤编造名),缺省时 task 文本与已知组件名**整词唯一命中**才锁(宁漏不误,0 或 ≥2 命中不锁);不同组件锁相互独立,不阻塞并行。② **主写守卫**:委派在途时主 agent 写工具(write/set_data/edit_data/delete_data/draft_commit)命中被锁组件子树 → 回灌 `COMPONENT_LOCKED`(整体 set 全量数据也拒;`dryRun` 不拦),锁释放后放行;**codeField 恒守卫(3.24.1+,html code-asset 模式)**:已存在代码组件的 code 字段(如 `components.N.code`)主 agent **恒不可直写**(与在途无关)→ 回灌 `CUSTOM_CODE_DELEGATION` 引导委派(实测弱指令模型无视提示词禁令直写覆盖人工值,机制化兜底;新建元素/整体 set/dryRun 不拦)。③ **人工并发保护**:委派在途窗口(checkout→commit)内人工/宿主直改 bind —— 同组件 code 被外部改过 → commit 保留人工值(keep_external,不静默覆盖)+ warn 留痕 + **keep_external 组件名随委派返回值回流主上下文**(主 agent 收口如实告知用户「已保留你的版本,是否仍按原任务继续」,不误判为子 agent 失败后重写);组件被删 → 不复活 + vfs 工作副本同步清理;索引位移(插入/删除致组件挪位)→ commit 按 `__pgId` 落到同组件,不写错位置。观察层:`inspect().subagent.lockedComponents`(组件名 → 占用委派)+ DebugDrawer 子 agent tab 锁视图。
+- **组件锁 · 同组件单委派互斥(3.13+ 机制锁)**:同一组件同一时间只允许一个在途委派,不再只靠 prompt 引导 —— ① **委派互斥**:同轮/并发对同一组件的第二个 `use_html` 立即回灌 `COMPONENT_BUSY`(recoverable,零子 agent 消耗,主 agent 下轮重委派即可);锁目标 = `components` 显式声明(过滤编造名),缺省时 task 文本与已知组件名**整词唯一命中**才锁(宁漏不误,0 或 ≥2 命中不锁);不同组件锁相互独立,不阻塞并行。② **主写守卫**:委派在途时主 agent 写工具(write/draft_commit)命中被锁组件子树 → 回灌 `COMPONENT_LOCKED`(整体 set 全量数据也拒;`dryRun` 不拦),锁释放后放行;**codeField 恒守卫(3.24.1+,html code-asset 模式)**:已存在代码组件的 code 字段(如 `components.N.code`)主 agent **恒不可直写**(与在途无关)→ 回灌 `CUSTOM_CODE_DELEGATION` 引导委派(实测弱指令模型无视提示词禁令直写覆盖人工值,机制化兜底;新建元素/整体 set/dryRun 不拦)。③ **人工并发保护**:委派在途窗口(checkout→commit)内人工/宿主直改 bind —— 同组件 code 被外部改过 → commit 保留人工值(keep_external,不静默覆盖)+ warn 留痕 + **keep_external 组件名随委派返回值回流主上下文**(主 agent 收口如实告知用户「已保留你的版本,是否仍按原任务继续」,不误判为子 agent 失败后重写);组件被删 → 不复活 + vfs 工作副本同步清理;索引位移(插入/删除致组件挪位)→ commit 按 `__pgId` 落到同组件,不写错位置。观察层:`inspect().subagent.lockedComponents`(组件名 → 占用委派)+ DebugDrawer 子 agent tab 锁视图。
 - **子 token 计入用量(2.40+)**:子 agent 的 LLM 消耗累加进 `sdk.usage`(automation `tokenBudget` 口径完整)。
 
 **自定义子 agent**(4 层级,从简到繁):
@@ -1158,7 +1156,7 @@ createChatSdk({
 
 > **开启方式(3.11+ 简化)**:传 `verify.check` / `verify.maxAttempts` / `verify.adversarial` 任一即自动开启,无需再配 `capabilities.verify: true`。`capabilities.verify: false` 显式关闭可阻止自动开;`verify.enabled: false` 优先级最高。
 
-**内置 check(默认)**:`createWriteBackCheck()` —— Agent 写了主数据(`write`/`set/edit/delete_data`)后,读回值确认写入生效 + 符合 schema。读回根对象自动取 `data.bind`(经 getter,适配 `sdk.setData` 运行时替换 bind;旧 windowProps 模式回退 `window`):
+**内置 check(默认)**:`createWriteBackCheck()` —— Agent 写了主数据(`write`)后,读回值确认写入生效 + 符合 schema。读回根对象自动取 `data.bind`(经 getter,适配 `sdk.setData` 运行时替换 bind;旧 windowProps 模式回退 `window`):
 - **写后读回**:set/edit 后读回为空 → 「未生效」反馈;读回不符合 schema → 反馈
 - **delete 语义**:delete 后读回空 = 删除成功(放行);仍有值 → 「未删干净」
 - **跳过被拒写**:写被合法拒绝(schema 校验失败 / 范围拒绝 / 白名单 `PATH_DENIED`)时**不误报**(读回无值是预期)
@@ -1195,7 +1193,7 @@ createChatSdk({
   // ... 其他配置
   // humanConfirm: true,  // 主动征询(默认开启,不传也开;false 关闭)
   approval: {
-    tools: ['write'], // 被动:需确认的工具名(simple 模式主入口;advanced 模式可列底层 set/edit/delete_data)
+    tools: ['write'], // 被动:需确认的工具名(write 主写入口)
     // confirm: (name, args) => args?.path?.startsWith('Editor.'),  // 自定义判定(优先于 tools)
     // timeoutMs: 30000,  // 超时自动拒绝(0=不超时,默认)
     // humanConfirmTool: false,  // 传 approval 时亦可关主动侧(等价于顶层 humanConfirm:false)
@@ -2199,7 +2197,7 @@ A: ① 用 `write` 的 `patch` 增量改而非整体重传 `value`;② 调大 `m
 A: 用 `capabilities: { dataOps: false, fetch: false, planning: false, skills: false, vfs: false, ... }` 关掉对应内置工具/中间件(默认全开)。`dataOps:false` → 不装 dataOps 工具集(纯调研场景);`fetch:false` → 不装 `fetch_document`。⚠️ vfs 关 → 大结果外存退化为截断;summarization 关 → 长会话不压缩。
 
 **Q: console 提示「capabilities.X 已列入移除计划」?**
-A: `tracing` / `skillHostScript` / `preferences` / `bulkGuard` 四项已进入 deprecation warn 期(维护者确认外部零使用,计划 3.48.0 移除;装配期配置命中才 warn,每挂载一次)。如你在使用,到仓库 issue 说明即可按反馈保留;迁移方式见 warn 文案(各含迁移指引)。`todoDeps` 已撤除(残键被静默忽略,不报错)。
+A: `tracing` / `skillHostScript` / `preferences` / `bulkGuard` 四项已进入 deprecation warn 期(维护者确认外部零使用,计划 4.1.0 移除;装配期配置命中才 warn,每挂载一次)。如你在使用,到仓库 issue 说明即可按反馈保留;迁移方式见 warn 文案(各含迁移指引)。`todoDeps` 已撤除(残键被静默忽略,不报错)。
 
 **Q: 多个 Agent 同页共存会串数据吗?**
 A: 不会。给每个传不同的 `id` 即隔离。若想让多个对话框共享**同一个** Agent,用 `shareContext: true`(同 `id`)。共享实例间有 core 级串行闸:send/switchSession 跨实例排队串行;任一实例的生命周期收口(unmount/switchSession/resetSession)会中止共享 core 的全部在途流(共享状态不允许孤儿流续写)。

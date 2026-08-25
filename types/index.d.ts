@@ -950,6 +950,8 @@ export type SkillToolFactory = () => any | any[] | Promise<any | any[]>;
 export interface VerifyCheckContext {
   messages: any[];
   state: any;
+  /** 结构化日志(debugLogs;render-check 类环境降级留痕用,可缺省) */
+  log?: (type: string, data: unknown) => void;
 }
 export interface VerifyCheckResult {
   ok: boolean;
@@ -1569,7 +1571,7 @@ export declare function defineTool(opts: {
   writeCapable?: boolean | ((args: Record<string, unknown>) => boolean);
 }): any;
 export declare function createDataOps(config: DataConfig, opts?: DataOpsOptions): any[];
-/** 整体 set 写入纯函数:schema 校验 + 快照 + merge/替换 + audit。set_data / write(set) / draft_commit 共用。返回 {ok,hash,data} 或 {ok:false,error} */
+/** 整体 set 写入纯函数:schema 校验 + 快照 + merge/替换 + audit。write(set) / draft_commit 共用。返回 {ok,hash,data} 或 {ok:false,error} */
 export declare function commitSetToBind(args: { bindRef: unknown; value: unknown; schema: any; allowKeys: string[] | null; snapshots: any[]; maxSnapshots: number; audit: (e: any) => void; dryRun?: boolean; op?: 'set' | 'draft_commit'; snapshotLabel?: string }): { ok: true; hash: string; data: unknown; notices: string[] } | { ok: false; error: string };
 /** path-scoped-validation:增量 patch 逐目标局部校验(全部 apply 后按最终态;兄弟脏数据不株连)。返回写回计划 */
 export interface LocalWriteBack {
@@ -1590,7 +1592,7 @@ export interface LocalValidationPlan {
 export declare function validateRootValueLocally(args: { schema: any; allowKeys: string[] | null; value: unknown; bindRef: unknown }): { ok: true; assembly: unknown; wholeParsed: Record<string, unknown> | null; notices: string[] } | { ok: false; error: string; notices: string[] };
 /** 增量 patch 逐目标局部校验纯函数(appendCaptures/moveCaptures 由 apply 循环捕获;valueAt 为位移兜底) */
 export declare function validateWriteLocally(args: { schema: any; bindRef: unknown; clone: unknown; patches: { op?: string; jsonPath?: string; value?: unknown }[]; schemaErrorMode?: 'zod' | 'schema_invalid'; appendCaptures: { jp: string; elems: unknown[] }[]; moveCaptures: { jp: string; toPath: string; elem: unknown }[]; valueAt?: (jp: string) => unknown }): LocalValidationPlan;
-/** 增量 patch 写入纯函数(clone + 局部校验 + 快照 + 外科手术式写回);edit_data / write(edit) / eval 共用 */
+/** 增量 patch 写入纯函数(clone + 局部校验 + 快照 + 外科手术式写回);write(edit) / eval 共用 */
 export declare function applyPatchesToBind(args: { bindRef: unknown; patches: { op?: string; jsonPath?: string; value?: unknown }[]; schema: any; allowKeys: string[] | null; snapshots: any[]; maxSnapshots: number; markDataDirty?: () => void; schemaErrorMode?: 'zod' | 'schema_invalid'; snapshotLabel?: string; dryRun?: boolean; internalAfterWrite?: (bind: any, before: any) => void; protectedCtx?: unknown }): { ok: true; applied: { op: string; jp: string; value: unknown }[]; clone: unknown; notices: string[] } | { ok: false; error: string };
 /** 结构化追踪 span(revive-observability-tracing Phase 3) */
 export type SpanType = 'round' | 'model' | 'tool' | 'compression';
@@ -1934,7 +1936,7 @@ export interface JpNode {
   path: string;
   /** 匹配元素值 */
   value: unknown;
-  /** 父为数组时的索引(便于后续 edit_data_slot 的 jsonPath 定位) */
+  /** 父为数组时的索引(便于后续 write patch 的 jsonPath 定位) */
   index?: number;
 }
 export interface SearchHit {
@@ -2126,6 +2128,76 @@ export interface HtmlFormatCheckOptions {
 }
 /** HTML 格式 verify check(beforeReturn 门禁):扫 state.files 代码文件,不通过回灌 feedback 自纠 */
 export declare function createHtmlFormatCheck(opts?: HtmlFormatCheckOptions): VerifyCheck;
+/** 沙箱采集到的原始渲染信号(console.error / js-error / unhandledrejection / 资源失败 / CSP 违规 / console.warn) */
+export interface RenderSignal {
+    type: 'console-error' | 'console-warn' | 'js-error' | 'unhandledrejection' | 'resource-error' | 'csp-violation';
+    message: string;
+    source?: string;
+    lineno?: number;
+}
+/** 渲染指标(收集窗结束时采集;白屏判定口径 = 内容级:body 子节点数 / scrollHeight / 图片数) */
+export interface RenderMetrics {
+    bodyChildren: number;
+    scrollHeight: number;
+    imgCount: number;
+}
+/** 单组件沙箱渲染的原始结果(未归一;noDom = node/无 DOM 环境标记) */
+export interface RawRenderResult {
+    handshake: boolean;
+    signals: RenderSignal[];
+    metrics?: RenderMetrics;
+    timedOut?: boolean;
+    noDom?: boolean;
+}
+/** 归一后的单组件判定:pass / fail(带 problems)/ unavailable(握手缺失或超时,不算通过防假绿) */
+export interface RenderVerdict {
+    verdict: 'pass' | 'fail' | 'unavailable';
+    problems: string[];
+    warnings: string[];
+    metrics?: RenderMetrics;
+    reason?: 'handshake-missing' | 'timeout';
+}
+/** 渲染自检 VerifyCheck 工厂选项(runner 注入供测试桩用) */
+export interface HtmlRenderCheckOptions {
+    vfsPrefix?: string;
+    codeField?: string;
+    writablePaths?: string[];
+    runner?: (html: string) => Promise<RawRenderResult>;
+    maxTargets?: number;
+}
+/** 渲染自检对象:check 组合进 createHtmlSubagent 的 formatCheck 链;两个注入槽由装配期回填 */
+export interface HtmlRenderCheck {
+    check: VerifyCheck;
+    setGetController: (g: () => {
+        get?: () => { bind?: unknown } | null | undefined;
+    } | null | undefined) => void;
+    setWritablePaths: (paths: string[]) => void;
+}
+/** 沙箱运行参数(活动静默窗/硬上限/指标应答宽限;默认 900ms / 4000ms / 500ms) */
+export interface SandboxRunOptions {
+    silenceMs?: number;
+    hardCapMs?: number;
+    metricsGraceMs?: number;
+}
+/**
+ * 渲染级自检(render-check):本轮触达的 code 资产放沙箱 iframe(srcdoc + sandbox="allow-scripts")独立渲染,
+ * 采集 console.error / window.onerror / unhandledrejection / 资源失败 / 白屏指标 → 归一回灌自纠。
+ * 仅门禁形态(组合进 createHtmlSubagent 的 formatCheck 链);node/无 DOM 自动跳过渲染段保留结构段;
+ * 握手缺失(宿主 CSP 拦沙箱内联脚本)/ 超时 → unavailable 不算通过(零信号 ≠ 通过)。
+ */
+export declare function createHtmlRenderCheck(opts?: HtmlRenderCheckOptions): HtmlRenderCheck;
+/** 组合「结构 → 渲染」为单一 VerifyCheck(结构不过短路渲染;runBeforeReturn 不短路,两段必须单 check 内早返回) */
+export declare function composeStructureThenRender(structure: VerifyCheck, render: VerifyCheck): VerifyCheck;
+/** 信号归一纯函数:storage 类 SecurityError 降 warn(沙箱假阳性);无失败信号但 body 空 + scrollHeight<10 → 疑似白屏 fail */
+export declare function normalizeRenderResult(raw: RawRenderResult): RenderVerdict;
+/** 单组件沙箱渲染(离屏 iframe;用后销毁;node/无 DOM 返回 noDom) */
+export declare function renderInSandbox(html: string, opts?: SandboxRunOptions): Promise<RawRenderResult>;
+/** 沙箱 srcdoc 构造(collector 注入文档最前,不改组件原文) */
+export declare function buildSandboxSrcdoc(html: string, nonce: string): string;
+/** collector 采集脚本源码(nonce 握手 + 信号上报 + 活动信号 + 指标应答) */
+export declare function buildCollectorJs(nonce: string): string;
+/** 累计创建/销毁的沙箱 iframe 数(测试观察「用后销毁」契约) */
+export declare function getSandboxLifecycle(): { created: number; destroyed: number };
 /** 内置完整 HTML 生成规范 skill 构造器(示例路径按 root/codeField 参数化,集成方字段命名各异勿写死;默认快照 root='components'/codeField='code') */
 export declare function buildHtmlFragmentSkill(root?: string, codeField?: string): SkillSpec;
 /** 内置完整 HTML 生成规范 skill(createHtmlSubagent 默认装;传自定义 skills 覆盖默认时,显式并回此 skill 保住生成规范/安全底线;默认快照 root='components'/codeField='code') */

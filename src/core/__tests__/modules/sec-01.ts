@@ -4,7 +4,7 @@ import { createVfs } from '../../backends/vfs';
 
 import type { TestCtx } from './_ctx'
 
-// dataOps:单主对象 基础(set/get/delete + schema 校验)
+// dataOps:单主对象 基础(write/read + schema 校验)
 export async function run(ctx: TestCtx): Promise<void> {
   const { assert, invoke, byName } = ctx
   console.log('\n[dataOps]')
@@ -20,48 +20,48 @@ export async function run(ctx: TestCtx): Promise<void> {
     })
     const t = byName(tools)
 
-    // set_data 整体替换(合法)
-    let r = await invoke(t['set_data'], { value: '{ "theme": "dark", "count": 3 }' })
-    assert(appObj.theme === 'dark' && appObj.count === 3 && /已设置/.test(r), 'set_data 合法值生效 + 返回成功')
+    // write(set) 整体替换(合法)
+    let r = await invoke(t['write'], { value: '{ "theme": "dark", "count": 3 }' })
+    assert(appObj.theme === 'dark' && appObj.count === 3 && /已 write\(set\)/.test(r), 'write(set) 合法值生效 + 返回成功')
 
-    // set_data 非法值被 schema 校验拦截(不写入)
-    r = await invoke(t['set_data'], { value: '{ "theme": "red", "count": 1 }' })
-    assert(/SCHEMA_INVALID/.test(r) && appObj.theme === 'dark', 'set_data 非法值被 schema 校验拦截(不写入,返回结构化错误码)')
+    // write(set) 非法值被 schema 校验拦截(不写入)
+    r = await invoke(t['write'], { value: '{ "theme": "red", "count": 1 }' })
+    assert(/SCHEMA_INVALID/.test(r) && appObj.theme === 'dark', 'write(set) 非法值被 schema 校验拦截(不写入,返回结构化错误码)')
 
-    // set_data 缺字段:path-scoped-validation 契约收窄 —— merge 语义下未出现的 key 不过堂(缺必填不再拒),
+    // write(set) 缺字段:path-scoped-validation 契约收窄 —— merge 语义下未出现的 key 不过堂(缺必填不再拒),
     // 未出现字段保留原值(防误删);深度缺字段(出现的 key 值内缺必填)仍被局部校验拒
-    r = await invoke(t['set_data'], { value: '{ "theme": "dark" }' })
+    r = await invoke(t['write'], { value: '{ "theme": "dark" }' })
     assert(appObj.theme === 'dark' && appObj.count === 3, '✓ set 缺必填顶层 key → merge 语义放行且未出现字段保留(path-scoped 契约)')
-    r = await invoke(t['set_data'], { value: '{ "theme": "red" }' })
+    r = await invoke(t['write'], { value: '{ "theme": "red" }' })
     assert(/SCHEMA_INVALID/.test(r) && appObj.theme === 'dark', '✓ set 出现的 key 非法 → 局部校验仍拒')
 
-    // get_data 读整个主数据
-    r = await invoke(t['get_data'], {})
-    assert(/dark/.test(r) && /hash=/.test(r), 'get_data 不传 jsonPath 返回整个主数据 + hash')
+    // read 读整个主数据
+    r = await invoke(t['read'], {})
+    assert(/dark/.test(r) && /hash=/.test(r), 'read 不传 jsonPath 返回整个主数据 + hash')
 
-    // get_data 读子路径
-    r = await invoke(t['get_data'], { jsonPath: 'theme' })
-    assert(/dark/.test(r) && /hash=/.test(r), 'get_data 传 jsonPath 返回子路径值 + hash')
+    // read 读子路径
+    r = await invoke(t['read'], { jsonPath: 'theme' })
+    assert(/dark/.test(r) && /hash=/.test(r), 'read 传 jsonPath 返回子路径值 + hash')
 
-    // get_data 读非 schema 声明字段 → PATH_DENIED(白名单模式:仅 schema 声明的 key 可读)
-    r = await invoke(t['get_data'], { jsonPath: 'nope' })
-    assert(/PATH_DENIED/.test(r), 'get_data 读非 schema 声明字段 → PATH_DENIED')
+    // read 读非 schema 声明字段 → PATH_DENIED(白名单模式:仅 schema 声明的 key 可读)
+    r = await invoke(t['read'], { jsonPath: 'nope' })
+    assert(/PATH_DENIED/.test(r), 'read 读非 schema 声明字段 → PATH_DENIED')
 
-    // edit_data 增量 set 子路径(合法)
-    r = await invoke(t['edit_data'], { op: 'set', jsonPath: 'count', value: '5' })
-    assert(appObj.count === 5 && /已 edit/.test(r), 'edit_data set 子路径生效')
+    // write(edit) 增量 set 子路径(合法)
+    r = await invoke(t['write'], { patch: { op: 'set', jsonPath: 'count', value: '5' } })
+    assert(appObj.count === 5 && /已 write\(edit\)/.test(r), 'write(edit) set 子路径生效')
 
-    // edit_data 非法值被校验拦截(整体仍经 schema)
-    r = await invoke(t['edit_data'], { op: 'set', jsonPath: 'count', value: '"not a number"' })
-    assert(/SCHEMA_INVALID/.test(r) && appObj.count === 5, 'edit_data 非法值被 schema 校验拦截(不写入)')
+    // write(edit) 非法值被校验拦截(整体仍经 schema)
+    r = await invoke(t['write'], { patch: { op: 'set', jsonPath: 'count', value: '"not a number"' } })
+    assert(/SCHEMA_INVALID/.test(r) && appObj.count === 5, 'write(edit) 非法值被 schema 校验拦截(不写入)')
 
-    // delete_data 删子路径
-    r = await invoke(t['delete_data'], { jsonPath: 'count' })
-    assert(!('count' in appObj) && /已删除/.test(r), 'delete_data 删子路径生效')
+    // write(del) 删子路径
+    r = await invoke(t['write'], { patch: { jsonPath: 'count' }, del: true })
+    assert(!('count' in appObj) && /已删除/.test(r), 'write(del) 删子路径生效')
 
-    // delete_data 删非 schema 声明字段 → PATH_DENIED(白名单模式)
-    r = await invoke(t['delete_data'], { jsonPath: 'nope' })
-    assert(/PATH_DENIED/.test(r), 'delete_data 删非 schema 声明字段 → PATH_DENIED')
+    // write(del) 删非 schema 声明字段 → PATH_DENIED(白名单模式)
+    r = await invoke(t['write'], { patch: { jsonPath: 'nope' }, del: true })
+    assert(/PATH_DENIED/.test(r), 'write(del) 删非 schema 声明字段 → PATH_DENIED')
 
     // describe_data 返回说明
     r = await invoke(t['describe_data'], {})
@@ -72,7 +72,6 @@ export async function run(ctx: TestCtx): Promise<void> {
     const descAnchors: [string, RegExp][] = [
       ['eval_script', /沙箱/], ['draft_commit', /草稿/], ['draft_write', /drafts/],
       ['query_data', /JSONPath/], ['search_data', /搜索/], ['history_data', /快照/],
-      ['set_data', /deprecated|弃用/], ['get_data', /deprecated|弃用/], ['edit_data', /增量/],
       ['write', /四意图|写入主数据/], ['read', /hash/],
     ]
     for (const [n, anchor] of descAnchors) {
@@ -82,7 +81,7 @@ export async function run(ctx: TestCtx): Promise<void> {
       assert(d.length <= 330, `✓ 描述长度 → ${n} ≤330(实际 ${d.length},防描述膨胀)`)
     }
     // 总长上限:advanced 可见数据工具描述总和 ≤3200(压缩二批回归线)
-    const ADV_VISIBLE = ['describe_data','get_data','set_data','edit_data','delete_data','restore_data','history_data','query_data','search_data','eval_script','read','write','schema_data','diff_data','draft_write','draft_commit']
+    const ADV_VISIBLE = ['describe_data','restore_data','history_data','query_data','search_data','eval_script','read','write','schema_data','diff_data','draft_write','draft_commit']
     const total = ADV_VISIBLE.reduce((s2, n) => s2 + (t[n]?.description?.length ?? 0), 0)
     assert(total <= 3200, `✓ 描述总长 → advanced 数据工具描述合计 ≤3200(实际 ${total})`)
 

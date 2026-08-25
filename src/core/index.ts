@@ -44,6 +44,8 @@ export { createRagSubagent } from './sdk/ragSubagent'
 export type { RagHit, RagRetrieveOptions, RagRetriever, RagLoader, CreateRagSubagentOptions } from './sdk/ragSubagent'
 export { createHtmlSubagent, createHtmlFormatCheck, htmlFragmentSkill, buildHtmlFragmentSkill } from './sdk/htmlSubagent'
 export type { CreateHtmlSubagentOptions, HtmlFormatCheckOptions } from './sdk/htmlSubagent'
+export { createHtmlRenderCheck, composeStructureThenRender, buildSandboxSrcdoc, buildCollectorJs, normalizeRenderResult, renderInSandbox, getSandboxLifecycle } from './sdk/htmlRenderCheck'
+export type { HtmlRenderCheck, HtmlRenderCheckOptions, RenderSignal, RenderMetrics, RenderVerdict, RawRenderResult, SandboxRunOptions } from './sdk/htmlRenderCheck'
 export { validateHtmlFormat, HTML_VOID_TAGS } from './tools/htmlValidate'
 export type { HtmlFormatIssue } from './tools/htmlValidate'
 // 图片输入(image-input-vision):compressImage 压缩闸(headless 自建 UI 的集成方制备 AgentImage 用)

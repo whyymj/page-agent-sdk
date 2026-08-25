@@ -135,10 +135,10 @@ export async function run(ctx: TestCtx): Promise<void> {
     const bind: any = { title: 'old', count: 3, hidden: 'keep' }   // hidden 不在 schema(宿主自管)
     const t = byName(createDataOps({ schema, bind, description: 'cfg' }))
     // G1:缺必填顶层 key → merge 语义放行 + 未出现字段保留(契约收窄)
-    let r = await invoke(t['set_data'], { value: { title: 'new' } })
+    let r = await invoke(t['write'], { value: { title: 'new' } })
     assert(bind.title === 'new' && bind.count === 3 && bind.hidden === 'keep', '✓ 整体 set → 缺必填不再拒,未出现 key 保留(契约收窄 + 防误删)')
     // G2:出现的 key 坏值 → 拒
-    r = await invoke(t['set_data'], { value: { count: 'x' } })
+    r = await invoke(t['write'], { value: { count: 'x' } })
     assert(/SCHEMA_INVALID/.test(r) && bind.count === 3, '✓ 整体 set → 出现的 key 坏值仍拒')
     // G3:patches 后条修复前条 → 最终态合法即过(不做逐条即时校验)
     r = await invoke(t['write'], { patches: [
@@ -166,7 +166,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     const bind: any = { cfg: { a: 1 }, items: ['x'] }
     const t = byName(createDataOps({ schema, bind, description: 'sec' })
     )
-    await invoke(t['edit_data'], { op: 'merge', jsonPath: '', value: '{"__proto__":{"polluted":true},"b":2}' });
+    await invoke(t['write'], { patch: { op: 'merge', jsonPath: '', value: '{"__proto__":{"polluted":true},"b":2}' } });
     assert(bind.b === 2, '✓ merge 防污染 → 正常键落地')
     assert(!Object.prototype.hasOwnProperty.call(bind, '__proto__'), '✓ merge 防污染 → 无 __proto__ own 键')
     assert(({} as any).polluted === undefined, '✓ merge 防污染 → Object.prototype 未被污染')

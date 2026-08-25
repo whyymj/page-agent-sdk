@@ -9,7 +9,7 @@ Help the user embed `page-agent-sdk` so an AI agent safely edits a structured ma
 
 ## Core concept
 
-The SDK is a **standardized JSON-operation agent**: the integrator declares ONE main data object (`data: { schema, bind, description? }`); the agent edits it via `read` / `write` (high-level entry; `write` merges set/edit/delete + auto optimistic lock + auto snapshot), validated by schema, scoped to schema-declared fields (ZodObject top-level keys auto-whitelist), with snapshot rollback. "Editing JSON" becomes structured + validatable + rollbackable, NOT free-form LLM text. `bind` is any reactive/plain object — tools read/write it directly, **no `window` dependency**. Advanced mode (`toolMode:'advanced'`) also exposes low-level `get_data`/`set_data`/`edit_data`/`delete_data` for precise control.
+The SDK is a **standardized JSON-operation agent**: the integrator declares ONE main data object (`data: { schema, bind, description? }`); the agent edits it via `read` / `write` (high-level entry; `write` merges set/edit/delete + auto optimistic lock + auto snapshot), validated by schema, scoped to schema-declared fields (ZodObject top-level keys auto-whitelist), with snapshot rollback. "Editing JSON" becomes structured + validatable + rollbackable, NOT free-form LLM text. `bind` is any reactive/plain object — tools read/write it directly, **no `window` dependency**.
 
 ## Workflow
 

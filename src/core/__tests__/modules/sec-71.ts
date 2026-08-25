@@ -1,6 +1,6 @@
 /**
  * sec-71:fix-data-integrity(会话生命周期完整性 + 白名单深投影 + 压缩/渲染性能)单元层
- * - P1-19 深投影统一:read 整体/get_data 整体/read jsonPaths 根/query/search/diff 七路隐藏嵌套未声明字段;子路径口径一致
+ * - P1-19 深投影统一:read 整体/read jsonPaths 根/query/search/diff 六路隐藏嵌套未声明字段;子路径口径一致
  * - P1-25 压缩 LLM 摘要异步化:首压零阻塞返索引模板 + 后台完成 → 前缀缓存命中 + 尾部增量拼接 + 失败回退
  * - P1-26 markdown:markedToHtml hljs 尺寸闸(巨代码块转义直出,小块正常高亮)
  */
@@ -56,22 +56,19 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 1. read 整体
     const r1 = await invoke(t['read'], {})
     assert(!leaked(r1) && r1.includes('"theme"') && r1.includes('"dark"'), '✓ P1-19 read 整体深投影:嵌套未声明字段隐藏(config.apiKey/items.*._internal/_rootHidden),声明字段保留')
-    // 2. get_data 整体
-    const r2 = await invoke(t['get_data'], {})
-    assert(!leaked(r2), '✓ P1-19 get_data 整体深投影:嵌套未声明字段隐藏')
-    // 3. read jsonPaths 根项(多路径模式的根分支)
+    // 2. read jsonPaths 根项(多路径模式的根分支)
     const r3 = await invoke(t['read'], { jsonPaths: [''] })
     assert(!leaked(r3), '✓ P1-19 read jsonPaths 根项深投影:嵌套未声明字段隐藏')
-    // 4. query_data(查询目标深投影)
+    // 3. query_data(查询目标深投影)
     const r4 = await invoke(t['query_data'], { expr: '$.config' })
     assert(!leaked(r4) && r4.includes('dark'), '✓ P1-19 query_data 目标深投影:config.apiKey 不出现在查询结果')
-    // 5. search_data(搜索目标深投影 → 搜不到隐藏字段值)
+    // 4. search_data(搜索目标深投影 → 搜不到隐藏字段值)
     const r5 = await invoke(t['search_data'], { query: SECRET })
     assert(!leaked(r5) && /"matched":0/.test(r5), '✓ P1-19 search_data 目标深投影:隐藏字段值搜不到(matched=0)')
-    // 6. diff_data(当前值侧深投影:against=投影副本 → 无差异;隐藏字段不进 diff)
+    // 5. diff_data(当前值侧深投影:against=投影副本 → 无差异;隐藏字段不进 diff)
     const r6 = await invoke(t['diff_data'], { against: { title: 'T', config: { theme: 'dark' }, items: [{ name: 'a' }] } })
     assert(!leaked(r6) && /无差异/.test(r6), '✓ P1-19 diff_data 当前侧深投影:与投影副本无差异(bind 隐藏字段不参与对比)')
-    // 7. eval_script 根入参投影(node 无 Worker 不实跑;eval 根 source = projectBySchemaDeep(bindRef, schema),经纯函数断言同口径)
+    // 6. eval_script 根入参投影(node 无 Worker 不实跑;eval 根 source = projectBySchemaDeep(bindRef, schema),经纯函数断言同口径)
     const schemaForEval = z.object({
       title: z.string(),
       config: z.object({ theme: z.string() }),

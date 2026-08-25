@@ -2,6 +2,33 @@ import { test, expect } from '@playwright/test'
 import { mockLlm, fillInput, clickSend, clickByText, waitForAgentIdle, clearChat } from './_helpers'
 
 /**
+ * 双协议 LLM 请求体解析(complex-demo 走 Anthropic 协议 /v1/messages,其余 demo 多为 OpenAI /chat/completions):
+ * - system 段:OpenAI 在 messages[role=system];Anthropic 是顶层 system 字段(string 或 text 块数组)
+ * - 工具结果:OpenAI 在 messages[role=tool].content;Anthropic 在 user 消息 content[] 的 tool_result 块
+ * 返回拼好的 { sysText, toolContents },断言与协议解耦
+ */
+function extractLLMPayloads(bodies: any[]): { sysText: string; toolContents: string } {
+  const sysParts: string[] = []
+  const toolParts: string[] = []
+  for (const b of bodies) {
+    if (Array.isArray(b?.messages) && b.messages.some((m: any) => m.role === 'system')) {
+      sysParts.push(...b.messages.filter((m: any) => m.role === 'system').map((m: any) => String(m.content)))
+      toolParts.push(...b.messages.filter((m: any) => m.role === 'tool').map((m: any) => String(m.content)))
+    } else {
+      const sys = b?.system
+      sysParts.push(typeof sys === 'string' ? sys : Array.isArray(sys) ? sys.map((s: any) => s?.text ?? '').join('\n') : '')
+      for (const m of b?.messages ?? []) {
+        if (!Array.isArray(m?.content)) continue
+        for (const blk of m.content) {
+          if (blk?.type === 'tool_result') toolParts.push(typeof blk.content === 'string' ? blk.content : JSON.stringify(blk.content ?? ''))
+        }
+      }
+    }
+  }
+  return { sysText: sysParts.join('\n'), toolContents: toolParts.join('\n') }
+}
+
+/**
  * complex-demo 浏览器 E2E(真实复杂度基准:30 类型 + ~70 实例专题页)
  *
  * 覆盖:
@@ -131,10 +158,10 @@ test.describe('complex-demo: 真实复杂度(30 类型 + 70 实例)', () => {
     await page.click('.pick-overlay__btn')
     await expect(page.locator('.focus-chip')).toBeVisible()
 
-    // 捕获 LLM 请求体(验证 read 返 freeze 占位符 —— 精确值不进 AI 消息流)
+    // 捕获 LLM 请求体(双协议:OpenAI chat/completions 或 Anthropic /v1/messages;验证 read 返 freeze 占位符 —— 精确值不进 AI 消息流)
     const requestBodies: any[] = []
     page.on('request', (req) => {
-      if (req.method() === 'POST' && req.url().includes('chat/completions')) {
+      if (req.method() === 'POST' && (req.url().includes('chat/completions') || req.url().includes('/v1/messages'))) {
         try { const body = req.postData(); if (body) requestBodies.push(JSON.parse(body)) } catch { /* ignore */ }
       }
     })
@@ -150,10 +177,8 @@ test.describe('complex-demo: 真实复杂度(30 类型 + 70 实例)', () => {
     await clickSend(page)
     await waitForAgentIdle(page)
 
-    // 断言 1:read 受保护字段返 freeze 占位符(精确值保护生效)
-    const toolContents = requestBodies
-      .flatMap((b) => (b?.messages || []).filter((m: any) => m.role === 'tool').map((m: any) => m.content))
-      .join('\n')
+    // 断言 1:read 受保护字段返 freeze 占位符(精确值保护生效;双协议解析)
+    const toolContents = extractLLMPayloads(requestBodies).toolContents
     expect(toolContents, 'read 受保护字段返 ⟦frozen⟧ 占位符').toContain('⟦frozen')
 
     // 断言 2:trackId 原值保留(write 被 FROZEN_FIELD 拒,未生效)
@@ -168,11 +193,15 @@ test.describe('complex-demo: 真实复杂度(30 类型 + 70 实例)', () => {
   test('read 全量 → write patch 改 navbar title → read 子路径确认', async ({ page }) => {
     // 4 轮 ReAct + complex-demo 重页面(30 类型 70 实例)在高负载下跑不完默认 60s 测试预算(实测 flaky,
     // 重试才过)→ 放宽本用例预算 + idle 等待同步放宽;断言本身在 idle 后取值,不涉时序
+    // subtree-summary(4.0):重页面全量 read 下 components.0(≥3KB)降 <subtree> 占位 → 直写深路径被
+    // read-before-write 守卫拦(NEED_NARROW_READ)→ 窄读 components.0.props(覆盖 S=components.0 或
+    // components.0.props 两态)→ 复写放行;此即新标准闭环(S1 骨架直写仅对未落入摘要面的小标量路径成立)
     test.setTimeout(150_000)
     await mockLlm(page, [
       { tool_calls: [{ name: 'read', arguments: {} }] },
       { tool_calls: [{ name: 'write', arguments: { value: '测试改标题', patch: { op: 'set', jsonPath: 'components.0.props.title' } } }] },
-      { tool_calls: [{ name: 'read', arguments: { jsonPath: 'components.0.props.title' } }] },
+      { tool_calls: [{ name: 'read', arguments: { jsonPath: 'components.0.props' } }] },
+      { tool_calls: [{ name: 'write', arguments: { value: '测试改标题', patch: { op: 'set', jsonPath: 'components.0.props.title' } } }] },
       { text: '已完成,导航栏标题已改为「测试改标题」。' },
     ])
 
@@ -230,7 +259,7 @@ test.describe('complex-demo: 真实复杂度(30 类型 + 70 实例)', () => {
   test('mission capture + 深嵌套 patch:改领券首券面额 → systemPrompt 含主线 pin', async ({ page }) => {
     const requestBodies: any[] = []
     page.on('request', (req) => {
-      if (req.method() === 'POST' && req.url().includes('chat/completions')) {
+      if (req.method() === 'POST' && (req.url().includes('chat/completions') || req.url().includes('/v1/messages'))) {
         try { const body = req.postData(); if (body) requestBodies.push(JSON.parse(body)) } catch { /* ignore */ }
       }
     })
@@ -248,10 +277,8 @@ test.describe('complex-demo: 真实复杂度(30 类型 + 70 实例)', () => {
     const amount = await page.evaluate(() => (window as any).page.components[6].props.children[0].props.children[0].props.amount)
     expect(amount, '深嵌套 patch:components.6.props.children.0.props.children.0.props.amount = 100').toBe(100)
 
-    // 断言 2:mission capture → LLM 请求 systemPrompt 含「当前主线目标」pin + goal
-    const sysText = requestBodies
-      .flatMap((b) => (b?.messages || []).filter((m: any) => m.role === 'system').map((m: any) => m.content))
-      .join('\n')
+    // 断言 2:mission capture → LLM 请求 systemPrompt 含「当前主线目标」pin + goal(双协议解析)
+    const sysText = extractLLMPayloads(requestBodies).sysText
     expect(sysText, 'mission capture → systemPrompt 含「当前主线目标」pin 段').toContain('当前主线目标')
     expect(sysText, 'mission pin 含 user goal(领券)').toContain('领券')
   })
@@ -610,5 +637,174 @@ test.describe('complex-demo: 组件操作(调换顺序 / 改层级 / 聚焦纯�
     const code = await page.evaluate(() => window.page.components.find((c: any) => c.name === 'beer')?.code ?? '')
     expect(code, 'busy 后下轮重委派成功(重试版本落地)').toContain('畅饮')
     expect(calls(), 'busy 委派零 LLM 调用(总 7 次)').toBe(7)
+  })
+
+  // ===== 调整/修改操作全覆盖补齐(move op / 检索驱动闭环 / 深嵌套页 / 批量 / 回退 / 结构工具 / approval)=====
+
+  test('同容器调序:write patch move op(components.2 → components.0,数组重排一步原子)', async ({ page }) => {
+    const before = await page.evaluate(() => window.page.components.map((c: any) => c.type))
+    await mockLlm(page, [
+      // move 语义:源先移除,目标下标按移除后数组解释 → [c2, c0, c1, ...]
+      { tool_calls: [{ name: 'write', arguments: { patch: { op: 'move', jsonPath: 'components.2', value: 'components.0' } } }] },
+      { text: '已把第三个组件移到最前。' },
+    ])
+    await fillInput(page, '把第三个组件移到第一个')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    const after = await page.evaluate(() => window.page.components.map((c: any) => c.type))
+    expect(after.length, 'move 重排不增删元素').toBe(before.length)
+    expect(after[0], 'components[0] = 旧 [2](move 到下标 0)').toBe(before[2])
+    expect(after[1], 'components[1] = 旧 [0](顺移)').toBe(before[0])
+    expect(after[2], 'components[2] = 旧 [1](顺移)').toBe(before[1])
+  })
+
+  test('检索驱动修改闭环:query_data 定位 → read 窄读 → write 改(subtree-summary 标准链)', async ({ page }) => {
+    const { calls } = await mockLlm(page, [
+      { tool_calls: [{ name: 'query_data', arguments: { expr: '$.components[?(@.type=="navbar")]' } }] },
+      { tool_calls: [{ name: 'read', arguments: { jsonPath: 'components.0.props' } }] },
+      { tool_calls: [{ name: 'write', arguments: { patch: { op: 'set', jsonPath: 'components.0.props.title', value: '检索闭环改标题' } } }] },
+      { text: '已定位导航栏并改了标题。' },
+    ])
+    await fillInput(page, '找到导航栏,把标题改成「检索闭环改标题」')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    const title = await page.evaluate(() => window.page.components[0].props.title)
+    expect(title, 'query → 窄读 → write 闭环落地').toBe('检索闭环改标题')
+    expect(calls(), '三轮 ReAct(query/read/write)').toBeGreaterThanOrEqual(3)
+  })
+
+  test('跨组件批量修改:write patches 一次改页面标题 + 2 组件 className(原子)', async ({ page }) => {
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'write', arguments: { patches: [
+        { op: 'set', jsonPath: 'title', value: '批量修改标题OK' },
+        { op: 'set', jsonPath: 'components.0.className', value: 'batch-mark-0' },
+        { op: 'set', jsonPath: 'components.1.className', value: 'batch-mark-1' },
+      ] } }] },
+      { text: '已批量修改三处。' },
+    ])
+    await fillInput(page, '批量改:页面标题、前两个组件各加个标记类名')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    const r = await page.evaluate(() => ({
+      title: window.page.title,
+      c0: window.page.components[0].className,
+      c1: window.page.components[1].className,
+    }))
+    expect(r.title, 'patches[0] 页面标题落地').toBe('批量修改标题OK')
+    expect(r.c0, 'patches[1] components.0.className 落地').toBe('batch-mark-0')
+    expect(r.c1, 'patches[2] components.1.className 落地').toBe('batch-mark-1')
+  })
+
+  test('restore_data 回退:write 改坏 → restore_data 免参回退最近快照(调整操作的后悔药)', async ({ page }) => {
+    const original = await page.evaluate(() => window.page.components[0].props.title)
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'write', arguments: { patch: { op: 'set', jsonPath: 'components.0.props.title', value: '改坏了' } } }] },
+      { tool_calls: [{ name: 'restore_data', arguments: {} }] },
+      { text: '已回退到修改前。' },
+    ])
+    await fillInput(page, '把导航栏标题改成「改坏了」然后回退')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    const title = await page.evaluate(() => window.page.components[0].props.title)
+    expect(title, 'restore_data 回退最近快照 → title 恢复原值').toBe(original)
+  })
+
+  test('page-tools skill:load_skill 注入结构工具 → list_components 拿路径 → move_component 跨容器移动落地', async ({ page }) => {
+    // 动态找容器(带 props.children 的顶层组件)与被移动组件(components.2)
+    const info = await page.evaluate(() => {
+      const containerIdx = window.page.components.findIndex((c) => Array.isArray(c.props?.children))
+      const c2type = window.page.components[2]?.type
+      return { containerIdx, c2type, topCount: window.page.components.length, typeCount: window.page.components.filter((c: any) => c.type === c2type).length }
+    })
+    expect(info.containerIdx).toBeGreaterThanOrEqual(0)
+    const { calls } = await mockLlm(page, [
+      { tool_calls: [{ name: 'load_skill', arguments: { name: 'page-tools' } }] },
+      { tool_calls: [{ name: 'list_components', arguments: {} }] },
+      { tool_calls: [{ name: 'move_component', arguments: { path: 'components.2', targetPath: `components.${info.containerIdx}` } }] },
+      { text: '已把第三个组件移进容器。' },
+    ])
+    await fillInput(page, '把第三个组件移进第一个容器组件里')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    const r = await page.evaluate((t) => ({
+      topCount: window.page.components.length,
+      typeCount: window.page.components.filter((c: any) => c.type === t).length,
+      inContainer: window.page.components.some(
+        (c) => Array.isArray(c.props?.children) && c.props.children.some((ch) => ch.type === t),
+      ),
+    }), info.c2type)
+    expect(r.inContainer, 'move_component 跨容器移动落地(出现在容器 children 中)').toBe(true)
+    expect(r.topCount, '顶层组件数 -1(移进容器)').toBe(info.topCount - 1)
+    expect(r.typeCount, '顶层该类型计数 -1').toBe(info.typeCount - 1)
+    expect(calls(), 'load_skill + list + move 三轮工具链').toBeGreaterThanOrEqual(3)
+  })
+
+  test('delete_component approval:拒绝保留组件 → 重试批准删除(editor_fangzhou 对齐闭环)', async ({ page }) => {
+    const lastIdx = await page.evaluate(() => window.page.components.length - 1)
+    const lastType = await page.evaluate((i) => window.page.components[i].type, lastIdx)
+    const { calls } = await mockLlm(page, [
+      { tool_calls: [{ name: 'load_skill', arguments: { name: 'page-tools' } }] },
+      { tool_calls: [{ name: 'delete_component', arguments: { path: `components.${lastIdx}` } }] },
+      { text: '好的,已取消删除。' },
+      { tool_calls: [{ name: 'delete_component', arguments: { path: `components.${lastIdx}` } }] },
+      { text: '已删除最后一个组件。' },
+    ])
+    // 第一轮:征得拒绝 → 组件保留
+    await fillInput(page, '删掉最后一个组件')
+    await clickSend(page)
+    await page.waitForSelector('button:has-text("拒绝")', { timeout: 15_000 })
+    await clickByText(page, '拒绝')
+    await waitForAgentIdle(page)
+    expect(await page.evaluate((t) => window.page.components.filter((c: any) => c.type === t).length, lastType),
+      '拒绝后组件保留').toBeGreaterThanOrEqual(1)
+    // 第二轮:重试 → 批准 → 删除生效
+    await fillInput(page, '还是删掉吧')
+    await clickSend(page)
+    await page.waitForSelector('button:has-text("允许")', { timeout: 15_000 })
+    await clickByText(page, '允许')
+    await waitForAgentIdle(page)
+    expect(await page.evaluate((t) => window.page.components.filter((c: any) => c.type === t).length, lastType),
+      '批准后组件删除生效').toBe(0)
+    expect(calls(), 'LLM 调用链(load + 拒后收口 + 重删 + 删后收口)').toBeGreaterThanOrEqual(4)
+  })
+})
+
+test.describe('complex-demo deep(深嵌套页 · ?deep=1)', () => {
+  test('深路径 read + write:递归嵌套区最深 card 的 text 改写(10+ 段 jsonPath)', async ({ page }) => {
+    await page.goto('/examples/complex-demo/?deep=1')
+    await page.waitForSelector('.chat-dialog')
+    await page.waitForSelector('textarea')
+    // DFS 找最深的递归区 card(deepNest 生成器产物,id 以 -c 结尾),收集真实下标路径
+    const deep = await page.evaluate(() => {
+      let best: { path: string; type: string; depth: number } | null = null
+      const visit = (node: any, path: string, depth: number): void => {
+        if (!node || typeof node !== 'object') return
+        if (node.type === 'card' && String(node.id ?? '').endsWith('-c')) {
+          if (!best || depth > (best as any).depth) best = { path, type: node.type, depth }
+        }
+        const kids: Array<[any, string]> = []
+        if (Array.isArray(node.props?.children)) node.props.children.forEach((c: any, i: number) => kids.push([c, `${path}.props.children.${i}`]))
+        if (Array.isArray(node.props?.tabs)) node.props.tabs.forEach((t: any, i: number) => (t.children ?? []).forEach((c: any, j: number) => kids.push([c, `${path}.props.tabs.${i}.children.${j}`])))
+        kids.forEach(([c, p]) => visit(c, p, depth + 1))
+      }
+      window.page.components.forEach((c: any, i: number) => visit(c, `components.${i}`, 1))
+      return best
+    })
+    expect(deep, '找到递归嵌套区最深 card').not.toBeNull()
+    expect(deep!.type).toBe('card')
+    expect(deep!.depth, '嵌套深度 ≥6(tabs + 5 层递归 section/grid)').toBeGreaterThanOrEqual(6)
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'read', arguments: { jsonPath: deep.path } }] },
+      { tool_calls: [{ name: 'write', arguments: { patch: { op: 'set', jsonPath: `${deep.path}.props.text`, value: '深路径写入OK' } } }] },
+      { text: '已改深层卡片文案。' },
+    ])
+    await fillInput(page, `把最深的深层卡片的文案改成「深路径写入OK」(路径 ${deep.path})`)
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    const text = await page.evaluate((p) => {
+      const val = p.split('.').reduce((o: any, k) => (o == null ? o : o[k]), window.page)
+      return val?.props?.text ?? ''
+    }, deep.path)
+    expect(text, '10+ 段深 jsonPath patch 落地(逐段 isPathAllowed 穿透)').toBe('深路径写入OK')
   })
 })

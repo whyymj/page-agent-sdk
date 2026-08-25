@@ -7,7 +7,8 @@
  * Agent 经 write 改 page.title / page.components(增删改组件 / 调 props / 调 style)→ 左侧 PageRenderer 响应式更新(本 demo 保留 reactive 展示 Vue 响应式模式)。
  */
 import { reactive, onMounted, onUnmounted, ref } from 'vue'
-import { createChatSdk, createHtmlSubagent, defineSkill, htmlFragmentSkill, type ChatSdk } from '../../src/core'
+import { createChatSdk, createHtmlSubagent, defineSkill, defineTool, htmlFragmentSkill, type ChatSdk } from '../../src/core'
+import { z } from 'zod'
 import { useAgentConfig } from './useAgentConfig'
 import PageRenderer from './PageRenderer.vue'
 import DevNav from '../_shared/DevNav.vue'
@@ -73,6 +74,83 @@ function onFocusChipClick(path: string): void {
   selectedPath.value = path // PickOverlay 显示边框
   setTimeout(() => { if (selectedPath.value === path) selectedPath.value = null }, 2000)
 }
+
+// ===== page-tools 结构工具(editor_fangzhou 对齐:skill 工具工厂 + 宿主原生 reactive 操作 + writeCapable)=====
+// 组件清单/跨容器移动/删除收纳进 page-tools skill(load_skill 后注入工具池,渐进披露不占初始 systemPrompt token);
+// 结构变更走宿主 reactive 原生操作(与 editor 走原生 move.node 同思路),writeCapable 等效写标注让
+// 零工具门禁/stale-read/evidence 账本仍按写计入
+const isRag = query?.get('rag') === '1'
+const ragMcpUrl = ((import.meta.env.VITE_RAG_MCP_URL as string | undefined) || '').trim()
+
+/** 递归收集组件清单(path 即 write patch 可用的 jsonPath;容器经 props.children 下钻) */
+function walkComponents(out: Array<Record<string, unknown>>, nodes: unknown[], prefix: string, depth: number): void {
+  nodes.forEach((raw, i) => {
+    const node = raw as Record<string, any>
+    const path = `${prefix}.${i}`
+    const children: unknown[] = Array.isArray(node?.props?.children) ? node.props.children : []
+    out.push({ type: node?.type ?? '', name: node?.name ?? '', id: node?.id ?? '', path, depth, childCount: children.length })
+    if (children.length) walkComponents(out, children, `${path}.props.children`, depth + 1)
+  })
+}
+function listComponents(type?: string): Record<string, unknown> {
+  const out: Array<Record<string, unknown>> = []
+  walkComponents(out, pageObj.components, 'components', 1)
+  const filtered = type ? out.filter((c) => c.type === type) : out
+  return { total: filtered.length, components: filtered }
+}
+/** 解析 "a.b.0" 形态的数组元素路径 → { 所在数组, 下标, 节点 };不存在返回 null */
+function resolveArrayItem(path: string): { parent: unknown[]; index: number; node: unknown } | null {
+  const m = /^(.*)\.(\d+)$/.exec(path)
+  if (!m) return null
+  const arr = m[1].split('.').reduce<unknown>((o, k) => (o == null || typeof o !== 'object' ? undefined : (o as Record<string, unknown>)[k]), pageObj)
+  const idx = Number(m[2])
+  if (!Array.isArray(arr) || !arr[idx]) return null
+  return { parent: arr, index: idx, node: arr[idx] }
+}
+function moveComponent(path: string, targetPath: string): Record<string, unknown> {
+  const src = resolveArrayItem(path)
+  const tgt = resolveArrayItem(targetPath)
+  if (!src || !tgt) return { error: `路径不存在(src=${path}, target=${targetPath});先 list_components 拿准确路径` }
+  const children = (tgt.node as Record<string, any>)?.props?.children
+  if (!Array.isArray(children)) return { error: `目标不是容器组件(无 props.children):${targetPath}` }
+  // 源已在目标 children 内 = 同容器调序 → 引导 write move op(本工具只管跨容器)
+  if (src.parent === children) return { error: '该组件已在目标容器内,同容器调序请直接用 write 的 move op(如 {op:"move", jsonPath:"components.6.props.children.2", value:"components.6.props.children.0"}),无需本工具' }
+  if (targetPath.startsWith(path + '.')) return { error: '目标容器不能位于源组件子树内(会导致组件丢失)' }
+  const [moved] = src.parent.splice(src.index, 1) // reactive splice → 视图即时更新
+  children.push(moved)
+  return { moved: true, path, targetPath, type: (moved as Record<string, any>)?.type ?? '' }
+}
+function deleteComponent(path: string): Record<string, unknown> {
+  const hit = resolveArrayItem(path)
+  if (!hit) return { error: `路径不存在:${path};先 list_components 拿准确路径` }
+  const [removed] = hit.parent.splice(hit.index, 1)
+  return { deleted: true, path, type: (removed as Record<string, any>)?.type ?? '' }
+}
+const structuralTools = [
+  defineTool({
+    name: 'list_components',
+    description: '列出页面组件清单(type/name/path/嵌套深度/子组件数,path 即 write patch 可直接用的 jsonPath,含容器 props.children 递归)。修改/调序/移动/删除组件前先调它拿准确路径;传 type 按 type 过滤',
+    schema: z.object({ type: z.string().optional().describe('按组件 type 过滤(如 "coupon");不传列全部') }),
+    handler: ({ type }) => listComponents(type),
+  }),
+  defineTool({
+    name: 'move_component',
+    description: '跨容器移动组件(连同子树移到目标容器 props.children 末尾,reactive 原地搬移视图即时更新)。传 list_components 返回的 path;同容器内调序用 write 的 move op,无需本工具',
+    schema: z.object({
+      path: z.string().describe('要移动的组件 path(如 components.6.props.children.0)'),
+      targetPath: z.string().describe('目标容器组件 path(其 props.children 数组)'),
+    }),
+    writeCapable: true, // 等效写:宿主原生流程改页面数据,零工具门禁/stale-read/evidence 账本仍按写计入
+    handler: ({ path, targetPath }) => moveComponent(path, targetPath),
+  }),
+  defineTool({
+    name: 'delete_component',
+    description: '删除组件(含子树,reactive 原地移除)。破坏性操作,调用会挂人工确认;传 list_components 返回的 path',
+    schema: z.object({ path: z.string().describe('要删除的组件 path') }),
+    writeCapable: true,
+    handler: ({ path }) => deleteComponent(path),
+  }),
+]
 
 const root = ref<HTMLElement>()
 const agentRef = ref<ChatSdk | null>(null)
@@ -154,23 +232,47 @@ onMounted(() => {
     id: 'complex-demo',
     storage: 'memory',
     llm: {
+      provider: cfg.provider, // 'anthropic' = Claude 原生协议(默认组;deepseek-v4-flash 经 modelverse /llm 同源代理)
       apiKey: cfg.apiKey,
       baseUrl: cfg.baseUrl,
       model: cfg.model,
       temperature: cfg.temperature,
       maxTokens: cfg.maxTokens,
     },
+    // MCP 知识库 RAG(?rag=1 开启;editor_fangzhou 同款 Streamable HTTP):rag_search/rag_ask/rag_documents
+    // 注入工具池;握手 15s/调用 60s 超时自动降级,失败不阻塞主功能。URL 只进本地 .env(gitignore)
+    ...(isRag && ragMcpUrl ? { mcp: [{ transport: 'http' as const, url: ragMcpUrl, name: 'ark-kb' }] } : {}),
     systemPrompt:
       '你是复杂页面构建助手。左侧页面由 window.page 驱动,结构 { title, components[] }(组件数组按顺序拼装)。每个组件 = { type, id?, style?, visible?, className?, props:{...业务字段} };容器组件(container/section/grid)的 props.children 可嵌套任意组件。用户要改左侧页面时,改 page.title 或 page.components(增删改组件、调 props、调 style、容器内改 children),左侧实时更新。组件类型与各字段详见 load_skill("complex-builder")。\n\n' +
-      '\n\n【本平台组件路由】本平台含多种组件类型,其中 custom 为纯代码组件(根级 code = 完整自包含 HTML 页面,含 style/script)。路由:custom 的 **code 字段** → 必经 use_html 子 agent 委派(生成/修改/排查,你禁直接 write/edit code);custom 的**其他属性**(name/style/visible 等)+ 所有非 custom 组件(heading/banner/carousel/card/coupon...)→ 你直接 write 改。多组件含 custom 时,write_todos 列出 → 普通 组件直接 write、多个 custom 组件可同轮并行发多个 use_html 委派(每组件一次;同一组件同时只一个委派在途)。',
+      '\n\n【本平台组件路由】本平台含多种组件类型,其中 custom 为纯代码组件(根级 code = 完整自包含 HTML 页面,含 style/script)。路由:custom 的 **code 字段** → 必经 use_html 子 agent 委派(生成/修改/排查,你禁直接 write/edit code);custom 的**其他属性**(name/style/visible 等)+ 所有非 custom 组件(heading/banner/carousel/card/coupon...)→ 你直接 write 改。多组件含 custom 时,write_todos 列出 → 普通 组件直接 write、多个 custom 组件可同轮并行发多个 use_html 委派(每组件一次;同一组件同时只一个委派在途)。' +
+      '\n\n【结构操作】组件清单定位/跨容器移动/删除 → 先 load_skill("page-tools") 加载结构工具(list_components 拿准确 path / move_component 跨容器 / delete_component 删除挂人工确认);同容器调序直接用 write move op。' +
+      (isRag ? '\n【知识库】平台/组件配置类问题先查知识库:rag_search 检索 / rag_ask 引用问答(回答附出处),勿凭记忆编造。' : ''),
     // 默认 true:自定义 systemPrompt 末尾用 '---' 分隔线自动追加 reliableWriteRules(改前先 read、字段以 describe 为准、写错看校验错误重试、优先增量 patch);设 false 关闭;不传 systemPrompt 用默认 prompt 时已内置
     appendReliableWriteRules: true,
-    // 三档判档:每轮按最新 user 消息注入模式段(快速=不注入/方向闸=先征询/详细=征询+todos+范围限定深入要求)
+    // 动态 systemPrompt(editor_fangzhou 对齐,每轮注入):
+    // ① 页面实况段 —— ctx.data 每轮从 liveData() 取最新(setData 后自动同步),运行时算标题/组件数/嵌套深度
+    // ② 三档判档段(快速=不注入/方向闸=先征询/详细=征询+todos+范围限定深入要求)
     // ⚠️ state.messages 是 SDK 层 AgentMessage[](role 字段),非 langchain 消息(getType)—— 曾用 getType
     // 永远匹配不到 → 模式段从未注入(M1 真 LLM 0 次征询的真根因,机制锁测试暴露)
-    augmentSystem: ({ state }: any) => detectMode(String(
-      [...(state?.messages ?? [])].reverse().find((m: any) => m.role === 'user' || m.getType?.() === 'human')?.content ?? '',
-    )),
+    augmentSystem: ({ state, data }: any) => {
+      const segs: string[] = []
+      const bind = (data as { bind?: { title?: string; components?: unknown[] } } | undefined)?.bind ?? pageObj
+      let deepest = 0
+      const walkDepth = (nodes: unknown[], d: number): void => {
+        deepest = Math.max(deepest, d)
+        for (const n of nodes) {
+          const c = n as { props?: { children?: unknown[] } }
+          walkDepth(Array.isArray(c?.props?.children) ? c.props.children : [], d + 1)
+        }
+      }
+      walkDepth(bind?.components ?? [], 1)
+      segs.push(`## 页面实况(每轮同步)\n- 标题「${bind?.title ?? ''}」· 顶层组件 ${bind?.components?.length ?? 0} 个 · 最深嵌套 ${deepest} 层${isRag ? ' · 知识库已接(rag_search/rag_ask 可查组件配置与运营手册)' : ''}`)
+      const mode = detectMode(String(
+        [...(state?.messages ?? [])].reverse().find((m: any) => m.role === 'user' || m.getType?.() === 'human')?.content ?? '',
+      ))
+      if (mode) segs.push(mode)
+      return segs.join('\n\n')
+    },
     // 方向闸机制锁:提示词版门禁对弱指令模型无效(M1 真 LLM 实测 0 次征询)→ 回灌式门禁兜底
     middleware: [createProposeGateMiddleware()],
     // data 单主对象配置:schema + bind 直连 reactive 对象,工具直接读写 bind(集成方自己挂 window.page 供 PageRenderer 读)
@@ -179,6 +281,8 @@ onMounted(() => {
     data: { schema: pageSchema, bind: pageObj, resources: [{ path: 'components.0.props.trackId', mode: 'freeze' as const }] },
     // 胜任自动化:agent 能读渲染后 DOM(get_dom,看修改是否生效)+ 触发宿主页面动作(保存/发布,与配置面板同等)
     capabilities: { domInspect: true, draftWrite: true },
+    // 机制级人工确认(editor_fangzhou 对齐):破坏性删除挂 approval(UI 确认条 允许/拒绝;无响应 30s 自动拒)
+    approval: { confirm: (name: string) => name === 'delete_component' },
     maxParallelTools: 3,  // 同轮工具并发 >1:多个 use_html 委派可同轮并行(3.13 并行委派;同组件单一在途靠编排禁令)
     actions: {
       save_draft: { description: '保存当前页面为草稿(序列化 page 到 localStorage)。用户要求保存/存草稿时调用,无需参数。', run: saveDraft },
@@ -200,6 +304,18 @@ onMounted(() => {
         description: '编辑组件拼装的复杂页面(window.page,含 container/section/grid 容器可嵌套 children)。用户要求改左侧页面(增删改组件 / 调 props / 调样式 / 容器内嵌套)时使用',
         getContent: () => complexBuilderSkillContent,
       }),
+      defineSkill({
+        name: 'page-tools',
+        description: '页面结构操作工具集(list_components 组件清单 / move_component 跨容器移动 / delete_component 删除,load 后注入工具池)。凡涉及组件清单定位/跨容器移动/删除,先 load_skill("page-tools") 加载;read/write 数据工具恒可用',
+        getContent: () => [
+          '## page-tools 工具清单(已注入工具池,本会话常驻)',
+          '- list_components(type?):组件清单(path 即 write 的 jsonPath;含容器 children 递归与嵌套深度)。修改/调序/移动/删除前先调它拿准确路径',
+          '- move_component(path, targetPath):跨容器移动(连同子树移到目标容器 children 末尾)。同容器调序用 write move op,无需本工具',
+          '- delete_component(path):删除组件(破坏性,自动挂人工确认)',
+        ].join('\n'),
+        // 工具工厂:load_skill 后注入工具池(SDK 按 name 去重,重复加载安全)—— editor_fangzhou page-tools 同款渐进披露
+        tools: [() => structuralTools],
+      }),
     ],
     // HTML 代码子 agent:零配置可省(3.9 自动装配);此处显式声明演示「挂 UI 规范 skill」的定制路径 ——
     // skills 完全覆盖默认,须并回内置 htmlFragmentSkill(生成规范/安全底线),否则丢规范
@@ -214,9 +330,9 @@ onMounted(() => {
       ],
       // 独立模型 + 思考分层(output-quality-uplift + default-deep):主编排保持轻量,代码生成换强模型;
       // thinkingMode:'deep' 显式锁深思考(质量优先,token/耗时约 2-5×)/ 'simple' 剥思考省 token。
-      // 缺省 = 能力表 thinking:true 的模型自动 deep(默认 deep,零配置即质量优先)
-      llm: { apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, model: cfg.model },
-      thinkingMode: 'deep',
+      // thinking-capable 模型(v4-pro/claude 等)才注 deep;flash 类传了也无效(editor 网关实测)→ 继承不注参
+      llm: { provider: cfg.provider, apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, model: cfg.model },
+      ...(/pro|claude|thinking|o1/i.test(cfg.model) ? { thinkingMode: 'deep' as const } : {}),
     })],
     onEvent: (e) => { if (e.type === 'focus_chip_click') onFocusChipClick(e.path) }, // chip 点击 → 滚动到组件 + 边框闪
     debug: true,

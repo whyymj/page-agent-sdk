@@ -583,6 +583,8 @@ export type SkillToolFactory = () => any | any[] | Promise<any | any[]>;
 export interface VerifyCheckContext {
   messages: any[];
   state: any;
+  /** 结构化日志(debugLogs;render-check 类环境降级留痕用,可缺省) */
+  log?: (type: string, data: unknown) => void;
 }
 export interface VerifyCheckResult {
   ok: boolean;
@@ -1140,7 +1142,7 @@ export declare function defineTool(opts: {
   writeCapable?: boolean | ((args: Record<string, unknown>) => boolean);
 }): any;
 export declare function createDataOps(config: DataConfig, opts?: DataOpsOptions): any[];
-/** 整体 set 写入纯函数:schema 校验 + 快照 + merge/替换 + audit。set_data / write(set) / draft_commit 共用。返回 {ok,hash,data} 或 {ok:false,error} */
+/** 整体 set 写入纯函数:schema 校验 + 快照 + merge/替换 + audit。write(set) / draft_commit 共用。返回 {ok,hash,data} 或 {ok:false,error} */
 export declare function commitSetToBind(args: { bindRef: unknown; value: unknown; schema: any; allowKeys: string[] | null; snapshots: any[]; maxSnapshots: number; audit: (e: any) => void; dryRun?: boolean; op?: 'set' | 'draft_commit'; snapshotLabel?: string }): { ok: true; hash: string; data: unknown; notices: string[] } | { ok: false; error: string };
 export interface LocalWriteBack {
   op: 'set' | 'remove' | 'move' | 'mergeKeys' | 'appendElems';
@@ -1455,7 +1457,7 @@ export interface JpNode {
   path: string;
   /** 匹配元素值 */
   value: unknown;
-  /** 父为数组时的索引(便于后续 edit_data_slot 的 jsonPath 定位) */
+  /** 父为数组时的索引(便于后续 write patch 的 jsonPath 定位) */
   index?: number;
 }
 export interface SearchHit {
@@ -1640,6 +1642,76 @@ export interface HtmlFormatCheckOptions {
 }
 /** HTML 格式 verify check(beforeReturn 门禁):扫 state.files 代码文件,不通过回灌 feedback 自纠 */
 export declare function createHtmlFormatCheck(opts?: HtmlFormatCheckOptions): VerifyCheck;
+/** 沙箱采集到的原始渲染信号(console.error / js-error / unhandledrejection / 资源失败 / CSP 违规 / console.warn) */
+export interface RenderSignal {
+    type: 'console-error' | 'console-warn' | 'js-error' | 'unhandledrejection' | 'resource-error' | 'csp-violation';
+    message: string;
+    source?: string;
+    lineno?: number;
+}
+/** 渲染指标(收集窗结束时采集;白屏判定口径 = 内容级:body 子节点数 / scrollHeight / 图片数) */
+export interface RenderMetrics {
+    bodyChildren: number;
+    scrollHeight: number;
+    imgCount: number;
+}
+/** 单组件沙箱渲染的原始结果(未归一;noDom = node/无 DOM 环境标记) */
+export interface RawRenderResult {
+    handshake: boolean;
+    signals: RenderSignal[];
+    metrics?: RenderMetrics;
+    timedOut?: boolean;
+    noDom?: boolean;
+}
+/** 归一后的单组件判定:pass / fail(带 problems)/ unavailable(握手缺失或超时,不算通过防假绿) */
+export interface RenderVerdict {
+    verdict: 'pass' | 'fail' | 'unavailable';
+    problems: string[];
+    warnings: string[];
+    metrics?: RenderMetrics;
+    reason?: 'handshake-missing' | 'timeout';
+}
+/** 渲染自检 VerifyCheck 工厂选项(runner 注入供测试桩用) */
+export interface HtmlRenderCheckOptions {
+    vfsPrefix?: string;
+    codeField?: string;
+    writablePaths?: string[];
+    runner?: (html: string) => Promise<RawRenderResult>;
+    maxTargets?: number;
+}
+/** 渲染自检对象:check 组合进 createHtmlSubagent 的 formatCheck 链;两个注入槽由装配期回填 */
+export interface HtmlRenderCheck {
+    check: VerifyCheck;
+    setGetController: (g: () => {
+        get?: () => { bind?: unknown } | null | undefined;
+    } | null | undefined) => void;
+    setWritablePaths: (paths: string[]) => void;
+}
+/** 沙箱运行参数(活动静默窗/硬上限/指标应答宽限;默认 900ms / 4000ms / 500ms) */
+export interface SandboxRunOptions {
+    silenceMs?: number;
+    hardCapMs?: number;
+    metricsGraceMs?: number;
+}
+/**
+ * 渲染级自检(render-check):本轮触达的 code 资产放沙箱 iframe(srcdoc + sandbox="allow-scripts")独立渲染,
+ * 采集 console.error / window.onerror / unhandledrejection / 资源失败 / 白屏指标 → 归一回灌自纠。
+ * 仅门禁形态(组合进 createHtmlSubagent 的 formatCheck 链);node/无 DOM 自动跳过渲染段保留结构段;
+ * 握手缺失(宿主 CSP 拦沙箱内联脚本)/ 超时 → unavailable 不算通过(零信号 ≠ 通过)。
+ */
+export declare function createHtmlRenderCheck(opts?: HtmlRenderCheckOptions): HtmlRenderCheck;
+/** 组合「结构 → 渲染」为单一 VerifyCheck(结构不过短路渲染;runBeforeReturn 不短路,两段必须单 check 内早返回) */
+export declare function composeStructureThenRender(structure: VerifyCheck, render: VerifyCheck): VerifyCheck;
+/** 信号归一纯函数:storage 类 SecurityError 降 warn(沙箱假阳性);无失败信号但 body 空 + scrollHeight<10 → 疑似白屏 fail */
+export declare function normalizeRenderResult(raw: RawRenderResult): RenderVerdict;
+/** 单组件沙箱渲染(离屏 iframe;用后销毁;node/无 DOM 返回 noDom) */
+export declare function renderInSandbox(html: string, opts?: SandboxRunOptions): Promise<RawRenderResult>;
+/** 沙箱 srcdoc 构造(collector 注入文档最前,不改组件原文) */
+export declare function buildSandboxSrcdoc(html: string, nonce: string): string;
+/** collector 采集脚本源码(nonce 握手 + 信号上报 + 活动信号 + 指标应答) */
+export declare function buildCollectorJs(nonce: string): string;
+/** 累计/销毁的沙箱 iframe 数(测试观察「用后销毁」契约) */
+export declare function getSandboxLifecycle(): { created: number; destroyed: number };
 
 // checkpoint / dataOps / permissions
 export interface CheckpointDeps { [k: string]: any }

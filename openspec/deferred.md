@@ -480,6 +480,43 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 
 **来源**:`2026-08-23-model-offline-guidance` 实施时明示盲区:网关回 200 + 错误 JSON 体(modelverse 6003 黑洞形态)时 body 不捕获,统一转 `EmptyLLMResponseError`(自动重试 1 次后抛)——该形态下的 `model is offline` 文案检测抓不到,`MODEL_UNAVAILABLE` 码不生效。**为何暂缓**:覆盖需新增 body 捕获 = 流解析行为改动(违零副作用红线),须与 `streamMaxDurationMs`/空转黑洞族一起设计。**重启触发**:真实环境再现「200+错误体且含下线文案」的可复现样本。**重启须知**:`EmptyLLMResponseError` 携带原始 body 摘要(不改变重试语义),`isModelUnavailableError` 对 body 文案复检。
 
+### [2026-08-24] section-orchestrator:真 LLM initialPage 双臂 + 阈值标定 — ⏸ 暂缓(无环境)
+
+**来源**:section-orchestrator Phase 0/1 真人 LLM 门禁未跑 —— LLM 网关模型面不可用。**内容**:①initialPage 双臂(flash 硬干 vs nudge 分流;fixture 用无 code 字段的 schema 副本防 CUSTOM_CODE_DELEGATION 干扰归因)轮次/完成率/token 三指标;②S1 段规格四要素齐格式抽检;③阈值标定(DELEGATE_NUDGE_THRESHOLD 初值 12,与编排段注入同源)。**重启触发**:网关恢复 / test:real 环境可用。**重启须知**:mock 三态 + e2e 装配链(含 S7 回退保底)已实证机制;真 LLM 重点验证 flash 对 advisory 的分流裁决质量与阈值合理性;基线对比用 `--baseline-diff`。
+
+### [2026-08-24] subtree-summary:真 LLM 门禁(单干细节场景 + flash 三场景 + 阈值校准)— ⏸ 暂缓(无环境)
+
+**来源**:subtree-summary Phase 1 真 LLM 门禁未跑 —— LLM 网关模型面不可用。**内容**:①无子 agent 单干细节场景(轮次/token/完成率三指标;S1/S2/S5 行为符合预期);②flash 三场景(深改单组件/占位下内容问答/猜路径盲写 → 守卫拦截与自纠质量);③据数据调阈值(只升 `SUBTREE_SUMMARY_THRESHOLD` 常量,机制不回退)。**重启触发**:网关恢复 / test:real 套件环境可用。**重启须知**:mock 四态 + complex-demo 重页面真浏览器闭环已实证机制;真 LLM 重点验证弱模型对 NEED_NARROW_READ 回灌的自纠质量与阈值合理性(初始 3072 字符);跑法参考 `doc/real-llm-regression.md`(idle 双条件 + 跑前重启 dev server)。
+
+### [2026-08-24] render-check:S4 主 agent 验收工具 + 整页组装钩子 — ⏸ 暂缓(评审裁决 deferred)
+
+**来源**:`2026-08-24-render-check` 评审:①新增主栈默认工具与 main-surface-slim 方向相逆且收益与门禁重复 → S4 砍除;②SDK 无页面树、非 code 组件宿主渲染、N 份自包含文档拼合引入选择器/脚本冲突假错 → 整页组装不做。**重启触发**:①出现门禁覆盖不到的验收缺口(如主 agent 收口前需主动抽检渲染,实测有需求再立项,形态走「非默认工具/能力包」);②宿主提供组装函数(页面树/布局容器)的钩子形态需求出现(集成方反馈「组件各自能跑但整页拼起来坏了」)。**重启须知**:组件级隔离渲染已上线(3.48),增量面只剩「跨组件信号归因」与「宿主组装钩子」;S4 工具须过 main-surface-slim 的工具面税评估。
+
+### [2026-08-24] render-check:真 LLM 坏 script 自纠闭环 — ⏸ 暂缓(无环境)
+
+**来源**:render-check 实施期真 LLM 门禁(坏 script → 自检-修复-复检 ≤2 次预算含降级不假绿)未跑 —— LLM 网关模型面不可用。**重启触发**:网关恢复 / test:real 套件环境可用时跑 `render-check` 场景(html-page-demo 注入坏 script)。**重启须知**:机制面已由真沙箱 browser e2e(7 项)+ mock 集成闭环实证;真 LLM 只验证「弱模型对渲染 feedback 的自纠质量」,跑法参考 `doc/real-llm-regression.md`。
+
+### [2026-08-24] 团队审查(3 agent:回归/并发/场景)遗留 P2 清单 — ⏸ 暂缓(P0/P1 已当场修)
+
+**来源**:subtree-summary + PLACEHOLDER_LEAK 落地后的团队审查;P0=0,P1×2 + P1 级口径缺口已当场修(leak 检查移 enforceSet 前 / 守卫文案补分页 / verify 拒绝码四码 / nudge keep_external 口径 / write(set) hash 复用)。遗留 P2 如下,**重启触发** = 各项所述实例出现或相关模块下次改动时顺手:
+
+1. **并发写互锁 TOCTOU(CA-P1 既有)**:`maxParallelTools>1` 时同轮两写都在 `await handleConflict` 让出前取旧基线 → 双双过锁后写互覆盖,无 VERSION_CONFLICT;根因修复 = commitSetToBind 入口 final hash 校验(dataOps.ts:899 注释自认)。默认串行不受影响;装配期 console.warn 已提示。
+2. **componentLock 时序残余窗口**:主写守卫在同步派发段、use_html acquire 在 await 后,同批 `[use_html, write(同组件)]` 并发可穿;code 字段仍被 CUSTOM_CODE_DELEGATION 恒守卫兜底。CLAUDE.md 已登记,e2e 用 slow_probe 锚。
+3. **并行模式写结果交叉不失效**:同批两个写都成功时,先写结果的「当前值+新 hash」在后写落地后陈旧,stale 失效不覆盖(串行无此问题)。
+4. **focus 路径漂移零检测**:focus 按数组下标锚定(components.0),调序/删除后换人 → 全文豁免+strict 拦截作用到错误子树;FocusController 无失效/重算入口。候选修法:augmentPrompt 期存在性校验失联警告 / codeAsset 场景 __pgId 锚定。
+5. **nudge 度量面盲区**:只认 `ctx.name==='write'` —— eval_script(transform)/draft_commit/restore_data 的 bulk grind 不进欠委派检测(writeGate 用 writeCapable 标注,nudge 手写名单偏离)。
+6. **resource_update 绕过占位防线**:value 只过 subSchema 类型校验直接落资源池+bind,占位串可经此通道进 bind(现实性低:需 LLM 把占位喂给低频精确值工具)。
+7. **MARKER_RE 非 ASCII 字段名漏检**:codeField 为中文等字段时生成 `<代码 2.3KB>`,写回不检(漏检非误伤;`<subtree` 子串规则不受影响)。
+8. **主 scope read 恒 deepClone**:summarizeLargeText 在 isMain 无条件克隆(零摘要也克隆);可改先 walk 估算命中阈值才克隆。
+9. **守卫跨轮零拦截**:subtreeGuard 占位集 invoke 级清空,「上轮读占位→本轮写」放行(口径明示);`components[3]` 括号形态与 dot 形态 fallsIn 互不匹配 → 漏拦。
+10. **approval×守卫双重确认边缘**:approval 在洋葱外层,获批写可再吃一次 NEED_NARROW_READ 重试再触发 approval(仅 approval.tools 配 write 时)。
+
+**更正记录**:「offload 吞 delegate-nudge advisory 尾巴」观察证伪(4a3539a commit message 结论有误)—— offload 在 coreExecTool 洋葱最内层,nudge 尾附在外层 wrapToolCall 追加恒可见;且写结果 safeStringify 封顶 600 字符触不到 offload 阈值。真实残余 = 历史轮压缩「保首砍尾」(一次性 advisory 生命周期内可接受)。
+
+### [2026-08-24] image-input 真 LLM 旁路三场景(image-input-vision 收尾遗留)— ⏸ 暂缓(无环境)
+
+**来源**:`2026-08-18-image-input-vision` 归档时收尾:describe 内置工具与 vision_tokens 分离已在原 tasks 划线否决(转述经集成方 LLM,SDK 侧无 token 可计),余真 LLM 验证未跑。**内容**:贴截图问组件 / 贴设计稿还原 custom / OCR 问答三场景(flash 量级视觉模型)。**重启触发**:集成方(如 editor)接入 images.describe 后的真实使用反馈,或网关模型面恢复视觉模型可用。**重启须知**:复用 `examples/images-demo` 的 `window.__VISION_CONFIG` 运行时端点覆盖;三场景各 ≥3 轮新会话。
+
 ## 维护约定
 
 

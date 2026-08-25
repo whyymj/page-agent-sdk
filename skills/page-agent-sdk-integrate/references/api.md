@@ -96,23 +96,19 @@ By default (`appendReliableWriteRules: true`), the SDK auto-appends `reliableWri
 
 ## Built-in data tools (auto-injected when `capabilities.dataOps`)
 
-Default `toolMode:'simple'` exposes high-level `read`/`write` + advanced query/snapshot tools (low-level `get`/`set`/`edit`/`delete`/`describe` are hidden, merged into `read`/`write`). `toolMode:'advanced'` exposes all; `toolMode:'minimal'` only `read`/`write`.
+High-level `read`/`write` are the main entry points; query/snapshot/eval tools are always available (no mode switch). Low-level CRUD `get_data`/`set_data`/`edit_data`/`delete_data` was **removed in 4.0** — `read`/`write` cover everything (`get_data({p})`→`read({jsonPath:p})`, `set_data({value})`→`write({value})`, `edit_data({op,p,value})`→`write({patch:{op,jsonPath:p,value}})`, `delete_data({p})`→`write({patch:{jsonPath:p},del:true})`).
 
-| Tool | Purpose | Mode |
-|---|---|---|
-| **`read`** / **`write`** (2.2+, recommended) | High-level entry: `read({jsonPath?, fields?, depth?})` lists/reads (supports field projection + depth truncation); `write({value?, patch?, patches?, del?})` merges set/edit/delete + auto optimistic lock + auto snapshot | simple/minimal |
-| `describe_data` | Show main data description + schema field descriptions | advanced |
-| `get_data` | Read main data (supports `jsonPath` precise sub-path read) | advanced |
-| `set_data` | Write whole main data (schema-validated, scoped to declared fields) | advanced |
-| `edit_data` | Patch by `jsonPath` (set/remove/merge/append) — avoids re-sending large JSON | advanced |
-| `delete_data` | Delete a sub-path (jsonPath) | advanced |
-| `snapshot_data` | Manual snapshot | simple/advanced |
-| `list_data_snapshots` | List snapshots | simple/advanced |
-| `restore_data` | Restore (no id = most recent) | simple/advanced |
-| `query_data` / `search_data` | JSONPath query / full-text search | simple/advanced |
-| `eval_script` | Sandboxed script on data (query/transform; transform supports `{patches:[...]}` incremental mode) | simple/advanced |
+| Tool | Purpose |
+|---|---|
+| **`read`** / **`write`** (recommended) | High-level entry: `read({jsonPath?, jsonPaths?, fields?, depth?, offset?, limit?})` lists/reads (field projection + depth truncation + array paging); `write({value?, patch?, patches?, del?, dryRun?})` merges set/edit/delete + auto optimistic lock + auto snapshot |
+| `describe_data` | Show main data description + format hints |
+| `schema_data` / `diff_data` | Inspect schema constraints at a path / diff snapshots or JSON |
+| `restore_data` / `history_data` | Restore snapshot (no id = most recent) / list & read snapshots |
+| `query_data` / `search_data` | JSONPath query / full-text search |
+| `eval_script` | Sandboxed script on data (query/transform; transform supports `{patches:[...]}` incremental mode) |
+| `draft_write` / `draft_commit` | Opt-in (`capabilities.draftWrite`) chunked build for very large JSON + atomic commit |
 
-**Key rule**: `write`/`set`/`edit`/`delete` only affect **schema-declared** fields (ZodObject auto-whitelist; undeclared fields hidden/denied). Sub-path reads are recursively projected by the sub-schema at that location (e.g. `read components.0` hides child undeclared fields). `jsonPath` is segment-by-segment validated against schema. Invalid schema → structured error, no write. `write`/`edit` writes in-place (preserves Vue reactive refs). `write` auto-tracks hash from `read` for optimistic lock (no manual `expectedHash` needed). Whole-set / `set_data` / `eval` transform become **merge** semantics in whitelist mode (only updates declared fields, undeclared fields preserved — prevents accidental deletion); `interceptors.write`-supplied invisible fields (not in schema) are written back to bind after schema+merge (not stripped).
+**Key rule**: `write` (all four intents) only affects **schema-declared** fields (ZodObject auto-whitelist; undeclared fields hidden/denied). Sub-path reads are recursively projected by the sub-schema at that location (e.g. `read components.0` hides child undeclared fields). `jsonPath` is segment-by-segment validated against schema. Invalid schema → structured error, no write. `write` writes in-place (preserves Vue reactive refs). `write` auto-tracks hash from `read` for optimistic lock (no manual `expectedHash` needed). Whole-set / `eval` transform become **merge** semantics in whitelist mode (only updates declared fields, undeclared fields preserved — prevents accidental deletion); `interceptors.write`-supplied invisible fields (not in schema) are written back to bind after schema+merge (not stripped).
 
 ### write / jsonPath edit operations
 

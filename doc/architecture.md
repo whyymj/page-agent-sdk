@@ -145,7 +145,7 @@ flowchart TD
 **数据存储位置:**
 - **实际值** → 宿主 `window[path]`(唯一数据源,V0/V1/V2 都在这)
 - **快照** → `dataOps` 闭包内 `snapshots: SnapshotEntry[]`(纯内存栈,FIFO 限长 20)
-- **hash** → 实时计算 `djb2(safeStringify(value))`,不存储,只在 `get_data`/`read` 返回末尾附 `hash=xxx`(整体 bind 的 hash)
+- **hash** → 实时计算 `djb2(safeStringify(value))`,不存储,只在 `read` 返回末尾附 `hash=xxx`(整体 bind 的 hash)
 - **冲突挂起信息** → `core.pendingConflict` ref(响应式内存,供 UI)+ `SdkEvent 'conflict'` 外发
 
 **关键约定:**
@@ -459,14 +459,14 @@ flowchart LR
 > CLAUDE.md「架构要点 · 数据槽操作」只留不变量;细节在这。源码:`src/core/tools/{dataOps,dataSlotQuery,jsonUtils,schemaUtils,resources}.ts` + `backends/vfs.ts`。
 
 **schema 形状白名单(ZodObject 时生效;非 ZodObject 全开放向后兼容):**
-- 顶层 key = 可读写白名单。**读路径统一深投影**:`projectBySchemaDeep` 单一口径(read 整体 / get_data 整体 / jsonPaths 根 / query / search / eval 根 / diff 一律递归投影,未声明字段不泄露)
+- 顶层 key = 可读写白名单。**读路径统一深投影**:`projectBySchemaDeep` 单一口径(read 整体 / jsonPaths 根 / query / search / eval 根 / diff 一律递归投影,未声明字段不泄露)
 - **写路径逐段校验**:`write`/`edit`/`delete` 的 `jsonPath` 经 `isPathAllowed` 逐段判(ZodArray 严格判索引 `/^\d+$/`;discriminatedUnion/union 静态不知 option → 降级开放,交 `schema.safeParse` 兜底)
 - 整体 `set` 自动转 **merge 语义**(未声明字段保留防误删);拦截器补充的未声明字段同样被白名单挡下
 - 校验不合法 → **结构化错误**(不写入);错误码/JSONPath 子集/sandbox 禁用列表见 `dataOps.ts` 头注
 
 **快照回退:**`set/edit/delete` 前自动存快照(**per-path 栈**);`restore_data` 一键回退;`history_data({list:true})` 只读查看快照时间线;`diff_data` 对比。
 
-**乐观锁与冲突:**`get_data`/`read` 返回附 `hash=xxx`;写工具传 `expectedHash` 或高层 `write` `autoLock`(默认开,用最后 read 的 hash)启用。外部改过(hash 不匹配)→ 冲突挂起 `sdk.pendingConflict`(ref)+ ChatDialog 冲突条三选一 → `sdk.resolveConflict('keep_external'|'overwrite'|'restore')`(状态机见 §⑤)。**per-scope 基线**:基线 Map 按 caller scope 隔离,子 agent 委派期间经 scope proxy 切换,子 read/write 不污染主基线。**契约:同 scope 连续写永不互相冲突**(写成功即刷基线,解析→检查→提交同步无 await)。headless 可 watch `pendingConflict` 自建 UI。
+**乐观锁与冲突:**`read` 返回附 `hash=xxx`;写工具传 `expectedHash` 或高层 `write` `autoLock`(默认开,用最后 read 的 hash)启用。外部改过(hash 不匹配)→ 冲突挂起 `sdk.pendingConflict`(ref)+ ChatDialog 冲突条三选一 → `sdk.resolveConflict('keep_external'|'overwrite'|'restore')`(状态机见 §⑤)。**per-scope 基线**:基线 Map 按 caller scope 隔离,子 agent 委派期间经 scope proxy 切换,子 read/write 不污染主基线。**契约:同 scope 连续写永不互相冲突**(写成功即刷基线,解析→检查→提交同步无 await)。headless 可 watch `pendingConflict` 自建 UI。
 
 **高层 `read`/`write`:**
 - `read({jsonPath?, jsonPaths?, fields?, depth?, offset?, limit?})`:多路径一次读、字段裁剪、深度截断、数组分页

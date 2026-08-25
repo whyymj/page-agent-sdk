@@ -62,7 +62,6 @@ export const MODEL_UNAVAILABLE_GUIDANCE = '该模型在当前网关不可用:换
 export function decorateModelUnavailable(err: unknown): boolean {
   if (!isModelUnavailableError(err)) return false
   const e = err as { code?: string; message?: string }
-  const already = e.code === 'MODEL_UNAVAILABLE'
   try {
     e.code = 'MODEL_UNAVAILABLE'
     if (typeof e.message === 'string' && !e.message.includes(MODEL_UNAVAILABLE_GUIDANCE)) {
@@ -71,5 +70,5 @@ export function decorateModelUnavailable(err: unknown): boolean {
   } catch {
     /* message 只读的异形错误:仅打码 */
   }
-  return true // 命中即 true(already 仅决定是否重复追加引导文案,不影响命中语义)
+  return true // 命中即 true(message 去重追加,不影响命中语义)
 }

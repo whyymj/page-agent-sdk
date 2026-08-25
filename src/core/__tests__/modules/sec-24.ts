@@ -61,7 +61,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     // controller 挂在工具数组上(不可枚举)
     const controller = (tools as any).controller
     assert(!!controller, 'createDataOps 返回的工具数组上挂有 controller')
-    assert(Array.isArray(tools) && tools.length === 14, 'controller 不可枚举不影响数组长度/遍历(仍 14 工具;simplify-toolset 移除 snapshot/list)')
+    assert(Array.isArray(tools) && tools.length === 10, 'controller 不可枚举不影响数组长度/遍历(仍 10 工具;legacy-crud-dedup 移除 get/set/edit/delete)')
 
     // get() 返回当前 config
     const cfg = controller.get()
@@ -72,21 +72,21 @@ export async function run(ctx: TestCtx): Promise<void> {
     controller.set({ schema: z.object({ count: z.number().int().min(0) }), bind: newObj, description: '改后' })
     const cfg2 = controller.get()
     assert(cfg2.description === '改后' && cfg2.bind === newObj, 'controller.set() 换 config 后 get() 反映新值')
-    // 新 schema 立即对工具生效:edit_data 合法值写入新 bind
-    let r = await invoke(t['edit_data'], { op: 'set', jsonPath: 'count', value: '42' })
-    assert(newObj.count === 42 && /已 edit/.test(r), 'set 换 config 后 edit 立即按新 schema 生效(写新 bind)')
+    // 新 schema 立即对工具生效:write(edit) 合法值写入新 bind
+    let r = await invoke(t['write'], { patch: { op: 'set', jsonPath: 'count', value: '42' } })
+    assert(newObj.count === 42 && /已 write\(edit\)/.test(r), 'set 换 config 后 write(edit) 立即按新 schema 生效(写新 bind)')
     // 旧 bind 不再被工具操作(工具操作新 bind)
     assert(dataObj.base === 'init', 'set 换 bind 后旧 bind 不受工具影响')
     // 新 schema 校验生效
-    r = await invoke(t['edit_data'], { op: 'set', jsonPath: 'count', value: '-1' })
+    r = await invoke(t['write'], { patch: { op: 'set', jsonPath: 'count', value: '-1' } })
     assert(/SCHEMA_INVALID/.test(r) && newObj.count === 42, 'set 换 schema 后按新 schema 校验(非法值不写)')
 
     // update() 只换 bind(保留 schema/description),清快照
     const newerObj: any = { count: 10 }
     controller.update(newerObj)
     assert(controller.get().bind === newerObj && controller.get().description === '改后', 'controller.update() 只换 bind,保留 schema/description')
-    r = await invoke(t['get_data'], { jsonPath: 'count' })
-    assert(/10/.test(r), 'update 换 bind 后 get_data 读新 bind 值')
+    r = await invoke(t['read'], { jsonPath: 'count' })
+    assert(/10/.test(r), 'update 换 bind 后 read 读新 bind 值')
 
     // set 后快照被清:history_data list 无历史
     r = await invoke(t['history_data'], { list: true })

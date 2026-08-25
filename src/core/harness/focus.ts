@@ -26,14 +26,11 @@ import { extractSchemaHint } from '../presets'
 /**
  * 写工具集合(聚焦时其 jsonPath 必须在任一 focus 子树内;读工具不限制,用户仍需看全量上下文)。
  * fix-authorization-surface(P1-21/22):
- *  - 增 draft_commit(整体写 bind,同 set_data 语义);增 eval_script(transform 模式,wrapToolCall 内单独判 mode)
+ *  - 增 draft_commit(整体写 bind,同 write(set) 语义);增 eval_script(transform 模式,wrapToolCall 内单独判 mode)
  *  - 移除 vfs_write/vfs_edit:vfs path 是工作区文件路径(如 html/x.vue)非数据 jsonPath,
  *    与焦点前缀比较恒不匹配 → 聚焦下误拦合法 vfs 写(html 子 agent 代码文件);vfs 工作区不属焦点数据范围
  */
 const WRITE_TOOLS = new Set([
-  'set_data',
-  'edit_data',
-  'delete_data',
   'write',
   'draft_commit',
 ])
@@ -41,7 +38,7 @@ const WRITE_TOOLS = new Set([
 /**
  * 提取一次工具调用涉及的所有 jsonPath scope(点号路径)。
  * 兼容 write 高层工具的嵌套:jsonPath 可能在 `patch.jsonPath` / `patches[].jsonPath`(批量逐条独立判断)。
- * 整体操作(write({value}) / set_data / draft_commit 无 jsonPath)返回空数组 → 由 wrapToolCall 按「整体写 = 越界」拒绝(P1-22)。
+ * 整体操作(write({value}) / draft_commit 无 jsonPath)返回空数组 → 由 wrapToolCall 按「整体写 = 越界」拒绝(P1-22)。
  */
 function extractScopes(args: unknown): string[] {
   const a = (args ?? {}) as Record<string, any>
@@ -197,7 +194,7 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
         }
         if (WRITE_TOOLS.has(ctx.name)) {
           const scopes = extractScopes(ctx.args)
-          // P1-22(fix-authorization-surface):无 jsonPath 整体写(write({value})/set_data/draft_commit/edit 无 path merge-append)
+          // P1-22(fix-authorization-surface):无 jsonPath 整体写(write({value})/draft_commit/edit 无 path merge-append)
           // 原「空 scopes 放行」与 strict 承诺冲突 —— 整体写无法校验子树归属 = 越界
           if (!scopes.length) return deny('(整体数据)')
           for (const scope of scopes) {
@@ -208,6 +205,10 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
         // 默认只返回聚焦子树(多焦点全含);显式路径读完全自由(「读不限制」设计保留)。教学行放结果级反馈
         // (3.4 立项教训:工具层反馈比 system prompt 引导强)。dataOps 零改动,复用多路径读(hash 供 autoLock)
         if (ctx.name === 'read') {
+          // subtree-summary 聚焦全文通道:聚焦态 read 目标落在焦点子树内 → 该子树(含嵌套大子树)读全文。
+          // 经 ctx.callConfig 透传 __pgFullTextPaths(同 __pgDataScope per-call 通道),read 侧按绝对路径前缀豁免摘要;
+          // 范围外读前缀不匹配不受影响。豁免是无子 agent 可用通道(主 agent 自有 set_focus 工具族)
+          ctx.callConfig = { ...(ctx.callConfig ?? {}), __pgFullTextPaths: focuses.map((f) => f.path) }
           const a = ctx.args as Record<string, unknown> | undefined
           if (!a?.jsonPath && !a?.jsonPaths) {
             const paths = focuses.map((f) => f.path)

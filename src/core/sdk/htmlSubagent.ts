@@ -28,6 +28,7 @@ import type { VfsFile } from '../harness/state'
 import type { VerifyCheck, VerifyCheckResult } from '../harness/verify'
 import { createTodosMiddleware } from '../harness/todos'
 import { createVerifyMiddleware } from '../harness/verify'
+import { createHtmlRenderCheck, composeStructureThenRender } from './htmlRenderCheck'
 import { validateHtmlFormat } from '../tools/htmlValidate'
 import { htmlOrchestratorPrompt } from '../presets'
 import { getByPath } from '../tools/jsonUtils'
@@ -333,9 +334,20 @@ export function createHtmlSubagent(options: CreateHtmlSubagentOptions = {}): Sub
   const middleware: Middleware[] = []
   if (planning) middleware.push(createTodosMiddleware())   // write_todos / update_todo(规划)
   // 格式校验链:validate_code 工具(自主自检)+ verify beforeReturn 门禁(确定性兜底)
+  // render-check:渲染自检组合进同一 VerifyCheck(结构不过短路渲染;单一中间件零新开关)
+  const renderCheck = formatCheck
+    ? createHtmlRenderCheck({ vfsPrefix: codeVfsPrefix, codeField, writablePaths: writablePaths ?? [] })
+    : undefined
   if (formatCheck) {
     middleware.push(createHtmlValidateToolsMiddleware(codeVfsPrefix))
-    middleware.push(createVerifyMiddleware({ check: createHtmlFormatCheck({ vfsPrefix: codeVfsPrefix }) }))
+    const structureCheck = createHtmlFormatCheck({ vfsPrefix: codeVfsPrefix })
+    const verifyMw = createVerifyMiddleware({
+      check: renderCheck ? composeStructureThenRender(structureCheck, renderCheck.check) : structureCheck,
+    })
+    // getController 注入通道(同 validate_code 先例:createChatSdk 装配期识别 _setGetController 后注入同源 dataOpsController,
+    // 供渲染检查读 write 新建组件的 bind code)
+    if (renderCheck) (verifyMw as any)._setGetController = renderCheck.setGetController
+    middleware.push(verifyMw)
   }
   // 注意:checkout/commit 钩子不由本工厂装(createChatSdk 装配期识别 _codeAsset 标记后追加 ——
   //   钩子需访问主 dataOpsController + vfsStore,本工厂调用时集成商尚未传 data,故延迟到装配期)
@@ -367,6 +379,7 @@ export function createHtmlSubagent(options: CreateHtmlSubagentOptions = {}): Sub
   ;(cfg as any)._rebuildCodeAssetPaths = (r: string) => {
     cfg.systemPrompt = htmlSystemPrompt(codeVfsPrefix, codeField, r)
     if (usedDefaultSkill) cfg.skills = [buildHtmlFragmentSkill(r, codeField)]
+    renderCheck?.setWritablePaths([r])  // 渲染检查的「write 新建」差集口径需最新写根
   }
   return cfg
 }

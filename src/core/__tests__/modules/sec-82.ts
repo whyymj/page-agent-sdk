@@ -41,7 +41,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(seen.length === 1 && (seen[0] as any)?.__pgDataScope === '', '✓ A2 主栈工具 config 兜底含 __pgDataScope=""(不再依赖 ambient 闭包;并行委派子窗口不改写主栈 scope)')
   }
 
-  console.log('\n[round2 A3:query_data/get_data 大文本摘要(codeAsset 形态)]')
+  console.log('\n[round2 A3:query_data/read 大文本摘要(codeAsset 形态)]')
   {
     const big = 'x'.repeat(2000)
     const bind: any = { components: [{ type: 'custom', name: 'c1', code: big }] }
@@ -53,13 +53,13 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 主 scope(config 带 __pgDataScope='')→ 摘要;query_data 命中 value 不再全文
     const q = await invoke(byName.query_data, { expr: '$.components[*]' })
     assert(q.includes('<code') && !q.includes(big), '✓ A3 query_data 主 scope 命中 code → <code Nkb> 摘要(修前全文回灌击穿 read 摘要机制)')
-    const g = await invoke(byName.get_data, { jsonPath: 'components.0' })
-    assert(g.includes('<code') && !g.includes(big), '✓ A3 get_data 主 scope → 同样摘要(与 read 同 isMain 语义)')
+    const g = await invoke(byName.read, { jsonPath: 'components.0' })
+    assert(g.includes('<code') && !g.includes(big), '✓ A3 read 单路径主 scope → code 摘要(与 query_data 同 isMain 语义)')
     // 子 scope(__pgDataScope='sub')→ 全文(子 agent 需要完整 code 工作)
     const qSub = await invoke(byName.query_data, { expr: '$.components[*]' }, { configurable: { __pgDataScope: 'sub' } })
     assert(qSub.includes(big), '✓ A3 query_data 子 scope → 全文不摘要(子 agent 工作需要)')
-    const gSub = await invoke(byName.get_data, { jsonPath: 'components.0' }, { configurable: { __pgDataScope: 'sub' } })
-    assert(gSub.includes(big), '✓ A3 get_data 子 scope → 全文')
+    const gSub = await invoke(byName.read, { jsonPath: 'components.0' }, { configurable: { __pgDataScope: 'sub' } })
+    assert(gSub.includes(big), '✓ A3 read 单路径子 scope → 全文')
   }
 
   console.log('\n[round2 A4:失败读(PATH_DENIED)不刷乐观锁基线]')

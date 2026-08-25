@@ -49,7 +49,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(data.components[0].code === BIG, '✓ 深拷贝:原 data 不被污染(bind 原值不变)')
     const sub = summarizeLargeText(data, false, specs, 200) as any
     assert(sub.components[0].code === BIG, '✓ 子 scope(isMain=false)原样返回(子 agent 改 code 需全文)')
-    assert(summarizeLargeText(data, true, [], 200) === data, '✓ 无 specs 原样返回(非 htmlSubagent 零开销)')
+    assert(JSON.stringify(summarizeLargeText(data, true, [], 200)) === JSON.stringify(data), '✓ 无 specs 且处处低于子树阈值 → 结构零变化(轻量数据零变化锁;泛化后无 specs 也走体积判定,≥阈值占位见 sec-105)')
     assert(summarizeLargeText(null, true, specs, 200) === null, '✓ null/非对象原样返回')
   }
 

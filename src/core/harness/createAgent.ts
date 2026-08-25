@@ -204,6 +204,11 @@ export interface CreateAgentOptions {
   /** 中间件栈(顺序:内置在前,用户在后) */
   middleware?: Middleware[]
   maxToolRounds?: number
+  /**
+   * 会话是否具备子 agent 委派能力(section-orchestrator 0a:createChatSdk 装配期传入;
+   * 轮次预算提醒 70% 档的委派教学按此感知 —— false 不点名 spawn_agent 等不存在的工具)
+   */
+  hasSubagent?: boolean
   /** 循环总迭代硬上限(防自纠死循环;默认 max(maxToolRounds*3, 30);harden-react-loop-budget) */
   maxIterations?: number
   /** 模型调用失败自动重试次数(默认 2;网络/429/5xx 重试,4xx 与 abort 不重试) */
@@ -307,7 +312,7 @@ export function computeMaxIterations(maxToolRounds: number, userMax?: number): n
  * 3.43 editor 实测驱动:12 组件整页计划(min ~25 轮)撞 15 轮上限,任务断在「查文档查到一半」。
  * 两档:剩余 ≤2 轮告急(优先级高,先判);已用 ≥70% 提醒。零开销纯函数,可白盒单测。
  */
-export function roundBudgetHintText(usedRounds: number, maxToolRounds: number): string {
+export function roundBudgetHintText(usedRounds: number, maxToolRounds: number, hasSubagent?: boolean): string {
   if (maxToolRounds <= 0 || usedRounds < 0) return ''
   const remaining = maxToolRounds - usedRounds
   if (remaining <= 0) return '' // 已触顶(收口路径),不打扰
@@ -315,17 +320,21 @@ export function roundBudgetHintText(usedRounds: number, maxToolRounds: number): 
     return `⚠️ 轮次预算告急:本轮任务已用 ${usedRounds}/${maxToolRounds} 轮工具调用,仅剩 ${remaining} 轮。立即停止扩展性操作(查询/重读/优化),完成手头最关键的一步写入或委派,然后用纯文本给出诚实结论:哪些已完成、哪些未做(用 update_todo 如实标记),用户可回复「继续」续跑。`
   }
   if (usedRounds >= Math.ceil(maxToolRounds * 0.7)) {
-    return `⚠️ 轮次预算提醒:本轮任务已用 ${usedRounds}/${maxToolRounds} 轮工具调用,剩余 ${remaining} 轮。优先完成核心写入/委派与收口,砍掉非必要的查询与重复读;若预估剩余步骤超出预算,先做最重要的部分并如实标记未完成项,不要等被打断。`
+    // section-orchestrator 0a:委派教学按能力感知(hasSubagent=false 不点名不存在的工具,泛化措辞)
+    const delegate = hasSubagent
+      ? '剩余任务多且重时,可并行分段委派(多个 spawn_agent 各带 writablePaths=段前缀,task 写明改动目标与验收),子 agent 过程隔离不占你的轮次与上下文;'
+      : '剩余任务多且重时优先做最关键的部分;'
+    return `⚠️ 轮次预算提醒:本轮任务已用 ${usedRounds}/${maxToolRounds} 轮工具调用,剩余 ${remaining} 轮。${delegate}砍掉非必要的查询与重复读;若预估剩余步骤超出预算,先做最重要的部分并如实标记未完成项,不要等被打断。`
   }
   return ''
 }
 
 /** C2 写失败计数认定的写工具集(dataOps 高层 + 底层写路径;draft_commit 视为根路径写) */
-const WRITE_TOOL_NAMES = new Set(['write', 'set_data', 'edit_data', 'delete_data', 'draft_commit'])
+const WRITE_TOOL_NAMES = new Set(['write', 'draft_commit'])
 
 /**
  * 从写工具 args 提取目标 path(计数聚合键;提取不出 → 根 '')。纯函数。
- * 覆盖:jsonPath 直传(edit_data/delete_data)/ patch.jsonPath(write 增量)/ patches[0].jsonPath(write 批量)/ 其余(整体 set)= 根
+ * 覆盖:jsonPath 直传(eval_script 子树)/ patch.jsonPath(write 增量)/ patches[0].jsonPath(write 批量)/ 其余(整体 set)= 根
  */
 export function extractWriteTargetPath(args: unknown): string {
   if (!args || typeof args !== 'object') return ''
@@ -892,7 +901,7 @@ export function createAgent(options: CreateAgentOptions) {
         // beforeModel(正序):中间件更新 state(todos 推进等),随后重渲染 system
         state = runBeforeModel(middlewares, { messages: currentMessages, state })
         // 轮次预算感知(round-budget-awareness):预算吃紧时把提示段注入本轮 system(只在 [0] 重渲染,不污染历史消息)
-        currentMessages = replaceSystem(currentMessages, roundBudgetHintText(rounds, maxToolRounds))
+        currentMessages = replaceSystem(currentMessages, roundBudgetHintText(rounds, maxToolRounds, options.hasSubagent))
         // 逐轮上下文保底压缩:tool 结果累积超放行上限时,从最早的 ToolMessage 起截断为占位摘要(大模型阈值高几乎不触发)
         currentMessages = trimContextIfNeeded(currentMessages, Math.round(caps.contextWindow * 0.6)) // H1:token 口径,单轮 currentMessages ≤60% 窗口(留输出+schema)
 

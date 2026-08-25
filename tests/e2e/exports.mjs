@@ -73,8 +73,8 @@ export async function run() {
       data: { schema: z.object({ x: z.number() }), bind: { x: 1 }, description: 'd' },
     })
     await sdk.mount()
-    const setTool = sdk.inspect().tools.find((t) => t.name === 'set_data')
-    assert(setTool?.source === 'builtin', 'set_data source=builtin')
+    const descTool = sdk.inspect().tools.find((t) => t.name === 'describe_data')
+    assert(descTool?.source === 'builtin', 'describe_data source=builtin')
     const readTool = sdk.inspect().tools.find((t) => t.name === 'read')
     assert(readTool?.source === 'builtin', 'read(高层入口)source=builtin')
     const fetchTool = sdk.inspect().tools.find((t) => t.name === 'fetch_document')

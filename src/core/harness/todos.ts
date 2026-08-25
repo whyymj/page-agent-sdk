@@ -16,7 +16,7 @@ import type { Middleware } from './middleware'
 import type { Todo, TodoStatus } from './state'
 
 /** 退出规划阶段的主数据写工具(开始执行);eval_script 本期不列入(transform/query 语义混合,见 design §4) */
-const PLAN_EXIT_TOOLS = new Set(['write', 'set_data', 'edit_data', 'delete_data'])
+const PLAN_EXIT_TOOLS = new Set(['write'])
 
 /** todos 入参形状(id 可选,框架补全);兼容 write_todos zod 推导类型 / Todo / hydrate 旧数据 */
 type TodoInput = { id?: string; content: string; status: TodoStatus; parentId?: string; deps?: string[]; criteria?: string; evidence?: string }
@@ -143,7 +143,7 @@ export function createTodosMiddleware(
       } else {
         planRevisions++
         if (planRevisions > maxPlanRevisions) {
-          return `规划阶段已达上限(${maxPlanRevisions} 次修订,现在已是第 ${planRevisions} 版计划)。停止修订,基于当前清单开始执行(用 write 落地;advanced 模式亦可用 set_data/edit_data)。当前清单:\n${todos.map((t, i) => `${i + 1}. #${t.id} [${t.status}] ${t.content}`).join('\n') || '(空)'}`
+          return `规划阶段已达上限(${maxPlanRevisions} 次修订,现在已是第 ${planRevisions} 版计划)。停止修订,基于当前清单开始执行(用 write 落地)。当前清单:\n${todos.map((t, i) => `${i + 1}. #${t.id} [${t.status}] ${t.content}`).join('\n') || '(空)'}`
         }
       }
       todos = ensureIds(input)

@@ -146,8 +146,8 @@ export async function run(ctx: TestCtx): Promise<void> {
     parsed = JSON.parse(r)
     assert(parsed.matched === 1 && /北京/.test(parsed.results[0].value), 'search_data: 命中 owner.city')
 
-    // 工具数量:14(describe/get/set/edit/delete/restore/history/query/search/eval/read/write/schema_data/diff_data;snapshot/list 已移除)
-    assert(tools.length === 14, 'createDataOps: 含 14 个工具(9 基础 + read/write/schema_data/history_data/diff_data;simplify-toolset 移除 snapshot/list)')
+    // 工具数量:10(describe/read/write/query/search/eval/restore/history/schema_data/diff_data;get/set/edit/delete 已移除——legacy-crud-dedup)
+    assert(tools.length === 10, 'createDataOps: 含 10 个工具(describe/read/write/query/search/eval/restore/history/schema_data/diff_data;legacy-crud-dedup 移除 get/set/edit/delete)')
 
     // eval_script 工具存在(装配检查;node 无 Worker,不实际跑)
     assert(!!t['eval_script'], 'eval_script 工具已装配')
@@ -265,12 +265,10 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(t3['write'], { value: { v: 2 } })
     assert(/VERSION_CONFLICT/.test(r), 'write autoLock:read 后外部改值 → 自动乐观锁触发冲突')
 
-    // LEAF_BIND:叶子 bind 的 set_data/write(set) 拒绝(不静默丢失)
+    // LEAF_BIND:叶子 bind 的 write(set) 拒绝(不静默丢失;set_data 已移除,原双断言合一)
     const leaf = '原始字符串' as any
     const leafTools = createDataOps({ schema: z.string(), bind: leaf, description: 'leaf' })
     const lt = byName(leafTools)
-    r = await invoke(lt['set_data'], { value: '"新值"' })
-    assert(/LEAF_BIND/.test(r), 'set_data 叶子 bind → LEAF_BIND 拒绝(不静默丢失)')
     r = await invoke(lt['write'], { value: '"新值"' })
     assert(/LEAF_BIND/.test(r), 'write(set) 叶子 bind → LEAF_BIND 拒绝')
 
@@ -299,35 +297,24 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(tPV['write'], { patch: { jsonPath: 'items' }, del: true })
     assert(/已删除/.test(r), 'M1: write del 不传 op → 通过(del 分支不读 op;原 bug:op 必填致 zod 校验失败)')
 
-    // 白名单严格(fix-dataops-write-correctness):write(set) / set_data 的未声明字段一律丢弃,
+    // 白名单严格(fix-dataops-write-correctness):write(set) 的未声明字段一律丢弃,
     // 即便用户显式传入也不写回 bind(安全收紧:可写字段须在 schema 声明)。
     const pageSupp2: any = { title: 'old', _internal: 'keep' }
     const toolsSupp2 = createDataOps({ schema: z.object({ title: z.string() }), bind: pageSupp2, description: 'p-supp2' })
     const tSupp2 = byName(toolsSupp2)
-    r = await invoke(tSupp2['set_data'], { value: { title: 'new2', _internal: 'user-supplied' } })
-    assert(pageSupp2.title === 'new2' && pageSupp2._internal === 'keep', '白名单严格: set_data 显式传非声明字段 → 被挡(_internal 保持 keep 而非 user-supplied)')
+    r = await invoke(tSupp2['write'], { value: { title: 'new2', _internal: 'user-supplied' } })
+    assert(pageSupp2.title === 'new2' && pageSupp2._internal === 'keep', '白名单严格: write(set) 显式传非声明字段 → 被挡(_internal 保持 keep 而非 user-supplied)')
 
     // 字符串 value parse 一致性(统一启发式)
     const page8: any = { count: 0, list: [] as any[] }
     const tools8 = createDataOps({ schema: z.object({ count: z.number(), list: z.array(z.any()) }), bind: page8, description: 'p8' })
     const t8 = byName(tools8)
-    r = await invoke(t8['edit_data'], { op: 'set', jsonPath: 'count', value: '5' })
-    assert(page8.count === 5, 'edit_data 裸数字字符串 "5" → parse 成数字 5')
-    r = await invoke(t8['edit_data'], { op: 'append', jsonPath: 'list', value: 'c' })
-    assert(page8.list[0] === 'c', 'edit_data 裸字符串 "c" → 当原值字符串(parse 失败 fallback)')
-    r = await invoke(t8['set_data'], { value: '{bad' })
-    assert(/JSON_PARSE/.test(r), 'set_data "{bad" → JSON_PARSE(以 { 开头按 JSON 解析失败报错)')
-
-    // M2: edit_data 容错误传 write 的 patch 形式({patch:{op,jsonPath,value}})→ 从 patch 取值落地
-    // (原:op schema 必填 + 顶层无 op → zod 挡/MISSING_VALUE 浪费一轮;advanced 模式 edit_data 与 write 并存易混用)
-    r = await invoke(t8['edit_data'], { patch: { op: 'set', jsonPath: 'count', value: 99 } })
-    assert(page8.count === 99, 'M2: edit_data 误传 patch 形式 → 从 patch 取 op/jsonPath/value 落地')
-    // 顶层优先:顶层 op/jsonPath + patch.value → 用顶层 op/jsonPath + patch.value 兜底
-    r = await invoke(t8['edit_data'], { op: 'set', jsonPath: 'count', patch: { value: 77 } })
-    assert(page8.count === 77, 'M2: edit_data 顶层优先(顶层 op/jsonPath 主导,patch.value 兜底)')
-    // 顶层与 patch 都无 op → MISSING_VALUE(op 仍语义必填)
-    r = await invoke(t8['edit_data'], { jsonPath: 'count', value: 5 })
-    assert(/MISSING_VALUE/.test(r), 'M2: edit_data 顶层与 patch 都无 op → MISSING_VALUE')
+    r = await invoke(t8['write'], { patch: { op: 'set', jsonPath: 'count', value: '5' } })
+    assert(page8.count === 5, 'write(edit) 裸数字字符串 "5" → parse 成数字 5')
+    r = await invoke(t8['write'], { patch: { op: 'append', jsonPath: 'list', value: 'c' } })
+    assert(page8.list[0] === 'c', 'write(edit) 裸字符串 "c" → 当原值字符串(parse 失败 fallback)')
+    r = await invoke(t8['write'], { value: '{bad' })
+    assert(/JSON_PARSE/.test(r), 'write(set) "{bad" → JSON_PARSE(以 { 开头按 JSON 解析失败报错)')
 
     // #优化1:write 批量 patches(一次原子应用多个 patch)
     const page9: any = { title: 't', a: 1, b: 2, items: ['x'] }
@@ -381,14 +368,14 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(wlt['read'], { jsonPath: 'secret' })
     assert(/PATH_DENIED/.test(r), '白名单 read 非声明字段 → PATH_DENIED')
     // edit 非声明字段 → PATH_DENIED
-    r = await invoke(wlt['edit_data'], { op: 'set', jsonPath: 'secret', value: '"泄露"' })
-    assert(/PATH_DENIED/.test(r) && bigJson.secret === '机密字段', '白名单 edit 非声明字段 → PATH_DENIED(不写入)')
+    r = await invoke(wlt['write'], { patch: { op: 'set', jsonPath: 'secret', value: '"泄露"' } })
+    assert(/PATH_DENIED/.test(r) && bigJson.secret === '机密字段', '白名单 write(edit) 非声明字段 → PATH_DENIED(不写入)')
     // delete 非声明字段 → PATH_DENIED
-    r = await invoke(wlt['delete_data'], { jsonPath: 'secret' })
-    assert(/PATH_DENIED/.test(r) && bigJson.secret === '机密字段', '白名单 delete 非声明字段 → PATH_DENIED(不删除)')
-    // set_data 整体 → merge 语义(只更新声明字段,隐藏字段保留不动,防误删)
-    r = await invoke(wlt['set_data'], { value: { title: '新标题', components: [{ id: 2 }] } })
-    assert(bigJson.title === '新标题' && bigJson.secret === '机密字段' && bigJson.internalState.flag === true, '白名单 set_data → merge 语义:更新声明字段,隐藏字段(secret/internalState)保留不动')
+    r = await invoke(wlt['write'], { patch: { jsonPath: 'secret' }, del: true })
+    assert(/PATH_DENIED/.test(r) && bigJson.secret === '机密字段', '白名单 write(del) 非声明字段 → PATH_DENIED(不删除)')
+    // write(set) 整体 → merge 语义(只更新声明字段,隐藏字段保留不动,防误删)
+    r = await invoke(wlt['write'], { value: { title: '新标题', components: [{ id: 2 }] } })
+    assert(bigJson.title === '新标题' && bigJson.secret === '机密字段' && bigJson.internalState.flag === true, '白名单 write(set) → merge 语义:更新声明字段,隐藏字段(secret/internalState)保留不动')
     // write(set) 整体 → 同样 merge 语义
     r = await invoke(wlt['write'], { value: { title: '又改', components: [] } })
     assert(bigJson.title === '又改' && bigJson.secret === '机密字段', '白名单 write(set) → merge 语义:隐藏字段保留')
@@ -396,30 +383,30 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(wlt['query_data'], { expr: '$..*' })
     assert(!/机密字段/.test(r) && !/internalState/.test(r), '白名单 query_data → 只查声明字段(隐藏字段不参与)')
     // edit 声明字段子路径 → 允许
-    r = await invoke(wlt['edit_data'], { op: 'set', jsonPath: 'title', value: '"允许改"' })
-    assert(bigJson.title === '允许改', '白名单 edit 声明字段子路径 → 允许写入')
+    r = await invoke(wlt['write'], { patch: { op: 'set', jsonPath: 'title', value: '"允许改"' } })
+    assert(bigJson.title === '允许改', '白名单 write(edit) 声明字段子路径 → 允许写入')
 
     // 数组子项删除 splice(fix-dataops-write-correctness):三入口删数组元素 → length 递减、元素前移、无稀疏空位
     const arrSchema = z.object({ components: z.array(z.object({ id: z.number() })) })
     const mkArr = () => ({ components: [{ id: 1 }, { id: 2 }, { id: 3 }] })
-    // delete_data
+    // write del(不传 op,等价旧 delete_data)
     const ap1 = mkArr()
-    await invoke(byName(createDataOps({ schema: arrSchema, bind: ap1, description: 'ap1' }))['delete_data'], { jsonPath: 'components.0' })
-    assert(ap1.components.length === 2 && ap1.components[0].id === 2 && ap1.components[1].id === 3, '数组删除 splice: delete_data components.0 → length 3→2、元素前移([1,2,3]→[2,3]),无 empty 槽')
+    await invoke(byName(createDataOps({ schema: arrSchema, bind: ap1, description: 'ap1' }))['write'], { patch: { jsonPath: 'components.0' }, del: true })
+    assert(ap1.components.length === 2 && ap1.components[0].id === 2 && ap1.components[1].id === 3, '数组删除 splice: write del components.0 → length 3→2、元素前移([1,2,3]→[2,3]),无 empty 槽')
     // write del
     const ap2 = mkArr()
     await invoke(byName(createDataOps({ schema: arrSchema, bind: ap2, description: 'ap2' }))['write'], { patch: { op: 'remove', jsonPath: 'components.0' }, del: true })
     assert(ap2.components.length === 2 && ap2.components[0].id === 2, '数组删除 splice: write del components.0 → length 3→2、元素前移')
-    // edit remove
+    // write(edit) remove
     const ap3 = mkArr()
-    await invoke(byName(createDataOps({ schema: arrSchema, bind: ap3, description: 'ap3' }))['edit_data'], { op: 'remove', jsonPath: 'components.0' })
-    assert(ap3.components.length === 2 && ap3.components[0].id === 2, '数组删除 splice: edit remove components.0 → length 3→2、元素前移')
+    await invoke(byName(createDataOps({ schema: arrSchema, bind: ap3, description: 'ap3' }))['write'], { patch: { op: 'remove', jsonPath: 'components.0' } })
+    assert(ap3.components.length === 2 && ap3.components[0].id === 2, '数组删除 splice: write(edit) remove components.0 → length 3→2、元素前移')
     // 连续删空到 0 个元素(length 一路递减,不留空位;schema 无 .min() 约束允许删空)
     const ap4 = mkArr()
     const at4 = byName(createDataOps({ schema: arrSchema, bind: ap4, description: 'ap4' }))
-    await invoke(at4['delete_data'], { jsonPath: 'components.0' })
-    await invoke(at4['delete_data'], { jsonPath: 'components.0' })
-    await invoke(at4['delete_data'], { jsonPath: 'components.0' })
+    await invoke(at4['write'], { patch: { jsonPath: 'components.0' }, del: true })
+    await invoke(at4['write'], { patch: { jsonPath: 'components.0' }, del: true })
+    await invoke(at4['write'], { patch: { jsonPath: 'components.0' }, del: true })
     assert(ap4.components.length === 0, '数组连续删除: 3→2→1→0,length 一路递减无残留空位')
   }
 
@@ -432,17 +419,17 @@ export async function run(ctx: TestCtx): Promise<void> {
     const ctl = (toolsC as any).controller
     // ① ambient 切到 scope-A 并 read 建基线
     const exitA = ctl.enterScope('scope-A')
-    await invoke(tC['get_data'], {})
+    await invoke(tC['read'], {})
     // ② 外部改 bind(基线过期;无 token 时 autoLock 必冲突挂起)
     pageC.count = 99
-    // ③ 带 per-call token scope-B 的 set:读 B 基线(空 → 无 effHash → 直接写),不冲突
-    const r3 = await tC['set_data'].invoke({ value: '{ "count": 5 }' }, { configurable: { __pgDataScope: 'scope-B' } })
+    // ③ 带 per-call token scope-B 的 write(set):读 B 基线(空 → 无 effHash → 直接写),不冲突
+    const r3 = await tC['write'].invoke({ value: '{ "count": 5 }' }, { configurable: { __pgDataScope: 'scope-B' } })
     assert(!/CONFLICT/.test(r3) && pageC.count === 5, '✓ per-call scope token 优先:带 __pgDataScope 的写用 B 基线,不被 ambient scope-A 过期基线污染')
-    // ④ 对照:不带 token 的 set 走 ambient scope-A 过期基线 → autoLock 冲突挂起(证明 ③ 确实走了 token 而非巧合)
+    // ④ 对照:不带 token 的 write 走 ambient scope-A 过期基线 → autoLock 冲突挂起(证明 ③ 确实走了 token 而非巧合)
     pageC.count = 77  // 再制造一次外部改动
-    await invoke(tC['get_data'], {})  // 刷新 scope-A 基线(=77 的 hash)
+    await invoke(tC['read'], {})  // 刷新 scope-A 基线(=77 的 hash)
     pageC.count = 88  // 基线再次过期
-    const r4 = await invoke(tC['set_data'], { value: '{ "count": 6 }' })
+    const r4 = await invoke(tC['write'], { value: '{ "count": 6 }' })
     assert(/CONFLICT/.test(r4), '✓ 对照:无 token 走 ambient 过期基线 → 冲突(隔离来自 token 而非 ambient)')
     if ((ctl as any).exitScope) ctl.exitScope('scope-A')
     exitA?.()

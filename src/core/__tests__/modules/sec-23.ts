@@ -24,7 +24,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     const t = byName(tools)
 
     // merge value 含 __proto__/constructor:不应污染 Object.prototype,不应给目标加 own 危险键
-    let r = await invoke(t['edit_data'], { op: 'merge', jsonPath: '', value: '{"__proto__":{"polluted":true},"constructor":{"x":1},"b":2}' })
+    let r = await invoke(t['write'], { patch: { op: 'merge', jsonPath: '', value: '{"__proto__":{"polluted":true},"constructor":{"x":1},"b":2}' } })
     assert(bind.b === 2, 'merge: 正常键 b 落地')
     assert(!Object.prototype.hasOwnProperty.call(bind, '__proto__'), 'merge: 目标无 __proto__ own 属性')
     assert(!Object.prototype.hasOwnProperty.call(bind, 'constructor'), 'merge: 目标无 constructor own 属性')
@@ -32,14 +32,14 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(({} as any).x === undefined, 'merge: 未污染 Object.prototype(constructor 未生效)')
 
     // jsonPath 含 __proto__ 段:一律拒绝(PATH_UNSAFE)
-    r = await invoke(t['edit_data'], { op: 'set', jsonPath: '__proto__.polluted', value: 'true' })
-    assert(/PATH_UNSAFE/.test(r), 'edit: jsonPath 含 __proto__ 被拒')
-    assert(({} as any).polluted === undefined, 'edit: __proto__ jsonPath 未造成污染')
+    r = await invoke(t['write'], { patch: { op: 'set', jsonPath: '__proto__.polluted', value: 'true' } })
+    assert(/PATH_UNSAFE/.test(r), 'write(edit): jsonPath 含 __proto__ 被拒')
+    assert(({} as any).polluted === undefined, 'write(edit): __proto__ jsonPath 未造成污染')
 
     // set 越界数组索引:schema 校验在副本上拦截稀疏空洞,不写入
-    r = await invoke(t['edit_data'], { op: 'set', jsonPath: 'items.5', value: '"y"' })
-    assert(/SCHEMA_INVALID|PATCH_FAILED/.test(r), 'edit: set 越界数组索引被 schema 拦截(不产生稀疏空洞)')
-    assert(bind.items.length === 1 && bind.items[0] === 'x', 'edit: 越界 set 未改动原数组')
+    r = await invoke(t['write'], { patch: { op: 'set', jsonPath: 'items.5', value: '"y"' } })
+    assert(/SCHEMA_INVALID|PATCH_FAILED/.test(r), 'write(edit): set 越界数组索引被 schema 拦截(不产生稀疏空洞)')
+    assert(bind.items.length === 1 && bind.items[0] === 'x', 'write(edit): 越界 set 未改动原数组')
   }
 
   // ============ ReAct 循环健壮性(收口综合 / afterAgent 兜底 / 逐轮 trim)============

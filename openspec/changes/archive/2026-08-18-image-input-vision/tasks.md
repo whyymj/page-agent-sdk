@@ -23,4 +23,5 @@
 - [ ] ~~`describe_image` 工具 / `sdk.describeImage`~~(deferred:有真实需求再立项)
 - [ ] ~~`sdk.usage.vision_tokens` 分离累计~~(deferred:转述经集成方 LLM,SDK 侧无 token 可计)
 - [ ] 真 LLM:旁路三场景(贴截图问组件 / 贴稿还原 custom / OCR 问答;flash 量级视觉模型)
-- [ ] 文档:usage-guide 中英 vision 段 + README 能力行 + editor 集成指引(贴图改组件工作流)
+- [x] 文档:usage-guide 中英 vision 段 + README 能力行 + editor 集成指引(贴图改组件工作流)(3.46.0 补齐:usage-guide §6.17 中英 + README 中英 + doc 索引 + images-demo 示例)
+- [ ] 真 LLM 旁路三场景 → 已登记 openspec/deferred.md(2026-08-24 归档时补登记)

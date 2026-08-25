@@ -39,6 +39,13 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(roundBudgetHintText(29, 30).includes('仅剩 1 轮'), '✓ 剩余 1 轮 → 告急档')
     // 触顶/非法输入:零提示(收口路径不打扰;防负数/0 除错)
     assert(roundBudgetHintText(30, 30) === '' && roundBudgetHintText(35, 30) === '', '✓ 已触顶 → 无提示(收口路径,不打扰)')
+    // section-orchestrator 0a:70% 档委派教学按能力感知(hasSubagent)
+    const warnSub = roundBudgetHintText(21, 30, true)
+    assert(/并行分段委派/.test(warnSub) && /spawn_agent/.test(warnSub) && /writablePaths/.test(warnSub), '✓ 70% 档 + hasSubagent=true → 教「并行分段委派(多个 spawn_agent 各带 writablePaths)」')
+    const warnNoSub = roundBudgetHintText(21, 30, false)
+    assert(!/spawn_agent/.test(warnNoSub) && !/委派/.test(warnNoSub) && /轮次预算提醒/.test(warnNoSub), '✓ 70% 档 + hasSubagent=false → 不点名不存在的工具(泛化措辞,提醒本体保留)')
+    assert(!/spawn_agent/.test(roundBudgetHintText(21, 30)), '✓ 缺省第三参 → 同 false(向后兼容,旧断言不动即证)')
+    assert(!/spawn_agent/.test(roundBudgetHintText(28, 30, true)), '✓ 告急档不受 hasSubagent 影响(收口优先,不教新形态)')
     assert(roundBudgetHintText(5, 0) === '' && roundBudgetHintText(-1, 10) === '', '✓ 非法输入(max<=0/负数)→ 空(防御)')
   }
 

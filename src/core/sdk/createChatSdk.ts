@@ -54,6 +54,8 @@ import { createSummarizationMiddleware } from '../harness/summarization'
 import { buildDataPrompt, buildSystemPrompt } from './promptBuilder'
 import { createCodeAssetMiddleware, collectComponentNames } from './codeAssetMiddleware'
 import { createComponentLock, resolveTargetComponents, createComponentWriteGuardMiddleware, codeFieldIndexPaths } from './componentLock'
+import { createSubtreeWriteGuardMiddleware } from './subtreeGuard'
+import { createDelegateNudgeMiddleware } from '../harness/delegateNudge'
 import { createBaselineGuardMiddleware } from './baselineGuard'
 import { buildDiagnosticsReport, stringifyDiagnosticsReport, type DiagnosticsDataSummary } from './diagnostics'
 import { createHtmlSubagent } from './htmlSubagent'
@@ -290,13 +292,13 @@ export interface ChatSdkOptions {
     domInspect?: boolean     // DOM 读取工具 get_dom(默认 false;agent 读渲染后 DOM 结构,opt-in;有 token 成本,集成方按需开启)
     inspectEnv?: boolean     // 环境探查工具 inspect_env(默认 true;读 window 环境/location/调试变量,轻量只读,排查调试用)
     draftWrite?: boolean     // 分块写工具 draft_write/draft_commit(默认 false;几百 K JSON 分块构建再原子提交,opt-in;需 dataOps + vfs,advanced 暴露)
-    tracing?: boolean        // 结构化追踪 TraceSpan(默认 false;opt-in,采集有开销;DebugDrawer trace tab + getTraceMetrics + onEvent('trace'))⚠️ deprecation warn 期,计划 3.48 移除
+    tracing?: boolean        // 结构化追踪 TraceSpan(默认 false;opt-in,采集有开销;DebugDrawer trace tab + getTraceMetrics + onEvent('trace'))⚠️ deprecation warn 期,计划 4.1.0 移除
     automation?: boolean     // 无人值守自动化(默认 false;预算闸 token/time + 错误恢复;automation-layer Phase 4,opt-in 最远)
-    skillHostScript?: boolean  // skill exec 宿主脚本执行(默认 false;opt-in,允许 skill exec.context:'host' 全权执行;仅集成方内联 code,远程 url+host 禁止)⚠️ deprecation warn 期,计划 3.48 移除
+    skillHostScript?: boolean  // skill exec 宿主脚本执行(默认 false;opt-in,允许 skill exec.context:'host' 全权执行;仅集成方内联 code,远程 url+host 禁止)⚠️ deprecation warn 期,计划 4.1.0 移除
     contextInspector?: boolean // 上下文检查 inspectContext(默认 true;读每轮消息分类 token 占比,纯计算零 LLM 成本)
     agentCompression?: boolean // 压缩 agent 自主决策(默认 false;opt-in,开 + summaryLlm 可用 → decide 驱动压缩,失败降级静态;requires summarization)
-    preferences?: boolean      // 跨会话用户偏好记忆(默认 false;opt-in,自动写用户浏览器,行为敏感默认关;捕获→持久化→pin 段注入)⚠️ deprecation warn 期,计划 3.48 移除
-    bulkGuard?: boolean        // 大批量变更门禁(默认 false;单次写触达现有组件节点数超阈 → approval 确认;须同时配置 approval,否则 no-op 留痕;bulk-change-guard)⚠️ deprecation warn 期,计划 3.48 移除
+    preferences?: boolean      // 跨会话用户偏好记忆(默认 false;opt-in,自动写用户浏览器,行为敏感默认关;捕获→持久化→pin 段注入)⚠️ deprecation warn 期,计划 4.1.0 移除
+    bulkGuard?: boolean        // 大批量变更门禁(默认 false;单次写触达现有组件节点数超阈 → approval 确认;须同时配置 approval,否则 no-op 留痕;bulk-change-guard)⚠️ deprecation warn 期,计划 4.1.0 移除
   }
   /** 大批量变更门禁(默认关;capabilities.bulkGuard:true 开启)。量纲 = 现有组件节点数(同组件多 patch 不拦,新增内容不计);豁免:方案确认留痕 + 本会话同形态已确认一次 */
   bulkGuard?: BulkGuardOptions
@@ -324,7 +326,7 @@ export interface ChatSdkOptions {
   humanConfirm?: boolean
   /**
    * 人工确认:工具调用前弹确认框,用户「允许/拒绝」后才执行(默认关闭,不传 = 不装)。
-   * tools 指定需确认的工具名(如 ['write','set_data','edit_data']);confirm 自定义判定;timeoutMs 超时自动拒绝。
+   * tools 指定需确认的工具名(如 ['write']);confirm 自定义判定;timeoutMs 超时自动拒绝。
    * humanConfirmTool(传 approval 时默认 true;false 关闭):装载 request_human_confirmation 工具,LLM 可在不确定/多方案/高风险时主动征询用户。
    */
   approval?: {
@@ -817,9 +819,6 @@ const sharedCores = new Map<string, AgentCore>()
  * 非数据写工具返回 null。write 高层入口按 args 推断(del→delete,patch→edit,否则 set)。
  */
 function matchDataOp(name: string, args?: any): 'set' | 'edit' | 'delete' | 'restore' | null {
-  if (name === 'set_data') return 'set'
-  if (name === 'edit_data') return 'edit'
-  if (name === 'delete_data') return 'delete'
   if (name === 'restore_data') return 'restore'
   if (name === 'write') {
     if (args?.del) return 'delete'
@@ -1072,7 +1071,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   if (options.capabilities && typeof options.capabilities === 'object') {
     for (const k of Object.keys(DEPRECATED_CAPABILITIES)) {
       if ((options.capabilities as Record<string, unknown>)[k]) {
-        console.warn(`[page-agent-sdk][capabilities.${k}] ${DEPRECATED_CAPABILITIES[k as keyof typeof DEPRECATED_CAPABILITIES]}。维护者确认无外部使用,计划 3.48.0 移除;如你在使用请到仓库 issue 说明将按反馈保留`)
+        console.warn(`[page-agent-sdk][capabilities.${k}] ${DEPRECATED_CAPABILITIES[k as keyof typeof DEPRECATED_CAPABILITIES]}。维护者确认无外部使用,计划 4.1.0 移除;如你在使用请到仓库 issue 说明将按反馈保留`)
       }
     }
   }
@@ -1403,6 +1402,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         getCodeFieldPaths: () => codeFieldIndexPaths(liveData()?.bind, codeAssetConfigs.map((s) => ({ writablePaths: s._codeAsset.writablePaths, codeField: s._codeAsset.codeField }))),
       })
     : undefined
+  // subtree-summary Phase 1:read-before-write 守卫(dataOps 开即装;凭占位印象写 → 拦下引导窄读,非禁止)
+  const subtreeWriteGuardMw = dataOpsController?.getSummarizedPaths && dataOpsController.clearSummarizedPaths
+    ? createSubtreeWriteGuardMiddleware({ getSummarizedPaths: () => dataOpsController.getSummarizedPaths!(), clearSummarizedPaths: () => dataOpsController.clearSummarizedPaths!() })
+    : undefined
   const subagentsMw = useSubagent && subagentsForAssemble !== undefined
     ? createSubagentsMiddleware(subagentsForAssemble, { llm: options.llm, thinkingModeDefault: options.subagent?.thinkingMode, staleReadInvalidation: options.staleReadInvalidation, allTools: () => core.agent?.allTools ?? allTools, debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null, getBind: () => liveData()?.bind, tracker: subagentTracker, guardMiddleware: childGuards.length ? childGuards : undefined, getVfsFiles: useVfs ? () => vfsStore.files : undefined, enterDataScope: dataOpsController?.enterScope ? (id) => dataOpsController.enterScope!(id) : undefined, exitDataScope: dataOpsController?.exitScope ? (id) => dataOpsController.exitScope!(id) : undefined, onUsage: (u) => { usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0); usage.completion_tokens = (usage.completion_tokens ?? 0) + (u.completion_tokens ?? 0); usage.total_tokens = (usage.total_tokens ?? 0) + (u.total_tokens ?? 0); if (u.reasoning_tokens) usage.reasoning_tokens = (usage.reasoning_tokens ?? 0) + u.reasoning_tokens }, timeoutMs: options.subagent?.timeoutMs,
       ...(componentLock ? { componentLock, resolveComponents: (args: { components?: string[]; task: string }) => resolveTargetComponents(args, collectComponentNames(liveData()?.bind, codeAssetPgIdPaths)) } : {}) })
@@ -1442,7 +1445,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   }
 
   // 对抗子 agent 的只读工具(白名单筛选,让其能实证读回数据检查而非臆测;dataOps 关闭则不含数据工具)
-  const READONLY_FOR_ADVERSARIAL = ['get_data', 'describe_data', 'read', 'fetch_document']
+  const READONLY_FOR_ADVERSARIAL = ['describe_data', 'read', 'fetch_document']
   const readonlyTools = allTools.filter((t) => READONLY_FOR_ADVERSARIAL.includes(t.name))
   // verify 中间件(check 省略时默认 createWriteBackCheck 写后读回验证)。maxAttempts 经 maxVerifyAttempts 透传 createAgent,非中间件字段
   const verifyMw = useVerify
@@ -1657,6 +1660,14 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(subagentsMw ? [subagentsMw] : []),
     // parallel-subagent-delegation Q3b:主 agent 写检查(委派在途组件锁前缀拒写;只装主栈,子 agent 走自己的栈)
     ...(componentWriteGuardMw ? [componentWriteGuardMw] : []),
+    // subtree-summary Phase 1:read-before-write 守卫(写路径落入摘要占位子树 × 本轮无窄读 → 回灌窄读指令;
+    // dataOps 开即装,非 codeAsset 门控 —— 纯 JSON 集成同样受益;dataOps controller 出占位路径集)
+    ...(subtreeWriteGuardMw ? [subtreeWriteGuardMw] : []),
+    // section-orchestrator 0b:欠委派 nudge(invoke 内累计写触达超阈 × 零委派 → 写结果尾附一次性 advisory;
+    // dataOps + subagent 都开才装 —— 无委派能力的集成提示无意义)
+    ...(dataOpsController && useSubagent
+      ? [createDelegateNudgeMiddleware({ getBind: () => liveData()?.bind })]
+      : []),
     // bulk-change-guard:大批量变更门禁(现组件节点数超阈 → approval)。装在 componentWriteGuard 之内
     // (D3:批量写命中在途锁组件 → 先收 COMPONENT_LOCKED 机制拒,不劳用户确认后才拒)
     ...(bulkGuardMw ? [bulkGuardMw] : []),
@@ -2812,6 +2823,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       tools: allTools,
       middleware: middlewares,
       maxToolRounds: options.maxToolRounds,
+      // section-orchestrator 0a:轮次预算提醒的委派教学按能力感知(subagent:false 集成不点名不存在的工具;
+      // 默认只读 spawn_agent 也算委派能力 —— subagents 未声明时 subagentsForAssemble 为 undefined 但工具在场)
+      hasSubagent: useSubagent,
       maxRetries: options.maxRetries,
       // P1-7(fix-hang-and-feedback):流停滞看门狗(默认 90s;0 关;chunk 间隔超时中断防 loading 永转)
       stallMs: options.streamStallMs ?? DEFAULT_STREAM_STALL_MS,

@@ -112,7 +112,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart TB
-    A["写请求<br/>write / edit_data / delete_data<br/>draft_commit / eval transform / dryRun"] --> B
+    A["写请求<br/>write(四意图) / draft_commit<br/>eval transform / dryRun"] --> B
     B["① 路径校验<br/>isUnsafePath / isPathAllowed<br/>PATH_UNSAFE / PATH_DENIED"] --> C
     C["② 应用到 clone / merge<br/>applyPatchToClone / merge 未声明字段保留<br/>PATCH_FAILED"] --> D
     D["③ 强制层(新增,插 ② 后 ④ 前)<br/>freeze 前缀段被改 → FROZEN_FIELD<br/>verbatim 句柄 → 定点展开回原值<br/>新值 ≠ 原值 → VERBATIM_MISMATCH<br/>未知句柄 → RESOURCE_NOT_FOUND"]
@@ -232,14 +232,14 @@ sequenceDiagram
 | 读面 | 所在模式 | 是否被替换覆盖 |
 |---|---|---|
 | `read` / `read({jsonPath})` | simple+advanced | ✅ 已设计 |
-| `get_data` / `describe_data` | 仅 advanced | ❌ 直接返真值 |
+| `describe_data` | 恒暴露 | ❌ 仅返说明文本(无值) |
 | `query_data` / `search_data` | simple 就有 | ❌ 直接返真值 |
 | `history_data` / `diff_data` | simple/advanced | ❌ 读快照真值 |
 | `eval_script` | simple+advanced | ❌ 沙箱脚本直读 bind |
 
-直接矛盾于 freeze 的核心声称「**精确值不入 LLM 消息流**」—— advanced 模式 LLM 用 `get_data`、simple 模式用 `query_data`,绕一圈就把冻结值看走了。
+直接矛盾于 freeze 的核心声称「**精确值不入 LLM 消息流**」—— LLM 用 `query_data`,绕一圈就把冻结值看走了。
 
-**结论(选①,与 Non-goal「精确性非安全遮蔽」一致)**:替换仅作用于**结构化读**(read / describe / get_data);`query_data`/`search_data` 是**显式查询**、`eval_script` 是**信任层沙箱**,返回真值不算破防 —— 因为 **freeze/verbatim 的真正防线在写侧强制**(改冻结路径照拒、verbatim 写非句柄新值照拒),读侧占位符只是「省 token + 防止无意识引用」。文档把「值不入消息流」表述收紧为「**结构化读默认不泄露;显式查询/沙箱可读真值,写侧强制兜底**」。不选全读面统一替换(更重,且与定位冲突)。
+**结论(选①,与 Non-goal「精确性非安全遮蔽」一致)**:替换仅作用于**结构化读**(read / describe_data);`query_data`/`search_data` 是**显式查询**、`eval_script` 是**信任层沙箱**,返回真值不算破防 —— 因为 **freeze/verbatim 的真正防线在写侧强制**(改冻结路径照拒、verbatim 写非句柄新值照拒),读侧占位符只是「省 token + 防止无意识引用」。文档把「值不入消息流」表述收紧为「**结构化读默认不泄露;显式查询/沙箱可读真值,写侧强制兜底**」。不选全读面统一替换(更重,且与定位冲突)。
 
 ### A2. `expandHandles` 全局深遍历 —— 改定点展开(架构缺口)
 

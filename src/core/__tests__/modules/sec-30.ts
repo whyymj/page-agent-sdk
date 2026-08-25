@@ -105,7 +105,7 @@ export async function run(ctx: TestCtx): Promise<void> {
   const c1: any = { a: { b: 1 } }
   assert(applyPatchToClone(c1, 'set', 'a.b', 2) === null, 'applyPatchToClone(set) → 成功返 null')
   assert(c1.a.b === 2, 'applyPatchToClone(set) → 值已设')
-  assert(applyPatchToClone({}, 'set', '', 1) === 'set 操作需要 jsonPath(整体替换请用 set_data)', 'applyPatchToClone(set 无 path) → 错误提示')
+  assert(applyPatchToClone({}, 'set', '', 1) === 'set 操作需要 jsonPath(整体替换请用 write({value}))', 'applyPatchToClone(set 无 path) → 错误提示')
   const c2: any = { a: 1 }
   assert(applyPatchToClone(c2, 'remove', 'a', undefined) === null, 'applyPatchToClone(remove) → 成功')
   assert(c2.a === undefined, 'applyPatchToClone(remove) → 已删除')

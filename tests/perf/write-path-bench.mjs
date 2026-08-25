@@ -46,7 +46,7 @@ function buildTools(n, codeAsset) {
     codeAsset ? { pgIdPaths: ['components'] } : {},
   )
   const by = Object.fromEntries(tools.map((t) => [t.name, t]))
-  return { bind, write: by['write'], get_data: by['get_data'] }
+  return { bind, write: by['write'], read: by['read'] }
 }
 
 function stats(ms) {
@@ -57,8 +57,8 @@ function stats(ms) {
 }
 
 async function benchRound(n, codeAsset, label) {
-  const { write, get_data, bind } = buildTools(n, codeAsset)
-  await get_data.invoke({}) // 建立乐观锁基线(同 agent read→write 配对的真实前序)
+  const { write, read, bind } = buildTools(n, codeAsset)
+  await read.invoke({}) // 建立乐观锁基线(同 agent read→write 配对的真实前序)
   const args = () => ({ patch: { op: 'set', jsonPath: 'components.3.props.title', value: `t-${Math.random().toString(36).slice(2, 8)}` }, autoLock: true })
   for (let i = 0; i < WARMUP; i++) await write.invoke(args()) // JIT 预热
   const times = []
