@@ -400,6 +400,8 @@ Auto-adjudication never sets `pendingConflict`, but the `conflict` event is stil
 
 **Under concurrent tools, `autoLock` degrades to "whole-snapshot semantics".** When `maxParallelTools > 1`, multiple `read`s in the same round **concurrently write the same baseline (main scope)** with nondeterministic completion order, and a subsequent `write` compares against "**the whole hash of whichever `read` finished last**" — "is this write using the hash from *my own* read?" is **not reproducible** across tools. This doesn't break the safety boundary (it's still whole-snapshot validation; conflicts are still caught), but you lose the "each write corresponds precisely to its own read" semantics. (Consecutive *writes* in the same scope are unaffected: each successful write refreshes the baseline, so an agent's own consecutive writes never conflict with each other.)
 
+**Concurrent write interlock (4.1+, automatic):** when `maxParallelTools > 1` AND `conflictWatchFields` is declared, the SDK automatically enables a dataOps-closure-level write mutex (a single lock covering every write tool's `[take baseline → conflict check → commit → refresh baseline]` section) — same-round parallel writes no longer "both pass a stale baseline while the later one silently clobbers the earlier"; instead the later write sees the post-commit baseline inside the lock: disjoint parallel writes both land normally; under a stale-baseline conflict, the write that gets adjudicated first lands, and a later write based on state the adjudicator never saw is **explicitly rejected with a single-shot `VERSION_CONFLICT`** (re-read and retry — no second hang). The lock is auto-released while a conflict ask is pending (sibling writes are not blocked by the human wait) and re-acquired with a one-shot freshness recheck after the ruling; `overwrite` rulings absorb the baseline and `restore` rulings refresh it (writes right after a ruling no longer mis-conflict). Serial mode (default 1) and parallel mode without `conflictWatchFields` are **zero-behavior-change** ("last write wins" remains the documented semantics for unarmed parallel). **Known boundary:** intent-level staleness of same-path parallel writes (two writes from one stale read each setting `count=1`, final value 1) matches serial semantics — the interlock serializes the mechanism, not information; for read-modify-write loops have the model `read` first, or pass `expectedHash` explicitly.
+
 **Under concurrency the `conflictWatchFields` baseline provides whole-snapshot protection** (per-scope, caller-isolated):
 
 ```ts
@@ -643,7 +645,7 @@ Delegation shares the same authorization/interception surface as the main agent 
 - **Same-round parallel delegation & failure isolation (3.13+)**: pre-declared `use_<id>` delegations can run **in parallel within one round** — the main agent may issue multiple delegations for **different** targets in the same round (requires `maxParallelTools > 1`, default 1 serial; the HTML orchestrator prompt guides this automatically). **Failure isolation**: unrelated parallel tasks never roll back as a batch — a failed delegation returns its error result alone to the main agent while the others execute and land normally; code-asset commits are per-component fault-tolerant (a single component's commit failure is skipped with a trace, others unaffected). This is deliberately different from a single `write({ patches })` atomic batch (all-or-nothing): the latter is the atomic intent of **one logical write** (related tasks), while parallel delegations are multiple independent logical writes (unrelated) — semantics split by task relatedness.
 - **Component lock · one in-flight delegation per component (3.13+ mechanical lock)**: a single component admits only one in-flight delegation at a time — no longer prompt-only guidance. ① **Delegation mutex**: a second concurrent `use_html` targeting the same component immediately returns `COMPONENT_BUSY` (recoverable, zero subagent cost — the main agent simply re-delegates next round); lock targets come from the explicit `components` arg (fabricated names filtered out), or, when absent, from a **unique whole-word match** of the task text against known component names (fail-open: 0 or ≥2 matches → no lock); different components' locks are independent and never block each other. ② **Main write guard**: while a delegation is in flight, main-agent write tools (`write`/`draft_commit`) hitting the locked component's subtree return `COMPONENT_LOCKED` (whole-data `set` also rejected; `dryRun` passes through) — allowed again once the lock releases. **codeField permanent guard (3.24.1+, html code-asset mode)**: the code field of an *existing* code component (e.g. `components.N.code`) is *permanently* unwritable by the main agent (independent of any in-flight lock) → returns `CUSTOM_CODE_DELEGATION` steering toward delegation (weak-instruction models were observed ignoring prompt prohibitions and overwriting human edits; the mechanism backstops this; new elements / whole-data set / dryRun still pass). ③ **Human-concurrency protection**: if a human/host mutates `bind` during the in-flight window (checkout→commit) — an external edit of the same component's code keeps the human value (`keep_external`, never silently overwritten) with a warn trace, **and the kept component names flow back into the delegation result** so the main agent honestly tells the user "your edit was preserved — continue with the original task?" instead of misreading it as subagent failure and rewriting; a deleted component stays deleted (no revival) and its vfs working copy is cleaned up; an index shift (insertion/removal moving components) is handled by committing via `__pgId` to the same component, never to a stale position. Observability: `inspect().subagent.lockedComponents` (component name → owning delegation) + the DebugDrawer subagent tab lock view.
 - **Child tokens counted**: subagent LLM usage accumulates into `sdk.usage` (automation `tokenBudget` accounting is complete). No extra `usage` events are emitted for child rounds.
-- **Child execution timeout (opt-in)**: `subagent: { timeoutMs }` — per-subagent timeout; on expiry the child stream is aborted and a recoverable error is fed back to the main LLM (retry / split into smaller subtasks). Default off (long-running subagents such as the html agent are not killed by accident).
+- **Child execution timeout**: `subagent: { timeoutMs }` — per-delegation total duration, **default 600000ms (10min) since 4.1** as a hang guard; `0` disables. On expiry the child stream is aborted and a recoverable error is fed back to the main LLM (retry / split into smaller subtasks). Reflected via `inspect().subagent.timeoutMs`.
 
 ### 6.2 Custom tools
 
@@ -683,7 +685,7 @@ defineSkill({
   // exec: run once on load, inject result into the full text (one-shot context init, a snapshot)
   exec: {
     code: 'return await fetch("/api/orders/summary").then(r => r.json())',  // inline JS
-    context: 'sandbox',  // default: Worker sandbox (no window/network, 3-layer guard); 'host' needs capabilities.skillHostScript
+    context: 'sandbox',  // default and only: Worker sandbox (no window/network, 3-layer guard); 'host' was removed in 4.1.0 (residual value falls back to sandbox)
     inject: 'append',    // default append (end); 'prepend' (start)
     // url: 'https://host/orders.js',  // remote script (sandbox only, never host)
   },
@@ -694,7 +696,7 @@ defineSkill({
 
 **exec vs tools (orthogonal — don't mix)**: `exec` = one-shot context init (snapshot on load, e.g. "current orders summary"); `tools` = query capability (called repeatedly by the LLM, e.g. "filter orders by X").
 
-- **exec security**: default `sandbox` (reuses eval_script's Worker sandbox: static scan + `lockSandboxGlobal` network lock + timeout). `context:'host'` runs with full host authority (`AsyncFunction`, can read window/fetch/DOM), requires `capabilities.skillHostScript:true` (opt-in, default off); **host only for integrator-supplied inline `code`** (not LLM-generated, not remote); `url`+`host` is forbidden (untrusted remote).
+- **exec security**: always `sandbox` (reuses eval_script's Worker sandbox: static scan + `lockSandboxGlobal` network lock + timeout). `context:'host'` (full host authority) was removed in 4.1.0 — residual `'host'` values run in the sandbox (full-authority downgraded to sandbox, semantics reversed, see CHANGELOG); for host-authority logic use defineSkill's `tools` factory on the integrator side.
 - **exec failure is not cached**: a failed script (e.g. network blip) doesn't block the skill (text still usable + failure noted) and is **not written to cache** — next `load_skill` re-runs exec (dynamic-skill resilience); only success is cached.
 - **exec large results**: when text + exec result exceeds 6000 chars, the createAgent offload kicks in (→ vfs + preview); the LLM re-reads via `vfs_read`. "Read-all-at-once" only guarantees the static text part.
 
@@ -739,13 +741,15 @@ defineSkill({
 - Stop generation (abort) — preserves partial content
 - Retry on error (UI)
 - **Bounded hangs (fix-hang-and-feedback)** — every "wait for human / external IO" point has a timeout + interrupt path:
-  - Approval requests on `send`/`batch` (no UI responder) **auto-reject after 30s** with an error event (override via `approval.timeoutMs`; `Infinity` = wait forever for integrators with their own confirmation channel)
+  - Approval/humanConfirm requests with no responder **auto-reject after 30s** (middleware-level since 4.1, covers headless `stream`, `send`/`batch` and `streaming:false`) with an `APPROVAL_AUTO_REJECTED` error event. The `approval_request` event carries an optional `hold()` — a responder that takes over calls it to cancel the timer (the built-in UI does this, so interactive flows wait for the human indefinitely). Override via `approval.timeoutMs`; `Infinity`/negative = wait forever for integrators with their own confirmation channel
   - `send(msg, { signal })` / `batch(tasks, onProgress, signal)` accept an AbortSignal; `unmount()` / `switchSession()` / `resetSession()` abort in-flight streams (no ghost streams)
   - MCP handshake timeout: default 15s (`mcp[].timeoutMs`); black-hole endpoints degrade gracefully instead of hanging init
   - MCP tool-call timeout (3.6+): each callTool defaults to 60s (`mcp[].callTimeoutMs`); a hung server no longer stalls the ReAct loop — the timed-out call is voided and fed back for LLM self-correction (no retry), the connection stays alive for subsequent calls
   - MCP reserved tool-name protection: an MCP tool whose name collides with a built-in/user tool (e.g. `write`/`read`) is **rejected from injection** with a `console.warn` (prevents a compromised server from silently overriding built-ins); non-colliding tools from the same server inject normally
   - LLM stream stall watchdog: no chunk for `streamStallMs` (default 90s; 0 = off) → abort with error (no infinite loading)
   - Stream total duration cap: a single model call exceeding `streamMaxDurationMs` (default 600s; 0 = off) → `StreamMaxDurationError` (408, no retry). Guards against "keepalive black holes" — some relays return 200+SSE headers then hold the connection with empty keepalive frames (the interval watchdog never fires; observed frozen 7min+ with no error). Fail fast, then re-delegate/resend to recover
+  - Integrator tool watchdog (`toolTimeoutMs`, default 120s; 0 = off): a single tool call that never settles is abandoned at the timeout with a recoverable error result fed back for self-correction (prevents a broken integrator tool from hanging the whole round: eternal loading + dead stop button). Only applies to integrator-injected tools (`defineTool` / `actions` / skill tool factories / rag retriever); built-in tools / MCP / sub-agent delegation and optimistic-lock conflict waits (awaiting human resolution) are designed waits and are exempt
+  - Conflict hangs are abortable: on every entry point (`send` / `batch` / UI `stream`), aborting the passed AbortSignal auto-resolves a pending optimistic-lock conflict as keep_external — send no longer hangs forever; external changes are preserved and the agent's value is not written
 - **Instruction-adherence guards (instruction-adherence, 3.35+, both default on, zero config)** — two prefer-miss-over-false-positive guards for real-LLM failure modes:
   - **Completion gate (anti premature stop)**: after the agent plans with `write_todos`, if unfinished items remain but it tries to close with plain text, the framework injects a "two-exit" nudge to continue (mark done via `update_todo`, or keep executing), capped at 2 to avoid loops. Exempt when the closing line is a question (asking the user) or no plan exists (empty todos). Fixes "planned 3 tasks, did 1, then stopped". The nudge text also lists completed-but-no-evidence items as a rider
   - **Error-as-guide + duplicate-failure reminder (tool-result embedded, tool-call-economy C2)**: reading a nonexistent path returns `PATH_NOT_FOUND` with parent context (valid index range for arrays / actual keys for objects); a typo'd key gets `PATH_DENIED` with the parent's key set; when the same tool+args fails 2+ times in a row, a reminder is appended guiding the agent to change path/approach instead of retrying verbatim
@@ -915,29 +919,6 @@ off2()
 
 `onEvent` and `hook` are complementary: the former is a single constructor-time callback, the latter runtime multi-listener; both can coexist. Event types and filtering rules as above (`approval_request` not forwarded; stream events only in stream mode).
 
-### Structured tracing — TraceSpan (performance attribution / debugging, 2.19+)
-
-For long/complex runs where flat logs can't tell which round was slow, failed, or burned tokens. Enable structured tracing to get a **TraceSpan tree** (per-round `model`/`tool`/`compression` timing/status/usage) for performance attribution and error tracing. Opt-in (collection has overhead, default off).
-
-```ts
-createChatSdk({
-  capabilities: { tracing: true },  // opt-in, default off
-  onEvent: (e) => {
-    if (e.type === 'trace') console.log('trace done', e.metrics)  // emits spans + metrics when agent call ends
-  },
-})
-// After a run:
-// sdk.inspect().trace → { spans, metrics } (rounds / latency / tool success rate / retries / compressions / tokens)
-// DebugDrawer "📊 Context" tab, bottom 🌳 Trace section → metrics card + span list (visual)
-```
-
-- **Span types**: `round` / `model` (LLM call) / `tool` / `compression`, with `startTs`/`endTs`/`durationMs`/`status`/`attributes` (round no, tool name, usage, etc).
-- **`getTraceMetrics(spans)`** (exported pure fn): aggregates round count, avg/total latency, tool success rate, retries, compression freq, cumulative tokens.
-- **`onEvent('trace')`**: emits `{ spans, metrics }` when the agent call ends (feed APM / custom monitoring).
-- **`inspect().trace`**: runtime reflection of current spans + metrics.
-
-> Use cases: debug long-task bottlenecks (which round is slow), error tracing (which round failed), token-budget monitoring. APM backend reporting / distributed tracing still not built (backend-framework concern; feed via `onEvent('trace')` to Datadog/Sentry yourself).
-
 ### 6.13b Context archival `context_trimmed` (rescue content about to be deleted when the conversation grows long, context-persist-resilience)
 
 When the conversation exceeds `maxMemoryRounds` (default 30 rounds), the AI deletes the oldest rounds to free memory (originals gone forever, only a summary kept). If you need audit/compliance/backup, subscribe to `context_trimmed`: right before deletion it hands you the full originals (including referenced vfs large results) + the replacement summary — store them to your own server if you want (the SDK doesn't hoard; default deletion behavior is unchanged).
@@ -1062,9 +1043,9 @@ sdk.clearFocus() // exit focus, restore full editable range
 ```
 
 After focusing, three layers converge:
-- **Goal hint**: each turn injects "## Current refinement target: components.3 (Navbar)"
+- **Goal hint**: each turn injects "## Current refinement target: components.3 (Navbar)"; **intent-ownership steering (4.1+)**: creation-type commands ("add/change/remove X") default to modifying the focused component itself (e.g. focused on a tabs component, "add a tab" means adding a tab panel inside it — write `components.8.props.tabs` subpath); only an explicit "create a new standalone component" requires unfocusing — flash-class models were observed misreading "add a tab" as appending a whole new component, hence the mechanical guidance
 - **View convergence**: only the focused component's subtree schema is shown (other components hidden)
-- **Scope tightening (strict)**: writing outside the subtree (e.g. `components.0`) → `PATH_DENIED` error fed back for self-correction; reads are not limited. **Exception: tail-append allowed** — writing `<arrayPath>.<N>` (N ≥ current array length, i.e. appending a new element) doesn't break the focus subtree, so you can still create new components while focused (e.g. focused on hero, `write components.2` to append banner)
+- **Scope tightening (strict)**: writing outside the subtree (e.g. `components.0`) → `PATH_DENIED` error fed back for self-correction; the message leads with the **correct-path exit (4.1+)** — "if your intent is to modify the focused component itself, retry with a subpath of the focus path (with a concrete example)" — before the unfocus exits, preventing the agent from mechanically clearing focus and carrying out a misread intent; reads are not limited. **Exception: tail-append allowed** — writing `<arrayPath>.<N>` (N ≥ current array length, i.e. appending a new element) doesn't break the focus subtree, so you can still create new components while focused (e.g. focused on hero, `write components.2` to append banner)
 
 > **× code-as-data-asset hardening (sub-agent code refinement)**: with `createHtmlSubagent`, the sub-agent edits code via `vfs_edit` (not a data write), which `focus.ts`'s data-write guard doesn't cover. So `codeAssetMiddleware` adds a **vfs whitelist** before execution: a sub-agent (inheriting the main focus) may only `vfs_edit` the focused component's code file (judged by `__pgId` ownership) — out-of-scope → `PATH_DENIED`, so even a confused sub-agent can't touch another component's code. This is the hard-contract basis for "click a component → refine it by chat". Focusing an entire array / a non-code field is a passthrough (can't pin a specific component). **You can't create new components while focused** (the data write is blocked by focus.ts) — `clearFocus` first. Full example: `examples/html-page-demo` (click a component in the preview → 🎯 focus → refine by chat).
 
@@ -1417,38 +1398,6 @@ createChatSdk({
 - The **English default systemPrompt** is exported separately: `DEFAULT_SYSTEM_PROMPT_EN` + `systemPromptHelpers.reliableWriteRulesEn` (handy when writing your own English prompt)
 - Full example: `examples/i18n-demo` (en locale + statusDone/emptyGreeting HTML overrides)
 
-### 6.16 Cross-session user preference memory (3.23+)
-
-The agent automatically captures **durable user preferences** from conversation (color taste / copy style / layout density), persists them independently, and injects them into every future session — users never have to repeat "no purple" again:
-
-```ts
-createChatSdk({
-  container: '#root', llm: {...},
-  capabilities: { preferences: true },          // opt-in (auto-writing the user's browser is behavior-sensitive, default off)
-  preferenceStorage: { backend: 'indexed' },    // optional: same shape as skillStorage; maxEntries FIFO cap (default 20)
-})
-
-// Runtime management (delete wrongly-learned entries)
-sdk.getPreferences()            // snapshot [{id, content, topic, ...}] (newest first)
-await sdk.removePreference(id)  // remove one
-await sdk.clearPreferences()    // clear all
-```
-
-**Capture strategy (better to miss than to learn wrong)**:
-
-| Signal | Example | Handling |
-|---|---|---|
-| Strong: explicit command | "Remember: keep copy short from now on" | regex extraction, **zero LLM** |
-| Medium: pattern-word hit | "Don't use purple, too loud" | one small-LLM extraction (summaryLlm channel); the core test = **durable taste vs this-round task instruction** ("make this one red" is not a preference); falls back to strong-signal-only when unavailable |
-| Weak: behavioral inference | user keeps removing gradients | **not captured** (long inference chain, cost of learning wrong > benefit) |
-
-**Notes**:
-- **Entry merging**: topic is a fixed 6-value enum (color/copy/layout/interaction/tech/other); same topic **later statement overrides earlier** (changing one's mind doesn't leave contradictory entries), FIFO ≤20 (bounded prompt cost, ~200 tokens)
-- **Injection**: an augmentPrompt pin segment rebuilt into the system prompt every round (naturally compression-proof, same as mission); the segment header says "unless the user indicates otherwise this round"
-- **Division of labor with existing memory**: `memory` = integrator-authored global instructions / `craftNotes` = per-component handoff / `mission` = in-session goal / **preference memory = user-level, cross-session**
-- **Observable**: read-only "User preferences" section in the DebugDrawer Agent-info tab; captures and failures are logged to debugLogs (middleware type)
-- **Privacy boundary**: preferences stay on the device (same local IndexedDB as skillStore, never uploaded with session snapshots); pass a fixed `preferenceStorage.id` to share across pages/agents, omit to isolate per agentId
-
 ### 6.17 Image input (multimodal direct / captioning bypass)
 
 The dialog has built-in image input: three entry points (📎 pick / drag / paste screenshot) → compression gate → sent with the next message. **How the image travels depends on whether the main model has vision** — decided automatically across three branches:
@@ -1509,7 +1458,7 @@ A: LangChain `ToolMessage` uses snake_case `tool_call_id` (not camelCase). The S
 A: The model is unavailable on your gateway/provider (offline or not offered). The SDK detects this shape, tags it `code:'MODEL_UNAVAILABLE'`, and appends actionable guidance to the error message (switch the model name and `setLlm`, or check the gateway's model list). The main path still surfaces it as fatal (4xx is never retried); when a subagent delegation fails this way, the guidance flows back with the error result so the main agent can stop instead of re-delegating blindly. Known blind spot: gateways that return **200 + a non-SSE error JSON body** surface as `EmptyLLMResponseError` instead — the offline text cannot be detected there. Use the exported `isModelUnavailableError(err)` in your own `onEvent` for custom handling.
 
 **Q: Console says "capabilities.X 已列入移除计划" (scheduled for removal)?**
-A: `tracing` / `skillHostScript` / `preferences` / `bulkGuard` are in a deprecation warning period (maintainer confirmed no external usage; removal planned for 4.1.0; the warn fires once per mount only when the key is configured). If you use one of them, open a repo issue and it will be kept per feedback; migration guidance is included in each warn message. `todoDeps` has been removed (leftover keys are silently ignored, no error).
+A: **`tracing` / `skillHostScript` / `preferences` / `bulkGuard` were all removed in 4.1.0** (leftover keys silently ignored, zero warns; tracing migration → `debugLogs` + `exportDiagnostics`; `exec.context:'host'` residual values run in the sandbox — semantics reversed; leftover preference data in indexedDB can be cleared via DevTools by deleting `v:1::pref-store::*` keys). `todoDeps` has been removed (leftover keys silently ignored).
 
 **Q: `ChatOpenAI` param errors?**
 A: Use `apiKey` (not `openAIApiKey`), `model` (not `modelName`); `baseUrl` goes via `configuration.baseURL`.

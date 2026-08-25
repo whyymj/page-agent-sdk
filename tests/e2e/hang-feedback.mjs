@@ -2,7 +2,7 @@
 //  - P1-1:headless send 触发 humanConfirm → 无响应方 → 超时自动拒 + APPROVAL_AUTO_REJECTED error 事件 + send 不挂死
 //  - P1-4:send/batch 接 signal —— 已 abort 的 signal → send 立即收口 / batch 全部记 aborted
 //  - P1-2:MCP 黑洞端点(不可路由 IP)→ 握手超时 → mount 照常完成,降级跳过该 server
-import { setupEnv, createAssert, createChatSdk, z } from './_helpers.mjs'
+import { setupEnv, createAssert, createChatSdk, z, defineTool } from './_helpers.mjs'
 import { stubModel } from './_stub-model.mjs'
 
 const CAPS = { fetch: false, planning: false, skills: false, vfs: false, summarization: false, memory: false }
@@ -278,6 +278,125 @@ export async function run() {
     assert(llm.calls === 2, `✓ 首调 + 重试各 1 次后放弃(calls=${llm.calls},有界)`)
     assert(errors.some((e) => /空响应/.test(e.message)), '✓ error 事件外发(集成方 onEvent / UI 可感知失败原因)')
     assert(sdk.debugLogs.value.some((l) => l.type === 'error' && l.data?.stage === 'empty_llm_response'), '✓ debugLogs 留痕 empty_llm_response(诊断导出可见)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:hang-feedback] flow-robustness P0#1:集成方工具永不 settle → per-tool 看门狗超时回灌(不永挂)')
+  {
+    // defineTool 挂起探针 + toolTimeoutMs=80:原 bug = runPool 对工具 Promise 裸等 → send 永挂、stop 无效
+    const hangTool = defineTool({ name: 'hang_probe_e2e', description: '挂起探针(测试看门狗)', schema: z.object({}), handler: () => new Promise(() => {}) })
+    const llm = stubModel(
+      { toolCalls: [{ name: 'hang_probe_e2e', args: {} }] },
+      { text: '该工具当前不可用,已如实说明收口' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-tool-watchdog', storage: false, llm,
+      capabilities: { ...CAPS, subagent: false },
+      tools: [hangTool], toolTimeoutMs: 80,
+    })
+    await sdk.mount()
+    const t0 = Date.now()
+    const guard = new Promise((r) => setTimeout(() => r('__TIMEOUT__'), 8000))
+    const reply = await Promise.race([sdk.send('跑一下'), guard])
+    const elapsed = Date.now() - t0
+    assert(reply !== '__TIMEOUT__', '✓ P0#1 send 有界返回(原:集成方工具永挂拖死整轮)')
+    assert(elapsed < 8000, `✓ P0#1 收口耗时 ${elapsed}ms(≈80ms 看门狗,非永挂)`)
+    assert(sdk.debugLogs.value.some((l) => l.type === 'error' && l.data?.stage === 'tool_timeout' && l.data?.name === 'hang_probe_e2e'), '✓ tool_timeout observable 留痕(工具名 + 超时值)')
+    const tr = sdk.debugLogs.value.filter((l) => l.type === 'tool_result' && l.data?.name === 'hang_probe_e2e')
+    assert(tr.length === 1 && tr[0].data.status === 'error' && /工具执行超时/.test(tr[0].data.result), '✓ 超时 = recoverable 错误结果回灌(LLM 可自纠/收口,不杀流)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:hang-feedback] flow-robustness P0#2:send 冲突挂起 × signal abort → keep_external 有界收口')
+  {
+    // 原 bug:abort→resolve('keep_external') 联动只在 core.stream;send(invoke)冲突 ask 挂起 + abort 均不解 → send 永不返回
+    const bind = { title: 'orig' }
+    const llm = stubModel(
+      { toolCalls: [{ name: 'read', args: {} }] },
+      { toolCalls: [{ name: 'write', args: { value: { title: 'agent值' } } }] },
+      { text: '中断后收尾' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-send-conflict-abort', storage: false, llm,
+      capabilities: { ...CAPS, dataOps: true }, conflictWatchFields: ['*'],
+      data: { schema: z.object({ title: z.string() }), bind },
+    })
+    await sdk.mount()
+    const ac = new AbortController()
+    // read 结果落地瞬间外部篡改 → 下一次 write 即过期 → 冲突 ask 挂起(makeStreamWatch 全量外发事件,sdk.hook 可听)
+    const unhook = sdk.hook((e) => { if (e.type === 'tool_result' && e.name === 'read') bind.title = '外部新值' })
+    const p = sdk.send('改标题', { signal: ac.signal }).then((r) => ({ kind: 'reply', r }), (e) => ({ kind: 'error', e }))
+    const deadline = Date.now() + 8000
+    while (!sdk.pendingConflict.value && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20))
+    assert(!!sdk.pendingConflict.value, 'P0#2 前置:过期写触发冲突挂起(send 路径)')
+    ac.abort()  // 原:此 abort 不解冲突 → p 永挂
+    const settled = await Promise.race([p, new Promise((r) => setTimeout(() => r({ kind: '__TIMEOUT__' }), 8000))])
+    assert(settled.kind !== '__TIMEOUT__', '✓ P0#2 abort 后 send 有界返回(原:永不返回,唯一出路 unmount/switch/reset)')
+    assert(bind.title === '外部新值', '✓ abort 收口语义 = keep_external(外部修改保留,agent 值不落地)')
+    assert(sdk.pendingConflict.value === null, '✓ 收口后 pendingConflict 清空')
+    unhook()
+    sdk.unmount()
+  }
+
+  console.log('[e2e:hang-feedback] flow-robustness P1#9 provider 不回 tool_call id → 兜底 id 回写 AIMessage')
+  {
+    // 队列:① inspect_env 无 id(provider 漏回形态)② 文本收口。
+    // 原:AIMessage.tool_calls 无 id + ToolMessage 有兜底 id → 下轮请求协议 400(4xx 不重试,单轮 fatal)
+    const llm = stubModel(
+      { toolCalls: [{ name: 'inspect_env', args: {}, id: false }] },
+      { text: '环境检查完成' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-hang-tcid', storage: false, llm,
+      capabilities: { ...CAPS, subagent: false },
+    })
+    await sdk.mount()
+    const reply = await sdk.send('看下环境')
+    const msgs = llm.lastMessages ?? []  // 第 2 次模型调用收到的请求 messages
+    const ai = msgs.find((m) => Array.isArray(m.tool_calls) && m.tool_calls.length)
+    const tc = ai?.tool_calls?.[0]
+    const toolMsg = msgs.find((m) => m.tool_call_id)
+    assert(reply === '环境检查完成', '✓ P1#9 前置:无 id 工具轮正常执行并收口')
+    assert(!!tc && typeof tc.id === 'string' && tc.id.length > 0, `✓ AIMessage.tool_calls[0].id 已兜底回写(实际:${tc?.id})`)
+    assert(!!toolMsg && toolMsg.tool_call_id === tc?.id, '✓ ToolMessage.tool_call_id 与回写 id 一致(下轮请求「有 id tool_call ↔ 对应 tool_call_id」,不再 400)')
+    sdk.unmount()
+  }
+
+
+  console.log('[e2e:hang-feedback] completion-truncated:空输出 + completion 达上限 → 分步指引回灌(2026-08-25 实测:整页 HTML 塞进一次 write 参数撞 max_tokens,静默空收口 → 主 agent 无限重委派)')
+  {
+    // 队列:① 空输出 + completion_tokens=4096(模拟截断)② 回灌后正常收口
+    const llm = stubModel(
+      { text: '', usage: { prompt_tokens: 100, completion_tokens: 4096, total_tokens: 4196 } },
+      { text: '好的,我改用分步写入,先写骨架再逐步补充。' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-trunc', storage: false, llm,
+      capabilities: { ...CAPS, subagent: false },
+    })
+    await sdk.mount()
+    const reply = await sdk.send('能不能帮我加一个大组件呀?')
+    assert(reply === '好的,我改用分步写入,先写骨架再逐步补充。', '✓ 截断回灌后 LLM 重发正常收口(原:静默空回复)')
+    assert(llm.calls === 2, `✓ 截断回灌恰一次(模型被调 2 次;实际 ${llm.calls})`)
+    const stages = sdk.debugLogs.value.map((l) => l.data?.stage).filter(Boolean)
+    assert(stages.includes('completion_truncated_retry'), '✓ debugLogs 留痕 completion_truncated_retry(契约 B 可见性)')
+    sdk.unmount()
+  }
+  {
+    // 对照:空输出但 completion 未达阈(非截断形态,如网络空响应)→ 不触发截断回灌,保持原空回复语义
+    const llm = stubModel(
+      { text: '', usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 } },
+      { text: '第二轮正常文本' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-trunc-ctl', storage: false, llm,
+      capabilities: { ...CAPS, subagent: false },
+    })
+    await sdk.mount()
+    const reply = await sdk.send('能不能帮我加一个大组件呀?')
+    assert(reply === '', `✓ 非截断空输出(completion=50)→ 不误触发回灌,原空回复语义保持(实际:${reply.slice(0, 20)})`)
+    const stages = sdk.debugLogs.value.map((l) => l.data?.stage).filter(Boolean)
+    assert(!stages.includes('completion_truncated_retry'), '✓ 非截断形态零截断留痕(阈值防误报)')
     sdk.unmount()
   }
 

@@ -24,13 +24,11 @@
   - [6.8 上下文与内存上限](#68-上下文与内存上限)
   - [6.9 onEvent 事件回调(订阅常用时机)](#69-onevent-事件回调订阅常用时机)
   - [6.12 LLM 连接:直连 / 代理 / OpenAI 兼容端点](#612-llm-连接直连--代理--openai-兼容端点)
-  - [6.13 结构化追踪 TraceSpan(性能归因 / 调试)](#613-结构化追踪-tracespan性能归因--调试220)
   - [6.13b 上下文归档 context_trimmed](#613b-上下文归档-context_trimmed对话超长时抢救即将删除的内容context-persist-resilience)
   - [6.13c 诊断报告导出 exportDiagnostics](#613c-诊断报告导出-exportdiagnostics调试排查329)
   - [6.14 无人值守自动化](#614-无人值守自动化资源预算--错误恢复--批处理--断点续跑220)
   - [6.14 上下文聚焦 Focus(指定组件精修)](#614-上下文聚焦-focus指定组件精修focus-context)
   - [6.15 UI 定制与国际化(图标 / 主题 / 语言 / 文案覆盖)](#615-ui-定制与国际化图标--主题--语言--文案覆盖317321)
-  - [6.16 跨会话用户偏好记忆](#616-跨会话用户偏好记忆323)
   - [6.17 图片输入(多模态直发 / 识图转述旁路)](#617-图片输入多模态直发--识图转述旁路)
 - [7. 高级:自定义中间件](#7-高级自定义中间件)
 - [8. 命令式 API](#8-命令式-api)
@@ -453,6 +451,8 @@ createChatSdk({ /* ... */ conflictPolicy: 'overwrite' })
 
 **并发工具下,`autoLock` 退化为"整体快照语义"。** 当 `maxParallelTools > 1` 时,同一轮的多个 `read` 会**并发写同一基线(主 scope)**,完成顺序不确定,后续 `write` 比对的是"**最后完成的那个 `read` 的整体 hash**"——跨工具维度"我这个 write 用的是我自己那次 read 的 hash 吗"**不可重现**。这不破坏安全边界(仍是整体快照校验,冲突仍能被捕获),但失去了"每个 write 精确对应它自己的 read"的语义。(同 scope 连续**写**不受此影响:每次写成功即刷新基线,agent 自己连续写自己永不互相冲突。)
 
+**并发写互锁(4.1+,自动)**:`maxParallelTools > 1` 且声明了 `conflictWatchFields` 时,SDK 自动启用 dataOps 闭包级写互锁(async mutex,单锁覆盖全部写工具的「取基线 → 冲突检查 → 提交 → 刷基线」段)—— 同轮并发双写不再「双双过旧基线、后者静默覆盖前者」,而是后者在锁内看到前者落地后的新基线:不相交双写双双正常落地;陈旧基线冲突下,先经裁决的写入落地、后写若基于裁决者未见过的新状态会被**单发 `VERSION_CONFLICT` 显式拦下**(重 read 后可再写,不二次挂起)。冲突 ask 挂起期间锁自动释放(兄弟写不被人工等待阻塞),裁决恢复后做一次新鲜度校验;`overwrite` 裁决自动吸收基线、`restore` 裁决自动刷新基线(裁决后紧接的写不再连环误冲突)。串行模式(默认 1)与未声明 `conflictWatchFields` 的并行**零行为变化**(「后写覆盖」仍是未武装并行的既有明文语义)。**已知边界**:同路径并发双写的"意图级陈旧"(两写基于同一旧读、各写 `count=1` 终值为 1)与串行模式语义一致,互锁不做信息层合并 —— 需要读-改-写闭环时让模型先 `read` 再 `write`,或显式传 `expectedHash`。
+
 **并发场景需要精确乐观锁时:让 LLM 显式传 `expectedHash`。** 取它自己那次 `read` 返回值里的 `hash`,在 `write` 里回传:
 
 ```ts
@@ -756,7 +756,7 @@ defineSkill({
   // exec:加载时执行一次,结果注入全文(一次性上下文初始化,拿快照)
   exec: {
     code: 'return await fetch("/api/orders/summary").then(r => r.json())',  // 内联 JS
-    context: 'sandbox',  // 默认:Worker 沙箱(无 window/网络,三层防护);'host' 需 capabilities.skillHostScript
+    context: 'sandbox',  // 默认且唯一:Worker 沙箱(无 window/网络,三层防护);'host' 已随 4.1.0 移除(残值落 sandbox 执行)
     inject: 'append',    // 默认 append(文末);'prepend'(文首)
     // url: 'https://host/orders.js',  // 远程脚本(仅 sandbox,禁止 host)
   },
@@ -772,7 +772,7 @@ defineSkill({
 | `exec` | 上下文初始化(加载时拿一次性快照,如「当前订单概览」) | `load_skill` 时自动 | 一次(每次 load 重跑) |
 | `tools` | 查询能力(反复调用,如「按条件查订单」) | LLM 显式调 | 反复 |
 
-- **exec 安全边界**:默认 `sandbox`(复用 eval_script 的 Worker 沙箱:静态扫描 + `lockSandboxGlobal` 锁网络层 + 超时)。`context:'host'` 宿主全权执行(`AsyncFunction`,可读 window/fetch/DOM),需 `capabilities.skillHostScript:true`(opt-in 默认关);**host 仅集成方内联 `code`**(非 LLM 生成、非远程),`url`+`host` 禁止组合(远程不可信)。
+- **exec 安全边界**:恒 `sandbox`(复用 eval_script 的 Worker 沙箱:静态扫描 + `lockSandboxGlobal` 锁网络层 + 超时)。`context:'host'`(宿主全权)已随 4.1.0 移除 —— 残值 `'host'` 落 sandbox 执行(原宿主全权降级为沙箱,语义反转见 CHANGELOG);需宿主全权逻辑请用 defineSkill 的 `tools` 工厂在集成方侧编排。
 - **exec 失败不缓存**:脚本执行失败(如网络抖动)不阻塞 skill(文本仍可用 + 标注失败原因),且**不写缓存**——下次 `load_skill` 重新执行(动态 skill 韧性);成功才缓存(跨轮跨会话复用)。
 - **exec 大结果**:注入文本 + exec 结果总量超 6000 字符时,走 createAgent 通用 offload(转 vfs + 预览),LLM 按需 `vfs_read` 二次读;「一次读全」仅保证静态文本部分(动态数据本就该按需查,契合渐进式披露)。
 
@@ -904,12 +904,14 @@ createChatSdk({ maxRetries: 0 })   // 关闭自动重试
 **④ 挂起有界收口(fix-hang-and-feedback)**
 所有「等外部/等人」的挂起点都有超时兜底与中断通道,不会永久挂死:
 
-- **无 UI 场景的确认请求自动拒**:`send`/`batch` 路径(无 ApprovalBar 响应方)触发人工确认时,**30s 无响应自动拒绝** + error 事件留痕,LLM 收到拒绝继续/收口(不再永挂)。`approval.timeoutMs` 可覆盖(传 `Infinity` = 无限等,给自建确认通道的集成方)
+- **无响应方路径的确认请求自动拒(4.1+ 中间件级)**:approval/humanConfirm 触发人工确认时,**30s 无响应自动拒绝** + `APPROVAL_AUTO_REJECTED` error 事件留痕,LLM 收到拒绝继续/收口(不再永挂)。响应方接管机制:`approval_request` 事件携带可选 `hold()` —— 内置 UI(useChat)收到即调,计时取消、无限等用户;无人调(headless 任意入口 / `send`/`batch` / `streaming:false` 等无响应方路径)→ 30s 自动拒。`approval.timeoutMs` 可覆盖(传 `Infinity`/负数 = 不超时,给自建确认通道的集成方留口)
 - **send/batch 可中断**:`send(msg, { signal })` / `batch(tasks, onProgress, signal)` 接 AbortSignal;`unmount()` / `switchSession()` / `resetSession()` 也会自动中止在途流(无幽灵流烧 token)
 - **MCP 握手超时**:默认 15s(`mcp[].timeoutMs` 可调),黑洞端点降级跳过,不阻塞 SDK 启动
 - **MCP 工具调用超时**(3.6+):单次 callTool 默认 60s(`mcp[].callTimeoutMs` 可调),server 挂起不再拖死 ReAct 轮 —— 超时该次调用作废回灌 LLM 自纠(不重试),连接不断后续调用复用
 - **LLM 流停滞看门狗**:chunk 间隔(含等首个)超 `streamStallMs`(默认 90s,0 关)→ 自动中断报错,防 loading 永转
 - **流总时长上限**:单次模型调用总时长超 `streamMaxDurationMs`(默认 600s,0 关)→ 抛 `StreamMaxDurationError`(408 不重试)。兜「空转帧黑洞」:部分中转站返回 200+SSE 头后以 keepalive 空转帧维持连接(间隔看门狗被喂饱永不触发),实测冻结 7min+ 无报错;超限快速失败后重委派/重发即自愈
+- **集成方工具看门狗**(`toolTimeoutMs`,默认 120s,0 关):单工具执行超时 → 放弃等待,recoverable 错误结果回灌自纠(防集成方工具永不 settle 拖死整轮:loading 永转 + stop 无效)。只对集成方注入工具生效(`defineTool` / `actions` / skill 工具工厂 / rag retriever);内置工具/MCP/子 agent 委派与乐观锁冲突挂起(等人工裁决)是设计内等待,一律豁免
+- **冲突挂起可中断**:`send`/`batch` 与 UI `stream` 全入口 —— 携带的 AbortSignal abort 时,挂起的乐观锁冲突自动按「保留外部」(keep_external)收口,send 不再永不返回;外部修改保留、agent 值不落地
 
 **⑤ 指令执行力守卫(instruction-adherence,3.35+,均默认开、零配置)**
 针对真 LLM 实测的两类失效,框架内置两个宁漏勿误的守卫:
@@ -1078,7 +1080,7 @@ createChatSdk({
     allowedTools: ['myResearchTool'],  // 子 agent 可用的额外工具(默认仅只读主数据 + fetch)
     maxDepth: 1,    // 递归深度(默认 1:主可 spawn,子不可再 spawn)
     maxParallel: 4, // spawn_agents 并发上限(默认 4)
-    // timeoutMs: 300000, // 单个子 agent 执行超时(2.40+,opt-in 默认关;超时 abort 子流,错误回灌主 LLM 可重试/拆分)
+    // timeoutMs: 300000, // 单次委派总时长(4.1+ 默认 600000=10min 挂起兜底;0=不限制;超时 abort 子流,错误回灌主 LLM 可重试/拆分)
     // enabled: false  // 关闭子 agent
   },
   maxParallelTools: 1,  // 同轮工具并发(默认 1 串行;与 subagent.maxParallel 不同)
@@ -1195,7 +1197,7 @@ createChatSdk({
   approval: {
     tools: ['write'], // 被动:需确认的工具名(write 主写入口)
     // confirm: (name, args) => args?.path?.startsWith('Editor.'),  // 自定义判定(优先于 tools)
-    // timeoutMs: 30000,  // 超时自动拒绝(0=不超时,默认)
+    // timeoutMs: 30000,  // 无响应自动拒(4.1+ 默认 30000;响应方调事件 hold() 接管后不限时;Infinity/负数=不超时)
     // humanConfirmTool: false,  // 传 approval 时亦可关主动侧(等价于顶层 humanConfirm:false)
   },
 })
@@ -1252,74 +1254,6 @@ sdk.listCheckpoints()  // 查看可用回退点
 **就地还原**:主数据就地清空+重填(保留 Vue reactive 容器引用,UI 自动更新);messages 用 splice 替换内容(保留同一响应式数组引用);vfs 清空重填;todos reset。
 
 > **与 dataOps 快照区别**:dataOps 快照(`restore_data`)随 set/edit/delete 自动入栈,单次回退最近一次写;checkpoint 整体,回滚到某轮起点(跨多次写 + 对话 + vfs + todos)。二者叠加:小错用 dataOps 精细修,大错用 checkpoint 整体回。`nested-demo` 已开启 `checkpoint: true`。
-
-### 6.13 结构化追踪 TraceSpan(性能归因 / 调试,2.20+)
-
-长任务/复杂场景下,扁平日志不知哪轮慢、哪轮失败、哪轮烧 token。开启结构化追踪得到 **TraceSpan 树**(每轮 `model`/`tool`/`compression` 的 timing/status/usage),供性能归因与错误追溯。opt-in(采集有性能开销,默认关)。
-
-```ts
-createChatSdk({
-  capabilities: { tracing: true },  // opt-in,默认关
-  onEvent: (e) => {
-    if (e.type === 'trace') console.log('trace 完成', e.metrics)  // agent 调用结束 emit spans + metrics
-  },
-})
-// 运行后:
-// sdk.inspect().trace  → { spans, metrics }(轮次/延迟/工具成功率/重试/压缩/token)
-// DebugDrawer「📊 上下文」tab 底部 🌳 Trace 段 → metrics 卡片 + span 列表(可视化)
-```
-
-- **Span 类型**:`round`(每轮)/ `model`(LLM 调用)/ `tool`(工具执行)/ `compression`(上下文压缩),含 `startTs`/`endTs`/`durationMs`/`status`/`attributes`(round 编号、工具名、usage 等)。
-- **`getTraceMetrics(spans)`**(导出纯函数):聚合出轮次数、平均/总延迟、工具成功率、重试次数、压缩频次、累计 token。
-- **`onEvent('trace')`**:agent 调用结束 emit `{ spans, metrics }`(供集成方接 APM / 自建监控)。
-- **`inspect().trace`**:运行时反射当前 spans + metrics(DebugDrawer / headless 读)。
-
-> 适用:调试长任务瓶颈(哪轮慢)、错误追溯(哪轮失败)、token 预算监控(每轮 usage)。仍不做 APM 后端上报 / 分布式追踪(后端框架需求;经 `onEvent('trace')` 自行接 Datadog/Sentry 等)。
-
-### 6.13b 上下文归档 `context_trimmed`(对话超长时抢救即将删除的内容,context-persist-resilience)
-
-对话超过 `maxMemoryRounds`(默认 50 轮)时,AI 会删除最早的轮次腾内存(原文永久丢失,只留摘要)。若需审计 / 合规 / 备份,订阅 `context_trimmed`:删除前打包完整原文(含被引用的 vfs 大结果)+ 替代摘要给你,你要存就存自己的服务器(SDK 不囤积,默认删除行为不变)。
-
-```ts
-createChatSdk({
-  storage: 'indexed',  // 需开 storage(vfs 大结果才持久化、归档才完整)
-  onEvent(e) {
-    if (e.type === 'context_trimmed') {
-      // e.dropped    = 即将被删的完整早期对话(每轮:用户 / AI / 工具结果)
-      // e.vfsResults = 这些轮引用的 vfs 大结果原文 { 地址→内容 }
-      // e.summary    = 替代的摘要
-      archiveService.save({ dropped: e.dropped, vfsResults: e.vfsResults, summary: e.summary })
-    }
-  }
-})
-```
-
-- 不订阅 = 跟现在一样(AI 照删,你不管)。完全可选。
-- 同链路:vfs 孤儿 GC(trim 后自动回收没人引用的大结果,防堆积);mission / workingMemory 跨刷新持久化(长任务目标 + 工作记忆刷新不丢)。
-
-### 6.13c 诊断报告导出 `exportDiagnostics`(调试排查,3.29+)
-
-用户报「agent 行为不对」时,最难的是拿到现场:完整日志 + 消息 + 上下文快照。**`sdk.exportDiagnostics()`** 一键聚合当前会话诊断快照为 JSON 字符串,用户复制全文发维护者即可排查(内置 UI 的 DebugDrawer 头部有 💾 按钮直接下载 JSON 文件(原复制改下载,大日志 clipboard 易截断)):
-
-```ts
-const text = sdk.exportDiagnostics()  // JSON 字符串,可直接复制/上传
-```
-
-报告内容:`debugLogs` 全量(完整日志主体)+ `messages` + `inspect()` 快照(tools/middleware/subagent/上下文构成)+ `usage` 累计用量 + `pendingConflict` + `dataSummary`(数据描述/顶层键/字节量级)+ `sessionId`(多会话锚点)+ 环境信息。
-
-**隐私收口**:apiKey 不入报告;data schema 剥 zod 内部结构(只留顶层键摘要);**bind 数据不 dump 全文**(只留摘要);url 凭据查询参数自动打码;单字段 >50KB 截断留痕(图片 dataUri 防撑爆)。
-
-**总长闸**:报告 >6MB 时从最旧日志丢弃至达标(头部插 `diagnostics_truncated` 标记,保留排查相关性最高的近段日志),剪贴板友好。
-
-纯函数可单独用(headless 集成方自建排查入口):
-
-```ts
-import { buildDiagnosticsReport, stringifyDiagnosticsReport, maskUrlCredentials } from 'page-agent-sdk'
-// buildDiagnosticsReport({ debugLogs, messages, info, usage, ... }) → 结构化报告
-// stringifyDiagnosticsReport(report) → 应用总长闸的 JSON 字符串
-```
-
-> headless 集成方复用内置 DebugDrawer 时不传 `exportDiagnostics` prop 也可:按钮降级为本地聚合(仅 logs + getInfo,无 messages/usage/dataSummary)。
 
 ### 6.14 无人值守自动化(资源预算 / 错误恢复 / 批处理 / 断点续跑,2.20+)
 
@@ -1649,9 +1583,9 @@ sdk.clearFocus() // 退出精修,恢复全量可操作范围
 ```
 
 聚焦后三层收敛:
-- **目标提示**:每轮 systemPrompt 注入「## 当前精修目标:components.3(导航栏)。仅操作该子树」
+- **目标提示**:每轮 systemPrompt 注入「## 当前精修目标:components.3(导航栏)。仅操作该子树」;**意图归属引导(4.1+)**:「增加/修改/删除 X」类创建型指令默认归属聚焦组件本身(如聚焦 tabs 时说「增加 tab」= 给它加页签,写 `components.8.props.tabs` 子路径),仅用户明确要求新建独立组件才需解焦 —— 实测 flash 曾把「增加tab」误读为新建组件追加页尾,故机制化引导
 - **视野收敛**:只看到该组件子树的 schema 描述(`getSchemaAtPath` 取子树,`extractSchemaHint` 渲染),不看其他组件
-- **范围收紧(strict)**:写该子树之外(如 `components.0`)→ `PATH_DENIED` 越界错误回灌,agent 自纠;读工具不限制(用户仍需看全量上下文)。**例外:尾部追加放行** —— 写 `<arrayPath>.<N>`(N ≥ 当前数组长度,即追加新元素)不破坏焦点子树,故聚焦模式下仍可新建组件(如聚焦 hero 时 `write components.2` 追加 banner)
+- **范围收紧(strict)**:写该子树之外(如 `components.0`)→ `PATH_DENIED` 越界错误回灌,agent 自纠;**文案先给「正路」出口(4.1+)**:被拦时优先提示「若意图是修改聚焦组件本身,改写焦点路径的子路径重试(附实际焦点路径示例)」,解焦出口(remove_focus/clear_focus/换焦点)列后 —— 防 agent 照方抓药清焦后把误读执行到底;读工具不限制(用户仍需看全量上下文)。**例外:尾部追加放行** —— 写 `<arrayPath>.<N>`(N ≥ 当前数组长度,即追加新元素)不破坏焦点子树,故聚焦模式下仍可新建组件(如聚焦 hero 时 `write components.2` 追加 banner)
 
 > **× code-as-data-asset 强化(子 agent 代码精修)**:用 `createHtmlSubagent` 时,子 agent 改代码走 `vfs_edit`(非数据写),`focus.ts` 的数据写拦截不覆盖 vfs,故 `codeAssetMiddleware` 在执行前补一道 **vfs 白名单**:子 agent(继承主焦点)只能 `vfs_edit` 焦点组件的代码文件(按 `__pgId` 归属判定),越界 `PATH_DENIED` —— 即使子 agent 误解也改不到别的组件代码。这是「点选组件 → 对话精修」的硬约束基础。焦点为整个数组 / 非代码字段时放行(无法精确到组件)。**聚焦模式下不能新建组件**(数据写被 focus.ts 拦),新建前先 `clearFocus`。完整示例见 `examples/html-page-demo`(预览区点选组件 → 🎯 聚焦 → 对话精修)。
 
@@ -2066,38 +2000,6 @@ createChatSdk({
 - **默认 systemPrompt 英文版**单独导出:`DEFAULT_SYSTEM_PROMPT_EN` + `systemPromptHelpers.reliableWriteRulesEn`(英文场景想自定义 prompt 时可拼用)
 - 完整示例:`examples/i18n-demo`(en locale + statusDone/emptyGreeting HTML 覆盖)
 
-### 6.16 跨会话用户偏好记忆(3.23+)
-
-agent 从对话中自动捕获用户的**持久偏好**(配色口味/文案风格/排版密度),独立持久化,下个会话自动注入 —— 用户不必每个会话重申「别用紫色」:
-
-```ts
-createChatSdk({
-  container: '#root', llm: {...},
-  capabilities: { preferences: true },          // opt-in(自动写用户浏览器属行为敏感,默认关)
-  preferenceStorage: { backend: 'indexed' },    // 可选:与 skillStorage 同构;maxEntries FIFO 上限(默认 20)
-})
-
-// 运行时管理(学错了可删)
-sdk.getPreferences()          // 条目快照 [{id, content, topic, ...}](updatedAt 新在前)
-await sdk.removePreference(id) // 删单条
-await sdk.clearPreferences()   // 清空
-```
-
-**捕获策略(宁漏勿误)**:
-
-| 信号 | 例 | 处理 |
-|---|---|---|
-| 强:显式命令 | 「记住:以后文案都要短」 | 正则直接提取,**零 LLM** |
-| 中:模式词命中 | 「别用紫色」「太艳了」 | 小 LLM(summaryLlm 通道)提炼一次;核心判定 = **持久口味 vs 本轮任务指令**(「把这个改成红色」不是偏好);不可用时只走强信号 |
-| 弱:行为推断 | 连续 3 次改掉渐变 | **不捕获**(推断链长,学错成本 > 收益) |
-
-**要点**:
-- **条目合并**:topic 固定 6 枚举(color/copy/layout/interaction/tech/other);同 topic **后说覆盖前说**(用户改主意不并存,防注入段自相矛盾),FIFO ≤20(偏好段 token 有界,~200 token)
-- **注入**:augmentPrompt pin 段(每轮重建进 system prompt,跨压缩天然生效,同 mission);段头声明「除非用户本轮另有指示」
-- **与既有记忆的分工**:`memory` 集成方写死全局指令 / `craftNotes` 组件级交接 / `mission` 会话内目标 / **偏好记忆 = 用户级跨会话**
-- **可观察**:DebugDrawer「Agent 信息」tab「用户偏好」只读小节;捕获/失败留 debugLogs(middleware 类型)
-- **隐私边界**:偏好只存本机(同 skillStore 的 IndexedDB,不随会话快照上传);`preferenceStorage.id` 传同一固定串可跨页面/跨 agent 共享,不传按 agentId 隔离
-
 ### 6.17 图片输入(多模态直发 / 识图转述旁路)
 
 对话框内置图片输入:三入口(📎 选择 / 拖拽 / 粘贴截图)→ 压缩闸 → 随下一条消息发送。**图怎么发取决于主模型是否有视觉能力**,三分支自动判定:
@@ -2197,7 +2099,7 @@ A: ① 用 `write` 的 `patch` 增量改而非整体重传 `value`;② 调大 `m
 A: 用 `capabilities: { dataOps: false, fetch: false, planning: false, skills: false, vfs: false, ... }` 关掉对应内置工具/中间件(默认全开)。`dataOps:false` → 不装 dataOps 工具集(纯调研场景);`fetch:false` → 不装 `fetch_document`。⚠️ vfs 关 → 大结果外存退化为截断;summarization 关 → 长会话不压缩。
 
 **Q: console 提示「capabilities.X 已列入移除计划」?**
-A: `tracing` / `skillHostScript` / `preferences` / `bulkGuard` 四项已进入 deprecation warn 期(维护者确认外部零使用,计划 4.1.0 移除;装配期配置命中才 warn,每挂载一次)。如你在使用,到仓库 issue 说明即可按反馈保留;迁移方式见 warn 文案(各含迁移指引)。`todoDeps` 已撤除(残键被静默忽略,不报错)。
+A: **`tracing` / `skillHostScript` / `preferences` / `bulkGuard` 四项已于 4.1.0 移除**(残键静默忽略,零 warn;tracing 迁移 → `debugLogs` + `exportDiagnostics`;skillHostScript 的 `exec.context:'host'` 残值落 sandbox 执行 = 语义反转;存量 indexedDB 偏好数据可用浏览器 DevTools 清 `v:1::pref-store::*` 键)。`todoDeps` 已撤除(残键静默忽略)。
 
 **Q: 多个 Agent 同页共存会串数据吗?**
 A: 不会。给每个传不同的 `id` 即隔离。若想让多个对话框共享**同一个** Agent,用 `shareContext: true`(同 `id`)。共享实例间有 core 级串行闸:send/switchSession 跨实例排队串行;任一实例的生命周期收口(unmount/switchSession/resetSession)会中止共享 core 的全部在途流(共享状态不允许孤儿流续写)。

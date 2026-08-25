@@ -13,6 +13,7 @@ import { z } from 'zod'
 import type { StructuredToolInterface } from '@langchain/core/tools'
 import type { SubagentConfig } from '../harness/subagent'
 import type { SkillSpec } from '../harness/skills'
+import { markWatchdogTools } from '../harness/toolWatchdog'
 
 // ===== 类型 =====
 
@@ -151,7 +152,7 @@ export const ragSearchSkill: SkillSpec = {
 
 /** 把 retriever 包成 search_docs 工具;retriever 抛错 try/catch 降级为错误字符串回灌(换关键词重试,不崩) */
 function buildSearchTool(name: string, retriever: RagRetriever, defaultTopK: number): StructuredToolInterface {
-  return tool(
+  const t = tool(
     async ({ query, topK }) => {
       try {
         const hits = await retriever(query, { topK: topK ?? defaultTopK })
@@ -170,11 +171,14 @@ function buildSearchTool(name: string, retriever: RagRetriever, defaultTopK: num
       }),
     },
   )
+  // per-tool 看门狗(flow-robustness P0#1):retriever 是集成方实现(接向量库/远程 API),永不 settle 时兜底
+  markWatchdogTools([t])
+  return t
 }
 
 /** 把 loader 包成 load_doc 工具;loader 抛错降级(换 source 重试) */
 function buildLoadTool(name: string, loader: RagLoader): StructuredToolInterface {
-  return tool(
+  const t = tool(
     async ({ source }) => {
       try {
         const res = await loader(source)
@@ -191,6 +195,9 @@ function buildLoadTool(name: string, loader: RagLoader): StructuredToolInterface
       schema: z.object({ source: z.string().describe('文档标识(id/URL/key)') }),
     },
   )
+  // per-tool 看门狗:loader 同为集成方实现,同 search 工具口径打标
+  markWatchdogTools([t])
+  return t
 }
 
 // ===== 工厂 =====

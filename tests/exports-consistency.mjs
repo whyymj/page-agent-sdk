@@ -33,6 +33,7 @@ const typesExports = extractExports(typesContent)
 const TYPES_ONLY_ALLOWLIST = new Set([
   'ChatDialogSections', 'ChatDialogProps', 'DebugDrawerProps', 'ChatModelLike',
   'SkillExecSpec', 'SkillToolFactory', 'Checkpoint', 'SessionOptions', 'WorkingMemory', 'Mission',
+  'HumanConfirmOptions',
 ])
 const missingInTypes = [...srcExports].filter(n => !typesExports.has(n))
 const extraInTypes = [...typesExports].filter(n => !srcExports.has(n))

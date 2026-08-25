@@ -24,7 +24,11 @@
 
 ## 进行中的 change
 
-_(无 —— `legacy-bundle-channel` 已实施完成随 3.26.0 发布归档,见「最近完成」段)_
+- **2026-08-25 [`flow-robustness`](./changes/2026-08-25-flow-robustness/)**(SDK,**P0×2 + P1**):全流程阻塞/挂起/崩溃收口 —— 工具执行看门狗(stop 按钮唯一击穿缺口)+ headless send abort 联动 + P1×10;五路审计结论:无死循环、无 P0 崩溃、已知两雷已修。
+- **2026-08-25 [`config-surface-pruning-round2`](./changes/2026-08-25-config-surface-pruning-round2/)**(SDK,P2,目标 4.1.0):deprecation 满期移除轮(tracing/skillHostScript/preferences/bulkGuard 四能力 + warn 机制);editor_fangzhou bulkGuard 已摘除;移除面已实盘补全(P0:measureWriteScale 迁出)。
+- **2026-08-25 [`write-conflict-final-hash`](./changes/2026-08-25-write-conflict-final-hash/)**(SDK,P1):并发写互锁 TOCTOU 根因修复;**方案已评审改判 C 收窄形态**(mutex + ask 恢复点补校验,design.md 定稿);团队审查 P1 定级,deferred #1 已立项。
+
+_(此前:`legacy-bundle-channel` 已实施完成随 3.26.0 发布归档,见「最近完成」段)_
 
 > **2026-08-17 `legacy-bundle-channel` 归档(随 3.26.0 发布)**:老构建链宿主(webpack≤4)官方接入通道 —— `page-agent-sdk/legacy` 子路径(es2017 全量打包单文件 ~2.9MB,vue/zod/@langchain 含 anthropic/MCP 全 inline,宿主 `await import()` 懒加载零 transpile/零 peer)+ 包根物理转发文件 `legacy.js`/`style.css`(webpack4 enhanced-resolve 不认 exports map)。实施三发现:① anthropic 必须 inline(external 时 await import 语法残留 acorn6 parse 硬失败)② ESM 下 rolldown 默认切 MCP hash chunk(inlineDynamicImports 固单文件)③ webpack4 子路径按包根文件解析(exports map 无用)。三层验证:editor_fangzhou 真实 webpack4 acorn 栈 parse / e2e legacy-subpath +11(191 符号等价)/ 正式版靶场端到端(编译+挂载+真实 LLM 工具轮落地)。文档:README×2 + usage-guide 中英 + 集成 skill 三通道决策树。selftest 2428 / e2e 764 / browser 84。
 

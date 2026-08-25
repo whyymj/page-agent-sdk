@@ -201,6 +201,8 @@ export function useChat(
             }
             case 'approval_request': {
               // 挂起等用户确认;resolve 由 resolveApproval 调用,清空后 agent 继续
+              // hold(flow-robustness P1#3):UI 接管确认 → 取消中间件的无响应自动拒计时,等用户不限时
+              event.hold?.()
               pendingApproval.value = {
                 toolName: event.toolName,
                 args: event.args,

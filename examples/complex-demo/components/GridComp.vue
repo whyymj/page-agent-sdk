@@ -8,6 +8,7 @@ import CompWrapper from './CompWrapper.vue'
 import CompRenderer from '../CompRenderer.vue'
 
 const props = defineProps<{
+  compPath?: string
   id?: string
   style?: Record<string, string>
   visible?: boolean
@@ -28,6 +29,7 @@ const gridStyle = computed(() => ({
   <CompWrapper :id="id" :style="style" :visible="visible" :className="className">
     <div :style="gridStyle">
       <CompRenderer
+      :path="compPath ? `${compPath}.props.children.${i}` : undefined"
         v-for="(c, i) in children"
         :key="(c.id ?? c.type) + '-' + i"
         :comp="c"

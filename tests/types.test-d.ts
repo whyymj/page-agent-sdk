@@ -122,20 +122,17 @@ type _ErrorEvt = Extract<SdkEvent, { type: 'error' }>
 export const _ee: 'recoverable' | 'fatal' | 'observable' | undefined = null as any as _ErrorEvt['severity']
 type _UsageEvt = Extract<SdkEvent, { type: 'usage' }>
 export const _ue: number = null as any as _UsageEvt['round']
-type _TraceEvt = Extract<SdkEvent, { type: 'trace' }>
-export const _te: unknown[] = null as any as _TraceEvt['spans']
-
 // 4. ChatSdkOptions 关键字段(防 automation/actions/capabilities/tokenBudget 等新增配置项漏入 types)
 export const _optFields: Pick<ChatSdkOptions,
   'tokenBudget' | 'timeBudgetMs' | 'actions' | 'capabilities' | 'onAudit'
   | 'augmentSystem' | 'appendReliableWriteRules' | 'skillStorage' | 'schemaHint'
 > = null as any
 
-// 5. capabilities 21 开关名完整性(防开关名漂移/缺漏;与 src/core/capabilities.ts CAPABILITIES 注册表呼应;audit P1-27 扩到全 21)
+// 5. capabilities 18 开关名完整性(防开关名漂移/缺漏;与 src/core/capabilities.ts CAPABILITIES 注册表呼应;round2 移除四能力后)
 export const _capKeys: Pick<NonNullable<ChatSdkOptions['capabilities']>,
   'dataOps' | 'fetch' | 'planning' | 'missionAnchor' | 'workingMemory' | 'focus' | 'skills' | 'vfs'
   | 'summarization' | 'memory' | 'subagent' | 'inspectEnv' | 'contextInspector' | 'verify' | 'domInspect'
-  | 'draftWrite' | 'tracing' | 'skillHostScript' | 'automation' | 'agentCompression'
+  | 'draftWrite' | 'automation' | 'agentCompression'
 > = null as any
 
 // 6. send options per-call 字段(audit P1-24:d.ts 与 src SendOptions 对齐,防 maxAutoRetries 漂移)

@@ -140,7 +140,7 @@ function wrapCustomCode(code: string): string {
   <!-- custom 纯代码组件:wrapper 接管点击命中 —— sandbox iframe 吞 click(无 allow-same-origin 不冒泡),
        事件委托 closest('[data-path]') 命不中;iframe pointer-events:none → click 透到 wrapper 命中 data-path(可两步拾取);
        动画仍跑(script 照常执行),hover 交互牺牲(纯预览展示) -->
-  <div v-if="comp.type === 'custom'" class="custom-comp-wrap" :data-path="path" :style="compStyle">
+  <div v-if="comp.type === 'custom'" class="custom-comp-wrap" :data-path="path" :style="compStyle" draggable="true">
     <iframe class="custom-comp-iframe"
       :srcdoc="wrapCustomCode(comp.code || '')"
       :style="{ height: customHeight }"
@@ -151,6 +151,7 @@ function wrapCustomCode(code: string): string {
   <component v-else
     :is="COMP_MAP[comp.type] ?? 'div'"
     v-bind="comp.props"
+    :comp-path="path"
     :id="comp.id"
     :style="compStyle"
     :class="compClass"
@@ -158,6 +159,7 @@ function wrapCustomCode(code: string): string {
     :aria-label="comp.ariaLabel"
     :data-tooltip="comp.tooltip"
     :data-path="path"
+    draggable="true"
   />
 </template>
 

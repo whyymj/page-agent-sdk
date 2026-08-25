@@ -73,34 +73,25 @@ export async function run() {
     assert(toolsOn.includes('fetch_document') === false, 'MIN_CAPS(fetch:false) → 不含 fetch_document')
     sdkOn.unmount()
 
-    console.log('[e2e:inspect] ✓ config-surface-pruning:deprecation warn(候选撤除面命中才触发,含迁移指引;未配置零输出)')
+    console.log('[e2e:inspect] ✓ config-surface-pruning round2:四能力残键装配不 throw 不 warn(tracing/skillHostScript/preferences/bulkGuard)')
     {
       const warns = []
       const origWarn = console.warn
       console.warn = (...a) => { warns.push(a.join(' ')) }
+      let threw = false
+      let sdkRemoved
       try {
-        const sdkDep = createChatSdk({
-          ui: false, id: 'e2e-deprecated-caps', storage: 'memory', llm: FAKE_LLM,
-          capabilities: { ...MIN_CAPS, preferences: true, tracing: true, skillHostScript: true, bulkGuard: true },
+        sdkRemoved = createChatSdk({
+          ui: false, id: 'e2e-removed-caps', storage: 'memory', llm: FAKE_LLM,
+          capabilities: { ...MIN_CAPS, tracing: true, skillHostScript: true, preferences: true, bulkGuard: true },
           data: { schema: z.object({ x: z.string() }), bind: { x: '1' } },
         })
-        await sdkDep.mount()
-        const hit = warns.filter((w) => w.includes('[page-agent-sdk][capabilities.'))
-        assert(hit.length === 4, `✓ 4 项 deprecation 键各 warn 一次(实际 ${hit.length})`)
-        assert(hit.every((w) => w.includes('4.1.0 移除')), '✓ warn 含移除目标版本 4.1.0(warn 期明确)')
-        assert(hit.some((w) => w.includes('capabilities.preferences') && w.includes('getPreferences')), '✓ warn 含迁移指引(preferences → 同批移除方法说明)')
-        sdkDep.unmount()
-        const before = warns.length
-        const sdkClean = createChatSdk({
-          ui: false, id: 'e2e-deprecated-caps-clean', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
-          data: { schema: z.object({ x: z.string() }), bind: { x: '1' } },
-        })
-        await sdkClean.mount()
-        sdkClean.unmount()
-        assert(warns.length === before, `✓ 未配置 deprecation 键 → 零新增 warn(实际新增 ${warns.length - before})`)
-      } finally {
-        console.warn = origWarn
-      }
+        await sdkRemoved.mount()
+      } catch { threw = true }
+      console.warn = origWarn
+      assert(!threw, '✓ 四能力残键 + 残配 → 装配/mount 不 throw')
+      assert(!warns.some((w) => w.includes('tracing') || w.includes('skillHostScript') || w.includes('preferences') || w.includes('bulkGuard')), '✓ 四能力残键 → 零 deprecation warn(warn 机制已随移除整体删除)')
+      sdkRemoved?.unmount()
     }
 
     // 默认配置 → 全暴露(toolMode 已移除,无精简工具面)
@@ -192,24 +183,6 @@ export async function run() {
     await sdkVfsNoDraft.mount()
     assert(!sdkVfsNoDraft.inspect().tools.some((t) => t.name === 'draft_write'), 'vfs 但 draftWrite 未开 → 不含 draft(opt-in)')
     sdkVfsNoDraft.unmount()
-    // tracing:true(opt-in)→ inspect().trace 存在(spans 初始空 + metrics);默认关 → undefined
-    const sdkTrace = createChatSdk({
-      ui: false, id: 'e2e-trace-on', storage: 'memory', llm: FAKE_LLM,
-      capabilities: { ...MIN_CAPS, tracing: true },
-      data: { schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'x' },
-    })
-    await sdkTrace.mount()
-    const traceInfo = sdkTrace.inspect()
-    assert(traceInfo.trace !== undefined && Array.isArray(traceInfo.trace.spans) && traceInfo.trace.metrics, 'tracing:true → inspect().trace 存在(spans + metrics)')
-    sdkTrace.unmount()
-    // 默认(tracing 未开)→ trace undefined(opt-in)
-    const sdkNoTrace = createChatSdk({
-      ui: false, id: 'e2e-trace-off', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
-      data: { schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'x' },
-    })
-    await sdkNoTrace.mount()
-    assert(sdkNoTrace.inspect().trace === undefined, '默认(tracing 关)→ inspect().trace undefined(opt-in)')
-    sdkNoTrace.unmount()
 
     // inspect().contextPreset 反映 complex(add-complex-preset-and-vfs-json)
     const sdkComplex = createChatSdk({

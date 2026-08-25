@@ -141,7 +141,6 @@ export type SdkEvent =
   | { type: 'session_restored'; sessionId: string; rounds: number }
   | { type: 'usage'; round: number; usage: TokenUsage; cumulative: TokenUsage }
   | { type: 'error'; message: string; severity?: 'recoverable' | 'fatal' | 'observable'; code?: string; context?: unknown }
-  | { type: 'trace'; spans: TraceSpan[]; metrics: TraceMetrics }
   | { type: 'context_trimmed'; dropped: { round: number; user: unknown; assistant: unknown[]; steps: unknown[] }[]; vfsResults: Record<string, string>; summary: string; reason: string }
   | { type: 'focus_chip_click'; path: string; label?: string }
   | { type: 'focus_change'; focuses: Focus[] };
@@ -269,6 +268,8 @@ export interface SubagentInfo {
   enabled: boolean;
   maxDepth: number;
   maxParallel: number;
+  /** 单次委派总时长毫秒(flow-robustness P1#4 反射:undefined → 默认 600000;0 = 关) */
+  timeoutMs: number;
   allowedTools: string[];
   /** 预声明子 agent 列表(动态:反映 setSubagents/addSubagent/removeSubagent 后的最新) */
   subagents?: { id: string; description: string }[];
@@ -347,8 +348,6 @@ export interface AgentInfo {
   };
   /** 会话级 checkpoint 装载状态(未开启 → undefined) */
   checkpoints?: { enabled: boolean; auto: boolean; list: CheckpointMeta[] };
-  /** 结构化追踪(revive-observability-tracing;capabilities.tracing 开时填充,否则 undefined) */
-  trace?: { spans: TraceSpan[]; metrics: TraceMetrics };
   /** 上下文构成快照(context-inspector;每轮 wrapModelCall 覆盖;capabilities.contextInspector:false → undefined) */
   context?: ContextSnapshot;
 }
@@ -503,6 +502,10 @@ export interface DataOpsOptions {
   onConflict?: (conflict: ConflictInfo) => Promise<ConflictResolution>;
   /** 冲突监听字段白名单(任意深度字段名):声明后仅这些字段的值变动触发自动冲突检测(位置不敏感);未声明 = 不开自动检测(仅显式 expectedHash 校验);['*'] = 全字段检测(旧 autoLock 行为) */
   conflictWatchFields?: string[];
+  /**
+   * 同轮工具并发上限(createAgent 透传):>1 且 conflictWatchFields 武装时启用 dataOps 闭包级并发写互锁(async mutex,单锁 bind 域)—— 同轮并发双写不再「双双过旧基线、后者静默覆盖前者」;串行/未武装直通 no-op 零行为变化
+   */
+  maxParallelTools?: number;
 }
 
 /** 数据操作控制器(运行时替换配置;createDataOps 返回的工具数组上以不可枚举属性 `controller` 挂载) */
@@ -568,11 +571,11 @@ export interface SkillRefSpec {
   doc?: string;
   getContent?: () => string | Promise<string>;
 }
-/** skill 执行钩子:code(内联 JS)/url(远程,仅 sandbox)二选一;context 默认 sandbox,host 需 skillHostScript */
+/** skill 执行钩子:code(内联 JS)/url(远程,仅 sandbox)二选一;context 默认 sandbox(host 已随 4.1.0 移除,残值落 sandbox 执行) */
 export interface SkillExecSpec {
   code?: string;
   url?: string;
-  context?: 'sandbox' | 'host';
+  context?: 'sandbox';
   inject?: 'append' | 'prepend';
 }
 /** skill 附带工具工厂(返回单个/数组工具,可异步;ctx.signal 运行时中止信号) */
@@ -619,8 +622,10 @@ export interface ApprovalOptions {
   tools?: string[];
   /** 自定义判定(优先于 tools);返回 true 需确认 */
   confirm?: (name: string, args: any) => boolean;
-  /** 超时毫秒(用户未响应自动拒绝);0 = 不超时(默认) */
+  /** 超时毫秒(无响应自动拒绝);SDK 装配层默认 30000(响应方调事件的 hold() 接管后不限时);显式 Infinity/负数 = 不超时 */
   timeoutMs?: number;
+  /** 超时自动拒的留痕回调(abort/用户先收口不触发) */
+  onAutoReject?: (info: { toolName: string; waitedMs: number }) => void;
   /** 是否装载 request_human_confirmation 主动确认工具(传 approval 时默认 true;false 关闭) */
   humanConfirmTool?: boolean;
 }
@@ -633,14 +638,14 @@ export interface PlanConfirmationRecord {
   choice: string;
   viaOptions: true;
 }
-export declare function createHumanConfirmMiddleware(onResolved?: (record: PlanConfirmationRecord) => void): any;
-export declare const HUMAN_CONFIRM_TOOL_NAME: string;
-/** 大批量变更门禁(bulk-change-guard):量纲 = 现有组件节点数;默认关,须配 approval 才装配 */
-export interface BulkGuardOptions {
-  threshold?: number;
+/** humanConfirm 中间件可选项:timeoutMs 无响应自动拒(超时视同拒绝);onAutoReject 超时留痕回调 */
+export interface HumanConfirmOptions {
   timeoutMs?: number;
-  mode?: 'confirm' | 'observe';
+  onAutoReject?: (info: { toolName: string; waitedMs: number }) => void;
 }
+export declare function createHumanConfirmMiddleware(onResolved?: (record: PlanConfirmationRecord) => void, opts?: HumanConfirmOptions): any;
+export declare const HUMAN_CONFIRM_TOOL_NAME: string;
+/** 写触达量纲结果(原 bulk-change-guard 量纲;bulkGuard 已于 4.1.0 移除,函数为 delegateNudge 依赖保留) */
 export interface WriteScaleResult {
   count: number;
   scopes: string[];
@@ -648,19 +653,6 @@ export interface WriteScaleResult {
 }
 /** 度量单次写调用触达的现有组件节点数(纯函数:同组件多 patch=1;新增路径不计) */
 export declare function measureWriteScale(args: unknown, getBind: () => unknown): WriteScaleResult;
-/** 中间件工厂参数(getBind/tools/getPlanConfirmation/onEvent;挂起经 ctx.emit approval_request) */
-export interface BulkGuardMiddlewareOptions extends BulkGuardOptions {
-  getBind: () => unknown;
-  tools?: unknown[];
-  getPlanConfirmation?: () => { at: number; summary: string } | undefined;
-  onEvent?: (info: { stage: 'bulk_guard'; decision: 'confirm' | 'observe' | 'exempt-plan' | 'exempt-once' | 'pass' | 'timeout' | 'rejected'; kind: string; count: number }) => void;
-}
-/** 会话级豁免态(每形态确认过一次本会话放行;reset 钩子接 switch/resetSession) */
-export interface BulkGuardState {
-  confirmedKinds: Set<string>;
-  reset(): void;
-}
-export declare function createBulkGuardMiddleware(opts: BulkGuardMiddlewareOptions): any;
 export interface CheckpointMeta {
   id: number;
   label?: string;
@@ -696,6 +688,8 @@ export interface StorageConfig {
   maxBytesPerSession?: number;
   evictionWatermark?: number;
   debounceMs?: number;
+  /** flush 单项落盘超时 ms(默认 5000):IDB 事务卡死不拖死 flush 调用方,超时项留待后续 flush/pagehide 重试 */
+  flushTimeoutMs?: number;
 }
 /** Skill 独立持久化存储配置(与 storage 选项分离) */
 export interface SkillStoreConfig {
@@ -842,6 +836,10 @@ export interface ChatSdkOptions {
   maxRetries?: number;
   /** LLM 流停滞看门狗(fix-hang-and-feedback P1-7):chunk 间隔(含等首个)超此 ms → 中断抛错防 loading 永转。默认 90s;0 = 关闭 */
   streamStallMs?: number;
+  /**
+   * per-tool 看门狗:单工具执行超此 ms → 放弃等待,recoverable 错误结果回灌自纠(防集成方工具永不 settle 拖死整轮:loading 永转 + stop 无效)。只对集成方注入工具生效(defineTool / actions / skill 工具工厂 / rag retriever);内置/MCP/委派与 conflict ask 挂起是设计内等待,豁免。默认 120s;0 = 关闭
+   */
+  toolTimeoutMs?: number;
   /** token 预算上限(累计 total_tokens 超过 → 停止 agent + emit BUDGET_EXCEEDED;需 capabilities.automation:true) */
   tokenBudget?: number;
   /** 单次 invoke 的 token 预算上限(opt-in,默认关):本次 agent 调用累计 total_tokens 超限 → 中断收口(observable emit + 友好文本,已完成部分保留);与 automation 全局 tokenBudget 正交 */
@@ -859,16 +857,14 @@ export interface ChatSdkOptions {
   /** 模型最大输出(token);顶层声明对 llm 实例场景也生效,缺省按 model 名查表 */
   maxOutputTokens?: number;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
-  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; tracing?: boolean; automation?: boolean; workingMemory?: boolean; focus?: boolean; skillHostScript?: boolean; contextInspector?: boolean; agentCompression?: boolean; preferences?: boolean; bulkGuard?: boolean };
-  subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number; timeoutMs?: number; thinkingMode?: 'simple' | 'deep' };
+  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; automation?: boolean; workingMemory?: boolean; focus?: boolean; contextInspector?: boolean; agentCompression?: boolean };/** tracing/skillHostScript/preferences/bulkGuard 已于 4.1.0 移除;残键静默忽略 */
+  subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number; /** 单次委派总时长毫秒(默认 600000=10min;超时 abort 子流 + recoverable 回灌;0 = 不限制) */ timeoutMs?: number; thinkingMode?: 'simple' | 'deep' };
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[];
   /** 自检:agent 返回前跑 check,不通过则 feedback 回灌自纠(默认关闭;需 capabilities.verify:true)。check 省略时默认 createWriteBackCheck 写后读回验证 */
   verify?: { enabled?: boolean; check?: VerifyCheck; maxAttempts?: number; adversarial?: boolean };
   /** 人工确认:工具调用前弹确认框,用户「允许/拒绝」后才执行(默认关闭,不传 = 不装) */
   approval?: ApprovalOptions;
-  /** 大批量变更门禁(默认关;capabilities.bulkGuard:true 开启,须同时配置 approval 否则 no-op)。量纲 = 现有组件节点数(同组件多 patch 不拦,新增内容不计);超阈挂 approval(自带 timeoutMs 超时自动拒);mode:'observe' 无人值守只留痕 */
-  bulkGuard?: { threshold?: number; timeoutMs?: number; mode?: 'confirm' | 'observe' };
   /** 主动征询(默认开启):装载 request_human_confirmation 工具,LLM 在不确定/多方案/高风险时主动征询;false 关闭(types-alignment 补漏) */
   humanConfirm?: boolean;
   /** 会话级 checkpoint 回滚(回到上次正常时)。默认关闭;传 true 或 { maxCheckpoints?, auto? } 开启 */
@@ -1161,34 +1157,6 @@ export interface LocalValidationPlan {
 export declare function validateRootValueLocally(args: { schema: any; allowKeys: string[] | null; value: unknown; bindRef: unknown }): { ok: true; assembly: unknown; wholeParsed: Record<string, unknown> | null; notices: string[] } | { ok: false; error: string; notices: string[] };
 export declare function validateWriteLocally(args: { schema: any; bindRef: unknown; clone: unknown; patches: { op?: string; jsonPath?: string; value?: unknown }[]; schemaErrorMode?: 'zod' | 'schema_invalid'; appendCaptures: { jp: string; elems: unknown[] }[]; moveCaptures: { jp: string; toPath: string; elem: unknown }[]; valueAt?: (jp: string) => unknown }): LocalValidationPlan;
 export declare function applyPatchesToBind(args: { bindRef: unknown; patches: { op?: string; jsonPath?: string; value?: unknown }[]; schema: any; allowKeys: string[] | null; snapshots: any[]; maxSnapshots: number; markDataDirty?: () => void; schemaErrorMode?: 'zod' | 'schema_invalid'; snapshotLabel?: string; dryRun?: boolean; internalAfterWrite?: (bind: any, before: any) => void; protectedCtx?: unknown }): { ok: true; applied: { op: string; jp: string; value: unknown }[]; clone: unknown; notices: string[] } | { ok: false; error: string };
-/** 结构化追踪 span(revive-observability-tracing Phase 3) */
-export type SpanType = 'round' | 'model' | 'tool' | 'compression';
-export type SpanStatus = 'ok' | 'error' | 'timeout';
-export interface TraceSpan {
-  id: string;
-  parentId?: string;
-  name: string;
-  type: SpanType;
-  startTs: number;
-  endTs?: number;
-  durationMs?: number;
-  status: SpanStatus;
-  attributes: Record<string, unknown>;
-}
-export interface TraceMetrics {
-  rounds: number;
-  totalDurationMs: number;
-  avgRoundMs: number;
-  toolCalls: number;
-  toolFailures: number;
-  toolSuccessRate: number;
-  modelCalls: number;
-  retries: number;
-  compressions: number;
-  totalTokens?: { prompt: number; completion: number; total: number };
-}
-/** 从 TraceSpan[] 聚合 metrics(纯函数:轮次/延迟/工具成功率/重试/压缩/token) */
-export declare function getTraceMetrics(spans: TraceSpan[]): TraceMetrics;
 // ============ 通用 JSON 操作纯函数(jsonUtils,refactor-module-extraction 从 dataOps 抽离;零依赖,经 ./query subpath 按需引入)============
 export type EditOp = 'set' | 'remove' | 'merge' | 'append';
 export declare const UNSAFE_KEYS: Set<string>;
@@ -1324,7 +1292,6 @@ export type CapabilityFlags = Partial<Record<string, boolean>>;
 export type ResolvedCapabilities = Record<string, boolean>;
 export declare const CAPABILITIES: readonly Capability[];
 /** 已列入移除计划的配置键(config-surface-pruning;warn 一版后移除) */
-export declare const DEPRECATED_CAPABILITIES: Readonly<Record<string, string>>;
 /** 单一解析:集成方原始 caps(Partial)→ 全量 boolean(opt-out 默认开 !==false / opt-in 默认关 ===true;requires 依赖未满足强制关)。参数宽松 Record<string,unknown>(兼容含 subagents 等非 boolean 字段的 caps 对象;只读已知 capability 的 boolean) */
 export declare function resolveCapabilities(caps?: Record<string, unknown>): ResolvedCapabilities;
 export declare function resolveStorage(storage: any): any | null;
@@ -1496,8 +1463,6 @@ export interface SandboxResult {
  * 无 input 传 undefined(skill exec);有 input 作 data 入参(eval_script)。
  */
 export declare function createSandboxRunner(script: string, timeoutMs?: number): (input?: unknown) => Promise<SandboxResult>;
-/** 宿主脚本执行(skill exec context:'host';AsyncFunction 主线程全权,不经静态扫描,需 capabilities.skillHostScript:true) */
-export declare function runHostScript(code: string, timeoutMs?: number): Promise<SandboxResult>;
 
 // ============ 工具报错(结构化 ERROR:{json},供 LLM 排查)============
 export interface ToolErrorInput {

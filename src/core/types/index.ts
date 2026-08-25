@@ -92,7 +92,7 @@ export type StreamEvent =
   | { type: 'tool_call'; name: string; args: any; id?: string }
   | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error'; durationMs?: number; id?: string }
   | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result' | 'reasoning'; name: string; args?: any; result?: string; status?: 'done' | 'error'; delta?: string; /** 关联的主循环工具调用 id(并行双委派各归各的 UI step) */ toolCallId?: string }
-  | { type: 'approval_request'; toolName: string; args: any; resolve: (approved: boolean | string) => void }
+  | { type: 'approval_request'; toolName: string; args: any; resolve: (approved: boolean | string) => void; /** 响应方应答接管:调用的瞬间取消无响应自动拒计时(内置 UI 收到即调;无人调 → 超时自动拒;无计时器时缺省) */ hold?: () => void }
   | { type: 'done'; content: string }
 
 /** 流式回调函数签名 */
@@ -117,7 +117,6 @@ export type SdkEvent =
   | { type: 'session_restored'; sessionId: string; rounds: number }
   | { type: 'usage'; round: number; usage: TokenUsage; cumulative: TokenUsage }
   | { type: 'error'; message: string; severity?: import('../tools/toolError').ErrorSeverity; code?: string; context?: unknown }
-  | { type: 'trace'; spans: import('../harness/createAgent').TraceSpan[]; metrics: import('../harness/createAgent').TraceMetrics }
   | { type: 'context_trimmed'; dropped: { round: number; user: unknown; assistant: unknown[]; steps: unknown[] }[]; vfsResults: Record<string, string>; summary: string; reason: string }
   | { type: 'focus_chip_click'; path: string; label?: string }
   | { type: 'focus_change'; focuses: import('../harness/state').Focus[] }
@@ -185,6 +184,8 @@ export interface SubagentInfo {
   enabled: boolean
   maxDepth: number
   maxParallel: number
+  /** 单次委派总时长毫秒(flow-robustness P1#4 反射:undefined → 默认 600000;0 = 关) */
+  timeoutMs: number
   allowedTools: string[]
   /** 预声明子 agent 列表(动态:反映 setSubagents/addSubagent/removeSubagent 后的最新) */
   subagents?: { id: string; description: string }[]
@@ -216,9 +217,6 @@ export interface AgentInfo {
   /** 方案确认留痕(save-and-plan-gates 3c:RHC 带 options 的方案被点选;ApprovalBar 上下文提示 + bulk-guard 豁免;切/重置会话清除) */
   planConfirmation?: import('../harness/humanConfirm').PlanConfirmationRecord
   /** 大批量变更门禁反射(bulk-change-guard;enabled:false = 未装配(默认关或未配 approval)) */
-  bulkGuard?: { enabled: boolean; threshold?: number; mode?: 'confirm' | 'observe'; confirmedKinds?: string[] }
-  /** 跨会话用户偏好(preferences 中间件;updatedAt 新在前;capabilities.preferences:false → undefined) */
-  preferences?: import('../backends/preferenceStore').PersistedPreference[]
   /** 跨压缩工作记忆(workingMemory 中间件;pin 最近 read/query/search 定位 path + read hash,≤10 LRU) */
   workingMemory?: { locatedPaths: string[]; lastHashes: Record<string, string> }
   /** 写驱动过期读失效会话累计(stale-read-invalidation;写后旧 read/query/search 结果被替换为占位的次数) */
@@ -257,6 +255,4 @@ export interface AgentInfo {
     auto: boolean
     list: { id: number; label?: string; timestamp: number; messageCount: number }[]
   }
-  /** 结构化追踪(revive-observability-tracing;capabilities.tracing 开时填充,否则 undefined) */
-  trace?: { spans: import('../harness/createAgent').TraceSpan[]; metrics: import('../harness/createAgent').TraceMetrics }
 }

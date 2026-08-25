@@ -44,7 +44,6 @@ import { run as run_sec_38 } from './modules/sec-38'
 import { run as run_sec_39 } from './modules/sec-39'
 import { run as run_sec_40 } from './modules/sec-40'
 import { run as run_sec_41 } from './modules/sec-41'
-import { run as run_sec_42 } from './modules/sec-42'
 import { run as run_sec_43 } from './modules/sec-43'
 import { run as run_sec_44 } from './modules/sec-44'
 import { run as run_sec_45 } from './modules/sec-45'
@@ -86,7 +85,6 @@ import { run as run_sec_80 } from './modules/sec-80'
 import { run as run_sec_81 } from './modules/sec-81'
 import { run as run_sec_82 } from './modules/sec-82'
 import { run as run_sec_83 } from './modules/sec-83'
-import { run as run_sec_84 } from './modules/sec-84'
 import { run as run_sec_85 } from './modules/sec-85'
 import { run as run_sec_86 } from './modules/sec-86'
 import { run as run_sec_87 } from './modules/sec-87'
@@ -108,6 +106,11 @@ import { run as run_sec_104 } from './modules/sec-104'
 import { run as run_sec_105 } from './modules/sec-105'
 import { run as run_sec_106 } from './modules/sec-106'
 import { run as run_sec_107 } from './modules/sec-107'
+import { run as run_sec_108 } from './modules/sec-108'
+import { run as run_sec_109 } from './modules/sec-109'
+import { run as run_sec_110 } from './modules/sec-110'
+import { run as run_sec_111 } from './modules/sec-111'
+import { run as run_sec_112 } from './modules/sec-112'
 
 // tsx 运行时由 node 提供 process;tsc 静态检查无 @types/node,显式声明其类型
 declare const process: { exit(code?: number): never }
@@ -176,8 +179,7 @@ const ctx = { assert, invoke, byName }
   await run_sec_39(ctx)
   await run_sec_40(ctx)
   await run_sec_41(ctx)
-  await run_sec_42(ctx)
-  await run_sec_43(ctx)
+    await run_sec_43(ctx)
   await run_sec_44(ctx)
   await run_sec_45(ctx)
   await run_sec_46(ctx)
@@ -218,7 +220,6 @@ await run_sec_80(ctx)
 await run_sec_81(ctx)
 await run_sec_82(ctx)
 await run_sec_83(ctx)
-await run_sec_84(ctx)
 await run_sec_85(ctx)
 await run_sec_86(ctx)
 await run_sec_87(ctx)
@@ -240,6 +241,11 @@ await run_sec_104(ctx)
 await run_sec_105(ctx)
 await run_sec_106(ctx)
 await run_sec_107(ctx)
+await run_sec_108(ctx)
+await run_sec_109(ctx)
+await run_sec_110(ctx)
+await run_sec_111(ctx)
+await run_sec_112(ctx)
   console.log(`\n==== ${passed}, ${failed} failed ====`)
   if (failed > 0) process.exit(1)
 })()

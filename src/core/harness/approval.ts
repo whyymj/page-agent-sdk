@@ -18,8 +18,10 @@ export interface ApprovalOptions {
   tools?: string[]
   /** 自定义判定(优先于 tools);返回 true 需确认 */
   confirm?: (name: string, args: any) => boolean
-  /** 超时毫秒(用户未响应自动拒绝);0 = 不超时(默认) */
+  /** 超时毫秒(用户未响应自动拒绝);0 = 不超时。SDK 装配层对无 UI 路径注入默认 30s(flow-robustness P1#3) */
   timeoutMs?: number
+  /** 超时自动拒的留痕回调(observable 接线由调用方负责;abort/用户先收口不触发) */
+  onAutoReject?: (info: { toolName: string; waitedMs: number }) => void
 }
 
 export function createApprovalMiddleware(opts: ApprovalOptions = {}): Middleware {
@@ -70,18 +72,29 @@ export function createApprovalMiddleware(opts: ApprovalOptions = {}): Middleware
           cleanup.push(() => ctx.signal?.removeEventListener('abort', onAbort))
         }
 
-        // 超时自动拒绝
+        // 超时自动拒绝(flow-robustness P1#3:SDK 装配层默认 30s —— 无响应方路径自动拒;
+        // 响应方收到事件调 hold() 接管(内置 UI 即如此),无人应答才计时收口;abort/用户先收口时 settled 已置,不误报)
+        let hold: (() => void) | undefined
         if (opts.timeoutMs && opts.timeoutMs > 0) {
-          const timer = setTimeout(() => finish(false), opts.timeoutMs)
+          const startedAt = Date.now()
+          let held = false
+          const timer = setTimeout(() => {
+            if (settled || held) return
+            const waitedMs = Date.now() - startedAt
+            finish(false)
+            opts.onAutoReject?.({ toolName: ctx.name, waitedMs })
+          }, opts.timeoutMs)
           cleanup.push(() => clearTimeout(timer))
+          hold = () => { held = true; clearTimeout(timer) } // 幂等:重复调/收口后调均无害
         }
 
-        // 发确认请求事件:UI 调 resolve(approved) 收口
+        // 发确认请求事件:UI 调 resolve(approved) 收口;确认接管者调 hold() 取消无响应计时
         ctx.emit?.({
           type: 'approval_request',
           toolName: ctx.name,
           args: ctx.args,
           resolve: finish,
+          hold,
         })
       })
     },

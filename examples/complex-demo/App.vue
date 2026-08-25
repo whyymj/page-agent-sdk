@@ -15,6 +15,7 @@ import DevNav from '../_shared/DevNav.vue'
 import EditableBanner from '../_shared/EditableBanner.vue'
 import DynamicReconfigPanel from './DynamicReconfigPanel.vue'
 import PageConfigPanel from './PageConfigPanel.vue'
+import PropsPanel from './PropsPanel.vue'
 import { initialPage, pageSchema, complexBuilderSkillContent, arkUiSpecContent } from './pageSchema'
 import { generateHugePage } from './hugePage'
 import { generateDeepNestedPage } from './deepNestedPage'
@@ -119,6 +120,39 @@ function moveComponent(path: string, targetPath: string): Record<string, unknown
   const [moved] = src.parent.splice(src.index, 1) // reactive splice → 视图即时更新
   children.push(moved)
   return { moved: true, path, targetPath, type: (moved as Record<string, any>)?.type ?? '' }
+}
+/** 手动拖拽移动(before/after = 调序,inside = 移入容器;宿主 reactive 原地搬移,视图即时更新) */
+function onManualMove({ from, to, position }: { from: string; to: string; position: 'before' | 'after' | 'inside' }): void {
+  const src = resolveArrayItem(from)
+  const tgt = resolveArrayItem(to)
+  if (!src || !tgt || from === to || to.startsWith(from + '.')) return // 防呆:目标在源子树内/同元素
+  if (position === 'inside') {
+    const children = (tgt.node as Record<string, any>)?.props?.children
+    if (!Array.isArray(children)) return
+    const [moved] = src.parent.splice(src.index, 1)
+    children.push(moved)
+  } else {
+    // 先算「删除源之后」的目标锚点下标(同数组且源在前 → 锚点前移一位),再搬移
+    let insertAt = tgt.index + (position === 'after' ? 1 : 0)
+    if (src.parent === tgt.parent && src.index < tgt.index) insertAt -= 1
+    const [moved] = src.parent.splice(src.index, 1)
+    tgt.parent.splice(Math.max(0, Math.min(insertAt, tgt.parent.length)), 0, moved)
+  }
+  selectedPath.value = null // 搬移后原 path 失效,清选中
+}
+/** 手动删除(属性面板;复用 deleteComponent 语义,带 confirm) */
+function onManualDelete(path: string): void {
+  if (!confirm(`删除组件 ${path}?`)) return
+  deleteComponent(path)
+  selectedPath.value = null
+}
+/** 提升到顶层末尾(从容器内搬出到页面末尾) */
+function onManualLift(path: string): void {
+  const hit = resolveArrayItem(path)
+  if (!hit) return
+  const [moved] = hit.parent.splice(hit.index, 1)
+  pageObj.components.push(moved)
+  selectedPath.value = null
 }
 function deleteComponent(path: string): Record<string, unknown> {
   const hit = resolveArrayItem(path)
@@ -357,8 +391,10 @@ onUnmounted(() => agent?.unmount())
     <aside class="pane pane-left">
       <DynamicReconfigPanel :agent="agentRef" />
       <PageConfigPanel :page="pageObj" :on-save="saveDraft" :on-publish="publish" :on-reset="resetPage" :publish-status="publishStatus" />
+      <!-- 手动编辑三件套之 ③:选中组件的属性面板(点击组件出现;② 拖拽调序/移入容器在 PageRenderer) -->
+      <PropsPanel v-if="selectedPath" :path="selectedPath" @close="selectedPath = null" @deleted="onManualDelete" @lift="onManualLift" />
       <EditableBanner title="AI 可编辑页面" hint="Agent 经 write 修改此区">
-        <PageRenderer :selected-path="selectedPath" @select="onSelectComponent" @focus="onFocusComponent" />
+        <PageRenderer :selected-path="selectedPath" @select="onSelectComponent" @focus="onFocusComponent" @move="onManualMove" />
       </EditableBanner>
     </aside>
     <section ref="root" class="pane pane-right"></section>

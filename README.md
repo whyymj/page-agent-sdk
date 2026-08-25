@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-3052%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-3035%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -162,7 +162,6 @@ CDN zero-config: `<script src="https://unpkg.com/page-agent-sdk"></script>` → 
 | 👁 DOM inspect (2.20+) | `get_dom` structure read + `dom_search` (selector/text) + `dom_info` (content/computed styles/event bindings from inline/Vue props/listener recorder) — lazy-injected via the `dom-inspect` skill so they don't occupy standing tool context | `capabilities.domInspect` |
 | 📊 Context inspector | Snapshot actual-LLM-message composition (total / occupancy / category ratio); DebugDrawer `📊 上下文` tab + `inspectContext()`; zero LLM cost, default on | `capabilities.contextInspector` |
 | 🤖 Agent-driven compression (2.33+) | `capabilities.agentCompression` (opt-in) lets the summary LLM decide per-trigger compression strategy via an `inspect_context` tool loop (keepRounds / windowRatio / summary mode / recall / preserve); `shouldTriggerCompression` gate avoids per-message LLM cost; decide failure/timeout degrades to static; `decisionTimeoutMs` / `decisionMaxTokens` configurable | `capabilities.agentCompression` + `summaryLlm` |
-| 🎯 Cross-session user preference memory | `capabilities.preferences` (**opt-in, default off** — auto-writing the user's browser is behavior-sensitive): the agent captures durable user preferences from conversation — strong signal (explicit commands like "Remember: …", zero LLM) / medium signal (pattern-word prefilter + small-LLM extraction; the core test is **durable taste vs this-round task instruction**) / behavioral inference **not captured** (better to miss than to learn wrong — one false preference would ride along every future session); preferences persist independently (preferenceStore, IndexedDB, same shape as storage/skillStorage; same topic **later statement overrides earlier**, FIFO ≤20); injected as a pin segment into the system prompt each round (survives sessions and compression); manage wrongly-learned entries via `sdk.getPreferences()/removePreference(id)/clearPreferences()`, plus a read-only DebugDrawer "User preferences" section | `capabilities: { preferences: true }` + optional `preferenceStorage` |
 | 🧭 Instruction adherence (3.35+) | **Completion gate**: if the agent tries to close with plain text while todos still have unfinished items, a "two-exit" nudge is injected (mark done via update_todo, or keep executing; ≤2 retries) — fixes "planned 3 tasks, did 1, then stopped" premature interruption. **Question-intent guard**: a 3-tier regex heuristic classifies each user message as a question; on hit a "answer first, don't act" pin segment is injected (survives compression) — fixes long-chat questions being dragged into actions by history (e.g. asking "what is this component" but ending up generating code). Both default on, zero config, prefer-miss-over-false-positive | built-in |
 | 🎨 Subagent model/thinking tiering | `createHtmlSubagent({ llm, thinkingMode })`: code-gen subagents get their own stronger model (main stays light for orchestration) + thinking-depth lock (`'deep'` injects thinking params for quality / `'simple'` strips them to save tokens; top-level `subagent.thinkingMode` as global default). LLMConfig construction path only (pre-built instance → warn + no-op); requires a thinking-capable model (deepseek-thinking / claude); `inspect().subagent.subagents` reflects the effective state | `createHtmlSubagent({ llm, thinkingMode })` |
 | ⚡ host actions (2.20+) | Register save/publish/preview etc; SDK auto-generates named tools, agent triggers page ops directly (no `trigger_action` indirection) | `actions` |
@@ -241,7 +240,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | **Page data** | `data` | `{schema,bind,description?}` | Single main object: declare zod schema (validation + field descriptions auto-injected into prompt) + bind (reactive/plain object, tools read/write directly, no `window`) + description |
 | | `tools` / `skills` / `memory` | `Tool[]` / `SkillSpec[]` / `string` | Custom tools / skills / AGENTS.md-style directives |
 | | `images` | `{upload?,describe?,describeTimeoutMs?}` | **Image input (image-input-vision)**: built-in three entry points (📎 pick / drag / paste) → compression gate (long edge ≤1568px, ≤4 per round, >20MB rejected). Multimodal main model (table hit or `llm.vision:true`) → images sent directly as content parts, zero config; text-only main model → configure `describe` to caption each image into the context (image never sent); neither → honest rejection, never silently dropped; `upload` swaps the original for an https URL (integrator OSS). See [usage-guide §6.17](doc/usage-guide.en.md#617-image-input-multimodal-direct--captioning-bypass) |
-| **Capability toggles** | `capabilities` | `{planning?,dataOps?,fetch?,skills?,vfs?,summarization?,memory?,subagent?,verify?,focus?,preferences?}` | Default all on (`verify`/`preferences` default off, opt-in; `focus` = context focus for refining one component, default on; `preferences` = cross-session preference memory); `false` to turn off |
+| **Capability toggles** | `capabilities` | `{planning?,dataOps?,fetch?,skills?,vfs?,summarization?,memory?,subagent?,verify?,focus?}` | Default all on (`verify` default off, opt-in; `focus` = context focus for refining one component, default on); `false` to turn off |
 | | `permissions` | `PermissionRule[]` | Scope whitelist (first-match-wins, default off) |
 | | `humanConfirm` | `boolean` · default `true` | Proactive inquiry (AI asks when uncertain/multi-plan) |
 | | `approval` | `{tools?,confirm?,timeoutMs?,humanConfirmTool?}` · default off | Passive confirm whitelist (pre-write allow/deny) |
@@ -312,7 +311,7 @@ createChatSdk({ subagents: [
 - **window query**: `query_data` (JSONPath) / `search_data` (fuzzy) / `eval_script` (sandboxed)
 - **fetch**: `fetch_document`
 - **vfs**: `vfs_read` / `vfs_write` / `vfs_edit` / `vfs_ls` / `vfs_glob` / `vfs_grep`
-- **planning/skills**: `write_todos` / `define_skill` / `load_skill` (skill can carry `exec` to run a script on load injecting live data + `tools` for repeatedly-callable tools; `exec.context:'host'` requires `capabilities.skillHostScript:true`)
+- **planning/skills**: `write_todos` / `define_skill` / `load_skill` (skill can carry `exec` to run a script on load injecting live data + `tools` for repeatedly-callable tools; `exec` always runs in the Worker sandbox — `context:'host'` was removed in 4.1.0)
 - **human confirm**: `request_human_confirmation` (proactive inquiry, default on)
 - **subagents**: `spawn_agent` / `spawn_agents` / `use_<id>` (pre-declared)
 - **checkpoint**: `restore_last_checkpoint` / `list_checkpoints`
@@ -500,7 +499,7 @@ function switchTo(i: number) {
 
 ```bash
 npm test            # 2894 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 957 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm run test:e2e    # 965 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test

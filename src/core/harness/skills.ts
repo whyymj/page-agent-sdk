@@ -17,7 +17,6 @@ import type { StructuredToolInterface } from '@langchain/core/tools'
 import { z } from 'zod'
 import type { Middleware } from './middleware'
 import { createSandboxRunner } from '../tools/sandbox'
-import { runHostScript } from '../tools/hostScript'
 
 export interface SkillSpec {
   /** skill 名(唯一标识) */
@@ -34,7 +33,7 @@ export interface SkillSpec {
   /**
    * 加载时执行脚本,结果注入 skill 全文(skill-external-scripts)。`code`/`url` 二选一:
    *  - `code`:内联 JS(页面内执行);`url`:远程脚本 URL(fetch 拉取后执行)
-   *  - `context:'sandbox'`(默认)走 Worker 沙箱(无 window/网络);`'host'` 需 `capabilities.skillHostScript:true`(宿主全权,仅集成方内联 code)
+   *  - `context:'sandbox'`(默认)走 Worker 沙箱(无 window/网络);`'host'` 已随 4.1.0 移除(残值落 sandbox 执行,语义反转)
    *  - `url`+`context:'host'` 禁止(远程不可信不能全权跑);exec 失败不阻塞(标注 + 不缓存,动态 skill 下次 load 重试)
    */
   exec?: SkillExecSpec
@@ -68,8 +67,8 @@ export interface SkillExecSpec {
   code?: string
   /** 远程脚本 URL(与 code 二选一;fetch 拉取后**沙箱**执行,禁止 host) */
   url?: string
-  /** 执行上下文:'sandbox'(默认,Worker 无 window/网络) | 'host'(宿主全权,需 capabilities.skillHostScript) */
-  context?: 'sandbox' | 'host'
+  /** 执行上下文:'sandbox'(默认,Worker 无 window/网络)。'host' 已随 4.1.0 移除 —— 残值按 sandbox 执行(原宿主全权降级为沙箱,语义反转见 CHANGELOG) */
+  context?: 'sandbox'
   /** 结果注入全文位置:'append'(默认,文末) | 'prepend'(文首) */
   inject?: 'append' | 'prepend'
 }
@@ -169,8 +168,6 @@ function renderRefIndex(s: SkillSpec): string {
 export interface SkillsMiddlewareOptions {
   /** 读 vfs 文档的函数(由 createChatSdk 在 vfs 启用时注入);未注入则 vfs 路径 doc 报错提示 */
   readVfs?: (path: string) => string | undefined
-  /** 是否开启宿主脚本执行(caps.skillHostScript,由 createChatSdk 注入);false/未传时 exec context:'host' 跳过 + warn */
-  hostScriptEnabled?: boolean
   /** skill 附带工具注入回调(load_skill 后触发;由 createChatSdk 装配:合并工具池 + rebind + source 标注) */
   onToolsReady?: (skillName: string, tools: StructuredToolInterface[]) => void
 }
@@ -206,20 +203,14 @@ async function fetchSkillScript(url: string): Promise<string | null> {
 
 /**
  * 执行 skill exec 钩子。返回 {ok,text}(成功,text 为注入文本)或 {ok:false,error}(失败/拒绝)。
- * 校验 + 路由:code/url 二选一;url+host 拒绝(远程不可信);host 需 hostScriptEnabled;sandbox code 直跑 / url 先 fetch。
+ * 校验 + 路由:code/url 二选一;sandbox code 直跑 / url 先 fetch。
+ * 4.1.0:host 上下文已移除(skillHostScript 撤除);context 残值 'host' 落 sandbox 执行(宿主全权降级沙箱,语义反转)。
  */
-export async function executeSkillExec(spec: SkillExecSpec, hostScriptEnabled?: boolean): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
-  const ctx = spec.context ?? 'sandbox'
+export async function executeSkillExec(spec: SkillExecSpec): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
   const hasCode = !!spec.code
   const hasUrl = !!spec.url
   if (!hasCode && !hasUrl) return { ok: false, error: 'exec 未提供 code 或 url' }
   if (hasCode && hasUrl) return { ok: false, error: 'exec code 与 url 不能同时提供(二选一)' }
-  if (hasUrl && ctx === 'host') return { ok: false, error: '远程脚本(url)禁止在 host 上下文执行(不可信代码不能全权跑)' }
-  if (ctx === 'host') {
-    if (!hostScriptEnabled) return { ok: false, error: 'skill 含宿主权限脚本(context:"host"),需 capabilities.skillHostScript:true 开启' }
-    const r = await runHostScript(spec.code!)
-    return r.ok ? { ok: true, text: stringifyExecResult(r.result) } : { ok: false, error: r.error || '宿主脚本执行失败' }
-  }
   // sandbox:url 先 fetch
   let script: string
   if (hasUrl) {
@@ -249,7 +240,7 @@ async function buildSkillContent(s: SkillSpec, opts?: SkillsMiddlewareOptions): 
   let content = text ?? ''
   let cacheable = true
   if (s.exec) {
-    const er = await executeSkillExec(s.exec, opts?.hostScriptEnabled)
+    const er = await executeSkillExec(s.exec)
     if (er.ok && er.text) {
       content = s.exec.inject === 'prepend' ? er.text + '\n\n' + content : (content ? content + '\n\n' : '') + er.text
     } else {

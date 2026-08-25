@@ -7,6 +7,7 @@ import CompWrapper from './CompWrapper.vue'
 import CompRenderer from '../CompRenderer.vue'
 
 defineProps<{
+  compPath?: string
   id?: string
   style?: Record<string, string>
   visible?: boolean
@@ -22,6 +23,7 @@ defineProps<{
       <h3 class="section-title">{{ title }}</h3>
       <div class="section-body">
         <CompRenderer
+      :path="compPath ? `${compPath}.props.children.${i}` : undefined"
           v-for="(c, i) in children"
           :key="(c.id ?? c.type) + '-' + i"
           :comp="c"

@@ -4,7 +4,6 @@ import { OverlayScrollbars } from 'overlayscrollbars'
 import 'overlayscrollbars/overlayscrollbars.css'
 import type { DebugLog } from '../harness/createAgent'
 import type { AgentInfo } from '../types'
-import type { TraceSpan } from '../harness/createAgent'
 import { copyText } from '../utils/clipboard'
 import { buildDiagnosticsReport, stringifyDiagnosticsReport } from '../sdk/diagnostics'
 import { MESSAGES_ZH_CN, type DialogLocale, type DialogMessages } from './messages'
@@ -348,11 +347,6 @@ const statusMeta = computed<Record<string, { label: string; color: string }>>(()
   completed: { label: m.value.debugTodoCompleted, color: '#059669' },
 }))
 function statusLabel(s: string) { return statusMeta.value[s]?.label ?? s }
-/** 偏好 topic 中文标签(DebugDrawer 展示用;与 harness/preferences.ts 注入段标签同源语义) */
-function topicLabel(t: string) {
-  const labels: Record<string, string> = { color: m.value.debugPrefTopicColor, copy: m.value.debugPrefTopicCopy, layout: m.value.debugPrefTopicLayout, interaction: m.value.debugPrefTopicInteraction, tech: m.value.debugPrefTopicTech, other: m.value.debugPrefTopicOther }
-  return labels[t] ?? t
-}
 /** 工具来源标签样式类(builtin/mcp/user) */
 function srcClass(s?: string) {
   if (!s) return ''
@@ -371,9 +365,6 @@ function formatDuration(ms: number): string {
   }
   return `${ms}ms`
 }
-/** trace(observability-tracing):spans + metrics 从 agentInfo.trace 读 */
-const traceSpans = computed<TraceSpan[]>(() => agentInfo.value?.trace?.spans ?? [])
-const traceMetrics = computed(() => agentInfo.value?.trace?.metrics)
 /** 上下文构成(context-inspector):从 agentInfo.context 读最近 wrapModelCall 快照 */
 const contextSnap = computed(() => agentInfo.value?.context)
 /** 占用色阶:绿(<阈值)< 黄(≥阈值)< 红(≥1 超窗口) */
@@ -400,7 +391,6 @@ function toggleSub(idx: number) {
   s.has(idx) ? s.delete(idx) : s.add(idx)
   subExpanded.value = s
 }
-function spanIcon(t: string) { return t === 'round' ? '🔄' : t === 'model' ? '🧠' : t === 'tool' ? '🔧' : t === 'compression' ? '📦' : '•' }
 // 压缩决策摘要(agent-driven-compression;DebugDrawer 上下文 tab + lastCompression 显示)
 function decisionSummary(d: { keepRounds?: number; windowRatio?: number; summarize: { mode: string }; recallTopK?: number; reason?: string }): string {
   const main = d.windowRatio != null ? `windowRatio=${d.windowRatio}` : `keepRounds=${d.keepRounds ?? '?'}`
@@ -452,7 +442,7 @@ function decisionSummary(d: { keepRounds?: number; windowRatio?: number; summari
               <div ref="drawerContentsEl">
             <!-- 上下文 & 性能(原 上下文 + Trace 两 tab 合并:token 构成与耗时归因同属运行态观察,集中一处) -->
             <div v-if="tab === 'context'" class="context-panel">
-              <div v-if="!contextSnap && !traceMetrics && !traceSpans.length" class="trace-empty">{{ m.debugCtxEmpty }}</div>
+              <div v-if="!contextSnap" class="trace-empty">{{ m.debugCtxEmpty }}</div>
               <template v-else>
                 <template v-if="contextSnap">
                 <div class="ctx-overview">
@@ -485,28 +475,6 @@ function decisionSummary(d: { keepRounds?: number; windowRatio?: number; summari
                   </div>
                 </div>
                 </template>
-                <!-- Trace 耗时归因(原独立 tab;metrics 卡片 + span 列表) -->
-                <div v-if="traceMetrics || traceSpans.length" class="ctx-trace">
-                  <div class="ctx-section-title">🌳 Trace</div>
-                  <template v-if="traceMetrics">
-                    <div class="trace-metrics">
-                      <div class="metric-card"><span>{{ m.debugMetricRounds }}</span><b>{{ traceMetrics.rounds }}</b></div>
-                      <div class="metric-card"><span>{{ m.debugMetricTotal }}</span><b>{{ traceMetrics.totalDurationMs }}ms</b></div>
-                      <div class="metric-card"><span>{{ m.debugMetricAvg }}</span><b>{{ traceMetrics.avgRoundMs }}ms</b></div>
-                      <div class="metric-card"><span>{{ m.debugMetricTools }}</span><b>{{ traceMetrics.toolCalls }}(✅{{ Math.round(traceMetrics.toolSuccessRate * 100) }}%)</b></div>
-                      <div class="metric-card" v-if="traceMetrics.compressions"><span>{{ m.debugMetricCompressions }}</span><b>{{ traceMetrics.compressions }}</b></div>
-                      <div class="metric-card" v-if="traceMetrics.totalTokens"><span>Token</span><b>{{ traceMetrics.totalTokens.total }}</b></div>
-                    </div>
-                  </template>
-                  <div v-if="traceSpans.length" class="trace-spans">
-                    <div v-for="s in traceSpans" :key="s.id" class="trace-span" :class="[s.type, s.status]">
-                      <span class="span-ico">{{ spanIcon(s.type) }}</span>
-                      <span class="span-name">{{ s.name }}</span>
-                      <span class="span-dur" v-if="s.durationMs">{{ formatDuration(s.durationMs) }}</span>
-                      <span class="span-status" v-if="s.status === 'error'">❌</span>
-                    </div>
-                  </div>
-                </div>
               </template>
             </div>
             <div v-if="tab === 'subagent'" class="subagent-panel">
@@ -797,15 +765,6 @@ function decisionSummary(d: { keepRounds?: number; windowRatio?: number; summari
                   <pre class="info-pre">{{ agentInfo.memory }}</pre>
                 </div>
 
-                <!-- 跨会话用户偏好(preferences opt-in;只读视图,删除走 sdk.removePreference/clearPreferences) -->
-                <div v-if="agentInfo.preferences?.length" class="info-section">
-                  <div class="info-title">🎯 {{ m.debugPrefsTitle }} ({{ agentInfo.preferences.length }})</div>
-                  <div v-for="p in agentInfo.preferences" :key="p.id" class="info-todo">
-                    <span class="todo-tag" style="background: #6366f1">{{ topicLabel(p.topic) }}</span>
-                    <span>{{ p.content }}</span>
-                  </div>
-                </div>
-
                 <div v-if="agentInfo.lastCompression" class="info-section">
                   <div class="info-title">🗜️ {{ m.debugLastCompTitle }}</div>
                   <div class="info-kv">
@@ -1007,24 +966,8 @@ function decisionSummary(d: { keepRounds?: number; windowRatio?: number; summari
 .drawer-enter-from, .drawer-leave-to { opacity: 0; }
 .drawer-enter-from .drawer-panel, .drawer-leave-to .drawer-panel { transform: translateX(100%); }
 
-/* trace 段(并入上下文 tab 的性能归因区):分隔线 + metrics 卡片 + span 列表 */
-.ctx-trace { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--dd-border-soft); }
 .trace-empty { color: var(--dd-faint); font-size: 12px; text-align: center; padding: 30px; line-height: 1.6; }
 .trace-empty code { background: var(--dd-border-soft); padding: 1px 5px; border-radius: 4px; font-size: 11px; }
-.trace-metrics { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
-.metric-card { display: flex; flex-direction: column; padding: 6px 10px; border-radius: 8px; background: var(--dd-accent-soft); border: 1px solid var(--dd-accent-border); min-width: 70px; }
-.metric-card span { font-size: 10px; color: var(--dd-muted); }
-.metric-card b { font-size: 14px; color: var(--cs-primary); }
-.trace-spans { display: flex; flex-direction: column; gap: 3px; }
-.trace-span { display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: var(--dd-surface); border-radius: 6px; font-size: 11px; border-left: 3px solid var(--cs-primary); }
-.trace-span.model { border-left-color: #059669; }
-.trace-span.tool { border-left-color: #7c3aed; }
-.trace-span.compression { border-left-color: #d97706; }
-.trace-span.error { background: var(--dd-err-bg); }
-.span-ico { font-size: 12px; flex-shrink: 0; }
-.span-name { flex: 1; color: var(--dd-text-2); font-family: 'SF Mono', Monaco, Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.span-dur { font-size: 10px; color: var(--dd-muted); font-family: 'SF Mono', Monaco, Consolas, monospace; flex-shrink: 0; }
-.span-status { font-size: 11px; flex-shrink: 0; }
 
 /* 上下文构成视图(context-inspector) */
 .context-panel { padding: 12px; }

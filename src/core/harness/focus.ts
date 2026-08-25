@@ -127,17 +127,23 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
   const notify = () => opts.onChange?.([...focuses])
   // 解焦指引文案(按 unfocusGuidance 分支;默认目标引导通用 —— 实测用户拾取按钮后说「文字红色」,agent 先误解为全页改)
   const guidance = opts.unfocusGuidance ?? 'tool'
-  const defaultTarget = '用户未指明目标的指令默认作用于聚焦组件;'
+  // 目标归属引导(focus-intent-steering,2026-08-25 实测事故驱动):「增加 tab」被 flash 误解为
+  // 新建 tabs 组件追加页尾(用户意图 = 在聚焦的 tabs 里加页签)。创建类动词(增加/添加/新建)同样默认
+  // 归属聚焦组件 —— 写其子路径;仅用户明确要求「新的独立组件」才需要解焦
+  const defaultTarget = '用户未指明目标的指令默认作用于聚焦组件(「增加/修改/删除 X」类指令优先理解为对聚焦组件本身的改动 —— 如为其加页签/子项,写焦点路径的子路径;仅用户明确要求新建独立组件时才需解除焦点);'
+  // PATH_DENIED 正路出口优先(同事故驱动):被拦时先提示「改写焦点子路径」这一正确出路,
+  // 解焦出口列后 —— flash 照方抓药,文案给什么出口就走什么出口(示例路径由 deny() 按实际焦点动态填)
+  const subpathExit = (examplePath?: string) => `若你的意图是修改聚焦组件本身(如给它新增页签/子项),请改写焦点路径的子路径重试${examplePath ? `(如 ${examplePath})` : ''};`
   const unfocusHint = guidance === 'tool'
-    ? '需改其他组件请先 remove_focus / clear_focus 或换焦点。'
+    ? `需改其他组件请先 remove_focus / clear_focus 或换焦点。${subpathExit()}`
     : guidance === 'ask-user'
-      ? '焦点由用户在输入框设定与移除(聚焦 chip ✕);用户要求改其他组件时,提示用户移除聚焦后重试,勿尝试写焦点外(会被拒)。'
-      : '需改其他组件时,在收口回复中说明需先取消焦点(焦点由主会话管理),勿尝试越界写。'
-  const denyHint = guidance === 'tool'
-    ? '请先 remove_focus / clear_focus 或换焦点后重试。'
+      ? `焦点由用户在输入框设定与移除(聚焦 chip ✕);用户要求改其他组件时,提示用户移除聚焦后重试,勿尝试写焦点外(会被拒)。${subpathExit()}`
+      : `需改其他组件时,在收口回复中说明需先取消焦点(焦点由主会话管理),勿尝试越界写。${subpathExit()}`
+  const denyHint = (examplePath?: string) => guidance === 'tool'
+    ? `${subpathExit(examplePath)}需操作焦点外组件请先 remove_focus / clear_focus 或换焦点后重试。`
     : guidance === 'ask-user'
-      ? '焦点由用户在输入框管理,请提示用户移除输入框中的聚焦 chip 后重试(当前模式无 focus 工具)。'
-      : '请只改焦点子树;需改其他组件时,在收口回复中说明需先取消焦点。'
+      ? `${subpathExit(examplePath)}焦点由用户在输入框管理,请提示用户移除输入框中的聚焦 chip 后重试(当前模式无 focus 工具)。`
+      : `${subpathExit(examplePath)}请只改焦点子树;需改其他组件时,在收口回复中说明需先取消焦点。`
 
   const mw: Middleware & FocusController = {
     name: 'focus',
@@ -177,8 +183,10 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
       // 例外:尾部追加(<arrayPath>.<N>,N>=数组长度)放行 —— 追加新元素不破坏焦点子树(聚焦模式可新建组件)
       if (focuses.length) {
         const labels = focuses.map((f) => (f.label ? `${f.path}(${f.label})` : f.path)).join(', ')
+        // 子路径示例用实际焦点路径(deny 引导随数据走,不硬编码)
+        const example = focuses.length === 1 ? `${focuses[0].path}.props.xxx` : undefined
         const deny = (scope: string): ToolExecResult => ({
-          content: `PATH_DENIED · 聚焦越界:当前聚焦 [${labels}],不可操作「${scope}」。${denyHint}`,
+          content: `PATH_DENIED · 聚焦越界:当前聚焦 [${labels}],不可操作「${scope}」。${denyHint(example)}`,
           status: 'error' as const,
         })
         // P1-21(fix-authorization-surface):eval_script transform 可改写任意路径/整体数据(原不在 WRITE_TOOLS → 绕过)。

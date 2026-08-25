@@ -37,7 +37,7 @@ export async function run(ctx: TestCtx): Promise<void> {
       'debugTabLogs', 'debugTabContext', 'debugTabSubagent', 'debugTabInfo',
       'debugFilterAll', 'debugFlowPrep', 'debugLogsEmpty', 'debugCardView', 'debugViewRawJson',
       'debugTodoPending', 'debugSubRunning', 'debugLocksTitle', 'debugSubagentEmpty',
-      'debugMetricRounds', 'debugCtxOccupancy', 'debugCtxRecalled', 'debugInfoBasic',
+      'debugCtxOccupancy', 'debugCtxRecalled', 'debugInfoBasic',
       'debugSkillsTitle', 'debugDataTitle', 'debugVerifyTitle', 'debugTodosTitle', 'debugLastCompTitle',
       'debugSkillNoReader', 'skillPanelTitle', 'skillCreateNew', 'skillNamePlaceholder',
       'skillErrName', 'skillDupWarnPrefix', 'skillHintA', 'codeCopyTitle', 'codePreviewTab',

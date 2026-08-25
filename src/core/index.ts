@@ -24,7 +24,7 @@ export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict, DialogConfig,
 export { buildSystemPrompt, buildDataPrompt, DEFAULT_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT_EN } from './sdk/promptBuilder'
 export { resolveContextOptions, type ContextPreset, CONTEXT_PRESETS } from './sdk/contextPreset'
 // capabilities 能力开关注册表 + 单一解析(p2-refactor 子项 4:消除 ===true/!==false 混)
-export { resolveCapabilities, CAPABILITIES, DEPRECATED_CAPABILITIES, type Capability, type CapabilityFlags, type ResolvedCapabilities } from './capabilities'
+export { resolveCapabilities, CAPABILITIES, type Capability, type CapabilityFlags, type ResolvedCapabilities } from './capabilities'
 export { defineTool } from './sdk/defineTool'
 // 宿主动作(actions):集成方注册页面操作(保存/发布/预览等),SDK 自动包成命名 tool 供 agent 调用
 export { actionsToTools, actionsToInspectInfo } from './sdk/actions'
@@ -35,7 +35,7 @@ export { connectMcp, extractText } from './mcp/client'
 export type { McpServerConfig, McpTransport, McpConnection } from './mcp/client'
 // harness 核心 + 中间件契约
 export { createAgent, detectGarbledToolCall, detectTransitionalReply, sanitizeGarbledContent } from './harness/createAgent'
-export type { CreateAgentOptions, DebugLog, TraceSpan, TraceMetrics, SpanType, SpanStatus } from './harness/createAgent'
+export type { CreateAgentOptions, DebugLog } from './harness/createAgent'
 export type { Middleware, ModelRequest, ModelResponse, ToolCallContext, StateUpdate } from './harness/middleware'
 export { createSubagentMiddleware, createSubagentsMiddleware, createSubagentTracker } from './harness/subagent'
 export type { SubagentOptions, SubagentLlmConfig, SubagentConfig, SubagentsController, SubagentStep, SubagentRunState, SubagentTracker } from './harness/subagent'
@@ -63,7 +63,7 @@ export type { MemorySource } from './harness/memory'
 export { createApprovalMiddleware } from './harness/approval'
 export type { ApprovalOptions } from './harness/approval'
 export { createHumanConfirmTool, createHumanConfirmMiddleware, HUMAN_CONFIRM_TOOL_NAME, type PlanConfirmationRecord } from './harness/humanConfirm'
-export { createBulkGuardMiddleware, measureWriteScale, type BulkGuardOptions, type BulkGuardMiddlewareOptions, type BulkGuardState, type WriteScaleResult } from './harness/bulkGuard'
+export { measureWriteScale, type WriteScaleResult } from './harness/delegateNudge'
 export { createCheckpointManager, createCheckpointMiddleware } from './harness/checkpoint'
 export type { CheckpointManager, CheckpointMeta, CheckpointDeps } from './harness/checkpoint'
 export { defineSkill } from './harness/skills'
@@ -74,14 +74,12 @@ export type { ResourceProtectSpec } from './tools/resources'
 export type { SkillsController } from './harness/skills'
 // 内置工具集(可独立导出 + 手动注入,配合 capabilities.dataOps/fetch 关闭默认自动装配)
 export { createDataOps, commitSetToBind, applyPatchesToBind, validateRootValueLocally, validateWriteLocally, type LocalWriteBack, type LocalValidationPlan } from './tools/dataOps'
-export { getTraceMetrics } from './utils/traceMetrics'
 export { jpEval, searchJson, runSandboxedScript } from './tools/dataSlotQuery'
 export type { JpNode, SearchHit, SearchMode, EvalResult } from './tools/dataSlotQuery'
 // 通用 Worker 沙箱(skill-external-scripts:eval_script 与 skill exec 共用;三层防护单一真相源)
 export { createSandboxRunner } from './tools/sandbox'
 export type { SandboxResult } from './tools/sandbox'
 // 宿主脚本执行器(skill exec context:'host',opt-in 全权;不经静态扫描)
-export { runHostScript } from './tools/hostScript'
 // 通用 JSON 操作纯函数(refactor-module-extraction 从 dataOps 抽离;零依赖、白盒可测,经 ./query subpath 按需引入)
 export {
   UNSAFE_KEYS, isUnsafePath, safeMerge, getByPath, setByPath, deleteByPath,
@@ -124,10 +122,6 @@ export { createSessionStore, createMemoryBackend, createWebStorageBackend, isQuo
 export type { StorageConfig, StorageBackendType, SessionStore, SessionMeta, SessionSnapshot, StorageEvent, StorageBackend } from './backends/storage'
 export { createSkillStore } from './backends/skillStore'
 export type { SkillStore, SkillStoreConfig, PersistedSkill } from './backends/skillStore'
-export { createPreferenceStore, DEFAULT_MAX_PREFERENCES } from './backends/preferenceStore'
-export type { PreferenceStore, PreferenceStoreConfig, PersistedPreference, PreferenceTopic } from './backends/preferenceStore'
-export { createPreferencesMiddleware, extractExplicitPreference, looksLikePreferenceSignal, parsePreferenceJson, buildExtractPrompt, buildPreferencePrompt } from './harness/preferences'
-export type { PreferencesMiddlewareOptions } from './harness/preferences'
 // 通用消息 / 上下文类型
 export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, SdkEvent, SdkEventHandler, TokenUsage, ToolStep, BatchResult, BatchProgress, AgentImage, ImagesConfig } from './types'
 export type { Focus } from './harness/state'

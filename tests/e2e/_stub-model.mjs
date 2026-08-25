@@ -30,6 +30,8 @@ export class StubChatModel extends BaseChatModel {
     this.calls = 0
     /** 每次调用的 system prompt(messages[0] 内容)收集(断言中间件 augmentPrompt 注入段,如组件代码文件地图) */
     this.systemPrompts = []
+    /** 最近一次调用的完整 messages(断言协议形态,如 tool_call id 兜底回写后「有 id tool_call + 对应 tool_call_id」) */
+    this.lastMessages = null
     // harden-context-resilience:stub 默认声明 ≥200K 窗口(resolveLlm 实例路径读 .contextWindow),过最小窗口校验
     this.contextWindow = opts.contextWindow ?? 200000
   }
@@ -47,6 +49,7 @@ export class StubChatModel extends BaseChatModel {
 
   /** stream 路径(createAgent 用):yield ChatGenerationChunk,基类 stream 会 yield chunk.message 给聚合 */
   async *_streamResponseChunks(messages, _opts, _runm) {
+    this.lastMessages = messages
     // 收集 system prompt(断言 augmentPrompt 注入段;content 可能为数组,取字符串拼接)
     const sys = messages[0]?.content
     if (typeof sys === 'string') this.systemPrompts.push(sys)
@@ -67,7 +70,8 @@ export class StubChatModel extends BaseChatModel {
     const msg = new AIMessageChunk({
       content: resp.text ?? '',
       tool_calls: (resp.toolCalls ?? []).map((tc, i) => ({
-        id: tc.id ?? `call_stub_${this.calls}_${i}`,
+        // id:false = 显式省略(测 agent 级 id 兜底回写:provider 不回 id → 下轮 400 的场景注入)
+        id: tc.id === false ? undefined : (tc.id ?? `call_stub_${this.calls}_${i}`),
         name: tc.name,
         args: tc.args ?? {},
         type: 'tool_call',

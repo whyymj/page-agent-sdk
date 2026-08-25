@@ -161,11 +161,6 @@ export interface DialogMessages {
   debugSubHistoryTitle: string       // 历史 / History
   debugStepsBtn: string
   debugStepsCountSuffix: string      // 步 / steps(n 在前)
-  debugMetricRounds: string
-  debugMetricTotal: string
-  debugMetricAvg: string
-  debugMetricTools: string
-  debugMetricCompressions: string
   debugCtxEmpty: string
   debugCtxOccupancy: string          // 占用 / Occupancy(title)
   debugCtxThreshold: string          // 压缩阈值 / compress threshold
@@ -207,13 +202,6 @@ export interface DialogMessages {
   debugSameAsMain: string            // (同主) / (same as main)
   debugTodosTitle: string
   debugMemoryTitle: string
-  debugPrefsTitle: string             // 用户偏好 / User preferences(preferences opt-in 小节标题)
-  debugPrefTopicColor: string         // 偏好 topic 标签:颜色 / color
-  debugPrefTopicCopy: string          // 文案 / copy
-  debugPrefTopicLayout: string        // 排版 / layout
-  debugPrefTopicInteraction: string   // 交互 / interaction
-  debugPrefTopicTech: string          // 技术 / tech
-  debugPrefTopicOther: string         // 其他 / other
   debugLastCompTitle: string
   debugTriggered: string
   debugNotTriggered: string          // ✗(未达阈值) / ✗ (below threshold)
@@ -402,11 +390,6 @@ export const MESSAGES_ZH_CN: DialogMessages = {
   debugSubHistoryTitle: '历史',
   debugStepsBtn: '步骤',
   debugStepsCountSuffix: ' 步',
-  debugMetricRounds: '轮次',
-  debugMetricTotal: '总耗时',
-  debugMetricAvg: '平均/轮',
-  debugMetricTools: '工具',
-  debugMetricCompressions: '压缩',
   debugCtxEmpty: '未开启 contextInspector(默认开)或暂无快照。跑一轮 agent 后切回刷新。',
   debugCtxOccupancy: '占用',
   debugCtxThreshold: '压缩阈值',
@@ -448,13 +431,6 @@ export const MESSAGES_ZH_CN: DialogMessages = {
   debugSameAsMain: '(同主)',
   debugTodosTitle: '任务清单',
   debugMemoryTitle: '持久指令 (memory)',
-  debugPrefsTitle: '用户偏好(跨会话)',
-  debugPrefTopicColor: '颜色',
-  debugPrefTopicCopy: '文案',
-  debugPrefTopicLayout: '排版',
-  debugPrefTopicInteraction: '交互',
-  debugPrefTopicTech: '技术',
-  debugPrefTopicOther: '其他',
   debugLastCompTitle: '上轮压缩',
   debugTriggered: '触发',
   debugNotTriggered: '✗(未达阈值)',
@@ -643,11 +619,6 @@ export const MESSAGES_EN_US: DialogMessages = {
   debugSubHistoryTitle: 'History',
   debugStepsBtn: 'Steps',
   debugStepsCountSuffix: ' steps',
-  debugMetricRounds: 'Rounds',
-  debugMetricTotal: 'Total',
-  debugMetricAvg: 'Avg/round',
-  debugMetricTools: 'Tools',
-  debugMetricCompressions: 'Compressions',
   debugCtxEmpty: 'contextInspector not enabled (on by default) or no snapshot yet. Run a round then switch back.',
   debugCtxOccupancy: 'Occupancy',
   debugCtxThreshold: 'compress threshold',
@@ -689,13 +660,6 @@ export const MESSAGES_EN_US: DialogMessages = {
   debugSameAsMain: ' (same as main)',
   debugTodosTitle: 'Todos',
   debugMemoryTitle: 'Persistent instructions (memory)',
-  debugPrefsTitle: 'User preferences (cross-session)',
-  debugPrefTopicColor: 'color',
-  debugPrefTopicCopy: 'copy',
-  debugPrefTopicLayout: 'layout',
-  debugPrefTopicInteraction: 'interaction',
-  debugPrefTopicTech: 'tech',
-  debugPrefTopicOther: 'other',
   debugLastCompTitle: 'Last compression',
   debugTriggered: 'Triggered',
   debugNotTriggered: '✗ (below threshold)',

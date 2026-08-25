@@ -28,6 +28,8 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(prompt.includes('components.1'), 'focus 聚焦 → augmentPrompt 含焦点 path')
     assert(prompt.includes('导航栏'), 'focus 聚焦 → augmentPrompt 含 label')
     assert(prompt.includes('焦点子树结构'), 'focus 聚焦 → augmentPrompt 含子树 schema 段(视野收敛)')
+    // focus-intent-steering(2026-08-25 实测事故:「增加tab」被误解为新建组件,用户意图=聚焦 tabs 加页签)
+    assert(prompt.includes('优先理解为对聚焦组件本身的改动'), 'focus 聚焦 → 目标提示含创建类指令归属引导(增加/修改 X 默认改聚焦组件本身)')
 
     // clearFocus → 不再注入
     mw.clearFocus()
@@ -94,6 +96,9 @@ export async function run(ctx: TestCtx): Promise<void> {
     )
     assert(outside.status === 'error', 'focus 写越界(components.0)→ status=error')
     assert(outside.content.includes('PATH_DENIED'), 'focus 写越界 → content 含 PATH_DENIED')
+    // 正路出口优先(focus-intent-steering):被拦先引「改写焦点子路径」(带实际焦点路径示例),解焦出口列后
+    assert(outside.content.includes('请改写焦点路径的子路径重试(如 components.1.props.xxx)'), 'focus PATH_DENIED → 文案先给子路径正路出口(示例 = 实际焦点路径)')
+    assert(outside.content.indexOf('子路径重试') < outside.content.indexOf('remove_focus'), 'focus PATH_DENIED → 子路径出口排在解焦出口之前(正路优先)')
 
     // 前缀边界:components.10 不误匹配 components.1(用 . 分隔判,非 startsWith 裸前缀)
     const idx10 = await mw.wrapToolCall!(

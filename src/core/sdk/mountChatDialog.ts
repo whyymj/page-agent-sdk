@@ -100,8 +100,17 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
           ...(core.store ? {
             sessions: core.sessions.value,            // Ref 响应式 → Wrapper render 重渲染 → ChatDialog 自动更新
             currentSessionId: core.sessionId,
-            onNewSession: () => { void ctx.runSerial(() => core.switchSession()) },          // 经 runSerial(与 return 的 switchSession 一致,防并发 state 竞态)
-            onOpenSession: (id: string) => { void ctx.runSerial(() => core.switchSession(id)) },
+            // 经 runSerial(与 return 的 switchSession 一致,防并发 state 竞态)。
+            // flow-robustness P1#6:void fire-and-forget 补 catch → 失败 emit observable(原:二次 load/createSession
+            // 拒绝变 unhandledRejection,UI 零反馈半切换态);API 侧 sdk.switchSession 仍正常 reject(集成方自处理)
+            onNewSession: () => {
+              void ctx.runSerial(() => core.switchSession()).catch((e: unknown) =>
+                core.emit({ type: 'error', message: `新建会话失败:${e instanceof Error ? e.message : String(e)}`, severity: 'observable', code: 'SESSION_SWITCH_FAILED', context: { target: 'new' } } as any))
+            },
+            onOpenSession: (id: string) => {
+              void ctx.runSerial(() => core.switchSession(id)).catch((e: unknown) =>
+                core.emit({ type: 'error', message: `切换会话失败(${id}):${e instanceof Error ? e.message : String(e)}`, severity: 'observable', code: 'SESSION_SWITCH_FAILED', context: { target: id } } as any))
+            },
             onRemoveSession: async (id: string) => { if (id !== core.sessionId) { await core.store!.deleteSession(core.agentId, id); await core.refreshSessions() } },
           } : {}),
         })

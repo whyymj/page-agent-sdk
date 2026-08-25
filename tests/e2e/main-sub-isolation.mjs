@@ -252,5 +252,19 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:main-sub-isolation] flow-robustness P1#4 子 agent 默认总时长反射(600s 默认/显式覆盖/0 关)')
+  {
+    const mk = async (sub) => {
+      const sdk = createChatSdk({ ui: false, id: 'e2e-msi-defto-' + Math.random().toString(36).slice(2, 7), storage: false, llm: stubModel({ text: 'ok' }), capabilities: { ...CAPS, vfs: false }, ...(sub !== undefined ? { subagent: sub } : {}) })
+      await sdk.mount()
+      const info = sdk.inspect()
+      sdk.unmount()
+      return info.subagent.timeoutMs
+    }
+    assert(await mk(undefined) === 600_000, '✓ P1#4 未配 subagent.timeoutMs → 默认总时长 600000(10min,挂起兜底默认开)')
+    assert(await mk({ timeoutMs: 30_000 }) === 30_000, '✓ P1#4 显式 timeoutMs 覆盖默认')
+    assert(await mk({ timeoutMs: 0 }) === 0, '✓ P1#4 timeoutMs=0 → 关(不限制)')
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

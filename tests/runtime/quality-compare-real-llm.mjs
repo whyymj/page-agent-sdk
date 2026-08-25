@@ -160,7 +160,7 @@ async function runOnce(browser, url, config, runNo) {
       }
     })
     await uninstall()
-    const errors = await page.evaluate(() => (window.__toolLog || []).filter((l) => l.kind === 'error' || /COMPONENT_BUSY|BULK_CHANGE_REJECTED|预检/.test(l.result ?? '')).map((l) => (l.msg ?? l.result ?? '').slice(0, 150)))
+    const errors = await page.evaluate(() => (window.__toolLog || []).filter((l) => l.kind === 'error' || /COMPONENT_BUSY|预检/.test(l.result ?? '')).map((l) => (l.msg ?? l.result ?? '').slice(0, 150)))
     return {
       config: config.label, runNo, elapsedMs: Date.now() - t0,
       ...data,

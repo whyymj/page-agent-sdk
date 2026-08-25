@@ -24,6 +24,7 @@ import { createAgent, type DebugLog } from '../harness/createAgent'
 import { asAgentError } from '../tools/toolError'
 import { decorateModelUnavailable } from '../harness/errors'
 import { isAbort } from '../harness/retry'
+import { markWatchdogTools } from '../harness/toolWatchdog'
 import { z, type ZodType } from 'zod'
 import { getSchemaAtPath, schemaHasCodeField, inferWritablePaths, getSchemaTopKeys } from '../tools/schemaUtils'
 import { systemPromptHelpers } from '../presets'
@@ -38,7 +39,6 @@ import { createMemoryMiddleware } from '../harness/memory'
 import { createPermissionsMiddleware, type PermissionRule } from '../harness/permissions'
 import { createApprovalMiddleware } from '../harness/approval'
 import { createHumanConfirmTool, createHumanConfirmMiddleware, HUMAN_CONFIRM_TOOL_NAME, type PlanConfirmationRecord } from '../harness/humanConfirm'
-import { createBulkGuardMiddleware, type BulkGuardOptions } from '../harness/bulkGuard'
 import {
   createCheckpointManager,
   createCheckpointMiddleware,
@@ -63,7 +63,7 @@ import { isChatModel, resolveLlm, deriveTitle } from './llmResolver'
 import { constructLlmFromConfig, constructOpenLlmSync } from '../llm/constructLlm'
 import { createConflictManager, type ConflictPolicy } from './conflictManager'
 import { resolveStorage, resolveDialogConfig } from './optionsResolver'
-import { resolveCapabilities, DEPRECATED_CAPABILITIES } from '../capabilities'
+import { resolveCapabilities } from '../capabilities'
 import { createSdkEvents } from './events'
 import type { ContextManagerOptions } from '../composables/useContextManager'
 import { resolveContextOptions, PRESET_PRESERVE, type ContextPreset } from './contextPreset'
@@ -75,7 +75,6 @@ import { hashValue, watchFieldsHash } from '../tools/jsonUtils'
 import { fetchDocTools } from '../tools/fetchDoc'
 import { domTools, domInspectSkill, domSearchTool, domInfoTool } from '../tools/domTool'
 import { inspectTools } from '../tools/envTool'
-import { getTraceMetrics } from '../utils/traceMetrics'
 import { createBudgetMiddleware } from '../harness/budget'
 import { actionsToTools, actionsToInspectInfo, type ActionMap } from './actions'
 import { selectBuiltinTools } from '../toolsets'
@@ -84,8 +83,6 @@ import { createUsageHintsMiddleware } from '../harness/usageHints'
 import { createResourcesPinMiddleware } from '../harness/resourcesPin'
 import { type SessionStore, type StorageConfig, type StorageBackendType, type SessionSnapshot, type SessionMeta } from '../backends/storage'
 import { createSkillStore, type SkillStore, type SkillStoreConfig, type PersistedSkill } from '../backends/skillStore'
-import { createPreferenceStore, type PreferenceStoreConfig, type PersistedPreference } from '../backends/preferenceStore'
-import { createPreferencesMiddleware } from '../harness/preferences'
 import { makeId } from '../utils/id'
 import { resolveModelCaps, MIN_CONTEXT_WINDOW } from '../utils/modelCaps'
 import { trimMemoryMessagesImpl, composeTrimSummary } from '../utils/rounds'
@@ -205,13 +202,6 @@ export interface ChatSdkOptions {
    */
   skillStorage?: SkillStoreConfig | false
   /**
-   * 用户偏好跨会话记忆的独立持久化存储(preference-persistence;需 `capabilities.preferences:true` 开启)。
-   * - 与 storage/skillStorage 同构:默认 `{ backend: 'indexed' }`(storage:false 也持久化);id 不传按 agentId 隔离,同 id 跨 agent 共享
-   * - `maxEntries`:FIFO 上限(默认 20;超限删最旧)
-   * - `false`:不持久化(仍工作,但仅当前页面生命周期内有效,刷新丢失)
-   */
-  preferenceStorage?: PreferenceStoreConfig | false
-  /**
    * AGENTS.md 风格持久指令(加载时优先于持久化的 memory)。
    * 支持三种形态:
    *   - string:静态文本
@@ -250,6 +240,13 @@ export interface ChatSdkOptions {
   streamStallMs?: number
   /** 单次模型调用流总时长上限:防空转帧黑洞(keepalive 空转不断喂饱间隔看门狗,实测冻结 7min+ 无报错;超限 → StreamMaxDurationError,重委派/重发即自愈)。默认 600s;0 = 关闭 */
   streamMaxDurationMs?: number
+  /**
+   * per-tool 看门狗(flow-robustness P0#1):单工具执行超此 ms → 放弃等待,recoverable 错误结果回灌自纠
+   * (防集成方工具永不 settle 拖死整轮:loading 永转 + stop 无效)。只对集成方注入工具生效(defineTool /
+   * actions / skill 工具工厂 / rag retriever);内置/MCP/委派与 conflict ask 挂起是设计内等待,豁免。
+   * 默认 120s;0 = 关闭。
+   */
+  toolTimeoutMs?: number
   /** token 预算上限(累计 total_tokens 超过 → 停止 agent + emit BUDGET_EXCEEDED;需 capabilities.automation:true) */
   tokenBudget?: number
   /**
@@ -292,16 +289,11 @@ export interface ChatSdkOptions {
     domInspect?: boolean     // DOM 读取工具 get_dom(默认 false;agent 读渲染后 DOM 结构,opt-in;有 token 成本,集成方按需开启)
     inspectEnv?: boolean     // 环境探查工具 inspect_env(默认 true;读 window 环境/location/调试变量,轻量只读,排查调试用)
     draftWrite?: boolean     // 分块写工具 draft_write/draft_commit(默认 false;几百 K JSON 分块构建再原子提交,opt-in;需 dataOps + vfs,advanced 暴露)
-    tracing?: boolean        // 结构化追踪 TraceSpan(默认 false;opt-in,采集有开销;DebugDrawer trace tab + getTraceMetrics + onEvent('trace'))⚠️ deprecation warn 期,计划 4.1.0 移除
     automation?: boolean     // 无人值守自动化(默认 false;预算闸 token/time + 错误恢复;automation-layer Phase 4,opt-in 最远)
-    skillHostScript?: boolean  // skill exec 宿主脚本执行(默认 false;opt-in,允许 skill exec.context:'host' 全权执行;仅集成方内联 code,远程 url+host 禁止)⚠️ deprecation warn 期,计划 4.1.0 移除
     contextInspector?: boolean // 上下文检查 inspectContext(默认 true;读每轮消息分类 token 占比,纯计算零 LLM 成本)
     agentCompression?: boolean // 压缩 agent 自主决策(默认 false;opt-in,开 + summaryLlm 可用 → decide 驱动压缩,失败降级静态;requires summarization)
-    preferences?: boolean      // 跨会话用户偏好记忆(默认 false;opt-in,自动写用户浏览器,行为敏感默认关;捕获→持久化→pin 段注入)⚠️ deprecation warn 期,计划 4.1.0 移除
-    bulkGuard?: boolean        // 大批量变更门禁(默认 false;单次写触达现有组件节点数超阈 → approval 确认;须同时配置 approval,否则 no-op 留痕;bulk-change-guard)⚠️ deprecation warn 期,计划 4.1.0 移除
   }
-  /** 大批量变更门禁(默认关;capabilities.bulkGuard:true 开启)。量纲 = 现有组件节点数(同组件多 patch 不拦,新增内容不计);豁免:方案确认留痕 + 本会话同形态已确认一次 */
-  bulkGuard?: BulkGuardOptions
+  /** 大批量变更门禁已移除(4.1.0);残键静默忽略。迁移:approval.tools 手工圈选高危工具 */
   /** 子 agent 委派(spawn_agent/spawn_agents);默认开启,{ enabled: false } 关闭 */
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | BaseChatModel; maxDepth?: number; maxParallel?: number; timeoutMs?: number; thinkingMode?: 'simple' | 'deep' }
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
@@ -476,12 +468,6 @@ export interface ChatSdk {
   getMission(): Mission | undefined
   /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
   setMission(mission: Partial<Mission>): void
-  /** 读取跨会话用户偏好快照(updatedAt 新在前;capabilities.preferences:false → 恒 []) */
-  getPreferences(): PersistedPreference[]
-  /** 删除单条跨会话偏好(by id;学错可删);capabilities 关 → false */
-  removePreference(id: string): Promise<boolean>
-  /** 清空全部跨会话偏好(存储 + 注入段同清);capabilities 关 → no-op */
-  clearPreferences(): Promise<void>
   /** 读取当前聚焦焦点(兼容:返回首个;未聚焦 / capabilities.focus:false → undefined) */
   getFocus(): Focus | undefined
   /** 读取全部聚焦焦点(multi-focus;空数组=未聚焦;capabilities.focus:false → []) */
@@ -727,12 +713,6 @@ export interface AgentCore {
   getMission(): Mission | undefined
   /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
   setMission(mission: Partial<Mission>): void
-  /** 读取跨会话用户偏好快照(updatedAt 新在前;capabilities.preferences:false → 恒 []) */
-  getPreferences(): PersistedPreference[]
-  /** 删除单条跨会话偏好(by id);capabilities 关 → false */
-  removePreference(id: string): Promise<boolean>
-  /** 清空全部跨会话偏好;capabilities 关 → no-op */
-  clearPreferences(): Promise<void>
   /** 读取当前聚焦焦点(兼容:返回首个;未聚焦 / capabilities.focus:false → undefined) */
   getFocus(): Focus | undefined
   /** 读取全部聚焦焦点(multi-focus;空数组=未聚焦;capabilities.focus:false → []) */
@@ -976,11 +956,25 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 随 SessionSnapshot 持久化(editor storage:'indexed' 跨刷新恢复会话,内存态刷新即丢会断豁免链);切/重置会话清除。
   // 口径:仅方案类确认记录 —— 单组件删除确认(true/false)不写入(评审 2-5:防低敏感确认烧掉批量门禁豁免)
   let lastPlanConfirmation: PlanConfirmationRecord | undefined
+  // flow-robustness P1#3:approval/humanConfirm 中间件本体默认 30s 无响应自动拒(全路径统一,替代原 send/batch
+  // 事件级 approvalWatch)。响应方接管机制:事件携带 hold(),内置 UI(useChat)收到即调 → 计时取消、无限等人;
+  // 无人调 hold(headless 任意入口 / send·batch / streaming:false 裸 invoke —— approval_request 不外发,
+  // 这些路径集成方无法应答)→ 30s 自动拒 + observable。approval.timeoutMs 显式覆盖:正值生效;
+  // Infinity/负数 = 关(stream onEvent 自建确认通道的集成方留口)。
+  // emit 延迟求值(同 conflictMgr 模式:emit 在下方定义,中间件运行时才调)。
+  const rawApprovalMs = options.approval?.timeoutMs
+  const approvalNoRespMs =
+    rawApprovalMs !== undefined && Number.isFinite(rawApprovalMs) && rawApprovalMs > 0 ? rawApprovalMs
+    : rawApprovalMs !== undefined && (!Number.isFinite(rawApprovalMs) || rawApprovalMs < 0) ? 0
+    : 30_000
+  const onApprovalAutoReject = (info: { toolName: string; waitedMs: number }): void => {
+    emit({ type: 'error', message: `确认请求(${info.toolName})${Math.round(info.waitedMs / 1000)}s 无响应已自动拒绝 —— 当前路径无 UI 响应方;可传 approval.timeoutMs 调整(Infinity = 无限等)`, severity: 'observable', code: 'APPROVAL_AUTO_REJECTED', context: info } as any)
+  }
   const humanConfirmMw = createHumanConfirmMiddleware((record) => {
     lastPlanConfirmation = record
     persistSave({ planConfirmation: record })
     core.agent?.debugLogs?.value?.push({ timestamp: Date.now(), type: 'middleware', data: { stage: 'plan_confirmation', summary: record.summary, choice: record.choice } })
-  })
+  }, { timeoutMs: approvalNoRespMs, onAutoReject: onApprovalAutoReject })
   // 上下文聚焦(focus-context):指定组件精修,目标/视野/范围三层收敛。getSchema 延迟引用 liveData(适配 setData 运行时替换,同 checkpointMgr.getData 模式)
   // 焦点变更统一 emit focus_change(所有入口:API/agent 工具/dialog chip/reset;闭包引用 emit,运行时已初始化)
   const focusMw = createFocusMiddleware({ getSchema: () => liveData()?.schema, getBind: () => liveData()?.bind, onChange: (focuses) => emit({ type: 'focus_change', focuses }) })
@@ -1067,17 +1061,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
   // 内置能力开关(默认全开;false 则对应中间件/工具不装载)
   const caps = resolveCapabilities(options.capabilities)  // 单一解析(消除 !==false/===true 混;opt-in/out 经注册表 defaultOn,requires 表达依赖)
-  // config-surface-pruning:候选撤除面 deprecation warn(配置命中才触发,每挂载一次;含移除目标版本 + 迁移指引,不引导声明任何新配置)
-  if (options.capabilities && typeof options.capabilities === 'object') {
-    for (const k of Object.keys(DEPRECATED_CAPABILITIES)) {
-      if ((options.capabilities as Record<string, unknown>)[k]) {
-        console.warn(`[page-agent-sdk][capabilities.${k}] ${DEPRECATED_CAPABILITIES[k as keyof typeof DEPRECATED_CAPABILITIES]}。维护者确认无外部使用,计划 4.1.0 移除;如你在使用请到仓库 issue 说明将按反馈保留`)
-      }
-    }
-  }
   const useDataOps = caps.dataOps
   const useDraft = caps.draftWrite  // draft_write/commit 分块构建大 JSON(opt-in,默认关;需 dataOps + vfs)
-  const useTracing = caps.tracing  // 结构化追踪 TraceSpan(opt-in,默认关;采集有开销)
   const useAutomation = caps.automation  // 无人值守自动化(预算闸+错误恢复;opt-in,最远)
 
   // 最终 systemPrompt 的 base 段(不含数据段):用户 systemPrompt(或默认)+ 可选 reliableWriteRules 追加,统一由 buildSystemPrompt 处理
@@ -1104,6 +1089,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         maxSnapshots: options.maxSnapshots,
         onConflict: conflictMgr.set,
         conflictWatchFields: options.conflictWatchFields,
+        // write-conflict C 形态装配条件:>1 且 conflictWatchFields 武装 → dataOps 闭包级写互锁
+        maxParallelTools: options.maxParallelTools,
         vfsStore: (useDraft || !!finalDataConfig?.resources?.length) ? vfsStore : undefined,  // draft 工具 / 受保护资源(opt-in):vfsStore 提供 → createDataOps 装 draft_write/draft_commit + resource_*
         // code-as-data-asset:htmlSubagent writablePaths → pgIdPaths(schema extend 加 __pgId:safeParse 不剥离 + afterWrite 补 __pgId)+ largeTextPaths(主 scope read code 摘要)
         ...(codeAssetPgIdPaths.length ? { pgIdPaths: codeAssetPgIdPaths } : {}),
@@ -1262,6 +1249,13 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   let allTools: StructuredToolInterface[] = rebuildExtraTools()
   /** 重建 extraTools(传 createAgent 的 tools):dedupeTools 收敛 builtin + userTools + actions + humanConfirm + checkpoint + mcp(后覆盖先,返回唯一集) */
   function rebuildExtraTools(): StructuredToolInterface[] {
+    // per-tool 看门狗标记(flow-robustness P0#1):集成方注入面(user 原生 langchain 工具 / actions.run
+    // 包装 / skill 工具工厂产物)无自有闸,统一打标 coreExecTool race toolTimeoutMs。defineTool 产物已在
+    // 创建时打标(此处幂等);builtin/mcp(自有闸)/humanConfirm(设计内等人工)不打 —— 重名覆盖时幸存
+    // 对象随自身标记走(user 实现覆盖 builtin → 看 user 实现,语义正确)
+    markWatchdogTools(userTools)
+    markWatchdogTools(actionTools)
+    markWatchdogTools(loadedSkillTools)
     const { tools, collisions } = dedupeTools([
       { label: 'builtin', tools: builtinTools },
       { label: 'user', tools: userTools },
@@ -1321,8 +1315,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // fix-authorization-surface P1-16:permissions/approval 提升具名 const,同实例注入子栈(childGuards)。
   // 修原「委派路径整体绕过把关」—— 子 agent 写操作同样过主 permissions 自动拒 + approval 人工确认
   const permissionsMw = options.permissions?.length ? createPermissionsMiddleware(options.permissions) : undefined
+  // timeoutMs 装配层归一:undefined → approvalNoRespMs(无 UI 默认 30s / UI 无限等);显式值(含 Infinity=0 无限等)原样透传
   const approvalMw = options.approval && (options.approval.tools !== undefined || !!options.approval.confirm)
-    ? createApprovalMiddleware(options.approval)
+    ? createApprovalMiddleware({ ...options.approval, timeoutMs: options.approval.timeoutMs ?? approvalNoRespMs, onAutoReject: onApprovalAutoReject })
     : undefined
   const childGuards: Middleware[] = [...(permissionsMw ? [permissionsMw] : []), ...(approvalMw ? [approvalMw] : []), ...(baselineGuardMw ? [baselineGuardMw] : [])]  // 序同主栈:permissions 外层 → approval 内层;baseline-guard 子栈自定义工具改 bind 同样刷基线
   const subagentMw =
@@ -1411,28 +1406,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       ...(componentLock ? { componentLock, resolveComponents: (args: { components?: string[]; task: string }) => resolveTargetComponents(args, collectComponentNames(liveData()?.bind, codeAssetPgIdPaths)) } : {}) })
     : undefined
 
-  // bulk-change-guard(大批量变更门禁,缓解非根治):单次写触达现有组件节点数超阈 → 挂 approval 确认。
-  // 装配规则(评审 3-1,硬性防 headless 挂死):① 默认关(capabilities.bulkGuard,集成方显式开)
-  // ② 必须配置 approval(白名单/confirm 至少一项)才装 —— 未配 approval 无响应方,「无响应方检测」机制
-  // 不存在,整体 no-op + info 留痕。量纲 = 现有组件节点数(同组件多 patch 不拦;新增内容不计破坏面);
-  // 挂起自带 timeoutMs(默认 30s 超时自动拒,stream 路径无 approvalWatch 兜底);observe 模式只留痕不挂起;
-  // 豁免:lastPlanConfirmation(3c 方案确认留痕)/ 本会话同形态已确认一次。
-  const useBulkGuard = !!options.capabilities?.bulkGuard && !!approvalMw
-  const bulkGuardMw = useBulkGuard
-    ? createBulkGuardMiddleware({
-        ...(options.bulkGuard ?? {}),
-        getBind: () => liveData()?.bind,
-        tools: allTools,  // writeCapable 标注判定(单一真相源)
-        getPlanConfirmation: () => lastPlanConfirmation,
-        onEvent: (info) => {
-          core.agent?.debugLogs?.value?.push({ timestamp: Date.now(), type: 'middleware', data: info })
-        },
-        // 挂起走 ctx.emit(approval_request 流内通道,与 approval/humanConfirm 同源;core 外发 emit 吞该事件勿用)
-      })
-    : undefined
-  if (options.capabilities?.bulkGuard && !approvalMw) {
-    console.info('[page-agent-sdk] bulkGuard 已请求但未配置 approval,门禁未装配(整体 no-op;配置 approval.tools 或 approval.confirm 后生效)')
-  }
+  // bulk-change-guard 已于 4.1.0 移除(config-surface-pruning round2;capabilities.bulkGuard/bulkGuard 残键静默忽略)
   const subagentsController = subagentsMw ? (subagentsMw as any).controller as import('../harness/subagent').SubagentsController : null
 
   /** 思考深度锁定反射(subagent-thinking-mode-lock):thinkingMode 解析(显式 > 顶层缺省)+ 实际生效状态。
@@ -1530,33 +1504,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         : `agent::${agentId}`,
     })
 
-  // ===== 用户偏好跨会话记忆(preference-persistence;capabilities.preferences opt-in 默认关)=====
-  // 捕获:强信号(「记住:」正则,零 LLM)+ 中信号(模式词初筛 → summaryLlmInvoke 提炼,宁漏勿误);行为推断不捕获
-  // 注入:augmentPrompt「## 用户偏好」pin 段(每轮重建进 system,天然跨压缩,同 mission)
-  const usePreferences = caps.preferences
-  type PreferencesMw = ReturnType<typeof createPreferencesMiddleware>
-  const preferenceStore = usePreferences && options.preferenceStorage !== false
-    ? createPreferenceStore({
-        ...(typeof options.preferenceStorage === 'object' ? options.preferenceStorage : {}),
-        id: options.preferenceStorage && typeof options.preferenceStorage === 'object' && options.preferenceStorage.id
-          ? options.preferenceStorage.id
-          : `agent::${agentId}`,
-      })
-    : null
-  const preferencesMw: PreferencesMw | null = preferenceStore
-    ? createPreferencesMiddleware({
-        store: preferenceStore,
-        // 小 LLM 通道(中信号提炼);summaryLlmInvoke 缺省(apiKey 缺失等)→ 只强信号生效(降级)
-        llmInvoke: summaryLlmInvoke,
-        getSessionId: () => core.sessionId,
-        onDebug: (data) => {
-          const logs = core.agent?.debugLogs
-          if (!logs) return
-          logs.value.push({ timestamp: Date.now(), type: 'middleware', data })
-          triggerRef(logs)
-        },
-      })
-    : null
+  // preferences(跨会话用户偏好记忆)已随 4.1.0 移除(config-surface-pruning round2);迁移:自行存储偏好经 systemPrompt/augmentSystem 注入
 
   /** 合并 initialSkills + userSkills(同名 userSkills 覆盖)→ controller.set;持久化 userSkills 到 SkillStore */
   const syncUserSkills = () => {
@@ -1608,7 +1556,6 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(useMission ? [missionMw] : []), // mission 在 todos 前(pin 段在 todos 段前;revive-mission-anchor)
     intentGuardMw, // mission 后:问句意图守卫 pin 段(逐消息定性「先答勿做」;instruction-adherence B,默认开)
     resumeNoticeMw, // 会话恢复提示:恢复非空历史后首轮注入「数据可能已变,先核实」(applySnapshot 触发,一次性)
-    ...(preferencesMw ? [preferencesMw] : []), // mission 后:用户偏好 pin 段(跨会话;afterAgent 收口捕获;opt-in 默认关)
     ...(usePlanning ? [todosMw] : []),
     ...(useSkills
       ? [
@@ -1620,8 +1567,6 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           ], {
             // vfs 启用时注入 readVfs,让 skill 文档源(vfs://path)能读取 vfs 文件
             readVfs: useVfs ? (p: string) => vfsStore.files[p]?.content : undefined,
-            // skill exec context:'host' 开关(caps.skillHostScript,opt-in 默认关;关时 host 脚本跳过 + warn)
-            hostScriptEnabled: caps.skillHostScript,
             // skill 附带工具注入回调:load_skill 后合并 loadedSkillTools + 标 source + rebind(skill-external-scripts §5)
             onToolsReady: (skillName, tools) => {
               for (const t of tools) {
@@ -1668,9 +1613,6 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(dataOpsController && useSubagent
       ? [createDelegateNudgeMiddleware({ getBind: () => liveData()?.bind })]
       : []),
-    // bulk-change-guard:大批量变更门禁(现组件节点数超阈 → approval)。装在 componentWriteGuard 之内
-    // (D3:批量写命中在途锁组件 → 先收 COMPONENT_LOCKED 机制拒,不劳用户确认后才拒)
-    ...(bulkGuardMw ? [bulkGuardMw] : []),
     ...(augmentSystemMw ? [augmentSystemMw] : []),
     ...(contextInspectorMw ? [contextInspectorMw] : []),  // context-inspector:wrapModelCall 快照实际消息构成(大小/分类/占比)
     ...(options.middleware || []),
@@ -1683,44 +1625,19 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
   const maxMemoryRounds = options.maxMemoryRounds ?? DEFAULT_MAX_MEMORY_ROUNDS
 
-  // P1-1(fix-hang-and-feedback):approval/humanConfirm「无响应方路径」自动拒 ——
-  // send/batch 走 invoke 无 UI,approval_request 挂起后无人可 resolve → 原实现永久挂死且零可见(humanConfirm 默认开,headless+send 高发)。
-  // 超时默认 30s;approval.timeoutMs 显式覆盖(0 同默认 —— 该路径无 UI,等无意义;Infinity/负数 = 无限等,给自建确认通道的集成方留口)。
-  // 被拒后 emit observable error 留痕(契约 B);abort 已收口的确认不再误报(查 signal.aborted)。
-  const rawApprovalMs = options.approval?.timeoutMs
-  const approvalAutoRejectMs =
-    rawApprovalMs === undefined || rawApprovalMs === 0 ? 30_000
-    : !Number.isFinite(rawApprovalMs) || rawApprovalMs < 0 ? 0
-    : rawApprovalMs
-  /** invoke 过程事件 handler:监听 approval_request,超时无响应自动拒 + emit error */
-  function makeApprovalWatch(signal?: AbortSignal): ((e: import('../types').StreamEvent) => void) | undefined {
-    if (!approvalAutoRejectMs) return undefined
-    return (e) => {
-      if (e.type !== 'approval_request') return
-      const startedAt = Date.now()
-      const toolName = e.toolName
-      setTimeout(() => {
-        if (signal?.aborted) return // abort 已自动拒(中间件 signal 联动),不误报
-        e.resolve(false)
-        emit({ type: 'error', message: `确认请求(${toolName})${Math.round((Date.now() - startedAt) / 1000)}s 无响应已自动拒绝 —— send/batch 路径无 UI 响应方;可传 approval.timeoutMs 调整(Infinity = 无限等)`, severity: 'observable', code: 'APPROVAL_AUTO_REJECTED', context: { toolName, waitedMs: Date.now() - startedAt } } as any)
-      }, approvalAutoRejectMs)
-    }
-  }
-
+  // flow-robustness P1#3:原 P1-1 的 makeApprovalWatch(send/batch 事件级 30s 自动拒)已移除 ——
+  // approval/humanConfirm 中间件本体默认 30s 无响应自动拒(无 UI 路径,装配层注入,见 buildCore),
+  // 全入口(stream/send/batch)统一口径且不再双发 observable。
   /**
-   * send/batch 路径的流事件观察器:approval 自动拒(P1-1)+ observable error 事件转发 emit。
-   * 3.11 真 LLM 复测发现:send 路径只传 approvalWatch,agent stream 内的 observable error
+   * send/batch 路径的流事件观察器:observable error 等过程事件转发 emit。
+   * 3.11 真 LLM 复测发现:send 路径不转发流内事件,agent stream 内的 observable error
    * (GARBLED_TOOL_CALL_EXHAUSTED / ROUND_TOKEN_BUDGET_EXCEEDED / STREAM_STALLED 等)到不了
-   * options.onEvent —— headless 集成方对「任务可能未完成」完全无感知。仅转发 error 类
-   * (流式 delta 不外发,保持「流式事件仅 stream 模式」契约)。
+   * options.onEvent —— headless 集成方对「任务可能未完成」完全无感知。
    */
-  function makeStreamWatch(signal?: AbortSignal): (e: import('../types').StreamEvent) => void {
-    const approvalWatch = makeApprovalWatch(signal)
+  function makeStreamWatch(_signal?: AbortSignal): (e: import('../types').StreamEvent) => void {
     return (e) => {
-      approvalWatch?.(e)
-      // F1(send/batch 全量事件外发):原只 emit error → headless 用 send() 的集成方经 sdk.hook 听不到
-      // tool_call/reasoning/text 等过程(「聋子」路径);现全量转发(approval_request 仍不外发 ——
-      // send/batch 无 UI 响应方,由 approvalWatch 30s 自动拒收口,与 core.stream 的 UI 路径语义一致)。
+      // F1(send/batch 全量事件外发):headless 用 send() 的集成方经 sdk.hook 听 tool_call/reasoning/text
+      // 等过程(approval_request 仍不外发 —— 无 UI 响应方路径由中间件 30s 自动拒收口)。
       if ((e as any).type !== 'approval_request') emit(e as any)
     }
   }
@@ -1941,11 +1858,21 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       // automation 无人值守错误恢复:致命错误(invoke 抛错)→ restore_last_checkpoint 回到本轮前 + 重试(限 maxAutoRetries 次防循环)。
       // 适合无人值守批量/长任务:单点模型/工具致命错误不永久中断,自动回退重试;确定性错误重试仍耗尽 → fatal(emit + throw)。
       // checkpoint 在 beforeModel save(时点在 push user 后)→ restore 后 messages 已含本轮 user,故用 pushed 标记避免重复 push。
+      // flow-robustness P1#12:send 路径同 stream 刷新 vfs 被引用集(原只在 stream 注册 → 跨轮 LRU 淘汰被引用 large_results → vfs_read 404)
+      vfsStore?.setProtectedRefs?.(extractVfsRefs(messages))
       const maxAuto = useAutomation ? (options.maxAutoRetries ?? 1) : 0
       let attempt = 0
       let pushed = false
       // P1-1(fix-hang-and-feedback):无响应方路径自动拒确认 + observable error 转发(详见 makeStreamWatch 注释)
       const streamWatch = makeStreamWatch(options.signal)
+      // abort→冲突收口联动(flow-robustness P0#2):core.stream 入口有同款,send(invoke)路径原本缺失 ——
+      // 乐观锁冲突 ask 挂起期间 signal abort 不解 onConflict Promise → send 永不返回(unmount/switch/reset
+      // 可解但 headless 编程式 abort 无出路)。abort 即按「保留外部」收口(keep_external 不写入,与生命周期口径一致)
+      if (options.signal) {
+        const abortConflict = () => conflictMgr.resolve('keep_external')
+        if (options.signal.aborted) abortConflict()
+        else options.signal.addEventListener('abort', abortConflict, { once: true })
+      }
       const sidAtSend = core.sessionId  // 孤儿收口(rv-core F5):invoke 期间 resetSession/switch 换会话的比对锚
       while (true) {
         if (!pushed) {
@@ -1964,7 +1891,14 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           }
           messages.push({ role: 'assistant', content: reply, timestamp: Date.now() })
           core.afterRound()
-          if (store) await store.flush() // 确保落盘完成(indexed 异步事务;刷新前已写入)
+          // flow-robustness P1#11:flush 错误源分流 —— 落盘失败不是 LLM 错误,不再进上方 fatal 分支
+          // (原:flush reject 被误归因 LLM fatal → AUTO_RECOVER_RETRY 回退 checkpoint 重跑整轮烧 token);
+          // 留痕后放行,落盘交 debounce/pagehide 兜底
+          if (store) {
+            try { await store.flush() } catch (e) {
+              emit({ type: 'error', message: `落盘失败(不影响本轮回复):${e instanceof Error ? e.message : String(e)}`, severity: 'observable', code: 'PERSIST_FLUSH_FAILED' } as any)
+            }
+          }
           return reply
         } catch (err) {
           // abort(用户经 signal 中止):不计错误,静默上抛(同 useChat「abort 不计入 error」语义)
@@ -1998,6 +1932,14 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       if (core.refCount <= 0) throw new Error('page-agent-sdk: agent 已释放(unmount),拒绝排队中的 batch')  // rv-verify A6 同族:release 后剩余任务照跑烧 LLM
       const results: BatchResult[] = []
       const streamWatch = makeStreamWatch(signal)  // P1-1:批处理同样无 UI 响应方,确认超时自动拒;error 转发同 send
+      // flow-robustness P1#12:batch 路径同 stream 刷新 vfs 被引用集(原只在 stream 注册 → 跨任务 LRU 淘汰被引用 large_results → vfs_read 404)
+      vfsStore?.setProtectedRefs?.(extractVfsRefs(messages))
+      // abort→冲突收口联动(flow-robustness P0#2):batch 与 send 同款(invoke 路径冲突 ask 挂起不吃 abort)
+      if (signal) {
+        const abortConflict = () => conflictMgr.resolve('keep_external')
+        if (signal.aborted) abortConflict()
+        else signal.addEventListener('abort', abortConflict, { once: true })
+      }
       for (let i = 0; i < tasks.length; i++) {
         // P1-4(fix-hang-and-feedback):外部 abort → 停止剩余任务(剩余记 aborted,不静默丢)
         if (signal?.aborted) {
@@ -2013,7 +1955,12 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           const reply = await core.agent!.invoke(messages, signal, streamWatch)
           messages.push({ role: 'assistant', content: reply, timestamp: Date.now() })
           core.afterRound()
-          if (store) await store.flush()
+          // P1#11 同 send:flush 失败不标记任务失败(LLM 已成功;落盘交兜底),留痕放行
+          if (store) {
+            try { await store.flush() } catch (e) {
+              emit({ type: 'error', message: `落盘失败(不影响本任务结果):${e instanceof Error ? e.message : String(e)}`, severity: 'observable', code: 'PERSIST_FLUSH_FAILED' } as any)
+            }
+          }
           results.push({ index: i, task, reply, ok: true })
           onProgress?.({ done: i + 1, total: tasks.length, task, ok: true })
         } catch (err) {
@@ -2070,15 +2017,18 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       focusMw.reset()
       resumeNoticeMw.reset() // 切会话:清待注入恢复标记(下方 applySnapshot 若灌入历史会重新标记)
       lastPlanConfirmation = undefined // 切会话:清方案确认留痕(方案时效限本会话;回原会话经 applySnapshot 恢复)
-      bulkGuardMw?.state.reset() // 切会话:清 bulk-guard 会话级豁免态(每类只拦一次的计数重置)
-      // 偏好本身跨会话保留(不 reset);仅重置消息扫描水位(新会话 messages 从 0 起,须重扫)
-      preferencesMw?.resetScanCursor()
       // session-history S1:切会话清 checkpoint 栈,防旧会话快照污染新会话(开 checkpoint 时,否则 restore 会回退到旧会话态)
       if (checkpointMgr) checkpointMgr.importStack([])
       // 释放上一会话的调试日志(切会话后旧日志不再相关,立即释放内存)
       core.agent!.debugLogs.value = []
       core.agent!.resetStaleReadsInvalidated?.() // stale-read 失效计数同点清零,防旧会话计数带进新会话
-      if (!snap) snap = await store.load(agentId, target)
+      // 二次 load(新建会话路径):此时内存态已清/sessionId 已换,失败若上抛 = 半切换态且 UI 按钮路径无人接
+      // (flow-robustness P1#6)→ 降级空会话 + observable 留痕(切换照常完成,快照可后续手动重载)
+      if (!snap) {
+        try { snap = await store.load(agentId, target) } catch (e) {
+          emit({ type: 'error', message: `会话快照载入失败,已降级空会话:${e instanceof Error ? e.message : String(e)}`, severity: 'observable', code: 'SESSION_SNAPSHOT_LOAD_FAILED', context: { sessionId: target } } as any)
+        }
+      }
       if (snap) {
         core.applySnapshot(snap)
         emit({ type: 'session_restored', sessionId: target, rounds: snap.messages?.length ?? 0 })
@@ -2108,8 +2058,6 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       focusMw.reset()
       resumeNoticeMw.reset() // 清空会话:新会话无恢复历史,清待注入标记
       lastPlanConfirmation = undefined // 清空会话:清方案确认留痕(save-and-plan-gates 3c)
-      bulkGuardMw?.state.reset() // 清空会话:清 bulk-guard 会话级豁免态
-      preferencesMw?.resetScanCursor() // 偏好跨会话保留;只重置扫描水位(同 switchSession)
       if (checkpointMgr) checkpointMgr.importStack([])
       if (core.agent) { core.agent.debugLogs.value = []; core.agent.resetStaleReadsInvalidated?.() }
       if (store) {
@@ -2327,19 +2275,16 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         mission: useMission ? missionMw.getMission() : undefined,
         // 方案确认留痕(save-and-plan-gates 3c):本会话最近一次 RHC 方案确认(带 options);DebugDrawer 可见
         planConfirmation: lastPlanConfirmation,
-        // bulk-change-guard 反射:装配状态 + 阈值 + 会话级豁免形态集
-        bulkGuard: useBulkGuard ? { enabled: true, threshold: options.bulkGuard?.threshold ?? 4, mode: options.bulkGuard?.mode ?? 'confirm', confirmedKinds: [...bulkGuardMw!.state.confirmedKinds] } : { enabled: false },
-        // 跨会话用户偏好(DebugDrawer 只读视图;capabilities.preferences:false → undefined)
-        preferences: usePreferences && preferencesMw ? preferencesMw.getPreferences() : undefined,
         workingMemory: useWorkingMemory ? workingMemoryMw.getWorkingMemory() : undefined,
         focus: useFocus ? focusMw.getFocus() : undefined,
         focuses: useFocus ? focusMw.getFocuses() : [],
-        trace: useTracing && core.agent?.spans ? { spans: core.agent.spans.value, metrics: getTraceMetrics(core.agent.spans.value) } : undefined,
         actions: actionsToInspectInfo(options.actions ?? {}),
         subagent: {
           enabled: !!subagentMw,
           maxDepth: options.subagent?.maxDepth ?? 1,
           maxParallel: options.subagent?.maxParallel ?? 4,
+          // 单次委派总时长(flow-robustness P1#4:undefined → 默认 600000;0 = 关;反射实际生效值)
+          timeoutMs: options.subagent?.timeoutMs !== undefined ? (options.subagent.timeoutMs > 0 ? options.subagent.timeoutMs : 0) : 600_000,
           allowedTools: options.subagent?.allowedTools ?? [],
           // 预声明子 agent 列表(动态:反映 setSubagents/addSubagent/removeSubagent 后的最新;含 thinkingMode/thinkingApplied 反射)
           subagents: (subagentsController?.get() ?? []).map(reflectSubagentThinking),
@@ -2420,23 +2365,6 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       missionMw.setMission(m)
       core.infoTick.value++ // 触发 DebugDrawer 刷新
     },
-    /** 读取跨会话用户偏好快照(updatedAt 新在前;capabilities.preferences:false → 恒 []) */
-    getPreferences(): PersistedPreference[] {
-      return preferencesMw ? preferencesMw.getPreferences() : []
-    },
-    /** 删除单条跨会话偏好(by id;学错可删);capabilities 关 → false */
-    async removePreference(id: string): Promise<boolean> {
-      if (!preferencesMw) return false
-      const ok = await preferencesMw.removePreference(id)
-      if (ok) core.infoTick.value++
-      return ok
-    },
-    /** 清空全部跨会话偏好(存储 + 注入段同清);capabilities 关 → no-op */
-    async clearPreferences(): Promise<void> {
-      if (!preferencesMw) return
-      await preferencesMw.clearPreferences()
-      core.infoTick.value++
-    },
     /** 读取当前聚焦焦点(兼容:返回首个 focus;未聚焦 / capabilities.focus:false → undefined) */
     getFocus(): Focus | undefined {
       return useFocus ? focusMw.getFocus() : undefined
@@ -2483,7 +2411,18 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   /** 解析会话 id + 载入快照(仅 store 非 null 时) */
   async function resolveAndLoad(): Promise<void> {
     if (!store) return
-    await store.ready
+    // flow-robustness P1#5:ready 包 race 5s —— IDB open 卡 blocked(跨 tab 版本锁)时原实现拖死
+    // initDone → mount 永不 resolve;超时放行(backend 预置内存,窗口内读写降级不炸),留痕可见。
+    // 注意 ready(false)(后端不可用降级内存)是合法快速落定,自带 degraded 事件,不算超时不重复留痕
+    const READY_TIMEOUT = Symbol('storage-ready-timeout')
+    const readyResult = await Promise.race([
+      store.ready.then(() => 'ready' as const),
+      new Promise<typeof READY_TIMEOUT>((r) => setTimeout(() => r(READY_TIMEOUT), 5000)),
+    ])
+    if (readyResult === READY_TIMEOUT) {
+      console.warn('[page-agent-sdk][persist] 存储初始化 5s 未就绪(可能被其他标签页锁住),已放行;持久化暂降级内存,就绪后自动恢复')
+      emit({ type: 'error', message: '存储初始化 5s 未就绪(IDB blocked?),已放行降级运行', severity: 'observable', code: 'STORAGE_READY_TIMEOUT' } as any)
+    }
     const sessOpts = options.session || {}
     if (sessOpts.id) {
       core.sessionId = sessOpts.id
@@ -2746,8 +2685,6 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     await resolveAndLoad()
     // Skill 独立加载(与 storage 选项分离;即使 storage:false 也从 SkillStore 恢复)
     await loadUserSkills()
-    // 用户偏好预载:await store.ready 后拉 list 填中间件内存 cache(此后 augmentPrompt 读 cache 零 await)
-    if (preferencesMw) await preferencesMw.preload()
     // MCP:连所有 server(故障隔离),工具注入 allTools。
     // mcp-e2e 真测优化:握手(默认 15s 超时)曾 await 在 initDone → mount 被阻塞,server 不可达时
     // 对话框 15s 不渲染(切模式白屏感)。改为后台连接:agent 先建/对话框先渲染,握手完成后 push 工具 +
@@ -2831,6 +2768,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       stallMs: options.streamStallMs ?? DEFAULT_STREAM_STALL_MS,
       // 流总时长上限(默认 600s;0 关):间隔看门狗盲区兜底 —— 空转帧黑洞 chunk 不断但无实质内容
       streamMaxMs: options.streamMaxDurationMs ?? DEFAULT_STREAM_MAX_DURATION_MS,
+      // per-tool 看门狗(flow-robustness P0#1,默认 120s / 0 关):只对集成方注入工具生效(toolWatchdog 打标)
+      toolTimeoutMs: options.toolTimeoutMs,
       maxParallelTools: options.maxParallelTools,
       // 模型能力透传(已在 buildCore 解析,声明优先 > 表 > 缺省):驱动 maxTokens 缺省与 offload 阈值
       contextWindow: modelCaps.contextWindow,
@@ -2851,8 +2790,6 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         //  onLlmChange 拿不到原 cfg.contextWindow → 在 setLlm 用原 llmOpt 重算更准)
         currentLlm = newLlm
       },
-      // trace:createAgent finally 调 onTrace(spans, metrics) → emit('trace')(capabilities.tracing 开时注入,关时 undefined → createAgent 不采集,零开销)
-      onTrace: useTracing ? (spans, metrics) => { try { emit({ type: 'trace', spans, metrics }) } catch { /* emit 抛错忽略 */ } } : undefined,
       debug: options.debug,
     })
     agentRef.current = core.agent
@@ -3051,12 +2988,6 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
     getMission: core.getMission,
     /** 显式设置/覆盖 mission(传 {goal} 重设;传 {goal,criteria} 整体替换;传 {} 清空);capabilities 关时 warn 不抛 */
     setMission: core.setMission,
-    /** 读取跨会话用户偏好快照(updatedAt 新在前;capabilities.preferences:false → 恒 []) */
-    getPreferences: core.getPreferences,
-    /** 删除单条跨会话偏好(by id;学错可删);capabilities 关 → false */
-    removePreference: core.removePreference,
-    /** 清空全部跨会话偏好(存储 + 注入段同清);capabilities 关 → no-op */
-    clearPreferences: core.clearPreferences,
     /** 读取当前聚焦焦点(未聚焦 / capabilities.focus:false → undefined) */
     getFocus: core.getFocus,
     getFocuses: core.getFocuses,

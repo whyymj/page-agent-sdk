@@ -204,6 +204,8 @@ const DEFAULT_READONLY_TOOLS = [
 ]
 const DEFAULT_MAX_DEPTH = 1
 const DEFAULT_MAX_PARALLEL = 4
+/** 子 agent 单次执行默认总时长(flow-robustness P1#4 挂起兜底;opts.timeoutMs 显式覆盖,0/负 = 关) */
+const DEFAULT_SUBAGENT_TIMEOUT_MS = 600_000
 const DEFAULT_CHILD_ROUNDS = 6
 const SPAWN_TOOL_NAMES = ['spawn_agent', 'spawn_agents']
 
@@ -493,17 +495,20 @@ async function runSubagent(
     // 转发工具调用进度 + 思考过程(reasoning)到主 UI(text 不转发:是生成内容,经 vfs/data 落地;UI 可见 ≠ 进主上下文,隔离不破)
     if (forward && (e.type === 'tool_call' || e.type === 'tool_result' || e.type === 'reasoning')) forward(e)
   }, childAc.signal)
-  if (!opts.timeoutMs || opts.timeoutMs <= 0) {
+  // flow-robustness P1#4:默认总时长 10min(原 opt-in → 默认开;0/负 = 关,opts.timeoutMs 显式覆盖)。
+  // 单模型调用 600s 闸只兜单次调用,多轮工具循环无外层闸时理论最坏 ~70min 且主循环同轮 await。
+  const subTimeoutMs = opts.timeoutMs !== undefined ? opts.timeoutMs : DEFAULT_SUBAGENT_TIMEOUT_MS
+  if (!subTimeoutMs || subTimeoutMs <= 0) {
     // afterAgent 在 finally 段跑(commit/keep_external 检出),await streamP resolve 时标记已就绪,可安全装饰
     try { return decorateSubagentResult(await streamP, child.getState()) } finally { cleanup() }
   }
-  // P1-17b:子执行超时(opt-in)—— race 超时 abort 子流并抛错(spawn 工具 catch → recoverable 回灌,主 LLM 可重试/拆小子任务)
+  // P1-17b:子执行超时 —— race 超时 abort 子流并抛错(spawn 工具 catch → recoverable 回灌,主 LLM 可重试/拆小子任务)
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeoutP = new Promise<never>((_, rej) => {
     timer = setTimeout(() => {
       childAc.abort()
-      rej(new Error(`子 agent 执行超时(${opts.timeoutMs}ms),已中止。可简化子任务或拆更小的子任务重试`))
-    }, opts.timeoutMs)
+      rej(new Error(`子 agent 执行超时(${subTimeoutMs}ms),已中止。可简化子任务或拆更小的子任务重试,或经 subagent.timeoutMs 调整(0=不限制)`))
+    }, subTimeoutMs)
   })
   // 超时收口后 streamP 的 abort rejection 无人 await → 吞掉防 unhandled(同 stallTimeout 模式;正常路径 race 直接消费 streamP)
   streamP.catch(() => {})

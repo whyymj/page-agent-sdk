@@ -30,8 +30,9 @@ async function main() {
   }
 
   const bind = JSON.parse(JSON.stringify(initialPage)) as { title: string; components: any[] }
-  // 工具链审计:send(invoke)不外发 tool_call 事件(仅 stream 发)→ 从 trace.spans 收 tool span name(=工具名,createAgent.ts:629)
-  const toolNames = (s: any) => ((s.inspect().trace?.spans ?? []) as { type: string; name: string }[]).filter((x) => x.type === 'tool').map((x) => x.name)
+  // 工具链审计:send(invoke)不外发 tool_call 事件(仅 stream 发)→ 从 debugLogs 收 tool_call 条目
+  // (trace.spans 已随 4.1.0 tracing 移除;debugLogs 跨 send 累积 → 基线切片取本任务增量)
+  const toolLogsFrom = (s: any, baseline: number) => (s.debugLogs?.value ?? []).slice(baseline).filter((l: any) => l.type === 'tool_call').map((l: any) => l.data?.name).filter(Boolean)
 
   const sdk = createChatSdk({
     ui: false,
@@ -69,13 +70,13 @@ async function main() {
   for (let i = 0; i < tasks.length; i++) {
     process.stdout.write(`\n--- ${tasks[i].slice(0, 48)} ---\n`)
     let reply = ''
+    const logBaseline = (sdk.debugLogs?.value?.length ?? 0)  // 本任务前 debugLogs 基线(切片增量)
     try {
       reply = await sdk.send(tasks[i])
     } catch (e) {
       reply = `❌ 失败:${(e as Error).message}`
     }
-    const info = sdk.inspect()
-    const newTools = toolNames(sdk)  // spans 每次 send(invoke→stream:492)重置 → toolNames 即本次任务工具链,无需 slice
+    const newTools = toolLogsFrom(sdk, logBaseline)  // debugLogs 基线切片 = 本任务工具链
     report.push({
       task: tasks[i].slice(0, 40),
       ok: !reply.startsWith('❌'),
@@ -96,7 +97,7 @@ async function main() {
   console.log('mission:', JSON.stringify(info.mission))
   console.log('planPhase:', JSON.stringify(info.planPhase))
   console.log('workingMemory:', JSON.stringify(info.workingMemory))
-  console.log('trace.metrics:', JSON.stringify(info.trace?.metrics))
+  console.log('总轮次(debugLogs llm_request):', (sdk.debugLogs?.value ?? []).filter((l: any) => l.type === 'llm_request').length)
   console.log('systemPrompt 体积(chars):', info.systemPrompt.length)
   console.log('总工具调用:', toolNames(sdk).join(', '))
 
@@ -105,7 +106,7 @@ async function main() {
     `# 码良级真 LLM 实测发现(${new Date().toISOString().slice(0, 10)})`,
     '',
     `模型: ${process.env.VITE_AI_MODEL || 'deepseek-v4-flash'} | 初始组件: ${initialPage.components.length} | 组件类型: 34(含 icon/tag/price)`,
-    `systemPrompt 体积: ${info.systemPrompt.length} chars | 总轮次: ${info.trace?.metrics?.rounds ?? '-'} | 总工具调用: ${toolNames(sdk).length}`,
+    `systemPrompt 体积: ${info.systemPrompt.length} chars | 总轮次: ${(sdk.debugLogs?.value ?? []).filter((l: any) => l.type === 'llm_request').length} | 总工具调用: ${toolLogsFrom(sdk, 0).length}`,
     `mission capture: ${info.mission ? '✓ ' + info.mission.goal : '✗'} | planning 触发: ${info.planPhase?.inPlanning ? '✓' : '✗(或简单任务未触发)'}`,
     '',
     '## 任务级工具链',

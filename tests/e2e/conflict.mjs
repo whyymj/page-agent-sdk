@@ -293,5 +293,63 @@ export async function run() {
     }
   }
 
+  console.log('[e2e:conflict] write-conflict C 形态 · 并发写互锁(maxParallelTools=2 同轮双写,陈旧基线)')
+  {
+    // write-conflict-final-hash:同轮并发两写曾「双双过陈旧基线 → 后写静默覆盖前写与外部修改」;
+    // 互锁 + 裁决恢复点校验后:前写落地、后写被显式拦下(VERSION_CONFLICT 回灌可见,可重读重写)
+    const { stubModel } = await import('./_stub-model.mjs')
+    const CAPS = { fetch: false, planning: false, skills: false, summarization: false, memory: false }
+    const bind = { title: 'orig' }
+    const llm = stubModel(
+      { toolCalls: [{ name: 'read', args: {} }] },                                                        // 建基线 H0
+      { toolCalls: [                                                                                     // 同轮双写(均基于 H0)
+        { name: 'write', args: { patch: { op: 'set', jsonPath: 'title', value: 'A' } } },
+        { name: 'write', args: { patch: { op: 'set', jsonPath: 'title', value: 'B' } } },
+      ] },
+      { text: '已处理' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-write-mutex', storage: false, llm, capabilities: CAPS,
+      conflictWatchFields: ['*'], conflictPolicy: 'overwrite', maxParallelTools: 2,
+      data: { schema: z.object({ title: z.string() }), bind },
+    })
+    await sdk.mount()
+    const unhook = sdk.hook((e) => { if (e.type === 'tool_result' && e.name === 'read') bind.title = 'ext' })  // read 落地即外部改 → 双写基线均陈旧
+    await sdk.send('改标题')
+    unhook()
+    const trs = sdk.debugLogs.value.filter((l) => l.type === 'tool_result' && l.data?.name === 'write')
+    assert(bind.title === 'A', `✓ 并发写互锁:前写落地不被后写静默覆盖(实际 title=${bind.title};原:B 静默覆盖 A 与外部改)`)
+    assert(trs.length === 2 && trs.some((l) => l.data.status === 'done') && trs.some((l) => /裁决恢复点校验失败/.test(String(l.data.result))),
+      '✓ 后写被恢复点校验显式拦下(VERSION_CONFLICT 回灌 LLM 可见可重试,非静默丢写)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:conflict] write-conflict C 形态 · 并行不相交双写零误伤(双双落地)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    const CAPS = { fetch: false, planning: false, skills: false, summarization: false, memory: false }
+    const bind = { title: 'orig', note: 'n0' }
+    const llm = stubModel(
+      { toolCalls: [{ name: 'read', args: {} }] },
+      { toolCalls: [
+        { name: 'write', args: { patch: { op: 'set', jsonPath: 'title', value: 'A' } } },
+        { name: 'write', args: { patch: { op: 'set', jsonPath: 'note', value: 'N' } } },
+      ] },
+      { text: '完成' },
+    )
+    const conflicts = []
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-write-mutex-disjoint', storage: false, llm, capabilities: CAPS,
+      conflictWatchFields: ['*'], maxParallelTools: 2,
+      onEvent: (e) => { if (e.type === 'conflict') conflicts.push(e) },
+      data: { schema: z.object({ title: z.string(), note: z.string() }), bind },
+    })
+    await sdk.mount()
+    await sdk.send('改两处')
+    assert(bind.title === 'A' && bind.note === 'N', '✓ 并行不相交双写双双落地(外科叠加,与串行等价)')
+    assert(conflicts.length === 0, `✓ 互锁不给不相交双写加冲突(N1 同 scope 连续写语义保持,实际 ${conflicts.length} 次)`)
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

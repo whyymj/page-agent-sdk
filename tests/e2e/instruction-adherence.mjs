@@ -207,5 +207,34 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:instruction-adherence] flow-robustness transitional 问号豁免 → 方案征询问句不回灌')
+  {
+    // 问句收尾(方案征询):rounds>0 过渡表态词命中但句尾问号 → 豁免直接收口(模型只被调 2 次)
+    const llm = stubModel(
+      { toolCalls: [{ name: 'inspect_env', args: {} }] },
+      { text: '我先给出两套方案:A 直接改、B 先确认,你选哪套?' },
+    )
+    const sdk = createChatSdk({ ui: false, id: 'e2e-trans-q', storage: false, llm, capabilities: CAPS })
+    await sdk.mount()
+    const reply = await sdk.send('有什么方案?')
+    assert(llm.calls === 2, `✓ 问句收尾 → transitional 豁免零回灌(模型被调 2 次;实际 ${llm.calls})`)
+    assert(/你选哪套\?/.test(reply), '✓ 方案征询文本原样返回(与方案先行 RHC 不冲突)')
+    sdk.unmount()
+  }
+  {
+    // 对照:同句去问号 → transitional 回灌 1 次,第 3 次调用收口(豁免不扩大)
+    const llm = stubModel(
+      { toolCalls: [{ name: 'inspect_env', args: {} }] },
+      { text: '我先给出两套方案:A 直接改、B 先确认,你选一套。' },
+      { text: '两套方案:A 直接改;B 先确认。你选哪套?' },
+    )
+    const sdk = createChatSdk({ ui: false, id: 'e2e-trans-nq', storage: false, llm, capabilities: CAPS })
+    await sdk.mount()
+    const reply = await sdk.send('有什么方案?')
+    assert(llm.calls === 3, `✓ 非问句过渡表态 → 照常回灌 1 次(模型被调 3 次;实际 ${llm.calls})`)
+    assert(/B 先确认/.test(reply), '✓ 回灌后正常收口')
+    sdk.unmount()
+  }
+
   return ctx
 }

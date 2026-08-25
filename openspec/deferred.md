@@ -20,7 +20,7 @@
 
 | change | 旧结论 | 🔄 重启状态 | 落地 Phase |
 |---|---|---|---|
-| observability-structured-tracing | ❌ 缩水 | 🔄 **恢复完整**(TraceSpan 树,非缩水) | Phase 3 |
+| observability-structured-tracing | ❌ 缩水 | ✅ **已结案(4.1.0 移除)**:重启落地后经 config-surface-pruning round2 审计撤除(维护者确认外部零使用;debugLogs + exportDiagnostics 已覆盖运行态观察) | Phase 3 |
 | add-mission-anchor | ⏸ 暂缓 | 🔄 **重启**(分层默认核心开;capture 争议接受) | Phase 1 |
 | add-cross-round-working-memory | ⏸ 暂缓 | 🔄 **重启**(**解绑 C 组** → 独立中间件,只 pin path/hash) | Phase 1 |
 | add-structured-todos-and-subagent-writes | ⏸ 暂缓 | 🔄 **重启**(update_todo 已由 adaptive-planning 做;剩余层级 deps + 子agent写) | Phase 2 |
@@ -39,7 +39,7 @@ SDK 定位是**框架无关的轻量页面 JSON 操作 Agent**(自研 Deep Agent
 
 ## 各项详情
 
-### observability-structured-tracing — ❌ 缩水(TraceSpan 树不做)
+### observability-structured-tracing — ❌ 缩水(TraceSpan 树不做)【✅ 已结案:曾重启落地,4.1.0 随 config-surface-pruning round2 移除;本段为历史溯源】
 
 **核实现状**:`debugLogs` 是扁平 `{timestamp,type,data,source?}[]`(`createAgent.ts:42`),无 duration / 父子层级;`inspect()`(`types/index.ts:107`)无 trace/metrics 字段。proposal 声称属实。
 
@@ -500,7 +500,7 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 
 **来源**:subtree-summary + PLACEHOLDER_LEAK 落地后的团队审查;P0=0,P1×2 + P1 级口径缺口已当场修(leak 检查移 enforceSet 前 / 守卫文案补分页 / verify 拒绝码四码 / nudge keep_external 口径 / write(set) hash 复用)。遗留 P2 如下,**重启触发** = 各项所述实例出现或相关模块下次改动时顺手:
 
-1. **并发写互锁 TOCTOU(CA-P1 既有)**:`maxParallelTools>1` 时同轮两写都在 `await handleConflict` 让出前取旧基线 → 双双过锁后写互覆盖,无 VERSION_CONFLICT;根因修复 = commitSetToBind 入口 final hash 校验(dataOps.ts:899 注释自认)。默认串行不受影响;装配期 console.warn 已提示。
+1. **并发写互锁 TOCTOU(CA-P1 既有)** — ✅ **已实施**(2026-08-25,[2026-08-25-write-conflict-final-hash](changes/2026-08-25-write-conflict-final-hash/) C 形态:dataOps 闭包级 async mutex + ask 拆段 + 裁决恢复点校验,`maxParallelTools>1 && conflictWatchFields 武装` 相与装配;selftest sec-109 + e2e conflict.mjs 双场景锁定;本条随之移除)
 2. **componentLock 时序残余窗口**:主写守卫在同步派发段、use_html acquire 在 await 后,同批 `[use_html, write(同组件)]` 并发可穿;code 字段仍被 CUSTOM_CODE_DELEGATION 恒守卫兜底。CLAUDE.md 已登记,e2e 用 slow_probe 锚。
 3. **并行模式写结果交叉不失效**:同批两个写都成功时,先写结果的「当前值+新 hash」在后写落地后陈旧,stale 失效不覆盖(串行无此问题)。
 4. **focus 路径漂移零检测**:focus 按数组下标锚定(components.0),调序/删除后换人 → 全文豁免+strict 拦截作用到错误子树;FocusController 无失效/重算入口。候选修法:augmentPrompt 期存在性校验失联警告 / codeAsset 场景 __pgId 锚定。
@@ -517,7 +517,28 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 
 **来源**:`2026-08-18-image-input-vision` 归档时收尾:describe 内置工具与 vision_tokens 分离已在原 tasks 划线否决(转述经集成方 LLM,SDK 侧无 token 可计),余真 LLM 验证未跑。**内容**:贴截图问组件 / 贴设计稿还原 custom / OCR 问答三场景(flash 量级视觉模型)。**重启触发**:集成方(如 editor)接入 images.describe 后的真实使用反馈,或网关模型面恢复视觉模型可用。**重启须知**:复用 `examples/images-demo` 的 `window.__VISION_CONFIG` 运行时端点覆盖;三场景各 ≥3 轮新会话。
 
+## 2026-08-25 flow-robustness 登记(P2 残项,五路审计评估不进本 change)
+
+> 来源:`2026-08-25-flow-robustness` proposal「登记 deferred」清单(P0×2 + P1 全部已实施,以下为评估后暂缓的 P2)。**重启触发** = 各项所述实例出现或相关模块下次改动时顺手。
+
+| 项 | 说明 | 触发条件 |
+|---|---|---|
+| memory 异步 source / images.upload race 超时 | fire-and-forget 异步源无超时闸;挂起概率极低(内部 fetch 均有网络层超时兜底) | 实测挂起案例 |
+| MCP listTools 15s race | 握手 15s 降级已有;listTools 本身无 race(理论挂) | MCP 环境实测 listTools 挂死 |
+| hashValue 失败返回常量串 / watchFieldsHash 环数据 RangeError | 乐观锁静默失效面(hash 算错 ≠ 挂起);环数据已被 deepClone 环防御前置拦截大半 | 乐观锁静默失效实测案例(两修法二选一,按案例定) |
+| vfs_json_patch isUnsafePath 预检 | `__proto__` 段预检加固(与已登记 SE #3/#4 同型) | 与 SE 加固组一起做 |
+| query/search 环数据误标 | 环数据下 query/search 的体积估算误标;环已被写路径前置拦截,读路径残留 | 环数据实测读路径异常 |
+| Worker OOM 文档明示 | eval_script 沙箱 OOM 行为文档化(非代码修) | 下次动 usage-guide eval 段 |
+| hostScript 主线程死循环 | `skillHostScript` opt-in 且已在 4.1.0 移除清单(deprecation)—— 随移除自动消亡 | 随 config-surface-pruning-round2 收口 |
+| stream SYSTEM_PROMPT_OVER_BUDGET 早退仍推空 assistant | 与已登记「send-invoke 吞 error 事件」(循环/终止面 #3)同族不同路径 | 超预算实测案例(两路径一起修) |
+| auditWritePaths 跨会话残留 | 已接受(证据审计基线跨会话累积,语义可辩护) | 不修,留痕 |
+| 单轮 tool_calls 数量无上限 | 仅 maxIterations 90 轮间接约束;单轮爆发百级 tool_calls 会拖慢派发 | 弱模型实测单轮爆发 |
+| 启动段超时未 inner.abort(资源级) | 启动闸超时后未 abort 底层 fetch(资源泄漏级非挂起级) | 下次动 streamer 启动段 |
+
+**顺带更新既有条目**:上下文组 #2「setProtectedRefs 仅 stream 入口注入」→ 🔁 **send/batch 已修**(flow-robustness 任务 14,三入口一致);残留 = 子 agent 路径绕过(子共享主 vfs,保护面经主消息 refs 覆盖大半)。
+
 ## 维护约定
+
 
 
 - 暂缓项**不进** `project.md`「进行中的 change」(避免占心智);本文件是唯一索引。

@@ -25,9 +25,9 @@ import { asAgentError } from '../tools/toolError'
 import { buildImageContentParts, appendImageDescriptions } from '../tools/imageInput'
 import { offloadLargeResult } from '../utils/offload'
 import { runPool } from '../utils/pool'
+import { DEFAULT_TOOL_TIMEOUT_MS, ToolTimeoutError, isWatchdogTool, withToolWatchdog } from './toolWatchdog'
 import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars, type ModelCaps } from '../utils/modelCaps'
-import { getTraceMetrics } from '../utils/traceMetrics'
-import { extractTextDelta, extractReasoningDelta, extractUsage, normalizeUsage } from '../utils/contentParts'
+import { extractTextDelta, extractReasoningDelta, normalizeUsage } from '../utils/contentParts'
 import { createInitialState, type HarnessState, type LoopProgress } from './state'
 import { withRetry, isAbort, type RetryOptions } from './retry'
 import { withStallTimeout, StreamStalledError, StreamMaxDurationError, EmptyLLMResponseError, DEFAULT_STREAM_STALL_MS, DEFAULT_STREAM_MAX_DURATION_MS } from '../utils/stallTimeout'
@@ -152,36 +152,6 @@ function parseDsmlValue(s: string): unknown {
   try { return JSON.parse(s) } catch { return s }
 }
 
-/** 结构化追踪 span(revive-observability-tracing Phase 3)。debugLogs 扁平数组的层级+timing+metrics 升级,供 DebugDrawer 树形 + getTraceMetrics */
-export type SpanType = 'round' | 'model' | 'tool' | 'compression'
-export type SpanStatus = 'ok' | 'error' | 'timeout'
-export interface TraceSpan {
-  id: string
-  parentId?: string
-  name: string
-  type: SpanType
-  startTs: number
-  endTs?: number
-  durationMs?: number
-  status: SpanStatus
-  /** 按 type 分桶:round:{round,aborted?} model:{round,tools?,usage?} tool:{name,args?,resultSnippet?} compression:{stats?} */
-  attributes: Record<string, unknown>
-}
-
-/** trace metrics(getTraceMetrics 纯函数聚合:轮次/延迟/工具成功率/重试/压缩/token) */
-export interface TraceMetrics {
-  rounds: number
-  totalDurationMs: number
-  avgRoundMs: number
-  toolCalls: number
-  toolFailures: number
-  toolSuccessRate: number
-  modelCalls: number
-  retries: number
-  compressions: number
-  totalTokens?: { prompt: number; completion: number; total: number }
-}
-
 export interface CreateAgentOptions {
   /** 预构造的 LLM 实例(任意 provider,provider 抽离);提供则优先于 apiKey/model 配置 */
   llm?: BaseChatModel
@@ -219,6 +189,12 @@ export interface CreateAgentOptions {
   stallMs?: number
   /** 单次模型调用流总时长上限(stream-max-duration):防空转帧黑洞(keepalive 不断喂饱间隔看门狗,实测冻结 7min+ 无报错)。默认 600s;0 = 关闭 */
   streamMaxMs?: number
+  /**
+   * per-tool 看门狗(flow-robustness P0#1):单工具执行超此 ms → 放弃等待,recoverable 错误结果回灌自纠。
+   * 只对集成方注入工具生效(defineTool/actions/skill 工厂/rag retriever,toolWatchdog.ts 打标);内置/MCP/
+   * 委派(use_<id> / spawn_*)与 conflict ask 挂起是设计内等待,一律豁免。默认 120s;0 = 关闭。
+   */
+  toolTimeoutMs?: number
   /** 同轮多个工具调用的并发上限(默认 1 = 串行,保持现有工具语义);>1 时并发执行 */
   maxParallelTools?: number
   /** beforeReturn 自纠上限(默认 0 = 关闭,纯放行);>0 时 agent 返回前跑 beforeReturn 钩子,有 feedback 则回灌 user 消息继续循环,达上限强制 return 防死循环 */
@@ -233,10 +209,6 @@ export interface CreateAgentOptions {
   onLog?: (entry: DebugLog) => void
   /** 子 agent 标记(subagent.ts 建子循环时置 true):imperative-zero-tool-gate 等主栈门禁据此豁免(子纯文本收口是正常形态) */
   __pgIsSubagent?: boolean
-  /** span 采集回调(capabilities.tracing 开时由 createChatSdk 注入;关时 undefined → startSpan/endSpan no-op 零开销) */
-  onSpan?: (span: TraceSpan) => void
-  /** 一次 agent 调用结束的 trace 回调(stream/invoke finally 触发,传完整 spans + metrics;createChatSdk 经此 emit('trace')) */
-  onTrace?: (spans: TraceSpan[], metrics: TraceMetrics) => void
   /** LLM 运行时切换回调(setLlm 后触发,供 createChatSdk 重解析模型能力 contextWindow/maxOutputTokens) */
   onLlmChange?: (newLlm: BaseChatModel) => void
   /**
@@ -367,12 +339,11 @@ export function createAgent(options: CreateAgentOptions) {
     retryDelayMs = 500,
     stallMs = DEFAULT_STREAM_STALL_MS,
     streamMaxMs = DEFAULT_STREAM_MAX_DURATION_MS,
+    toolTimeoutMs, // per-tool 看门狗(默认在 coreExecTool 内取 DEFAULT_TOOL_TIMEOUT_MS;显式 0 = 关)
     maxParallelTools = 1,
     maxVerifyAttempts = 0,
     roundTokenBudget = 0, // C4 单 invoke token 预算(opt-in;0=关)
     onLog,
-    onSpan,
-    onTrace,
     onLlmChange,
     imageContentFormat = 'openai' as 'openai' | 'anthropic',
     staleReadInvalidation = true,
@@ -385,9 +356,8 @@ export function createAgent(options: CreateAgentOptions) {
     console.warn(`[page-agent-sdk] maxToolRounds=${maxToolRounds} 非法(须 ≥1 正整数),已 clamp 到 1(0/负数致主循环 while 不进 → agent 不调 LLM 静默返回兜底文案)`)
     maxToolRounds = 1
   }
-  if (maxParallelTools > 1) {
-    console.warn(`[page-agent-sdk] maxParallelTools=${maxParallelTools}:并发工具下 dataOps 写工具不互锁(同轮并发两写都在 await handleConflict 让出前取旧基线 → 均通过乐观锁 → 后写覆盖前写,无 VERSION_CONFLICT 回灌);并发写不互锁,如需冲突保护保持 maxParallelTools=1 并声明 conflictWatchFields`)
-  }
+  // (原 maxParallelTools>1 并发写不互锁 warn 已撤 —— write-conflict-final-hash C 形态:dataOps 闭包级
+  //  mutex 接管,armed(conflictWatchFields 声明)自动串行化写工具;未武装时 createDataOps 装配期给精化提示)
 
   // 模型能力:声明优先 > model 名查表 > 缺省。
   // maxTokens 缺省 = maxOutputTokens(DeepSeek 8192 等,避免固定 16384 被截断);
@@ -438,31 +408,6 @@ export function createAgent(options: CreateAgentOptions) {
     triggerRef(debugLogs)
   }
 
-  // ===== 结构化追踪(TraceSpan 树;capabilities.tracing 开时采集,no-op 零开销)=====
-  const spans = shallowRef<TraceSpan[]>([])
-  let spanSeq = 0
-  const tracingEnabled = !!onSpan || !!onTrace
-  /** 开启一个 span(tracing 关时返回 null,no-op);parentId 建立父子(round 是 model/tool 的 parent)。
-   *  创建即 push 到 spans(round span 不 endSpan 也有记录;model/tool 在 endSpan 更新 endTs/duration/status) */
-  function startSpan(parentId: string | undefined, type: SpanType, name: string, attributes: Record<string, unknown> = {}): TraceSpan | null {
-    if (!tracingEnabled) return null
-    const span: TraceSpan = { id: `span-${++spanSeq}`, parentId, name, type, startTs: Date.now(), status: 'ok', attributes }
-    spans.value.push(span)
-    if (spans.value.length > MAX_DEBUG_LOGS) spans.value.splice(0, spans.value.length - MAX_DEBUG_LOGS)
-    triggerRef(spans)
-    return span
-  }
-  /** 结束 span(算 durationMs + 更新 status;span 已在 startSpan 时 push,此处只更新字段引用) */
-  function endSpan(span: TraceSpan | null, status: SpanStatus = 'ok', extra?: Record<string, unknown>) {
-    if (!span || !tracingEnabled) return
-    span.endTs = Date.now()
-    span.durationMs = span.endTs - span.startTs
-    span.status = status
-    if (extra) Object.assign(span.attributes, extra)
-    triggerRef(spans)
-    onSpan?.(span)
-  }
-
   // 合并工具:中间件贡献的工具 + 用户工具
   // let + rebindTools:支持运行时 setTools 动态增删用户工具(类比 setData/setSkills)
   let allTools: StructuredToolInterface[] = [
@@ -483,7 +428,7 @@ export function createAgent(options: CreateAgentOptions) {
   let llmWithTools = allTools.length > 0 ? (llm.bindTools?.(allTools) ?? llm) : llm
 
   /**
-   * 日志/spans 用的实际模型名:优先取当前 llm 实例的 .model/.modelName(setLlm 切换后仍是真值)。
+   * 日志用的实际模型名:优先取当前 llm 实例的 .model/.modelName(setLlm 切换后仍是真值)。
    * createChatSdk 路径只传 llm 实例不传 model 选项,旧逻辑直接用选项值 → 恒落 'gpt-3.5-turbo'
    * 兜底串,diagnostics 的 llm_request/context 日志两度误导排障(实际线上模型是 deepseek-v4-flash)。
    * 取值口径与 llmResolver.resolveModelCaps 同源(llm?.model ?? llm?.modelName)。
@@ -725,7 +670,27 @@ export function createAgent(options: CreateAgentOptions) {
       // scope 全文灌上下文)。子栈 wrapWithScope 在 invoke 时用子 scope 覆盖此键(dataOps scopeOf
       // per-call token 优先),不受默认值影响
       const callConfig = { __pgDataScope: '', ...(ctx.callConfig ?? {}) }
-      const result = await (target.invoke as any)(ctx.args, { configurable: callConfig })
+      // per-tool 看门狗(flow-robustness P0#1):只兜集成方注入工具(带 __pgWatchdog 标记,定义见
+      // toolWatchdog.ts)—— 永不 settle 时 race 超时返回 recoverable 错误,runPool/stream 不再被拖死
+      // (loading 永转 + stop 无效的唯一无闸缺口)。超时 ≠ abort:不杀流,回灌让 LLM 自纠/收口
+      const wdMs = isWatchdogTool(target, toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS) ? (toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS) : 0
+      let result: unknown
+      if (wdMs > 0) {
+        try {
+          result = await withToolWatchdog(Promise.resolve().then(() => (target.invoke as any)(ctx.args, { configurable: callConfig })), wdMs)
+        } catch (terr) {
+          if (terr instanceof ToolTimeoutError) {
+            log('error', { stage: 'tool_timeout', name: ctx.name, timeoutMs: wdMs, hint: '集成方工具超时,看门狗兜底(底层调用无法取消,可能仍在后台执行)' })
+            return {
+              content: `工具执行超时：${ctx.name} 超过 ${wdMs}ms 未返回,已放弃等待。该工具可能卡住(底层调用无法取消,或仍在后台执行),请勿原样重试;请改用其他方式完成,或向用户如实说明该工具当前不可用。`,
+              status: 'error',
+            }
+          }
+          throw terr
+        }
+      } else {
+        result = await (target.invoke as any)(ctx.args, { configurable: callConfig })
+      }
       let content = typeof result === 'string' ? result : JSON.stringify(result)
       // 大结果外存:经 ctx.state.files(vfs 中间件注入的共享引用),超阈值转存 vfs 只留预览+引用
       // files 非空决定「能存」,vfs_read 工具在场决定「能读」(外存引用文案引导模型 vfs_read 回读,
@@ -797,9 +762,6 @@ export function createAgent(options: CreateAgentOptions) {
   async function stream(messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal): Promise<string> {
     // 调试日志跨 stream 累积不清(MAX_DEBUG_LOGS=300 FIFO 上限自兜底):原每次 stream 清空 → 抽屉只剩最后一轮,
     // 上一轮的提示词/工具调用详情无法回看(调试场景核心诉求)。会话级清理归 switchSession/resetSession;
-    // spans/trace 仍按次重置(trace 指标是「最近一次调用」语义)。
-    spans.value = []
-    spanSeq = 0
     state = createInitialState()
     if (options.__pgIsSubagent) state.__pgIsSubagent = true  // 每次循环重建 state 保持子 agent 标记
     state.messages = messages
@@ -811,15 +773,11 @@ export function createAgent(options: CreateAgentOptions) {
     let input = messages
     for (const m of middlewares) {
       if (m.compressInput) {
-        const compSpan = startSpan(undefined, 'compression', `compress:${m.name}`, {})
         const r = await m.compressInput(input)
         input = Array.isArray(r) ? r : r.messages
         // 捕获最近一次压缩统计写入 state,供 DebugDrawer 可观测
         if (r && !Array.isArray(r) && r.stats) {
           state = { ...state, lastCompression: r.stats as any }
-          endSpan(compSpan, 'ok', { stats: r.stats })
-        } else {
-          endSpan(compSpan)
         }
       }
     }
@@ -867,7 +825,7 @@ export function createAgent(options: CreateAgentOptions) {
     // read 多路径引导(read-multi-path-nudge):同 invoke 单路径 read 连读计数,≥2 起成功结果尾附
     // jsonPaths 批量引导(治「多次调用 read」烧轮次;真 LLM 实测高频);jsonPaths 批量读清零。
     let singleReadCount = 0
-    /** writeCapable 标注判定(单一真相源;bulkGuard/componentLock 同口径;标注缺失退 WRITE_TOOL_NAMES 名单) */
+    /** writeCapable 标注判定(单一真相源;componentLock 同口径;标注缺失退 WRITE_TOOL_NAMES 名单) */
     const isWriteToolByName = (name: string): boolean => {
       const t = allTools.find((x) => x.name === name) as { writeCapable?: boolean | ((args: Record<string, unknown>) => boolean) } | undefined
       if (t && 'writeCapable' in t) return typeof t.writeCapable === 'function' ? true : t.writeCapable === true  // 条件写(eval_script transform)按保守口径计写
@@ -879,6 +837,7 @@ export function createAgent(options: CreateAgentOptions) {
     const maxIterations = computeMaxIterations(maxToolRounds, userMaxIterations)
     let lastFinalContent: string | null = null // 自纠路径缓存:verify 拒掉的最终答,供 rounds 耗尽兜底优先返回
     let formatRetries = 0 // 格式异常自纠计数:模型把工具调用写成文本(伪 XML/标签)时回灌反馈重生成,限次防死循环
+    let truncRetried = false // 截断自纠已用标记(completion_truncated 单次防死循环)
     let pendingFormatRetry = false // 上一轮触发了格式自纠(已 push feedback 待 LLM 重发):让 while 暂时绕过 rounds 预算给重试机会——重试是格式修正、非工具轮次,不该被 maxToolRounds 挡。实测痛点:DSML 在 rounds 耗尽后出现,重试被 while 挡致未发生 → 仍静默死亡。maxIterations(maxToolRounds*3) 仍作死循环硬上限
     const maxFormatRetries = 2
     try {
@@ -895,7 +854,6 @@ export function createAgent(options: CreateAgentOptions) {
           onEvent({ type: 'done', content: budgetMsg })
           return budgetMsg
         }
-        const roundSpanId = startSpan(undefined, 'round', `round ${iterations}`, { round: iterations })?.id
         onEvent({ type: 'round_start', round: iterations })  // 迭代号(含自纠轮,每轮新号);log 的 round 仍用工具轮号(rounds)便于调试追踪(harden-react-loop-budget)
 
         // beforeModel(正序):中间件更新 state(todos 推进等),随后重渲染 system
@@ -905,7 +863,6 @@ export function createAgent(options: CreateAgentOptions) {
         // 逐轮上下文保底压缩:tool 结果累积超放行上限时,从最早的 ToolMessage 起截断为占位摘要(大模型阈值高几乎不触发)
         currentMessages = trimContextIfNeeded(currentMessages, Math.round(caps.contextWindow * 0.6)) // H1:token 口径,单轮 currentMessages ≤60% 窗口(留输出+schema)
 
-        const modelSpan = startSpan(roundSpanId, 'model', liveModel(), { round: rounds + 1, tools: allTools.map((t) => t.name) })
         log('llm_request', {
           round: rounds + 1,
           model: liveModel(),
@@ -920,7 +877,6 @@ export function createAgent(options: CreateAgentOptions) {
         // llm_response 日志 data 带归一 usage(含 reasoning_tokens):激活 DebugDrawer 既有 per-log 用量行(此前 data 不带 usage 是死路径)
         const nuLog = normalizeUsage(response.message)
         log('llm_response', { round: rounds + 1, content: response.content, toolCalls: response.toolCalls, ...(nuLog ? { usage: nuLog } : {}) })
-        endSpan(modelSpan, response.aborted ? 'timeout' : 'ok', { usage: extractUsage(response.message) })
         // C1 自感知预算:本 invoke 累计 usage(normalizeUsage 归一 camelCase 兼容;主链会话级累加不受影响;reasoning 不进预算)
         {
           if (nuLog) {
@@ -939,6 +895,24 @@ export function createAgent(options: CreateAgentOptions) {
         }
 
         if (!response.toolCalls.length) {
+          // 截断检测(completion-truncated,2026-08-25 实测事故驱动):模型把完整大段内容(如整页 HTML)
+          // 塞进一次工具调用参数,生成途中撞 max_tokens 上限 → content 空 + 零 tool_calls,静默空收口
+          // (子 agent 变空结果 → 主 agent 无限重委派,每次从头再生成再撞墙)。信号:stop_reason 'length'
+          // 或(空输出 + completion tokens 达 4000+ 启发阈);单次回灌分步指引,重试仍空则放行(原空回复语义)
+          {
+            const stopMeta = (response.message as any)?.response_metadata ?? (response.message as any)?.responseMetadata
+            const stopReason: unknown = stopMeta?.stop_reason ?? stopMeta?.finish_reason
+            const nuTrunc = normalizeUsage(response.message)
+            const truncated = stopReason === 'length'
+              || (!response.content && (nuTrunc?.completion_tokens ?? 0) >= 4000)
+            if (truncated && !truncRetried) {
+              truncRetried = true // 单次防死循环(同 formatRetries 模式)
+              pendingFormatRetry = true // 绕过 rounds 预算给 LLM 重发机会(同 garbled 重试;maxIterations 兜底)
+              log('error', { stage: 'completion_truncated_retry', completionTokens: nuTrunc?.completion_tokens, stopReason: stopReason ?? null, hint: '空输出且 completion 达上限,疑似 max_tokens 截断;回灌分步写入指引' })
+              currentMessages.push(new HumanMessage('⚠️ 你上一轮输出为空(疑似被 max_tokens 截断:单次输出过长,常见于把完整大段代码塞进一次工具调用参数)。请改用分步方式:① 先用工具写入小体积骨架/占位结构,② 再逐步用增量工具调用补充内容;或大幅精简单次输出。不要一次性输出完整大段内容。'))
+              continue
+            }
+          }
           const garbled = detectGarbledToolCall(response.content)
           // 升级(#95):garbled 时先尝试解析 DSML/伪 XML → 标准 tool_calls(免重试,直接执行)
           const parsed = garbled ? parseGarbledToolCalls(response.content) : null
@@ -1026,14 +1000,23 @@ export function createAgent(options: CreateAgentOptions) {
           const id = call.id || `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
           return { id, call, ctx: { id, name: call.name, args: call.args, state, signal, emit: onEvent, logSink: pushLog } as ToolCallContext }
         })
+        // flow-robustness P1#9:provider 不回 tool_call id 时,兜底 id 回写 AIMessage.tool_calls(照 DSML 解析路径同款)。
+        // 原实现只回填 ToolMessage(tool_call_id=ctxs[i].id):下轮请求带「无 id 的 tool_call + 有 id 的 ToolMessage」
+        // → 协议 400(4xx 不重试,单轮 fatal)。response.toolCalls 即 message.tool_calls 引用(:713),索引对齐
+        if (calls.some((c) => !c.id)) {
+          const msgAny = response.message as any
+          if (msgAny?.tool_calls) {
+            msgAny.tool_calls = msgAny.tool_calls.map((tc: any, i: number) =>
+              (tc && tc.id) ? tc : { ...tc, id: ctxs[i]?.id, type: tc?.type ?? 'tool_call' })
+          }
+        }
         // 并发池执行(emit tool_call/result 在 fn 内,串行时保持交替 UX;结果按原顺序收集)
         const results = await runPool(
           ctxs,
           maxParallelTools,
           async (c) => {
             if (signal?.aborted) return undefined // 双保险:abort 不启动新工具
-            const toolSpan = startSpan(roundSpanId, 'tool', c.call.name, { name: c.call.name })
-            const t0 = Date.now()   // 独立计时(不依赖 tracing;span 仅 tracing 开启时才有 durationMs)
+            const t0 = Date.now()   // 独立计时(durationMs 供 tool_result 事件,不依赖 tracing)
             onEvent({ type: 'tool_call', name: c.call.name, args: c.call.args, id: c.id })
             log('tool_call', { round: rounds + 1, name: c.call.name, args: c.call.args, id: c.id })
             let result: { content: string; status: 'done' | 'error' }
@@ -1050,7 +1033,6 @@ export function createAgent(options: CreateAgentOptions) {
             const durationMs = Date.now() - t0
             onEvent({ type: 'tool_result', name: c.call.name, result: result.content, status: result.status, durationMs, id: c.id })
             log('tool_result', { round: rounds + 1, name: c.call.name, result: result.content, status: result.status, durationMs })
-            endSpan(toolSpan, result.status === 'error' ? 'error' : 'ok', { resultSnippet: String(result.content).slice(0, 100) })
             return result
           },
           signal,
@@ -1217,10 +1199,6 @@ export function createAgent(options: CreateAgentOptions) {
         const ae = asAgentError(e, 'observable')
         console.warn(`[Agent] afterAgent 清理出错(observable,已忽略):`, ae.message)
       }
-      // trace:agent 调用结束(finally 必跑,覆盖所有出口),emit spans + metrics(createChatSdk 经 onTrace → emit('trace'))
-      if (tracingEnabled && onTrace) {
-        try { onTrace(spans.value, getTraceMetrics(spans.value)) } catch { /* onTrace 抛错忽略,不影响主流程 */ }
-      }
     }
   }
 
@@ -1273,7 +1251,6 @@ export function createAgent(options: CreateAgentOptions) {
     setLlm,
     setModelCaps,
     debugLogs,
-    spans,
     // 复用内部权威拼装(base + Σ augmentPrompt),供 getInfo/inspect 收敛为单一真相源(fix-introspection-consistency)
     getEffectiveSystemPrompt: () => buildSystemPrompt(),
   }

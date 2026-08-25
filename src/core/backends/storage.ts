@@ -25,6 +25,8 @@ const DEFAULT_WEB_STORAGE_MAX_BYTES = 4 * 1024 * 1024 // local/session 默认配
 const DEFAULT_MAX_BYTES_PER_SESSION = 10 * 1024 * 1024 // 单会话软上限 10MB
 const DEFAULT_WATERMARK = 0.9 // 淘汰到 0.9*maxBytes 留余量
 const DEFAULT_DEBOUNCE_MS = 500
+/** flush 单项落盘超时默认值(flow-robustness P1#5;config.flushTimeoutMs 可调) */
+const DEFAULT_FLUSH_TIMEOUT_MS = 5000
 const EVICT_DELAY_MS = 300
 const META_KIND = '__meta__'
 const KEY_PREFIX = 'v:1'
@@ -91,6 +93,8 @@ export interface StorageConfig {
   evictionWatermark?: number
   /** 落盘 debounce(ms),默认 500 */
   debounceMs?: number
+  /** flush 单项落盘超时(ms),默认 5000 —— IDB 事务卡死(blocked/跨 tab 锁)不拖死调用方,超时项留 pending 交后续 flush/pagehide 兜底(flow-robustness P1#5) */
+  flushTimeoutMs?: number
 }
 
 export type StorageEvent =
@@ -359,6 +363,15 @@ function runSerial<T>(chains: Map<string, Promise<unknown>>, key: string, fn: ()
 
 // ===== SessionStore(编排层)=====
 export function createSessionStore(config: StorageConfig = {}): SessionStore {
+  return createSessionStoreImpl(config)
+}
+
+/** @internal 测试注入口:指定后端实例构造 store(不进公共导出/d.ts;selftest 验证 flush 超时/淘汰吞错等故障注入) */
+export function createSessionStoreWithBackend(config: StorageConfig, backendOverride: StorageBackend): SessionStore {
+  return createSessionStoreImpl(config, backendOverride)
+}
+
+function createSessionStoreImpl(config: StorageConfig = {}, backendOverride?: StorageBackend): SessionStore {
   const dbName = config.dbName ?? DEFAULT_DB_NAME
   const backendType = config.backend ?? 'indexed'
   const maxBytes = config.maxBytes ?? defaultMaxBytesFor(backendType)
@@ -377,7 +390,9 @@ export function createSessionStore(config: StorageConfig = {}): SessionStore {
     }
   }
 
-  let backend: StorageBackend
+  // flow-robustness P1#5:backend 预置内存后端(异步 init 落定前可被安全调用 —— ready 的消费方已包 race 超时放行,
+  // 放行后到 init 落定前的窗口内 load/save 直达内存:写丢(降级窗口已留痕)、读 undefined(空快照),不炸 TypeError)
+  let backend: StorageBackend = createMemoryBackend()
   let degradedToMemory = false // 运行时撞配额后一次性降级标志(避免反复重试)
   let readyResolve!: (v: boolean) => void
   const ready = new Promise<boolean>((r) => {
@@ -387,6 +402,11 @@ export function createSessionStore(config: StorageConfig = {}): SessionStore {
   // 启动:按 backend 类型选后端;不可用降级 memory(永不冒泡)
   ;(async () => {
     try {
+      if (backendOverride) { // 测试注入:后端直达就绪
+        backend = backendOverride
+        readyResolve(true)
+        return
+      }
       if (backendType === 'indexed') {
         if (typeof indexedDB === 'undefined') throw new Error('indexedDB 不可用')
         backend = await createIdbBackend(dbName)
@@ -507,16 +527,23 @@ export function createSessionStore(config: StorageConfig = {}): SessionStore {
     }, EVICT_DELAY_MS)
   }
 
-  /** 扫全局 meta → 总量超配额 → 按 lastAccessed 升序整会话 clearPrefix 到 ≤ watermark */
+  /** 扫全局 meta → 总量超配额 → 按 lastAccessed 升序整会话 clearPrefix 到 ≤ watermark。
+   *  内部吞错(flow-robustness P1#5):淘汰是尽力而为的后台维护,失败不冒泡 —— 调用面含
+   *  evictTimer 的 void fire-and-forget 与 flush 内 await,冒泡即 unhandledRejection / 拖死 flush;
+   *  失败留痕(degraded 事件)不静默。 */
   async function maybeEvict(): Promise<void> {
-    const metas: SessionMeta[] = []
-    await backend.scan(globalPrefix(dbName), (key, value) => {
-      if (key.endsWith('::' + META_KIND)) metas.push(value as SessionMeta)
-    })
-    const victims = selectForEviction(metas, maxBytes, watermark)
-    for (const m of victims) {
-      await backend.clearPrefix(sessionPrefix(dbName, m.agentId, m.sessionId))
-      emit({ type: 'evicted', agentId: m.agentId, sessionId: m.sessionId, bytes: m.bytes })
+    try {
+      const metas: SessionMeta[] = []
+      await backend.scan(globalPrefix(dbName), (key, value) => {
+        if (key.endsWith('::' + META_KIND)) metas.push(value as SessionMeta)
+      })
+      const victims = selectForEviction(metas, maxBytes, watermark)
+      for (const m of victims) {
+        await backend.clearPrefix(sessionPrefix(dbName, m.agentId, m.sessionId))
+        emit({ type: 'evicted', agentId: m.agentId, sessionId: m.sessionId, bytes: m.bytes })
+      }
+    } catch (err) {
+      emit({ type: 'degraded', reason: `淘汰扫描失败(已跳过,不影响读写):${err instanceof Error ? err.message : String(err)}` })
     }
   }
 
@@ -568,16 +595,36 @@ export function createSessionStore(config: StorageConfig = {}): SessionStore {
           timers.delete(k)
         }
       }
+      // flow-robustness P1#5:逐项 race 落盘超时 —— IDB 事务卡死(blocked/跨 tab 锁)不拖死 flush 调用方
+      // (send 收口 / pagehide 兜底);超时项留 pending 交后续 flush/pagehide 重试,迟到落定后自行收口。
+      // 不预清 pending:同 kind 后续 save 接管槽位时靠 identity 守卫防误删新值。
+      const flushMs = config.flushTimeoutMs ?? DEFAULT_FLUSH_TIMEOUT_MS
       const items = Array.from(pending.entries())
-      pending.clear()
       await Promise.all(
-        items.map(async ([k, w]) => {
-          await commit(k, w.value, w.agentId, w.sessionId)
-          w.resolve()
-        }),
+        items.map(([k, w]) => new Promise<void>((resolve) => {
+          let timer: ReturnType<typeof setTimeout> | undefined
+          commit(k, w.value, w.agentId, w.sessionId).then(
+            () => {
+              if (timer) clearTimeout(timer)
+              if (pending.get(k) === w) pending.delete(k)
+              w.resolve()
+              resolve()
+            },
+            () => { // 理论不可达(commit 内部吞错);防御收口不挂起
+              if (timer) clearTimeout(timer)
+              if (pending.get(k) === w) pending.delete(k)
+              w.resolve()
+              resolve()
+            },
+          )
+          timer = setTimeout(() => {
+            emit({ type: 'degraded', reason: `flush 落盘超时(${flushMs}ms,key=${k}),已放行;该项留待后续 flush/pagehide 重试` })
+            resolve()
+          }, flushMs)
+        })),
       )
       emit({ type: 'flush' })
-      await maybeEvict() // flush 立即淘汰(pagehide 兜底场景)
+      void maybeEvict() // flush 立即淘汰(pagehide 兜底场景);void 不 await:淘汰卡死不拖死调用方(内部已吞错留痕)
     },
     async deleteSession(agentId, sessionId) {
       const prefix = sessionPrefix(dbName, agentId, sessionId)

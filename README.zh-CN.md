@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-3052%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-3035%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -164,7 +164,6 @@ CDN 零配置：`<script src="https://unpkg.com/page-agent-sdk"></script>` → `
 | 🎯 focus 自动切换 (2.31+) | AI 自动判断任务范围 → `set_focus`(局部任务)/ `clear_focus`(全局/完成);focus 跨刷新/切会话持久化(restore 经 `getSchemaAtPath` 校验 path,失效丢弃);子 agent 继承主焦点(三层收敛;主未聚焦 → 子无 focus 中间件,零回归) | `capabilities.focus` |
 | 🔒 精确值保护 (2.32+) | `data.resources: [{path, mode}]` 保护需精确保存字段:`freeze`(只读,精确值经 `⟦frozen:path⟧` 占位符不入消息流,写撞 FROZEN_FIELD)/ `verbatim`(原样保留,`⟦res:handle⟧`,改值经 `resource_update` 否则 VERBATIM_MISMATCH);写侧强制覆盖 commitSetToBind/applyPatches/eval + 资源工具(`resource_get/update/list/delete`,advanced)+ 跨压缩 pin | `data.resources` + `capabilities.vfs` |
 | 🌍 UI 定制与国际化 (3.17+~3.22+) | 对话框 UI 免 fork 全定制:`dialog.icons` 逐图标覆盖(纯文本或净化后 HTML 片段)+ 内置深色主题 `dialog.theme:'dark'` + **顶层 `i18n` 配置组(3.22+)**:`locale:'en-US'` 切内置文案包(聊天面 + Debug 抽屉 + Skill 面板 + 代码预览;`formatTime`/autoTitle 跟随,**默认 systemPrompt 切英文** → agent 回复语言与 UI 一致)、`messages` 键级覆盖(如 `statusDone: '<b style="color:#10b981">Done ✓</b>'` —— 富文本渲染位支持行内 HTML 片段,文案白名单净化)——换语言与改个别文案一个配置组;`DialogMessages`(~226 键)+ `MESSAGES_ZH_CN`/`MESSAGES_EN_US`/`resolveDialogMessages` 导出供自建 UI 复用 | `dialog.{icons,theme}` + `i18n.{locale,messages}` |
-| 🎯 跨会话用户偏好记忆 | `capabilities.preferences`(**opt-in 默认关**,自动写用户浏览器属行为敏感项):agent 从对话中捕获用户持久偏好 —— 强信号(「记住:…」显式命令,零 LLM)/ 中信号(模式词初筛 + 小 LLM 提炼,核心判定「持久口味 vs 本轮任务指令」)/ 行为推断**不捕获**(宁漏勿误:学错一条假偏好,之后每个会话都带着跑);偏好独立持久化(preferenceStore,IndexedDB,与 storage/skillStorage 同构;同 topic **后说覆盖前说**,FIFO ≤20);每轮经 pin 段注入 system prompt(跨会话/跨压缩生效);`sdk.getPreferences()/removePreference(id)/clearPreferences()` 管理学错条目,DebugDrawer「用户偏好」只读小节可查 | `capabilities: { preferences: true }` + 可选 `preferenceStorage` |
 | 🧭 指令执行力增强 (3.35+) | **完结门禁**:todos 有未完成项却欲纯文本收尾 → 回灌「双出口」反馈续跑(≤2 次),防「拆 3 项做 1 项就收口」的莫名中断;**问句意图守卫**:正则三档启发式逐消息定性问句,命中注入「先答勿做」pin 段(跨压缩存活),防长对话提问被历史拖着误路由成操作(如问「这是啥组件」却去生成代码)。均默认开、零配置、宁漏勿误 | 内置 |
 | 🎨 子 agent 模型/思考分层 | `createHtmlSubagent({ llm, thinkingMode })`:代码生成子 agent 独立强模型(主保持轻量编排)+ 思考深度锁定(`'deep'` 注入思考参数质量优先 / `'simple'` 剥除省 token;顶层 `subagent.thinkingMode` 全局缺省)。仅 LLMConfig 构造路径生效(预构造实例 warn+no-op);需模型支持思考(deepseek thinking 版/claude);`inspect().subagent.subagents` 反射生效状态 | `createHtmlSubagent({ llm, thinkingMode })` |
 | 🖼 图片输入 | 对话框内置三入口(📎 选择/拖拽/粘贴截图)→ 压缩闸(长边 ≤1568px/单轮 ≤4 张/超 20MB 拒);主模型多模态(gpt-4o/claude/qwen-vl 查表,或 `llm.vision:true`)→ 图片直发 content parts 零配置;纯文本主模型(deepseek 等)→ 配 `images.describe` 逐图识图转述注入(图不直发);都不配则诚实拒绝不静默丢图;`images.upload` 原图换 https URL(集成方 OSS);持久化只存缩略图 + vfs 引用 | `images: { upload?, describe? }` + `llm.vision` |
@@ -234,7 +233,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `augmentSystem` | `(ctx:{state,data?}) => string \| undefined` | 动态 system prompt 注入钩子:每轮调,按运行时 state/data 返回字符串作为一段注入;返回 undefined 跳过;回调抛错降级跳过(不崩)。`ctx.data` 每轮从 liveData() 取最新(setData 后自动同步),可据此动态算当前组件说明 / 部分 schema 描述。不配 = 现状行为 |
 | **页面数据** | `data` | `{schema,bind,description?}` | 单主对象:声明 zod schema(校验 + 字段描述自动注入提示词)+ bind(reactive/普通对象,工具直接读写,不挂 window)+ description |
 | | `tools` / `skills` / `memory` | `Tool[]` / `SkillSpec[]` / `string` | 自定义工具 / 技能 / AGENTS.md 风格持久指令 |
-| **能力开关** | `capabilities` | `{planning?,missionAnchor?,dataOps?,fetch?,skills?,vfs?,summarization?,memory?,workingMemory?,subagent?,verify?,domInspect?,focus?,preferences?}` | 核心默认开（`verify`/`domInspect`/`preferences` 默认关,opt-in;`focus` 上下文聚焦·指定组件精修,默认开;`preferences` 跨会话偏好记忆)；`false` 关掉省 token |
+| **能力开关** | `capabilities` | `{planning?,missionAnchor?,dataOps?,fetch?,skills?,vfs?,summarization?,memory?,workingMemory?,subagent?,verify?,domInspect?,focus?}` | 核心默认开（`verify`/`domInspect` 默认关,opt-in;`focus` 上下文聚焦·指定组件精修,默认开）；`false` 关掉省 token |
 | | `actions` | `Record<string,{description,run,params?}>` | **(2.18+) 宿主动作**：注册 save_draft/publish 等页面操作 → SDK 自动生成命名 tool 供 agent 触发 |
 | | `schemaHint` | `{maxKeys?,maxChars?}` · 默认 `{15,4000}` | **(2.18+) 大 schema 分层披露阈值**：超则 systemPrompt 只注入顶层概览（不带约束/不递归）,深层约束按需 `schema_data` 查;小 schema 无感（全量） |
 | | `images` | `{upload?,describe?,describeTimeoutMs?}` | **图片输入(image-input-vision)**：对话框内置三入口(📎/拖拽/粘贴)→ 压缩闸(长边≤1568/≤4 张/超 20MB 拒)。主模型多模态(查表或 `llm.vision:true`)→ 图片直发 content parts,零配置;纯文本主模型 → 配 `describe` 逐图识图转述注入(图不直发),都不配则诚实拒绝不静默丢图;`upload` 原图换 https URL(集成方 OSS)。见 [usage-guide §6.17](doc/usage-guide.md#617-图片输入多模态直发--识图转述旁路) |
@@ -290,7 +289,7 @@ const mySkill = defineSkill({ name: 'style_guide', description: '品牌色规范
 createChatSdk({ skills: [mySkill], /*...*/ })
 //    动态技能(skill-external-scripts):exec 加载时执行脚本注入实时数据 + tools 附带可反复调用的工具
 //    defineSkill({ name: 'orders', description: '订单概览', getContent: () => '说明…',
-//      exec: { code: 'return await fetch("/api/orders").then(r=>r.json())', context: 'sandbox' },  // 默认沙箱;host 需 capabilities.skillHostScript
+//      exec: { code: 'return await fetch("/api/orders").then(r=>r.json())', context: 'sandbox' },  // 恒沙箱执行('host' 已随 4.1.0 移除)
 //      tools: [() => orderQueryTool] })  // load_skill 后注入工具池,可反复调
 
 // ③ 自定义中间件(8 钩子:beforeAgent/wrapModelCall/beforeModel/afterModel/wrapToolCall/afterAgent/beforeReturn + augmentPrompt/compressInput/tools)
@@ -315,7 +314,7 @@ createChatSdk({ subagents: [
 - **压缩决策**（`capabilities.agentCompression` opt-in 默认关,需 `summaryLlm`,2.33+）：开 + summaryLlm 可用 → summarization 每轮先 `shouldTriggerCompression` gate(纯函数 token/轮数两模式,避免每条消息都 decide 烧 LLM)→ `decide` 两段式工具循环(bind `inspect_context` 查构成 → 输出决策 JSON)→ `compress(messages, decision)` 用决策切分/摘要 mode/召回/preserve(∪ 扩展);decide 失败/超时/模型不支持工具 → null 降级静态压缩(零阻塞)。`decisionTimeoutMs`(默认 6s)/`decisionMaxTokens`(默认 2048)可配;决策自动流到 `inspect().lastCompression.decision` + DebugDrawer「🤖 agent 决策」注记
 - **宿主动作**（2.18+,`actions` 注册）：集成方注册 save_draft/publish 等页面操作,SDK 自动生成命名 tool,agent 直接调用触发宿主(无需 trigger_action 中转)
 - **vfs**：`vfs_read` / `vfs_write` / `vfs_edit` / `vfs_ls` / `vfs_glob` / `vfs_grep`
-- **规划/技能**：`write_todos` / `define_skill` / `load_skill`（skill 可配 `exec` 加载时执行脚本注入实时数据 + `tools` 附带可反复调用的工具;`exec.context:'host'` 需 `capabilities.skillHostScript:true`）
+- **规划/技能**：`write_todos` / `define_skill` / `load_skill`（skill 可配 `exec` 加载时执行脚本注入实时数据 + `tools` 附带可反复调用的工具;`exec` 恒 Worker 沙箱执行 —— `context:'host'` 已随 4.1.0 移除）
 - **人工确认**：`request_human_confirmation`（主动征询，默认开）
 - **子 agent**：`spawn_agent` / `spawn_agents` / `use_<id>`（预声明）
 - **checkpoint**：`restore_last_checkpoint` / `list_checkpoints`
@@ -503,7 +502,7 @@ function switchTo(i: number) {
 
 ```bash
 npm test            # 2894 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 957 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm run test:e2e    # 965 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试

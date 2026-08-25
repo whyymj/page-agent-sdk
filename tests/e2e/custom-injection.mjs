@@ -199,7 +199,7 @@ export async function run() {
     sdk.unmount()
   }
 
-  console.log('[e2e:custom-injection] skill exec/tools 装配 + skillHostScript opt-in(skill-external-scripts)')
+  console.log('[e2e:custom-injection] skill exec/tools 装配(skill-external-scripts;host 上下文已随 4.1.0 移除)')
   {
     // 带 exec + tools 的 skill 装配不抛(exec/tools 新增可选字段,装配期不执行 factory)
     const sdk = createChatSdk({
@@ -219,16 +219,24 @@ export async function run() {
     sdk.unmount()
   }
   {
-    // skillHostScript opt-in 默认关;显式 true → mount 成功(新 capability 注册生效)
-    const sdk = createChatSdk({
-      ui: false, id: 'e2e-skill-host', storage: 'memory', llm: FAKE_LLM,
-      capabilities: { ...MIN_CAPS, skills: true, skillHostScript: true },
-      skills: [{ name: 'h', description: 'host skill', getContent: () => 'H', exec: { code: 'return 1', context: 'host' } }],
-    })
+    // 残键静默忽略 + 残值 'host' 落 sandbox 执行(4.1.0 语义反转):装配不 throw 不 warn
+    const warns = []
+    const origWarn = console.warn
+    console.warn = (...a) => { warns.push(a.join(' ')) }
     let threw = false
-    try { await sdk.mount() } catch { threw = true }
-    assert(!threw, 'skillHostScript:true + host skill → mount 成功(capability opt-in 生效)')
-    sdk.unmount()
+    let sdk
+    try {
+      sdk = createChatSdk({
+        ui: false, id: 'e2e-skill-host', storage: 'memory', llm: FAKE_LLM,
+        capabilities: { ...MIN_CAPS, skills: true, skillHostScript: true },
+        skills: [{ name: 'h', description: 'host skill', getContent: () => 'H', exec: { code: 'return 1', context: 'host' } }],
+      })
+      await sdk.mount()
+    } catch { threw = true }
+    console.warn = origWarn
+    assert(!threw, '✓ 残键 skillHostScript + 残值 host skill → mount 成功(残键静默忽略)')
+    assert(!warns.some((w) => w.includes('skillHostScript')), '✓ 残键 skillHostScript → 零 warn(warn 名单已移除)')
+    sdk?.unmount()
   }
 
   console.log('[e2e:custom-injection] setSkills skills 关闭 → 控制台 warn 不抛错')

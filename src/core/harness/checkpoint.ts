@@ -146,37 +146,44 @@ export function createCheckpointManager(deps: CheckpointDeps): CheckpointManager
 
   return {
     save(label) {
-      const messages = trimTrailingEmptyAssistant(deps.messages)
-      const windowVals: Record<string, unknown> = {}
-      if (deps.getData) {
-        // 单对象 data 模式:脏标记增量(脏或缓存空才 clone 新基线,否则复用上次 clone 省深拷贝)
-        const bindChanged = deps.consumeDataDirty?.() ?? true  // 无 consumeDataDirty → 永远 clone(向后兼容)
-        if (bindChanged || lastBindClone === undefined) {
-          lastBindClone = clone(deps.getData())
+      // flow-robustness P1#7:快照整体兜底 —— 环 bind 等克隆失败(reactive→structuredClone 抛→JSON 兜底遇环再抛)
+      // 原样上抛会 reject beforeModel 钩子 = 整个 invoke 炸;失败跳过本轮快照 + warn(快照是回滚保障非主路径)
+      try {
+        const messages = trimTrailingEmptyAssistant(deps.messages)
+        const windowVals: Record<string, unknown> = {}
+        if (deps.getData) {
+          // 单对象 data 模式:脏标记增量(脏或缓存空才 clone 新基线,否则复用上次 clone 省深拷贝)
+          const bindChanged = deps.consumeDataDirty?.() ?? true  // 无 consumeDataDirty → 永远 clone(向后兼容)
+          if (bindChanged || lastBindClone === undefined) {
+            lastBindClone = clone(deps.getData())
+          }
+          windowVals[''] = lastBindClone
+        } else {
+          // 旧 windowProps 模式:从 window 按 path 读(零桥接;不增量,保持简单+正确)
+          for (const p of deps.slotPaths ?? []) windowVals[p] = clone(getByPath(window, p))
         }
-        windowVals[''] = lastBindClone
-      } else {
-        // 旧 windowProps 模式:从 window 按 path 读(零桥接;不增量,保持简单+正确)
-        for (const p of deps.slotPaths ?? []) windowVals[p] = clone(getByPath(window, p))
+        // vfs 增量(最大头 8MB):vfsStore 写经 Proxy 统一标脏,未脏复用上次 clone
+        const vfsChanged = deps.vfsStore.consumeDirty?.() ?? true
+        if (vfsChanged || lastVfsClone === undefined) {
+          lastVfsClone = clone(deps.vfsStore.files)
+        }
+        const cp: Checkpoint = {
+          id: nextId++,
+          label,
+          timestamp: Date.now(),
+          messages: clone(messages),
+          windowVals,
+          vfs: lastVfsClone as Record<string, VfsFile>,
+          todos: clone(deps.getTodos()),
+          messageCount: messages.length,
+        }
+        stack.push(cp)
+        while (stack.length > max) stack.shift()
+        return cp.id
+      } catch (err) {
+        console.warn(`[page-agent-sdk][checkpoint] 快照失败(label=${label}),跳过本轮:`, err)
+        return -1
       }
-      // vfs 增量(最大头 8MB):vfsStore 写经 Proxy 统一标脏,未脏复用上次 clone
-      const vfsChanged = deps.vfsStore.consumeDirty?.() ?? true
-      if (vfsChanged || lastVfsClone === undefined) {
-        lastVfsClone = clone(deps.vfsStore.files)
-      }
-      const cp: Checkpoint = {
-        id: nextId++,
-        label,
-        timestamp: Date.now(),
-        messages: clone(messages),
-        windowVals,
-        vfs: lastVfsClone as Record<string, VfsFile>,
-        todos: clone(deps.getTodos()),
-        messageCount: messages.length,
-      }
-      stack.push(cp)
-      while (stack.length > max) stack.shift()
-      return cp.id
     },
 
     list() {

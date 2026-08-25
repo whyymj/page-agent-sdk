@@ -808,3 +808,76 @@ test.describe('complex-demo deep(深嵌套页 · ?deep=1)', () => {
     expect(text, '10+ 段深 jsonPath patch 落地(逐段 isPathAllowed 穿透)').toBe('深路径写入OK')
   })
 })
+
+// ===== 手动编辑三件套(拖拽调序 / 拖拽移入容器 / 属性面板;纯 UI 无 LLM 依赖)=====
+test('手动编辑:属性面板选中改值落地 + 删除属性', async ({ page }) => {
+  await page.goto('/examples/complex-demo/')
+  await page.waitForSelector('.chat-dialog')
+  await page.waitForFunction(() => (window as any).page?.components?.length > 20)
+  // 点击 navbar → 属性面板出现,改 title → bind 落地(视图与数据同源)
+  await page.locator('[data-path="components.0"]').first().click()
+  await expect(page.locator('.pp')).toBeVisible()
+  await expect(page.locator('.pp-path')).toContainText('components.0')
+  const titleInput = page.locator('.pp-row', { hasText: 'title' }).locator('input.pp-input').first()
+  await titleInput.fill('手动改的导航栏')
+  await titleInput.press('Tab')
+  await expect.poll(() => page.evaluate(() => (window as any).page.components[0].props.title)).toBe('手动改的导航栏')
+  // 删除属性(trackId)→ 键数减一
+  const keysBefore = await page.evaluate(() => Object.keys((window as any).page.components[0].props).length)
+  await page.locator('.pp-row', { hasText: 'trackId' }).locator('.pp-del').first().click()
+  await expect.poll(() => page.evaluate(() => Object.keys((window as any).page.components[0].props).length)).toBe(keysBefore - 1)
+})
+
+test('手动编辑:拖拽到组件上沿调序(顶层相邻互换)', async ({ page }) => {
+  await page.goto('/examples/complex-demo/')
+  await page.waitForSelector('.chat-dialog')
+  await page.waitForFunction(() => (window as any).page?.components?.length > 20)
+  const before = await page.evaluate(() => (window as any).page.components.slice(0, 2).map((c: any) => c.type))
+  await page.dragAndDrop('[data-path="components.1"]', '[data-path="components.0"]', { targetPosition: { x: 100, y: 5 } })
+  const after = await page.evaluate(() => (window as any).page.components.slice(0, 2).map((c: any) => c.type))
+  expect(after[0]).toBe(before[1])
+  expect(after[1]).toBe(before[0])
+})
+
+test('手动编辑:拖拽到容器中部移入(顶层消失 + section 子树出现)', async ({ page }) => {
+  await page.goto('/examples/complex-demo/')
+  await page.waitForSelector('.chat-dialog')
+  await page.waitForFunction(() => (window as any).page?.components?.length > 20)
+  const countdownIdx = await page.evaluate(() => (window as any).page.components.findIndex((c: any) => c.type === 'countdown'))
+  const sectionIdx = await page.evaluate(() => (window as any).page.components.findIndex((c: any) => c.type === 'section'))
+  await page.dragAndDrop(`[data-path="components.${countdownIdx}"]`, `[data-path="components.${sectionIdx}"]`, { targetPosition: { x: 100, y: 150 } })
+  // 顶层 countdown 归零;section 子树递归出现恰好 1 个(落点可为嵌套容器,内层优先语义)
+  const res = await page.evaluate(() => {
+    const found: string[] = []
+    const walk = (arr: any[], trail: string) => arr.forEach((c: any, j: number) => {
+      if (c?.type === 'countdown') found.push(`${trail}.${j}`)
+      if (Array.isArray(c?.props?.children)) walk(c.props.children, `${trail}.${j}.props.children`)
+      if (Array.isArray(c?.props?.tabs)) c.props.tabs.forEach((t: any, k: number) => walk(t.children ?? [], `${trail}.${j}.props.tabs.${k}.children`))
+    })
+    walk((window as any).page.components, 'components')
+    return { found, top: (window as any).page.components.filter((c: any) => c.type === 'countdown').length }
+  })
+  expect(res.top).toBe(0)
+  expect(res.found.length).toBe(1)
+})
+
+test('手动编辑:嵌套子组件可点选(data-path 容器透传)+ 提升到顶层', async ({ page }) => {
+  await page.goto('/examples/complex-demo/')
+  await page.waitForSelector('.chat-dialog')
+  await page.waitForFunction(() => (window as any).page?.components?.length > 20)
+  // section 的第一个子组件有 data-path(容器 comp-path 透传链)且可点选出属性面板
+  const sectionIdx = await page.evaluate(() => (window as any).page.components.findIndex((c: any) => c.type === 'section'))
+  const childPath = `components.${sectionIdx}.props.children.0`
+  const child = page.locator(`[data-path="${childPath}"]`)
+  expect(await child.count()).toBeGreaterThan(0)
+  await child.first().click()
+  await expect(page.locator('.pp')).toBeVisible()
+  // 提升到顶层末尾:顶层末位变成该子组件(类型先取 —— 提升后 children[0] 已位移)
+  const firstChildType = await page.evaluate((i: number) => (window as any).page.components[i]?.props?.children?.[0]?.type, sectionIdx)
+  await page.locator('.pp-btn', { hasText: '提升到顶层末尾' }).click()
+  const lastType = await page.evaluate(() => {
+    const comps = (window as any).page.components
+    return comps[comps.length - 1]?.type
+  })
+  expect(lastType).toBe(firstChildType)
+})

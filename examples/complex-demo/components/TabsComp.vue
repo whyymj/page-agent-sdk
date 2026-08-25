@@ -5,7 +5,7 @@
  */
 import { ref, defineAsyncComponent } from 'vue'
 const CompRenderer = defineAsyncComponent(() => import('../CompRenderer.vue'))
-defineProps<{ tabs: { label: string; children: any[] }[]; id?: string; style?: Record<string, string>; visible?: boolean; className?: string }>()
+defineProps<{ tabs: { label: string; children: any[] }[]; id?: string; style?: Record<string, string>; visible?: boolean; className?: string; compPath?: string }>()
 const active = ref(0)
 </script>
 <template>
@@ -15,7 +15,7 @@ const active = ref(0)
     </div>
     <div class="tabs-content">
       <div v-for="(tab, i) in tabs" v-show="active === i" :key="i" class="tab-panel">
-        <CompRenderer v-for="(child, j) in tab.children" :key="j" :comp="child" />
+        <CompRenderer v-for="(child, j) in tab.children" :key="j" :comp="child" :path="compPath ? `${compPath}.props.tabs.${i}.children.${j}` : undefined" />
       </div>
     </div>
   </div>

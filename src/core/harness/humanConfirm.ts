@@ -71,12 +71,25 @@ export interface PlanConfirmationRecord {
   viaOptions: true
 }
 
+/** humanConfirm 中间件可选项(flow-robustness P1#3:无 UI 响应方路径的挂起兜底) */
+export interface HumanConfirmOptions {
+  /** 超时毫秒(用户未响应自动拒,视同拒绝);0 = 不超时(默认,SDK 装配层对无 UI 路径注入 30s) */
+  timeoutMs?: number
+  /** 超时自动拒的留痕回调(observable 接线由调用方负责;abort/用户先收口不触发) */
+  onAutoReject?: (info: { toolName: string; waitedMs: number }) => void
+}
+
 /**
  * 创建人工确认中间件:拦截 request_human_confirmation,发 approval_request 事件,await 用户选择。
  * onResolved(save-and-plan-gates 3c):用户裁决回调 —— 仅「带 options 且用户点了某方案」时触发
  * (方案确认留痕 lastPlanConfirmation);true/false(允许/拒绝)与非方案征询不回调,由调用方口径控制。
+ * opts.timeoutMs(P1#3):超时无响应自动拒 —— 无 UI 响应方路径(headless + 自建 UI 不处理 approval_request)
+ * 原实现无限挂;超时视同拒绝(与 approval 中间件/send·batch 口径对齐)。
  */
-export function createHumanConfirmMiddleware(onResolved?: (record: PlanConfirmationRecord) => void): Middleware {
+export function createHumanConfirmMiddleware(
+  onResolved?: (record: PlanConfirmationRecord) => void,
+  opts: HumanConfirmOptions = {},
+): Middleware {
   return {
     name: 'humanConfirm',
     wrapToolCall: async (ctx: ToolCallContext, next: (ctx: ToolCallContext) => Promise<ToolExecResult>) => {
@@ -123,7 +136,22 @@ export function createHumanConfirmMiddleware(onResolved?: (record: PlanConfirmat
           cleanup.push(() => ctx.signal?.removeEventListener('abort', onAbort))
         }
 
-        ctx.emit?.({ type: 'approval_request', toolName: ctx.name, args: ctx.args, resolve: finish })
+        // 超时自动拒(P1#3:无 UI 响应方路径兜底;响应方调 hold() 接管,无人应答才计时收口;abort/用户先收口时 settled 已置,不误报)
+        let hold: (() => void) | undefined
+        if (opts.timeoutMs && opts.timeoutMs > 0) {
+          const startedAt = Date.now()
+          let held = false
+          const timer = setTimeout(() => {
+            if (settled || held) return
+            const waitedMs = Date.now() - startedAt
+            finish(false)
+            opts.onAutoReject?.({ toolName: ctx.name, waitedMs })
+          }, opts.timeoutMs)
+          cleanup.push(() => clearTimeout(timer))
+          hold = () => { held = true; clearTimeout(timer) }
+        }
+
+        ctx.emit?.({ type: 'approval_request', toolName: ctx.name, args: ctx.args, resolve: finish, hold })
       })
     },
   }

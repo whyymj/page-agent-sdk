@@ -7,6 +7,7 @@ import CompWrapper from './CompWrapper.vue'
 import CompRenderer from '../CompRenderer.vue'
 
 defineProps<{
+  compPath?: string
   id?: string
   style?: Record<string, string>
   visible?: boolean
@@ -20,6 +21,7 @@ defineProps<{
   <CompWrapper :id="id" :style="style" :visible="visible" :className="className">
     <div :style="{ padding: (padding ?? 0) + 'px' }">
       <CompRenderer
+      :path="compPath ? `${compPath}.props.children.${i}` : undefined"
         v-for="(c, i) in children"
         :key="(c.id ?? c.type) + '-' + i"
         :comp="c"

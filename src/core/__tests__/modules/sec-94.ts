@@ -1,19 +1,12 @@
 /**
- * sec-94 —— bulk-change-guard(大批量变更门禁:量纲/豁免/降级)
+ * sec-94 —— measureWriteScale 写触达量纲(原 bulk-change-guard 的量纲函数)
  *
- * 背景(G5):注入/跑偏的批量破坏无门禁。机制化信号不是意图而是**规模** —— 但量纲必须正确:
- * 「op 条数」≠「破坏面」(同组件 8 条 style patch 是正常微调),正确量纲 = 现有组件节点数。
- *
- * A. 量纲:同组件多 patch = 1 不拦;跨组件散落 = N 拦;新增路径不计
- * B. 阈值边界(= 阈值触发,< 放行);dryRun 短路
- * C. observe 模式只留痕不挂起;confirm 模式挂 approval(确认放行执行真实工具)
- * D. 拒绝 → BULK_CHANGE_REJECTED 回灌(含原子性提示);数据零改动
- * E. 会话级豁免:确认后同形态再超阈直接放行;reset 清除
- * F. lastPlanConfirmation(方案确认留痕)存在 → 豁免
- * G. writeCapable 判定:只拦写工具
+ * bulkGuard 中间件已随 4.1.0 移除(config-surface-pruning round2);量纲函数为 delegateNudge
+ * (欠委派检测)依赖 + 公共导出保留,本模块锁其纯函数行为:
+ * A. 量纲:同组件多 patch = 1;跨组件散落 = N;新增路径不计;整体 set 按现有组件总数
  */
 import type { TestCtx } from './_ctx'
-import { measureWriteScale, createBulkGuardMiddleware, type BulkGuardMiddlewareOptions } from '../../harness/bulkGuard'
+import { measureWriteScale } from '../../harness/delegateNudge'
 
 /** 测试 bind:5 个组件(components 数组)+ 2 个区块(sections 数组) */
 function testBind(): Record<string, unknown> {
@@ -38,7 +31,7 @@ function mkCallCtx(name: string, args: Record<string, unknown>, onApproval?: (re
 
 export async function run(ctx: TestCtx): Promise<void> {
   const { assert } = ctx
-  console.log('[sec-94] bulk-change-guard:大批量变更门禁(量纲 = 现有组件节点数)')
+  console.log('[sec-94] measureWriteScale 写触达量纲(原 bulk-change-guard;bulkGuard 已移除,函数为 delegateNudge/公共导出保留)')
 
   // ===== A. 量纲正反例(评审 3-4 核心)=====
   {
@@ -72,100 +65,4 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(r.count === 0, '✓ 量纲 → dryRun 短路不度量')
   }
 
-  // ===== B/C/D/E/F/G. 中间件行为 =====
-  {
-    const bind = testBind()
-    const events: string[] = []
-    const opts = (over: Partial<BulkGuardMiddlewareOptions> = {}): BulkGuardMiddlewareOptions => ({
-      getBind: () => bind,
-      tools: [{ name: 'write', writeCapable: true } as any, { name: 'read' } as any],
-      onEvent: (e) => events.push(`${e.decision}:${e.kind}:${e.count}`),
-      ...over,
-    })
-    const fivePatch = [0, 1, 2, 3, 4].map((i) => ({ op: 'set', jsonPath: `components.${i}.props.x`, value: 1 }))
-
-    // B:阈值边界 —— 阈值 4,count 3 放行
-    {
-      const mw = createBulkGuardMiddleware(opts({ threshold: 4 }))
-      let ran = false
-      const r = await mw.wrapToolCall!(mkCallCtx('write', { patches: [0, 1, 2].map((i) => ({ op: 'set', jsonPath: `components.${i}.x`, value: 1 })) }), async () => { ran = true; return { content: 'ok', status: 'done' as const } })
-      assert(ran && r.content === 'ok' && r.status !== 'error', '✓ 阈值边界 → count 3 < 4 放行(执行真实工具)')
-      assert(events.some((e) => e.startsWith('pass:')), '✓ 留痕 → pass 决策入日志')
-    }
-
-    // C1:confirm 模式 —— 超阈挂 approval;确认放行执行真实工具 + 会话级豁免
-    {
-      events.length = 0
-      const mw = createBulkGuardMiddleware(opts({ threshold: 4 }))
-      let resolver: ((ok: boolean) => void) | undefined
-      const p = mw.wrapToolCall!(mkCallCtx('write', { patches: fivePatch }, (r) => { resolver = r }), async () => { (bind as any).__executed = true; return { content: '已写入', status: 'done' as const } })
-      await new Promise((r) => setTimeout(r, 10))
-      assert(typeof resolver === 'function', '✓ confirm → 超阈挂 approval_request(ctx.emit 带 resolve)')
-      resolver!(true)
-      const r = await p
-      assert((bind as any).__executed === true && r.status !== 'error', '✓ confirm → 用户确认后放行执行真实工具')
-      assert(mw.state.confirmedKinds.has('patches'), '✓ 会话豁免 → 确认后该形态记入 confirmedKinds')
-      // E:同形态再超阈 → 直接放行(不再挂)
-      let ran2 = false
-      const r2 = await mw.wrapToolCall!(mkCallCtx('write', { patches: fivePatch }), async () => { ran2 = true; return { content: 'again', status: 'done' as const } })
-      assert(ran2 && r2.status !== 'error', '✓ 会话豁免 → 同形态第二次直接放行(防反复弹窗)')
-      // reset 清除
-      mw.state.reset()
-      assert(mw.state.confirmedKinds.size === 0, '✓ reset → 会话豁免态清除')
-    }
-
-    // D:拒绝 → BULK_CHANGE_REJECTED + 数据零改动
-    {
-      events.length = 0
-      const mw = createBulkGuardMiddleware(opts({ threshold: 4 }))
-      const before = JSON.stringify(bind)
-      let resolver: ((ok: boolean) => void) | undefined
-      const p = mw.wrapToolCall!(mkCallCtx('write', { patches: fivePatch }, (r) => { resolver = r }), async () => { (bind as any).__leaked = true; return { content: '不应执行', status: 'done' as const } })
-      await new Promise((r) => setTimeout(r, 10))
-      resolver!(false)
-      const r = await p
-      assert(r.status === 'error' && r.content.includes('BULK_CHANGE_REJECTED'), '✓ 拒绝 → BULK_CHANGE_REJECTED 错误回灌')
-      assert(r.content.includes('原子'), '✓ 拒绝文案 → 含分批破坏 patches 原子性提示')
-      assert(JSON.stringify(bind) === before, '✓ 拒绝 → 数据零改动(真实工具未执行)')
-    }
-
-    // C2:observe 模式只留痕不挂起
-    {
-      events.length = 0
-      const mw = createBulkGuardMiddleware(opts({ threshold: 4, mode: 'observe' }))
-      let ran = false
-      const r = await mw.wrapToolCall!(mkCallCtx('write', { patches: fivePatch }), async () => { ran = true; return { content: 'ok', status: 'done' as const } })
-      assert(ran && r.status !== 'error', '✓ observe → 超阈只留痕不挂起(无人值守档)')
-      assert(events.some((e) => e.startsWith('observe:patches:5')), '✓ observe → 留痕 decision=observe')
-    }
-
-    // F:lastPlanConfirmation 存在 → 豁免
-    {
-      events.length = 0
-      const mw = createBulkGuardMiddleware(opts({ threshold: 4, getPlanConfirmation: () => ({ at: 1, summary: '方案' }) }))
-      let ran = false
-      const r2 = await mw.wrapToolCall!(mkCallCtx('write', { patches: fivePatch }), async () => { ran = true; return { content: 'ok', status: 'done' as const } })
-      assert(ran && r2.status !== 'error', '✓ 方案豁免 → lastPlanConfirmation 存在直接放行')
-      assert(events.some((e) => e.startsWith('exempt-plan:')), '✓ 方案豁免 → 留痕 exempt-plan')
-    }
-
-    // G:writeCapable 判定 —— 只拦写工具(read 不拦)
-    {
-      events.length = 0
-      const mw = createBulkGuardMiddleware(opts({ threshold: 1 }))
-      let ran = false
-      const r = await mw.wrapToolCall!(mkCallCtx('read', { jsonPath: 'components' }), async () => { ran = true; return { content: '读取结果', status: 'done' as const } })
-      assert(ran && r.status !== 'error', '✓ 工具判定 → 非 writeCapable 工具(read)不拦')
-    }
-
-    // 超时自动拒(挂起自带超时 —— stream 路径无 approvalWatch 兜底)
-    {
-      events.length = 0
-      const mw = createBulkGuardMiddleware(opts({ threshold: 4, timeoutMs: 30 }))
-      const p = mw.wrapToolCall!(mkCallCtx('write', { patches: fivePatch }), async () => ({ content: '不应执行', status: 'done' as const }))
-      const r = await p
-      assert(r.status === 'error' && r.content.includes('BULK_CHANGE_REJECTED'), '✓ 超时 → 挂起自带超时自动拒(不依赖 approvalWatch)')
-      assert(events.some((e) => e.startsWith('timeout:')), '✓ 超时 → 留痕 timeout')
-    }
-  }
 }

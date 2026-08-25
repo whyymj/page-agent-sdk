@@ -7,6 +7,7 @@
 import { tool } from '@langchain/core/tools'
 import { z, type ZodType } from 'zod'
 import type { StructuredToolInterface } from '@langchain/core/tools'
+import { markWatchdogTools } from '../harness/toolWatchdog'
 
 export interface DefineToolOptions<S extends ZodType> {
   name: string
@@ -39,5 +40,8 @@ export function defineTool<S extends ZodType>(opts: DefineToolOptions<S>): Struc
   if (opts.writeCapable !== undefined) {
     ;(t as { writeCapable?: unknown }).writeCapable = opts.writeCapable
   }
+  // per-tool 看门狗(flow-robustness P0#1):defineTool 是集成方工具的主入口,创建即打标 ——
+  // coreExecTool 对带标工具 race toolTimeoutMs(默认 120s),兜「永不 settle」拖死 runPool/stop 失效
+  markWatchdogTools([t])
   return t
 }

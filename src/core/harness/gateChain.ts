@@ -108,7 +108,10 @@ export function runFinishGates(i: RunFinishGatesInput): GateOutcome {
   if (garbled) return null  // 乱码文本:门禁全跳(原文都不可信,回灌无意义)
 
   // 1. transitional:过程性收口(rounds>0 短文本过渡表态)/ 第 0 轮行动叙述(长文幻觉叙述)
-  const transitional = rounds > 0 ? detectTransitionalReply(content) : detectActionNarration(content)
+  // flow-robustness P1#10:句尾问号豁免(与 completion/zero_tool 口径对齐)——「我先给出两套方案…你选哪套?」
+  // 是方案征询(等用户裁决),命中 TRANSITIONAL_RE 回灌 ×2 会与方案先行(RHC)冲突
+  const endsWithQuestion = /[?？]\s*$/.test(content.trim())
+  const transitional = !endsWithQuestion && (rounds > 0 ? detectTransitionalReply(content) : detectActionNarration(content))
   if (g.transitionalRetries < MAX_TRANSITIONAL_RETRIES && transitional) {
     g.transitionalRetries += 1
     return {

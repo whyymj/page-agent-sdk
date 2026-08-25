@@ -2,7 +2,54 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
-## [Unreleased]
+## [4.1.0] - 2026-08-25
+
+### Fixed(completion-truncated:截断检测回灌,实测「无限重委派」事故驱动)
+
+- **事故形态**:`use_html` 子 agent 把完整自包含 HTML 塞进一次 `write` 参数生成,途中撞 max_tokens 上限(实测 completion_tokens 恰 4096)→ content 空 + 零 tool_calls → **子 agent 静默空收口,委派返回空结果** → 主 agent 无从得知原因,无限重委派(每次从头再生成再撞墙);截断的生成内容不落任何存储,重试无缓存可复用
+- **修**:ReAct 循环收口分支增截断检测 —— `stop_reason 'length'` 或(空输出 + completion ≥ 4000 启发阈)→ 单次回灌「分步写入指引」(先写骨架再增量补充/精简单次输出),`completion_truncated_retry` debugLogs 留痕;重试仍空则放行(原空回复语义保持);非截断空响应(completion 未达阈)零误报(e2e 对照场景锁定)
+- 顺带:.env `VITE_AI_MAX_TOKENS=8192`(deepseek-v4 输出上限;生成整页 HTML 的单次工具调用需 ≥8K)
+
+### Fixed(focus-intent-steering:聚焦意图归属 + PATH_DENIED 正路出口,实测事故驱动)
+
+- **事故形态**:用户两步拾取聚焦 tabs(components.8)后说「增加tab,主题玩具」(意图 = 在该 tabs 里加页签),flash 把它误读为「新建一个 tabs 组件追加页尾」—— 第一次写 `append components` 被 focus strict 正确拦下(`PATH_DENIED 聚焦越界`),但拒绝文案的三个出口全是「remove_focus / clear_focus / 换焦点」,agent 照方抓药清焦重发,把误读执行到底(新组件落到 footer 之后,用户以为页面没变化)
+- **修 ①(意图归属引导)**:focus 目标提示段补「增加/修改/删除 X」类创建型指令默认归属聚焦组件本身(如给它加页签/子项,写焦点子路径);仅用户明确要求新建独立组件才需解焦
+- **修 ②(PATH_DENIED 正路出口优先)**:拒绝文案先给「若意图是修改聚焦组件本身,改写焦点路径的子路径重试(附实际焦点路径动态示例)」,解焦出口列后 —— 信息随工具结果回流,不依赖提示词自觉
+
+### Removed(config-surface-pruning round2:四能力移除 —— 4.1.0 deprecation 兑现,残键静默忽略零 warn)
+
+- **`bulkGuard`(大批量变更门禁)**:中间件/`bulkGuard` 细配/`inspect().bulkGuard` 反射全删;`measureWriteScale` 量纲函数保留(delegateNudge 欠委派检测依赖 + 公共导出)。**迁移**:`approval.tools` 手工圈选高危工具
+- **`preferences`(跨会话用户偏好记忆)**:中间件 + `preferenceStore.ts` 整文件 + 公共 API 三件(`getPreferences`/`removePreference`/`clearPreferences`)+ DebugDrawer 偏好小节 + 7 i18n 键全删。**迁移**:自行存储偏好经 `systemPrompt`/`augmentSystem` 注入;存量 indexedDB 数据可用 DevTools 清 `v:1::pref-store::*` 键
+- **`skillHostScript`(skill 宿主脚本执行)**:`hostScript.ts` + `runHostScript` 导出 + `exec.context:'host'` 分支全删;**`SkillExecSpec.context` 收窄为 `'sandbox'`,残值 `'host'` 落 sandbox 执行 = 宿主全权降级沙箱(语义反转)**。**迁移**:需宿主全权逻辑用 `defineSkill` 的 `tools` 工厂在集成方侧编排
+- **`tracing`(结构化追踪 TraceSpan)**:`traceMetrics.ts` + createAgent 全部 span 埋点 + `inspect().trace` + `onEvent('trace')` + DebugDrawer Trace 段 + `getTraceMetrics` 导出全删。**迁移**:`debugLogs`(扁平日志含 usage/durationMs)+ `exportDiagnostics` 已覆盖运行态观察;maliang 审计脚本数据源已改 debugLogs
+- **deprecation warn 机制整体删除**(`DEPRECATED_CAPABILITIES` 导出撤除 —— 名单已随四能力清空);capabilities 注册表 21→18 开关(opt-in 8→5);四键残键装配不 throw 不 warn(e2e 负向断言锁定)
+
+### Fixed(flow-robustness Phase 2:P1 崩溃/行为偏差六项)
+
+- **deepClone 环防御(可诊断)**:环数据深拷贝原抛 `Converting circular structure to JSON` 零路径线索(写路径第一条语句即抛,功能瘫痪无从排查);现失败时单发探测环路径,抛「数据存在循环引用($.a.b…)」带路径可诊断错误;同引用多分支(合法 DAG,JSON 语义允许)带回溯探测不误伤
+- **checkpoint save 克隆兜底**:环 bind(reactive Proxy → structuredClone 抛 → JSON 兜底遇环再抛)原样上抛会 reject beforeModel 钩子 = 整个 invoke 炸;现失败跳过本轮快照 + warn(返回 -1 哨兵;快照是回滚保障非主路径);纯对象环 structuredClone 原生支持,不触发本兜底
+- **tool_call id 兜底回写 AIMessage**:provider 不回 tool_call id 时,原实现只回填 ToolMessage(tool_call_id=兜底 id)→ 同 invoke 下轮请求带「无 id 的 tool_call + 有 id 的 ToolMessage」→ 协议 400(4xx 不重试,单轮 fatal);现兜底 id 同步写回 `message.tool_calls`(照 DSML 解析路径同款,e2e 断言下轮请求 id↔tool_call_id 配对)
+- **transitional 门禁句尾问号豁免**(与 completion/zero_tool 口径对齐):「我先给出两套方案…你选哪套?」是方案征询(等用户裁决),原命中过渡表态词回灌 ×2 与方案先行(RHC)冲突;句尾 `?/？` 豁免,非问句过渡表态照常回灌(豁免不扩大)
+- **send/batch 落盘错误源分流**:`await store.flush()` 失败原被误归因 LLM fatal → automation `AUTO_RECOVER_RETRY` 回退 checkpoint 重跑整轮烧 token / batch 任务误标失败;现 flush 独立 try(`PERSIST_FLUSH_FAILED` observable 留痕放行,落盘交 debounce/pagehide 兜底)
+- **send/batch 补 vfs protectedRefs 刷新**(原只在 stream 注册):跨轮 LRU 淘汰被消息引用的 large_results → `vfs_read` 404;现三入口一致(extractVfsRefs)
+
+### Added(flow-robustness Phase 1:P1 挂起兜底四项)
+
+- **approval/humanConfirm 无响应自动拒(中间件级,全路径统一)**:原 30s 只在 send/batch 事件级 approvalWatch 注入,headless `stream`(自建 UI 不处理 approval_request)与 `streaming:false` 裸 invoke 路径确认请求**无限挂**。现 approval/humanConfirm 中间件本体默认 30s,响应方接管机制 = `approval_request` 事件携带可选 **`hold()`** —— 内置 UI(useChat)收到即调、计时取消、无限等用户(交互路径零行为变化);无人调(headless 任意入口 / send/batch / streaming:false,approval_request 不外发故集成方无法应答)→ 30s 自动拒 + `APPROVAL_AUTO_REJECTED` observable(替换原 send/batch 专属 approvalWatch,全入口单一机制不再双发)。`approval.timeoutMs` 覆盖:正值生效;Infinity/负数 = 不超时(自建确认通道留口)
+- **子 agent 单次委派默认总时长 600s(10min)**:原 `subagent.timeoutMs` opt-in(单模型调用 600s 闸只兜单次调用,多轮工具循环理论最坏 ~70min 且主循环同轮 await)。现默认开、可覆盖、`0` = 关;超时 abort 子流 + recoverable 回灌(机制沿用 P1-17b);`inspect().subagent.timeoutMs` 反射实际生效值
+- **storage 挂起/异常面收口**:① `maybeEvict` 内部吞错留痕(原 evictTimer 的 `void` 与 flush 内 `await` 无 catch,扫描/淘汰失败 → unhandledRejection 污染 release/pagehide/visibilitychange 三处 fire-and-forget;现 degraded 事件留痕不静默);② `flush` 逐项 5s race(`storage.flushTimeoutMs` 可调)—— IDB 事务卡死(blocked/跨 tab 锁)不再拖死 send 收口,超时项留 pending 交后续 flush/pagehide 重试(identity 守卫防迟到落定误删接管新值);③ 初始化 `ready` 5s race —— IDB open 卡 blocked 不再拖死 mount,超时放行留痕(backend 预置内存,窗口内读写降级不炸;ready(false) 合法快速降级不算超时)
+- **会话切换入口收口**:ChatDialog「新建/打开会话」按钮路径 `void runSerial(switchSession)` 补 catch → `SESSION_SWITCH_FAILED` observable(原二次 load/createSession 拒绝变 unhandledRejection + UI 零反馈半切换态;API 侧 `sdk.switchSession` 仍正常 reject 由集成方处理);switchSession 二次快照载入失败降级空会话 + `SESSION_SNAPSHOT_LOAD_FAILED` 留痕(内存态已清后不再上抛半切换态)
+
+### Added(write-conflict-final-hash:C 形态并发写互锁)
+
+- **dataOps 闭包级并发写互锁**:装配条件 `maxParallelTools>1 && conflictWatchFields 武装` 相与 —— 修「同轮并发两写都在 `await handleConflict` 让出前取旧基线 → 双双过乐观锁 → 后写静默覆盖前写(零 VERSION_CONFLICT 回灌)」。async mutex(单锁 bind 域,主×子共享闭包;非 per-scope)串行化全部写工具 `[取 effHash → handleConflict → commit → setBaseline]` 段,覆盖 7 个 commit 位(write set/edit+patches/**del**/draft_commit/eval transform 三模式 —— eval 此前完全无乐观锁检查,属增量收益);effHash 在 acquire 之后取(N1「同 scope 连续写永不冲突」时序保持)
+- **ask 拆段 + 裁决恢复点校验**:冲突 ask 挂起先放锁再等人(挂起期间兄弟写照常落地刷基线,防饥饿);裁决恢复后单发校验(锚 = 裁决者所见 hash —— 对 effHash 校验会把每次 overwrite 裁决都打回,机制自我否决),ask 窗口又落地的新修改被拦(VERSION_CONFLICT 单发不二次挂起;`conflict_recheck` audit 留痕);overwrite 裁决吸收基线 + restore 裁决补基线刷新(顺手修:commit 失败/回退后不再连环误冲突);`sdk.updateResource` 公共 API 补基线刷新(与工具版 resource_update 对称)
+- **行为定案**:并行不相交双写零冲突双双落地(N1 语义保持);同路径双写的意图级陈旧(两写基于同一 stale read,双计数器各写 1 终值 1)接受并文档化 —— 互锁修的是锁机制层,与串行逐字节等价;串行模式(默认)与未武装并行直通 no-op 零行为变化;createAgent 泛化并发 warn 撤除(未武装精化提示移至 dataOps 装配期)
+
+### Added(flow-robustness Phase 0:P0×2 挂起缺口收口)
+
+- **per-tool 看门狗 `toolTimeoutMs`(默认 120s,0 关)**:集成方注入工具(`defineTool` / `actions` / skill 工具工厂 / rag retriever)永不 settle 时,超时放弃等待、recoverable 错误结果回灌 LLM 自纠 —— 修「坏工具拖死整轮」:runPool 永挂 → loading 永转、队列全堵、**stop 按钮无效**(abort 只在工具间隙检查,已启动工具不取消),子 agent 内同理向上毒化主循环。只对集成方注入工具生效(创建/装配期打 `__pgWatchdog` 标):内置工具/MCP(自有 60s callTimeoutMs)/子 agent 委派(`use_<id>`/`spawn_*`,真 LLM 单次委派 >120s 常态)/乐观锁冲突挂起(等人工裁决)是设计内等待,一律豁免;超时 ≠ abort(不杀流,observable `tool_timeout` 留痕)
+- **headless `send`/`batch` 冲突挂起可中断(P0#2)**:abort→按 keep_external 收口挂起冲突的联动原只在 `core.stream`(UI 路径);`send`(invoke)路径乐观锁冲突 ask 挂起 + signal abort 均不解 → **send 永不返回**(唯一出路 unmount/switchSession/resetSession)。现 send/batch 入口同款注册(abort 即保留外部修改、agent 值不落地、send 有界返回);`conflictManager.set` 另接受可选 `signal` race(已中止直接 keep_external;挂起中 abort 收口 + 清 pending,晚到用户裁决 no-op;按 id 比对防 ref 深代理恒等误判)
 
 ## [4.0.0] - 2026-08-25
 

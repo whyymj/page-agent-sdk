@@ -13,7 +13,84 @@
  * (initialPage 双臂试点标定前取保守初值 12;数据裁决只升不降)。debugLogs stage:'delegate_nudge' 留痕。
  */
 import type { Middleware, ToolCallContext, ToolExecResult } from './middleware'
-import { measureWriteScale } from './bulkGuard'
+import { getByPath } from '../tools/jsonUtils'
+
+/** 规模度量结果(原 bulk-change-guard 量纲;bulkGuard 已于 4.1.0 移除,本函数为 delegateNudge 依赖 + 公共导出保留) */
+export interface WriteScaleResult {
+  /** 触达的现有组件节点数(执行前 bind 实测;新增内容不计) */
+  count: number
+  /** 组件级路径首段去重(报告用) */
+  scopes: string[]
+  /** 写形态分类 */
+  kind: 'patches' | 'del' | 'subtree-set' | 'whole-set' | 'other'
+}
+
+/**
+ * 度量单次写调用触达的现有组件节点数(纯函数,可单测;原 bulk-change-guard 量纲,现为欠委派 nudge 复用):
+ * - write({patches[]}) / write({patch}):distinct 组件级路径首段(components.N → components.N;
+ *   同组件 8 条 patch = 1);后段路径截到「数组索引」层(组件粒度)
+ * - write({del:true, patch:{jsonPath}}):同口径
+ * - write({value})(整体 set,merge 语义触碰全部):现有组件节点总数(全量白名单模式按顶层声明数组计)
+ * 新增内容不计破坏面:路径在 bind 不存在(append 到数组/新键 set)→ 不计。
+ */
+export function measureWriteScale(args: unknown, getBind: () => unknown): WriteScaleResult {
+  const a = (args ?? {}) as Record<string, any>
+  const bind = getBind()
+  const seg = (p: string): string => {
+    // 组件级路径首段:到第二个数组索引或第一个字段(如 components.5.props.x → components.5;
+    // components.5 → components.5;title → title)。无索引的顶层 key 原样。
+    const parts = p.split('.')
+    const out: string[] = []
+    let idxSeen = 0
+    for (const s of parts) {
+      out.push(s)
+      if (/^\d+$/.test(s)) {
+        idxSeen++
+        if (idxSeen >= 1) break  // 首个数组索引即组件粒度边界(editor: components.N)
+      }
+    }
+    return out.join('.')
+  }
+  const paths: string[] = []
+  let kind: WriteScaleResult['kind'] = 'other'
+  if (a.dryRun === true) return { count: 0, scopes: [], kind: 'other' }  // 只读预检不度量
+  if (a.del === true) {
+    kind = 'del'
+    if (typeof a.patch?.jsonPath === 'string' && a.patch.jsonPath) paths.push(a.patch.jsonPath)
+  } else if (Array.isArray(a.patches)) {
+    kind = 'patches'
+    for (const p of a.patches) { if (p && typeof p.jsonPath === 'string' && p.jsonPath) paths.push(p.jsonPath) }
+  } else if (a.patch && typeof a.patch.jsonPath === 'string' && a.patch.jsonPath) {
+    kind = 'subtree-set'
+    paths.push(a.patch.jsonPath)
+  } else if (a.value !== undefined) {
+    // 整体 set(merge 语义触碰全部现有组件):按 bind 顶层组件数组实测计数
+    kind = 'whole-set'
+    if (bind && typeof bind === 'object') {
+      const scopeSet = new Set<string>()
+      let total = 0
+      for (const k of Object.keys(bind)) {
+        const v = (bind as Record<string, unknown>)[k]
+        if (Array.isArray(v) && v.length && v.every((x) => x && typeof x === 'object')) {
+          total += v.length
+          scopeSet.add(k)
+        }
+      }
+      return { count: total, scopes: [...scopeSet], kind }
+    }
+    return { count: 0, scopes: [], kind }
+  } else {
+    return { count: 0, scopes: [], kind }
+  }
+  // distinct 组件级首段 + 「现有」过滤(新增路径 bind 不存在 → 不计破坏面)
+  const scopeSet = new Set<string>()
+  for (const p of paths) {
+    const head = seg(p)
+    // head 在 bind 上可解析且非 undefined → 现有节点;undefined → 新增内容不计
+    if (getByPath(bind, head) !== undefined) scopeSet.add(head)
+  }
+  return { count: scopeSet.size, scopes: [...scopeSet], kind }
+}
 
 export interface DelegateNudgeOptions {
   /** 读取当前 bind(度量整体 set 触达与现有组件基数) */
