@@ -20,7 +20,8 @@ import { isAbort } from '../harness/retry'
 /**
  * 思考过程(reasoning)渲染尾部上限:超出则只保留最近 N 字(滑窗)。
  * 防 LLM 输出超长思考(实测 75000 字)时,每 delta 重渲染巨大字符串 → 主线程卡死页面无响应。
- * reasoning 仅用于 UI 展示(不回灌 LLM),截尾无副作用;子 agent 另记 subReasonTotal(总数计数照涨)。
+ * reasoning 仅用于 UI 展示(不回灌 LLM),截尾无副作用;主 agent 记 reasoningTotal / 子 agent记
+ * subReasonFull(完整串),总数计数照涨不随截尾冻结。
  */
 const REASON_TAIL_CAP = 4000
 
@@ -123,6 +124,7 @@ export function useChat(
         content: '',
         timestamp: Date.now(),
         reasoning: '',
+        reasoningTotal: 0,  // 思考总字数(不受渲染截尾影响,计数照涨;UI 计数用)
         steps: [] as ToolStep[],
       })
       // 轮次分隔:多轮工具循环中模型每轮的 text/reasoning 直接拼接会连成一段("我来查一下根据结果…"),
@@ -137,6 +139,8 @@ export function useChat(
               break
             case 'reasoning':
               if (pendingSep) { assistantMsg.reasoning += '\n'; pendingSep = false }
+              // 总量计数照涨(渲染截尾只影响展示文本,计数不该随之冻结 —— 主 agent 与子 agent subReasonFull 口径对齐)
+              assistantMsg.reasoningTotal += event.delta.length
               // 截尾上限:防超长思考卡死(reasoning 仅 UI 展示,不回灌 LLM)
               assistantMsg.reasoning = (assistantMsg.reasoning + event.delta).slice(-REASON_TAIL_CAP)
               break

@@ -58,6 +58,8 @@ async function copyReason() {
         {{ status === 'running' ? `${messages.thinkingCountPrefix}${charCountLabel}${messages.charCountSuffix}` : messages.reasoningTitle }}
       </span>
       <span v-if="truncated" class="sub-reason-trunc">{{ messages.truncatedNotePrefix }}{{ subReason.length }}{{ messages.truncatedNoteSuffix }}</span>
+      <!-- 展开/收起文字链右置(与主 agent 思考块口径一致:摘要行尾「展开」二字,非箭头暗示) -->
+      <span class="sub-reason-toggle">{{ open ? messages.collapse : messages.expand }}</span>
       <button type="button" class="sub-reason-copy" :class="{ copied }" :title="truncated ? messages.copyThinkingTruncTitle : messages.copyThinking" @click.stop.prevent="copyReason">{{ copied ? messages.copied : messages.copy }}</button>
     </summary>
     <div ref="bodyRef" class="sub-reason-body">{{ truncated ? '…(前面已截断)\n' : '' }}{{ subReason }}</div>
@@ -76,8 +78,10 @@ async function copyReason() {
 @keyframes cs-think-pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
 .sub-reason-body { padding: 4px 10px 6px; border-top: 1px solid var(--cs-sub-border); font-size: 10px; line-height: 1.5; color: var(--cs-sub-text); white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow-y: auto; user-select: text; -webkit-user-select: text; }
 .sub-reason-trunc { margin-left: 4px; font-size: 9px; font-weight: 400; opacity: 0.7; }
-/* 复制按钮(右对齐;@click.stop 不触 summary 折叠) */
-.sub-reason-copy { margin-left: auto; border: none; background: rgba(108, 92, 231, 0.14); color: var(--cs-sub-text); border-radius: 4px; padding: 1px 7px; font-size: 10px; cursor: pointer; line-height: 1.5; transition: background 0.15s; }
+/* 展开/收起文字链(右缘推开,与主思考块 reasoning-toggle 同位;色变量同源) */
+.sub-reason-toggle { margin-left: auto; font-size: 10px; color: var(--cs-reason-toggle); }
+/* 复制按钮(跟在展开链后;@click.stop 不触 summary 折叠) */
+.sub-reason-copy { border: none; background: rgba(108, 92, 231, 0.14); color: var(--cs-sub-text); border-radius: 4px; padding: 1px 7px; font-size: 10px; cursor: pointer; line-height: 1.5; transition: background 0.15s; }
 .sub-reason-copy:hover { background: rgba(108, 92, 231, 0.26); }
 .sub-reason-copy.copied { background: rgba(16, 185, 129, 0.2); color: var(--cs-ok); }
 /* 状态色块(本组件内 status-dot) */

@@ -613,6 +613,39 @@ test.describe('complex-demo: 组件操作(调换顺序 / 改层级 / 聚焦纯�
     }
   })
 
+  test('思考计数:主 agent 超长思考计数用总量不随截尾冻结(修前恒 4k)', async ({ page }) => {
+    // 4600 字思考(> REASON_TAIL_CAP 4000):渲染文本尾部滑窗截到 4000,计数应显示总量 4.6k
+    const longReasoning = '深度思考.'.repeat(920) // 5 字 × 920 = 4600
+    await mockLlm(page, [
+      { reasoning: longReasoning, tool_calls: [{ name: 'read', arguments: { jsonPath: 'title' } }] },
+      { text: '看完标题了' },
+    ])
+    await fillInput(page, '读下标题')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    // 修前:countLabel 用截尾后 text.length(恒 4000 → '4k');修后用 reasoningTotal 总量 → '4.6k'
+    await expect(page.locator('.reasoning-count').first(), '计数显示总量 4.6k 而非截尾冻结的 4k').toHaveText(/4\.6k 字/)
+  })
+
+  test('子 agent 思考块:摘要行尾「展开」文字链,点击后变「收起」', async ({ page }) => {
+    await page.evaluate(() => {
+      window.page.components.push({ type: 'custom', name: 'beer', code: '<section class="beer"><h1>old</h1></section>', __pgId: 'c_tgl_beer' })
+    })
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'use_html', arguments: { task: '把 beer 标题改成「干杯青岛」', components: ['beer'] } }] },
+      { reasoning: '思考 beer 组件:改标题文字,保持结构与样式不变', tool_calls: [{ name: 'vfs_write', arguments: { path: 'html/c_tgl_beer.html', content: '<section class="beer"><h1>干杯青岛</h1></section>' } }] },
+      { text: 'beer 已改' },
+      { text: '完成' },
+    ])
+    await fillInput(page, '把 beer 标题改了')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    // 摘要行尾展开文字链(与主思考块口径一致;修前只有 ▸ 箭头无文字)
+    await expect(page.locator('.step-sub-reason .sub-reason-toggle'), '子思考摘要行尾有「展开」文字链').toHaveText('展开')
+    await page.locator('.step-sub-reason .sub-reason-head').click()
+    await expect(page.locator('.step-sub-reason .sub-reason-toggle'), '展开后文字链变「收起」').toHaveText('收起')
+  })
+
   test('组件锁互斥:同轮双 use_html 同组件 → 第二个 COMPONENT_BUSY,下轮重委派成功', async ({ page }) => {
     await page.evaluate(() => {
       window.page.components.push({ type: 'custom', name: 'beer', code: '<section class="beer"><h1>old</h1></section>', __pgId: 'c_busy_beer' })

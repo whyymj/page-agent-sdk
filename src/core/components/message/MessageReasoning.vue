@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-const props = withDefaults(defineProps<{ text: string; expanded: boolean; running?: boolean }>(), { running: false })
+const props = withDefaults(defineProps<{ text: string; expanded: boolean; running?: boolean; total?: number }>(), { running: false, total: undefined })
 defineEmits<{ (e: 'toggle'): void }>()
 
-// 字数展示:≥1000 自动换 k 单位(4200→4.2k、1000→1k、≥10万取整 123k),折叠态也有量级感
+// 字数展示:优先总量 total(渲染文本被尾部滑窗截断,长度恒 ≤ cap 会冻结计数;总量随流照涨);
+// 旧消息无 total → 回退文本长度。≥1000 自动换 k 单位(4200→4.2k、1000→1k、≥10万取整 123k)
 const countLabel = computed(() => {
-  const n = props.text.length
+  const n = props.total ?? props.text.length
   if (n < 1000) return String(n)
   const v = n / 1000
   return `${v >= 100 ? Math.round(v) : +v.toFixed(1)}k`

@@ -37,6 +37,10 @@ const isAssistant = computed(() => props.message.role === 'assistant')
 const reasoning = computed<string>(() =>
   isAssistant.value && 'reasoning' in props.message ? (props.message as { reasoning?: string }).reasoning ?? '' : '',
 )
+// 思考总字数(渲染文本尾部滑窗截断,计数用总量不冻结;旧消息无该字段 → 回退文本长度)
+const reasoningTotal = computed<number | undefined>(() =>
+  isAssistant.value && 'reasoningTotal' in props.message ? (props.message as { reasoningTotal?: number }).reasoningTotal : undefined,
+)
 const steps = computed<ToolStep[]>(() =>
   isAssistant.value && 'steps' in props.message ? ((props.message as { steps?: ToolStep[] }).steps ?? []) : [],
 )
@@ -50,7 +54,7 @@ const showCursor = computed(() => isAssistant.value && props.loading && props.is
   <div class="message-row" :class="message.role" :data-msg-idx="index">
     <div v-if="showAvatar" class="message-avatar"><AvatarIcon :role="message.role" :glyph="message.role === 'user' ? ctx.icons.userAvatar : ctx.icons.assistantAvatar" /></div>
     <div class="message-content">
-      <MessageReasoning v-if="isAssistant" :text="reasoning" :expanded="reasoningExpanded" :running="loading && isLast" @toggle="$emit('toggle-reasoning')" />
+      <MessageReasoning v-if="isAssistant" :text="reasoning" :total="reasoningTotal" :expanded="reasoningExpanded" :running="loading && isLast" @toggle="$emit('toggle-reasoning')" />
       <MessageSteps v-if="isAssistant" :steps="steps" :icons="ctx.icons" :messages="ctx.messages" />
       <!-- user 消息发送时的焦点快照:历史记录只读(本体点击回看滚动);不带 ✕ —— 删历史 chip 改不了已发消息的上下文,还会误删当前焦点 -->
       <div v-if="message.role === 'user' && message.focuses?.length" class="msg-focuses">
