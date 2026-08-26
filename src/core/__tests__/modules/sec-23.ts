@@ -75,13 +75,13 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(finalA.startsWith('最终综合回答'), '收口综合:工具轮耗尽后强制再跑一轮综合,返回最终回答(非"请简化问题")')
     assert(finalA.includes('工具调用次数已达上限') && finalA.includes('继续'), '收口综合附超调用次数可见提示(达上限/可回复继续),不「莫名停了」')
 
-    // ② 日志模型名真值:llm_request/context 记 llm 实例的 .model(编辑器诊断曾两度误记 gpt-3.5-turbo 兜底串误导排障)
+    // ② 日志模型名真值:llm_request/context 记 llm 实例的 .model(编辑器诊断曾两度误记 deepseek-v4-flash 兜底串误导排障)
     const mockM = new MockLLM([{ content: '好' }])
     ;(mockM as any).model = 'stub-live-model'
     const agentM = createAgent({ llm: mockM as any, maxToolRounds: 1, maxRetries: 0 })
     await agentM.stream([{ role: 'user', content: 'hi', timestamp: Date.now() }], () => {}, undefined)
     const reqM = (agentM.debugLogs.value as any[]).filter((l) => l.type === 'llm_request').map((l) => l.data.model)
-    assert(reqM.length > 0 && reqM.every((m: string) => m === 'stub-live-model'), 'llm_request 日志记 llm 实例真实模型名(非选项兜底 gpt-3.5-turbo)')
+    assert(reqM.length > 0 && reqM.every((m: string) => m === 'stub-live-model'), 'llm_request 日志记 llm 实例真实模型名(非选项兜底 deepseek-v4-flash)')
     const ctxM = (agentM.debugLogs.value as any[]).find((l) => l.type === 'context') as any
     assert(ctxM?.data?.model === 'stub-live-model', 'context 日志同口径记实例模型名')
     // 兜底链:实例不带模型名(如测试 stub/自定义 BaseChatModel)→ 回退 model 选项值,向后兼容

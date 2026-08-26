@@ -158,6 +158,9 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
         '## 当前精修目标',
         focuses.map((f) => `· ${f.path}${f.label ? `(${f.label})` : ''}`).join('\n'),
         `仅操作上述 ${focuses.length} 个聚焦子树${focuses.length > 1 ? '之一' : ''},${defaultTarget}不要改动其他组件;${unfocusHint}`,
+        // 指代锚定(2026-08-26 实测事故:用户点选深层组件后问「这是啥」,flash 答了整页概况 —— 旧段
+        // 全是写向话术,指代类问句零引导)。问答与操作同权重:指示代词默认指聚焦目标
+        '用户用指示代词提问(「这是啥/这个/它是干什么的」等)时,所指默认是聚焦目标 —— 先 read 聚焦子树,再围绕聚焦组件回答,勿泛答整页',
         'read 不带路径时默认只返回聚焦子树;需要全量主数据时显式列顶层键(read({jsonPaths:[...]}) )',
       ]
       // 视野收敛:注入每个焦点子树 schema 描述(LLM 每轮看到所有焦点组件结构)

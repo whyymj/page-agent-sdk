@@ -30,6 +30,8 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(prompt.includes('焦点子树结构'), 'focus 聚焦 → augmentPrompt 含子树 schema 段(视野收敛)')
     // focus-intent-steering(2026-08-25 实测事故:「增加tab」被误解为新建组件,用户意图=聚焦 tabs 加页签)
     assert(prompt.includes('优先理解为对聚焦组件本身的改动'), 'focus 聚焦 → 目标提示含创建类指令归属引导(增加/修改 X 默认改聚焦组件本身)')
+    // 指代锚定(2026-08-26 实测事故:点选深层组件后问「这是啥」→ 答了整页概况,旧段全是写向话术)
+    assert(prompt.includes('所指默认是聚焦目标'), 'focus 聚焦 → 目标提示含指示代词问句锚定(「这是啥/这个」默认指聚焦组件,先 read 再答勿泛答整页)')
 
     // clearFocus → 不再注入
     mw.clearFocus()

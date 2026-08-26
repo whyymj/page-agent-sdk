@@ -37,7 +37,7 @@ export function useAgentConfig(): DemoAgentConfig {
   return {
     apiKey: import.meta.env.VITE_AI_API_KEY || '',
     baseUrl: absolutize(import.meta.env.VITE_AI_BASE_URL || ''),
-    model: import.meta.env.VITE_AI_MODEL || 'gpt-3.5-turbo',
+    model: import.meta.env.VITE_AI_MODEL || 'deepseek-v4-flash',
     temperature: Number(import.meta.env.VITE_AI_TEMPERATURE) || 0.3,
     maxTokens: import.meta.env.VITE_AI_MAX_TOKENS ? Number(import.meta.env.VITE_AI_MAX_TOKENS) : undefined,
     systemPrompt: import.meta.env.VITE_AI_SYSTEM_PROMPT || undefined,

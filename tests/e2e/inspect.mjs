@@ -419,9 +419,9 @@ export async function run() {
 
   console.log('[e2e:inspect] setLlm → inspect().model 反映新模型')
   {
-    const sdk = createChatSdk({ ui: false, id: 'e2e-setllm', storage: 'memory', llm: { apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'gpt-3.5-turbo', contextWindow: 200000 }, capabilities: MIN_CAPS })
+    const sdk = createChatSdk({ ui: false, id: 'e2e-setllm', storage: 'memory', llm: { apiKey: 'sk-fake', baseUrl: 'http://fake', model: 'deepseek-v4-flash', contextWindow: 200000 }, capabilities: MIN_CAPS })
     await sdk.mount()
-    assert(sdk.inspect().model === 'gpt-3.5-turbo', '初始 inspect().model === gpt-3.5-turbo')
+    assert(sdk.inspect().model === 'deepseek-v4-flash', '初始 inspect().model === deepseek-v4-flash')
     sdk.setLlm({ apiKey: 'sk-fake2', baseUrl: 'http://fake2', model: 'gpt-4o', contextWindow: 200000 })
     assert(sdk.inspect().model === 'gpt-4o', 'setLlm 后 inspect().model === gpt-4o')
     sdk.unmount()

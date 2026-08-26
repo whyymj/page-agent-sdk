@@ -7,7 +7,7 @@
  * Agent 经 write 改 page.title / page.components(增删改组件 / 调 props / 调 style)→ 左侧 PageRenderer 响应式更新(本 demo 保留 reactive 展示 Vue 响应式模式)。
  */
 import { reactive, onMounted, onUnmounted, ref } from 'vue'
-import { createChatSdk, createHtmlSubagent, defineSkill, defineTool, htmlFragmentSkill, type ChatSdk } from '../../src/core'
+import { createChatSdk, createHtmlSubagent, defineSkill, defineTool, htmlFragmentSkill, type ChatSdk, type Middleware } from '../../src/core'
 import { z } from 'zod'
 import { useAgentConfig } from './useAgentConfig'
 import PageRenderer from './PageRenderer.vue'
@@ -222,27 +222,27 @@ function detectMode(text: string): string | undefined {
 // 提示词门禁(PROPOSE_GATE 段)对弱指令模型不构成约束 → 机制化:闸门关闭期间拦 use_html 委派与 components 写入,
 // 回灌引导先 request_human_confirmation;确认与 user 消息按「human 消息序号」对齐(确认发生在第 k 条 human 后 →
 // 该消息周期内放行;下一条 user 消息自动重新武装)。快速档零拦截(现状零变化)。
-function createProposeGateMiddleware() {
+function createProposeGateMiddleware(): Middleware {
   let confirmedAtHuman = -1
   return {
     name: 'propose-gate',
     // 确认信号从模型响应观察:request_human_confirmation 被批准中间件在外层短路,内层 wrapToolCall 看不到
     // 该调用(实测);wrapModelCall 是全路径覆盖点 —— 模型发起征询即记「本轮 human 序号已确认」
-    wrapModelCall: async (ctx: any, next: () => Promise<any>) => {
-      const res = await next(ctx)
+    // (类型经返回值 Middleware 上下文推断:wrapModelCall 的 next 吃 ModelRequest、wrapToolCall 的 next 吃 ToolCallContext,必须转发)
+    wrapModelCall: async (req, next) => {
+      const res = await next(req)
       try {
-        const calls = res?.toolCalls ?? []
-        if (calls.some((c: any) => c.name === 'request_human_confirmation')) {
-          const humans = (ctx?.state?.messages ?? []).filter((m: any) => m.role === 'user' || m.getType?.() === 'human')
+        if (res.toolCalls.some((c) => c.name === 'request_human_confirmation')) {
+          const humans = (req.state.messages as unknown as Array<{ role?: string; getType?: () => string }>).filter((m) => m.role === 'user' || m.getType?.() === 'human')
           confirmedAtHuman = humans.length
         }
       } catch { /* 观察层不崩 */ }
       return res
     },
-    wrapToolCall: async (ctx: any, next: () => Promise<any>) => {
-      const args = ctx?.args ?? {}
+    wrapToolCall: async (ctx, next) => {
+      const args = ctx.args ?? {}
       if (args.dryRun === true) return next(ctx)
-      const msgs: any[] = ctx?.state?.messages ?? []
+      const msgs = ctx.state.messages as unknown as Array<{ role?: string; content?: unknown; getType?: () => string }>
       // state.messages 是 SDK 层 AgentMessage[](role 字段),非 langchain 消息(getType)—— 用 role 判
       const humans = msgs.filter((m: any) => m.role === 'user' || m.getType?.() === 'human')
       const humanIdx = humans.length

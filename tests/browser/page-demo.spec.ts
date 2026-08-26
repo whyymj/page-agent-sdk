@@ -124,7 +124,7 @@ test.describe('page-demo: read → write → read', () => {
       ((body?.messages || []).filter((m: any) => m.role === 'tool').map((m: any) => m.content).join('\n'))
 
     // 断言:轮2/轮3 含 read 分页的 offset 标记(翻页机制工作)。
-    // 注:mock 用小 contextWindow model(gpt-3.5-turbo),read 大 result(60 button ~2.7K 字符)会 offload vfs
+    // 注:mock 用小 contextWindow model(deepseek-v4-flash),read 大 result(60 button ~2.7K 字符)会 offload vfs
     //   (round 含「已转存 vfs」而非 total/hasMore 文本);真实大 contextWindow model 不 offload,total/hasMore 直出。
     //   故此处验证 offset 分页标记 + 翻页只读;total/hasMore 文本断言留给真实 model 场景。
     const round2 = toolContents(requestBodies[1])

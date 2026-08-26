@@ -76,7 +76,7 @@ function isRetryableBody(body: unknown): boolean {
  * direct 模式直接构造 ChatOpenAI(与 LLMConfig 等价),并在非开发环境 warn 提醒 key 泄露风险。
  */
 export function createProxyLlm(opts: ProxyLlmOptions): BaseChatModel {
-  const model = opts.model || 'gpt-3.5-turbo'
+  const model = opts.model || 'deepseek-v4-flash'
   const temperature = opts.temperature
   const maxTokens = opts.maxTokens
   const baseURL = opts.baseUrl

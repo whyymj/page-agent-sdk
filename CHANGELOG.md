@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+## [4.2.1] - 2026-08-26
+
+### Changed
+
+- 默认模型兜底串 `gpt-3.5-turbo` → `deepseek-v4-flash`(createAgent 选项缺省 / proxyLlm / 各 demo useAgentConfig;仅未显式配 model 时的缺省值,显式配置零影响)
+
+### Fixed(focus-reference-anchoring:指代问句锚定聚焦目标,实测「这是啥」答整页事故驱动)
+
+- **事故形态**:用户点选深层嵌套组件(`components.18.props.children.0.props.children.2`)后问「这是啥」—— 意图明显是问焦点组件是什么,但 focus 注入段全是写向话术(仅操作/写子路径/解焦),指代类问句零引导 → flash 答了整页概况(reasoning 全程未提焦点,先 `refresh_preview` 再泛答)
+- **修**:focus 段补一行指代锚定 —— 「用户用指示代词提问(这是啥/这个/它)时,所指默认是聚焦目标 —— 先 read 聚焦子树,再围绕聚焦组件回答,勿泛答整页」;与 4.1 的写向意图归属引导(「增加 X」默认改聚焦组件)对称,问答与操作同权重
+- selftest +1(sec-54 指代锚定文案断言)
+
 ## [4.2.0] - 2026-08-26
 
 ### Added(chunked-code-write:append 字符串拼接,大 code 分块写入)
@@ -261,7 +273,7 @@
 
 ### Fixed(诊断日志误导)
 
-- **`llm_request`/`context` 日志的 `model` 字段记实际模型名**:`createChatSdk` 装配路径只传 llm 实例不传 `model` 选项,旧逻辑直接用选项值 → 恒落 `'gpt-3.5-turbo'` 兜底串,editor 诊断(2026-08-22 diagnostics)里实际模型 deepseek-v4-flash 被记成 gpt-3.5-turbo,两度误导排障。修正:优先读当前 llm 实例的 `.model`/`.modelName`(与 `resolveModelCaps` 同口径,`setLlm` 切换后仍真值),实例不带模型名时回退 `model` 选项(兼容旧配置路径)。`startSpan` 的 model span 名与 wrap-up 日志同口径
+- **`llm_request`/`context` 日志的 `model` 字段记实际模型名**:`createChatSdk` 装配路径只传 llm 实例不传 `model` 选项,旧逻辑直接用选项值 → 恒落 `'deepseek-v4-flash'` 兜底串,editor 诊断(2026-08-22 diagnostics)里实际模型 deepseek-v4-flash 被记成 deepseek-v4-flash,两度误导排障。修正:优先读当前 llm 实例的 `.model`/`.modelName`(与 `resolveModelCaps` 同口径,`setLlm` 切换后仍真值),实例不带模型名时回退 `model` 选项(兼容旧配置路径)。`startSpan` 的 model span 名与 wrap-up 日志同口径
 
 ## [3.43.1] - 2026-08-22
 
@@ -1116,7 +1128,7 @@
 - **9 具名 slot**(scoped `{ chat }`):替换内置原子为自定义实现(slot vnode 在 provider 子树自动 inject 同一 ctx)。
 - **默认路径行为零变化**(全开 + 无 slot = 拆分前行为);scoped CSS 类名归属=DOM 归属,跨边界 `:deep()`(如 `.message-row.assistant:hover :deep(.msg-actions)`)。
 - 新增导出 8 原子组件 + chatContext 三件套 + `ChatDialogSections` 类型;`ChatDialogProps` 补全(6→34 字段);browser e2e 33→36(新增 `custom-dialog-demo.spec.ts`:sections 关 footer/queued 验证)。
-- **修复 pre-existing**:`playwright.config` 的 `gpt-3.5-turbo`(16K 上下文) 与 `MIN_CONTEXT_WINDOW`(200K,2.30.0 引入)冲突致 `createChatSdk` 启动 throw → `glm-5.2`(1M,mock 拦截不连真 LLM,model 名仅用于 modelCaps 解析)。
+- **修复 pre-existing**:`playwright.config` 的 `deepseek-v4-flash`(16K 上下文) 与 `MIN_CONTEXT_WINDOW`(200K,2.30.0 引入)冲突致 `createChatSdk` 启动 throw → `glm-5.2`(1M,mock 拦截不连真 LLM,model 名仅用于 modelCaps 解析)。
 
 ## [2.33.0] - 2026-08-09
 

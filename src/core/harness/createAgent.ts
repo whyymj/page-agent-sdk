@@ -325,7 +325,7 @@ export function createAgent(options: CreateAgentOptions) {
   const {
     apiKey,
     baseUrl,
-    model = 'gpt-3.5-turbo',
+    model = 'deepseek-v4-flash',
     temperature = 0.7,
     maxTokens, // 不设默认:缺省由模型能力(maxOutputTokens)推导,避免设错被截断
     extraBody,
@@ -429,7 +429,7 @@ export function createAgent(options: CreateAgentOptions) {
 
   /**
    * 日志用的实际模型名:优先取当前 llm 实例的 .model/.modelName(setLlm 切换后仍是真值)。
-   * createChatSdk 路径只传 llm 实例不传 model 选项,旧逻辑直接用选项值 → 恒落 'gpt-3.5-turbo'
+   * createChatSdk 路径只传 llm 实例不传 model 选项,旧逻辑直接用选项值 → 恒落 'deepseek-v4-flash'
    * 兜底串,diagnostics 的 llm_request/context 日志两度误导排障(实际线上模型是 deepseek-v4-flash)。
    * 取值口径与 llmResolver.resolveModelCaps 同源(llm?.model ?? llm?.modelName)。
    */
