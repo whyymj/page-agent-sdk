@@ -56,6 +56,21 @@ export interface ToolStep {
   subReasonFull?: string;
 }
 
+/** 工具步骤展示映射(dialog.toolStepView 返回值);详见主包 types/index.d.ts ToolStepView */
+export interface ToolStepView {
+  title?: string;
+  detail?: string;
+}
+
+/** 工具步骤展示映射函数(dialog.toolStepView);详见主包 types/index.d.ts ToolStepViewFn */
+export type ToolStepViewFn = (step: {
+  name: string;
+  args?: unknown;
+  status: 'running' | 'done' | 'error';
+  result?: string;
+  durationMs?: number;
+}) => ToolStepView | undefined | null;
+
 export interface AgentMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;

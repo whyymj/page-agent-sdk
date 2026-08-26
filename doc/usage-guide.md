@@ -1977,6 +1977,10 @@ createChatSdk({
     headerLabels: true,                   // ⑤ 顶部按钮自适应文字标签(默认 true):宽度足够(头部内容区
                                           //    ≥440px,≈对话框 ≥472px)展示「文字+图标」,更窄回退纯图标;
                                           //    false 恒纯图标。文字走 i18n newSession/history/more 键
+    toolStepView: (s) =>                  // ⑥ 工具步骤展示映射(纯展示层拦截器):原始工具名 → 业务文案
+      s.name === 'write'                  //    入参含 name/args/status/result,可按 args 动态生成;
+        ? { title: '修改页面', detail: (s.args as any)?.jsonPath ?? (s.args as any)?.patch?.jsonPath }
+        : s.name === 'read' ? { title: '读取页面数据' } : undefined,  // undefined = 回退原始工具名
   },
   i18n: {                                 // ③④ 国际化配置组(顶层,3.22+;原 dialog.locale/messages 合并至此)
     locale: 'en-US',                      // ③ 整语言切换('zh-CN' 缺省):聊天面 + Debug 抽屉 + Skill 面板 +
@@ -1998,6 +2002,7 @@ createChatSdk({
 - **自建 UI 复用**(headless):`MESSAGES_ZH_CN` / `MESSAGES_EN_US` / `resolveDialogMessages(locale, partial)` 均从入口导出,同一套词条驱动你自己的 UI
 - **顶部按钮自适应文字标签**(⑤):纯 CSS 容器查询实现 —— 头部内容区 ≥440px 时「新建会话/历史记录/更多」展示文字+图标(关闭钮恒纯图标),更窄自动回退纯图标;不支持 `@container` 的旧浏览器恒纯图标(= 旧行为优雅降级)。文字即 i18n 键(`newSession`/`history`/`more`,`messages` 键级覆盖同机制生效);图标即 `dialog.icons` 同名四键
 - **滚动条统一替换**(3.27):主滚动面(消息区 + DebugDrawer 日志区)经 [OverlayScrollbars v2](https://github.com/KingSora/OverlayScrollbars) 接管 —— 隐藏原生滚动条换 overlay 细滚动条(保留原生滚动/键盘/触摸,内容增高自动跟随);对话框级横向不滚(长代码行收敛在代码块内部);其余小滚动区原生细条兜底。手柄颜色经 `--cs-scrollbar-thumb(-hover)` 覆盖(dark 主题已内置适配)
+- **工具步骤展示映射**(⑥,`dialog.toolStepView`):工具调用步骤行的原始工具名(read/write/use_html …)对终端用户往往不友好 → 映射为业务名称/内容。**纯展示层** —— 不影响发给 LLM 的工具名/协议/校验,只改 MessageSteps 步骤行渲染;子 agent 步骤(子进度行)同样应用;展开细节面板的入参/返回值**仍为原始数据**(排查通道不受影响)。规则:返回 `undefined`/漏配回退原始工具名;`detail` 仅单次调用展示(合并组 ×N 各次 args 可能不同,不展示单一 detail 防误导);合并键 = 映射后标题(同名工具映射出不同标题 → 分行显示);status running→done 翻转/args 补齐时以新入参重调(动态 detail 跟随更新);映射函数抛错安全(捕获后回退原始名,不炸渲染)。**`detail` 拿到的是原始 args**,可自行翻译成业务标签 —— 如 `components.5.children.1` 在闭包里查宿主数据解析成「轮播(轮播图)」(`examples/page-demo` 的 `compLabel` 示范),终端用户无须理解 jsonPath
 - **历史记录「删除会话」按钮图标**:`dialog.icons.sessionDelete`(缺省 ✕ 文本;传 `<img src="…" width="12" height="12">` 换自定义图)
 - **默认 systemPrompt 英文版**单独导出:`DEFAULT_SYSTEM_PROMPT_EN` + `systemPromptHelpers.reliableWriteRulesEn`(英文场景想自定义 prompt 时可拼用)
 - 完整示例:`examples/i18n-demo`(en locale + statusDone/emptyGreeting HTML 覆盖)

@@ -2,7 +2,20 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
-## [Unreleased]
+## [4.3.0] - 2026-08-26
+
+### Added(tool-step-view:工具步骤展示映射/拦截器)
+
+- **`dialog.toolStepView`**(纯展示层拦截器):工具调用步骤行的原始工具名(read/write/use_html …)可映射为业务友好名称/内容 —— `createChatSdk({ dialog: { toolStepView: (s) => s.name === 'write' ? { title: '修改页面', detail: s.args?.jsonPath } : undefined } })`
+- 入参为步骤只读投影(name/args/status/result/durationMs),可按 args 动态映射(如 write 的 jsonPath →「修改第 N 个组件」);返回 `{ title?, detail? }` 或 undefined(回退原始工具名);status running→done 翻转/args 补齐时以新入参重调;**映射抛错安全**(捕获后回退原名,不炸渲染)
+- `detail` 仅单次调用展示(合并组 ×N 各次 args 可能不同,展示单一 detail 会误导);合并键 = 映射后标题(同名调用映射出不同标题 → 分行显示);子 agent 步骤(children)同样应用;**不影响发给 LLM 的工具名/协议/校验**;展开细节面板的 args/result 仍为原始数据(排查通道不受影响)
+- 新导出类型 `ToolStepView` / `ToolStepViewFn`(主包 + headless);映射核心拆纯函数 `applyStepView`(src/core/components/stepView.ts)
+- selftest +11(sec-113:命中/未命中/抛错兜底/非对象返回/空串视为未提供/入参投影 + createChatContext 透传);browser +2(page-demo:映射命中自定义标题+动态 detail+展开细节原始数据 / 未映射工具回退原始名)
+
+### Changed(拖拽上传特效 + 路径友好展示示范)
+
+- **拖拽图片入输入框的视觉反馈重做**:去外扩 2px 虚线框 → 容器主色描边 + 柔和内衬高亮(::after 浮层),提示文案收敛为**中心药丸**(🖼️ 图标 + 「松开添加图片」,白字主色底 + 缩放淡入动画);双主题适配(light 深绿 / dark 紫)
+- page-demo `toolStepView` 示范升级:`components.5.children.1` 类原始 jsonPath 经闭包内 `compLabel` 解析成组件类型标签(`button(components.1)` 形态),根字段(title/theme)保留原样 —— 演示「args 原始数据 → 业务标签」翻译手法
 
 ## [4.2.3] - 2026-08-26
 

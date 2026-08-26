@@ -56,7 +56,7 @@ const showCursor = computed(() => isAssistant.value && props.loading && props.is
     <div v-if="showAvatar" class="message-avatar"><AvatarIcon :role="message.role" :glyph="message.role === 'user' ? ctx.icons.userAvatar : ctx.icons.assistantAvatar" /></div>
     <div class="message-content">
       <MessageReasoning v-if="isAssistant" :text="reasoning" :total="reasoningTotal" :expanded="reasoningExpanded" :running="loading && isLast" @toggle="$emit('toggle-reasoning')" />
-      <MessageSteps v-if="isAssistant" :steps="steps" :icons="ctx.icons" :messages="ctx.messages" />
+      <MessageSteps v-if="isAssistant" :steps="steps" :icons="ctx.icons" :messages="ctx.messages" :step-view="ctx.toolStepView" />
       <!-- user 消息执行时刻的焦点快照:纯展示(路径可能已变,不给点击效果);不带 ✕ —— 删历史 chip 改不了已发消息的上下文,还会误删当前焦点 -->
       <div v-if="message.role === 'user' && message.focuses?.length" class="msg-focuses">
         <span

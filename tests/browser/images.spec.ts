@@ -41,6 +41,30 @@ test.describe('图片输入(image-input-vision)', () => {
     await expect(page.locator('[data-test="img-chips"] .img-chip')).toHaveCount(1)
   })
 
+  test('拖拽图片到输入框 → 拖拽提示浮层 + chip 渲染(dragover/drop 通道)', async ({ page }) => {
+    await page.goto('/examples/minimal-demo/')
+    await page.waitForSelector('.chat-dialog')
+    // dragover 先行 → 提示浮层出现(「松开添加图片」)
+    await page.locator('.chat-input-wrap').dispatchEvent('dragover', {
+      bubbles: true, cancelable: true,
+    })
+    await expect(page.locator('.drop-hint')).toBeVisible()
+    await page.evaluate(async () => {
+      // 画布产真实 PNG → DataTransfer → 派发 drop 到输入容器(模拟拖图入框)
+      const c = document.createElement('canvas')
+      c.width = 40
+      c.height = 30
+      c.getContext('2d')!.fillRect(0, 0, 40, 30)
+      const blob = await new Promise<Blob>((r) => c.toBlob((b) => r(b!), 'image/png'))
+      const dt = new DataTransfer()
+      dt.items.add(new File([blob], 'drop.png', { type: 'image/png' }))
+      ;(document.querySelector('.chat-input-wrap') as HTMLElement).dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }))
+    })
+    await expect(page.locator('[data-test="img-chips"] .img-chip')).toHaveCount(1)
+    // drop 后浮层消失(dragleave 语义;不残留遮罩)
+    await expect(page.locator('.drop-hint')).toHaveCount(0)
+  })
+
   test('>20MB 大图 → 输入侧拒绝(img-error),不进 chip', async ({ page }) => {
     await page.goto('/examples/minimal-demo/')
     await page.waitForSelector('.chat-dialog')

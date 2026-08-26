@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-3068%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-3079%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -276,6 +276,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | `i18n` | `I18nOptions` | **顶层国际化配置组(3.22+;原 `dialog.locale`/`dialog.messages` 两键合并至此)**:`locale` 切换内置文案包 —— 聊天面 + Debug 抽屉 + Skill 面板 + 代码预览;`formatTime`(12h/24h)、autoTitle 与**默认 systemPrompt** 跟随(`en-US` → 英文版 `DEFAULT_SYSTEM_PROMPT_EN` 含 "Respond in English" 语言锚,agent 回复语言与 UI 一致;自定义 `systemPrompt` 不受影响,但其自动追加的 `reliableWriteRules` 段切英文)。`messages` = 键级覆盖(优先于 locale 包,如 `statusDone: '<b style="color:#10b981">完成</b>'` —— 富文本渲染位的值支持行内 HTML 片段,文案白名单净化);完整键清单(~226 键)见 `DialogMessages` |
 | `icons` | `Partial<DialogIcons>` | **图标自定义**:局部覆盖默认 emoji(`header` 🤖 / `subagent` 🤖 / `subagentProgress` 🧬 / `empty` 💬 / `focus` 🎯 / `queued` 📋 / `queuedEdit` ✏️ / `recommend` 💡 / `conflict` ⚠️;`assistantAvatar`/`userAvatar`/`send` 与顶部按钮四键 `newSession`/`history`/`more`/`close` 缺省 = 内置 SVG,传 emoji/字符/HTML 片段替换;历史删除按钮 `sessionDelete` 缺省 = ✕ 文本)。值为纯文本(emoji/字符)或 **HTML 片段**(以 `<` 开头,如内联 `<svg>`/`<img>`,经 DOMPurify 图标白名单净化,事件属性/危险协议剥除);空串 = 隐藏该图标(按钮键视为未传,防空按钮);未传键用默认 |
 | `headerLabels` | `boolean` · 默认 `true` | **顶部按钮自适应文字标签**:宽度足够(头部内容区 ≥440px,默认 padding 下 ≈ 对话框 ≥472px)时「新建会话/历史记录/更多」展示文字+图标,更窄自动回退纯图标(关闭钮恒纯图标;纯 CSS 容器查询,旧浏览器优雅降级为纯图标);`false` 恒纯图标。按钮文字走 i18n `newSession`/`history`/`more` 键(`i18n.messages` 键级覆盖生效),图标走 `dialog.icons` 同名四键 |
+| `toolStepView` | `ToolStepViewFn` | **工具步骤展示映射(纯展示层拦截器)**:把工具调用步骤行的原始工具名(read/write/use_html …)替换为业务友好名称/内容。每次工具调用渲染时调,入参含 `name`/`args`/`status`/`result`(可按 args 动态映射),返回 `{ title?, detail? }` 或 `undefined`(回退原始工具名);映射抛错安全(回退原名)。例:`toolStepView: (s) => s.name === 'write' ? { title: '修改页面', detail: (s.args as any)?.jsonPath } : undefined`。不影响发给 LLM 的工具名/协议/校验;子 agent 步骤同样应用;展开细节面板的 args/result 仍为原始数据 |
 
 ### 扩展点
 

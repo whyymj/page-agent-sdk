@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive } from 'vue'
-import type { ToolStep } from '../../types'
+import type { ToolStep, ToolStepViewFn } from '../../types'
+import { applyStepView } from '../stepView'
 import { copyText } from '../../utils/clipboard'
 import { DEFAULT_DIALOG_ICONS, type DialogIcons } from '../icons'
 import { MESSAGES_ZH_CN, type DialogMessages } from '../messages'
@@ -9,9 +10,10 @@ import IconGlyph from '../IconGlyph.vue'
 import MsgText from '../MsgText.vue'
 
 // icons 由 MessageRow 从 ctx 下传(纯 props 叶子零依赖);独立复用时缺省用默认图标集
-const props = withDefaults(defineProps<{ steps: ToolStep[]; icons?: DialogIcons; messages?: DialogMessages }>(), {
+const props = withDefaults(defineProps<{ steps: ToolStep[]; icons?: DialogIcons; messages?: DialogMessages; stepView?: ToolStepViewFn }>(), {
   icons: () => ({ ...DEFAULT_DIALOG_ICONS }),
   messages: () => ({ ...MESSAGES_ZH_CN }),
+  stepView: undefined,
 })
 
 /** 步骤状态中文标签(running/done/error → 执行中/成功/失败),配合色块 status-dot 使用 */
@@ -20,12 +22,18 @@ function statusLabel(status: 'running' | 'done' | 'error'): string {
   return status === 'running' ? msg.statusRunning : status === 'error' ? msg.statusError : msg.statusDone
 }
 
-/** 相邻同名工具合并:仅合并连续同名,count>1 显示 ×N;不相邻的同名工具分别成组。状态聚合(有 error→error,有 running→running,否则 done),children 合并,耗时求和 */
+/**
+ * 相邻同名工具合并:仅合并连续同名,count>1 显示 ×N;不相邻的同名工具分别成组。状态聚合(有 error→error,有 running→running,否则 done),children 合并,耗时求和。
+ * 展示映射(stepView):合并键 = 映射后标题(两次同名调用映射出不同标题 → 分行显示,集成方可按 args 细分);
+ * detail 仅单次调用(count===1)展示 —— 合并组的各次调用 args 可能不同,展示单一 detail 会误导。
+ */
 function groupedSteps(steps: ToolStep[]) {
-  const groups: { name: string; count: number; hasRunning: boolean; hasError: boolean; children: ToolStep[]; calls: ToolStep[]; totalMs: number; subReason?: string; subReasonFull?: string }[] = []
+  const groups: { name: string; title: string; detail?: string; count: number; hasRunning: boolean; hasError: boolean; children: ToolStep[]; calls: ToolStep[]; totalMs: number; subReason?: string; subReasonFull?: string }[] = []
   for (const s of steps) {
+    const view = applyStepView(props.stepView, s)
+    const title = view.title ?? s.name
     const last = groups.length ? groups[groups.length - 1] : null
-    if (last && last.name === s.name) {
+    if (last && last.title === title) {
       last.count++
       if (s.status === 'running') last.hasRunning = true
       if (s.status === 'error') last.hasError = true
@@ -37,6 +45,8 @@ function groupedSteps(steps: ToolStep[]) {
     } else {
       groups.push({
         name: s.name,
+        title,
+        detail: view.detail,
         count: 1,
         hasRunning: s.status === 'running',
         hasError: s.status === 'error',
@@ -50,6 +60,8 @@ function groupedSteps(steps: ToolStep[]) {
   }
   return groups.map((e) => ({
     name: e.name,
+    title: e.title,
+    detail: e.detail,
     count: e.count,
     status: e.hasError ? 'error' : e.hasRunning ? 'running' : 'done',
     children: e.children,
@@ -156,7 +168,9 @@ function copyDetail(text: string, truncated: boolean, full?: unknown): void {
     <div v-for="(step, sIdx) in groups" :key="sIdx" class="step-item" :class="step.status">
       <div class="step-head">
         <span class="status-dot" :class="step.status"></span>
-        <span class="step-name">{{ step.name }}</span>
+        <span class="step-name">{{ step.title }}</span>
+        <!-- 展示映射补充说明(单次调用;合并组 ×N 各次 args 可能不同,不展示单一 detail 防误导) -->
+        <span v-if="step.detail && step.count === 1" class="step-detail-hint">{{ step.detail }}</span>
         <span v-if="isSubagentTool(step.name)" class="subagent-badge" :title="messages.subagentBadgeTitle"><IconGlyph :icon="icons.subagent" /> {{ messages.subagentBadge }}</span>
         <span v-if="step.count > 1" class="step-count">×{{ step.count }}</span>
         <span class="step-status" :class="step.status"><MsgText :text="statusLabel(step.status)" /></span>
@@ -188,7 +202,7 @@ function copyDetail(text: string, truncated: boolean, full?: unknown): void {
         <div class="step-children-label"><IconGlyph :icon="icons.subagentProgress" /> {{ messages.subagentProgress }}</div>
         <div v-for="(c, cIdx) in groupedSteps(step.children)" :key="cIdx" class="step-child" :class="c.status">
           <span class="status-dot sm" :class="c.status"></span>
-          <span class="step-name">{{ c.name }}</span>
+          <span class="step-name">{{ c.title }}</span>
           <span v-if="c.count > 1" class="step-count">×{{ c.count }}</span>
           <span v-if="c.status === 'running'" class="step-status running">…</span>
         </div>
@@ -202,6 +216,8 @@ function copyDetail(text: string, truncated: boolean, full?: unknown): void {
 .step-item { display: flex; flex-direction: column; gap: 3px; align-self: flex-start; padding: 5px 10px; border-radius: 8px; background: var(--cs-step-bg); border: 1px solid var(--cs-step-border); font-size: 11px; color: var(--cs-step-text); max-width: 100%; user-select: text; -webkit-user-select: text; }
 .step-head { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .step-name { font-family: 'SF Mono', Monaco, Consolas, monospace; font-weight: 600; }
+/* 展示映射补充说明(纯文本,元信息色;不进 monospace —— 是自然语言不是代码名) */
+.step-detail-hint { font-size: 10px; color: var(--cs-step-meta); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .step-count { font-size: 10px; color: var(--cs-step-meta); font-weight: 600; }
 .step-status { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; letter-spacing: 0.2px; }
 .step-status.done { color: var(--cs-ok); background: rgba(var(--cs-ok-rgb), 0.12); }

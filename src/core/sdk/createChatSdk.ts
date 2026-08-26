@@ -91,7 +91,7 @@ import { extractVfsRefs, gcVfsLargeResults } from '../utils/vfsGc'
 import { DEFAULT_STREAM_STALL_MS, DEFAULT_STREAM_MAX_DURATION_MS } from '../utils/stallTimeout'
 import { createSerialRunner } from '../utils/serialRunner'
 import { normalizeUsage } from '../utils/contentParts'
-import type { AgentMessage, StreamHandler, AgentInfo, SdkEvent, SdkEventHandler, TokenUsage, BatchResult, BatchProgress, AgentImage, ImagesConfig } from '../types'
+import type { AgentMessage, StreamHandler, AgentInfo, SdkEvent, SdkEventHandler, TokenUsage, BatchResult, BatchProgress, AgentImage, ImagesConfig, ToolStepViewFn } from '../types'
 import { lightenMessages, hydrateImages, makeThumb, MAX_IMAGES_PER_ROUND } from '../tools/imageInput'
 import type { ToolCallContext } from '../harness/middleware'
 
@@ -416,6 +416,16 @@ export interface DialogConfig {
   sections?: Record<string, boolean>
   /** 顶部按钮宽度足够时展示文字标签(默认 true 自适应:头部内容区 ≥440px 展示「文字+图标」,更窄纯图标);false 恒纯图标。按钮文字走 i18n(newSession/history/more),图标走 dialog.icons 同名键 */
   headerLabels?: boolean
+  /**
+   * 工具步骤展示映射(纯展示层拦截器):把工具调用步骤行的原始工具名替换为自定义名称/内容。
+   * 每次工具调用渲染时调,入参含 name/args/status/result(可按 args 动态映射,如 write 的 jsonPath →
+   * 「修改第 N 个组件」);返回 { title?, detail? } 或 undefined(回退原始工具名)。映射抛错安全(回退原名)。
+   * 不影响发给 LLM 的工具名/协议/校验;子 agent 步骤(children)同样应用。例:
+   * ```ts
+   * toolStepView: (s) => s.name === 'write' ? { title: '修改数据', detail: (s.args as any)?.jsonPath } : undefined
+   * ```
+   */
+  toolStepView?: ToolStepViewFn
 }
 
 export interface ChatSdk {

@@ -127,6 +127,18 @@ onMounted(() => {
       title: '页面构建 Agent',
       placeholder: '试试:加一个"提交"按钮 / 主题改成 dark / 删掉列表 …',
       theme: 'dark', // 内置深色主题(方舟专题设计稿色板;--cs-* 变量驱动)
+      // ↓ 工具步骤展示映射(纯展示层拦截器):原始工具名对终端用户不友好 → 业务文案;可按 args 动态生成补充说明
+      toolStepView: (s) => {
+        if (s.name === 'write') {
+          // write 的 jsonPath 可能在顶层(write({jsonPath}))或 patch 内(write({patch:{jsonPath}}))
+          const a = s.args as { jsonPath?: string; patch?: { jsonPath?: string } } | undefined
+          const p = a?.jsonPath ?? a?.patch?.jsonPath ?? ''
+          // 原始路径(components.5.children.1)对用户无意义 → 解析成组件标签;根字段(title/theme)保留原样
+          return { title: '修改页面', detail: p.startsWith('components') ? compLabel(p) : p }
+        }
+        if (s.name === 'read') return { title: '读取页面数据' }
+        return undefined // 其余工具回退原始名
+      },
     },
   })
   agent.mount()

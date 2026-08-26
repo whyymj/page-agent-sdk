@@ -18,6 +18,30 @@ export interface ToolStep {
   subReasonFull?: string
 }
 
+/**
+ * 工具步骤展示映射(dialog.toolStepView 返回值):把原始工具名/入参翻译成面向用户的展示文案。
+ * 纯展示层 —— 不影响发给 LLM 的工具名/协议/校验,只改 MessageSteps 步骤行的渲染。
+ */
+export interface ToolStepView {
+  /** 步骤标题(替换原始工具名展示,如 write → 「修改数据」;不提供 = 保留原名) */
+  title?: string
+  /** 标题旁补充说明(单次调用时展示,如「第 3 个组件 · title 字段」;不提供 = 无) */
+  detail?: string
+}
+
+/**
+ * 工具步骤展示映射函数(dialog.toolStepView):每次工具调用渲染时调,返回自定义展示或 undefined(回退默认)。
+ * 入参为步骤的只读投影(含 args 可做动态映射,如 write 的 jsonPath → 「修改第 N 个组件」);
+ * status running→done 翻转/args 补齐时会以新入参重调。抛错安全(捕获后回退原始工具名)。
+ */
+export type ToolStepViewFn = (step: {
+  name: string
+  args?: unknown
+  status: 'running' | 'done' | 'error'
+  result?: string
+  durationMs?: number
+}) => ToolStepView | undefined | null
+
 /** user 消息附带图片(image-input-vision):内存态带 dataUri(直发/重发用);持久化轻形态只留 thumb+vfsRef/url(restore 后按需重水化) */
 export interface AgentImage {
   /** 图片 id(消息内唯一;vfs 路径与持久化引用的锚) */

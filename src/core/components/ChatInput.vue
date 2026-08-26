@@ -54,8 +54,11 @@ const onPaste = (e: ClipboardEvent): void => {
       @dragleave="dragOver = false"
       @drop.prevent="onDrop"
     >
-      <!-- 拖拽提示浮层 -->
-      <div v-if="dragOver" class="drop-hint">{{ m.imageDropHint }}</div>
+      <!-- 拖拽提示浮层:中心药丸(icon + 文案),容器整体柔和高亮 -->
+      <div v-if="dragOver" class="drop-hint">
+        <svg class="drop-hint-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-4.35-4.35a1.5 1.5 0 0 0-2.12 0L5 20"/></svg>
+        {{ m.imageDropHint }}
+      </div>
       <!-- chip 区(流式布局,输入容器内顶部:聚焦标签 + 待发送图片 + 输入错误纵向堆叠,永不遮挡输入文字) -->
       <div v-if="focuses.length || pendingImages.length || imageInputError" class="chip-stack">
         <!-- 聚焦标签(inline chip):聚焦组件精修时显示多 chip(🎯 path,multi-focus)。
@@ -143,13 +146,26 @@ const onPaste = (e: ClipboardEvent): void => {
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 .chat-input-wrap:focus-within { border-color: var(--cs-primary); box-shadow: 0 0 0 2px rgba(var(--cs-primary-rgb), 0.1); }
+/* 拖拽态:去虚线框 → 容器主色描边 + 柔和内衬高亮(::after 浮层),提示收敛为中心药丸 */
+.chat-input-wrap.drag-over { border-color: var(--cs-primary, #1f4d3a); }
 .chat-input-wrap.drag-over::after {
-  content: ''; position: absolute; inset: -3px; border: 2px dashed var(--cs-primary, #1f4d3a); border-radius: 10px;
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  background: rgba(var(--cs-primary-rgb, 31, 77, 58), 0.08);
   pointer-events: none; z-index: 2;
 }
 .drop-hint {
-  position: absolute; top: 8px; left: 0; right: 0; z-index: 3; text-align: center;
-  font-size: 11px; color: var(--cs-primary, #1f4d3a); pointer-events: none;
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 3;
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 12px; border-radius: 999px; white-space: nowrap;
+  background: var(--cs-primary, #1f4d3a); color: #fff;
+  font-size: 11px; line-height: 1; pointer-events: none;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  animation: cs-drop-in 0.18s ease-out;
+}
+.drop-hint-icon { width: 12px; height: 12px; flex-shrink: 0; }
+@keyframes cs-drop-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.92); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 }
 /* chip 区:容器内顶部流式堆叠(聚焦 → 图片 → 错误);自然撑高容器,输入文字永不被遮 */
 .chip-stack { display: flex; flex-direction: column; gap: 6px; padding: 8px 8px 0; }

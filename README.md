@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-3068%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-3079%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -280,6 +280,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | `i18n` | `I18nOptions` | **Top-level i18n group (3.22+; replaces `dialog.locale`/`dialog.messages`)**: `locale` switches the built-in message pack — chat surface + Debug drawer + Skill panel + CodePreview; `formatTime` (12h/24h), autoTitle, and the **default systemPrompt** follow (`en-US` → English `DEFAULT_SYSTEM_PROMPT_EN` with a "Respond in English" anchor, so agent replies match the UI language; a custom `systemPrompt` is untouched, but the auto-appended `reliableWriteRules` segment switches to English). `messages` = per-key overrides (priority over the locale pack, e.g. `statusDone: '<b style="color:#10b981">Done ✓</b>'` — values may be inline HTML fragments on rich-text render spots, sanitized via a text allowlist). Full key list (~226 keys) in `DialogMessages` |
 | `icons` | `Partial<DialogIcons>` | **Icon customization**: partial override of default emojis (`header` 🤖 / `subagent` 🤖 / `subagentProgress` 🧬 / `empty` 💬 / `focus` 🎯 / `queued` 📋 / `queuedEdit` ✏️ / `recommend` 💡 / `conflict` ⚠️; `assistantAvatar`/`userAvatar`/`send` and the header-button keys `newSession`/`history`/`more`/`close` default to built-in SVG — pass emoji/char/HTML fragment to replace; history delete button `sessionDelete` defaults to ✕ text). Values: plain text (emoji/char) **or an HTML fragment** (starting with `<`, e.g. inline `<svg>`/`<img>` — sanitized via a DOMPurify icon allowlist; event attributes/dangerous protocols stripped); empty string hides the icon (button keys treat it as unset, prevents an empty button); unset keys keep defaults |
 | `headerLabels` | `boolean` · default `true` | **Adaptive header-button text labels**: when wide enough (header content ≥440px ≈ dialog ≥472px with default padding), "New chat / History / More" show text+icon; narrower widths fall back to icon-only (close stays icon-only; pure CSS container queries, old browsers gracefully degrade to icon-only); `false` = always icon-only. Button text = i18n `newSession`/`history`/`more` keys (overridable via `i18n.messages`), icons = the four same-named `dialog.icons` keys |
+| `toolStepView` | `ToolStepViewFn` | **Tool-step display mapper (pure display-layer interceptor)**: replaces raw tool names (read/write/use_html …) on the tool-call step rows with business-friendly names/content. Called on each tool-call render with `name`/`args`/`status`/`result` (map dynamically by args); return `{ title?, detail? }` or `undefined` (fall back to the raw name); mapper exceptions are safe (fall back to the raw name). Example: `toolStepView: (s) => s.name === 'write' ? { title: 'Edit page', detail: (s.args as any)?.jsonPath } : undefined`. Never affects the tool names/protocol/validation sent to the LLM; subagent steps map too; the expanded args/result detail panel stays raw |
 
 ### Extension points
 

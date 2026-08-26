@@ -45,8 +45,7 @@ test.describe('page-demo: read → write → read', () => {
     expect(dialogText).toContain('测试改写')
   })
 
-  test('read 整个数据 → write 改 theme → read 确认', async ({ page }) => {
-    await mockLlm(page, [
+  test('read 整个数据 → write 改 theme → read 确认', async ({ page }) => {    await mockLlm(page, [
       { tool_calls: [{ name: 'read', arguments: {} }] },
       { tool_calls: [{ name: 'write', arguments: { value: 'dark', patch: { op: 'set', jsonPath: 'theme' } } }] },
       { tool_calls: [{ name: 'read', arguments: { jsonPath: 'theme' } }] },
@@ -618,6 +617,55 @@ test.describe('page-demo: read → write → read', () => {
     expect(await page.evaluate(() => JSON.stringify((window as any).page.components.at(-1).__pgNotes))).toContain('#F7C948')
     // 4 次 model 调用 = 主委派 → 子写 → 子收口 → 主收口
     expect(tracker.calls()).toBe(4)
+  })
+})
+
+test.describe('page-demo: 工具步骤展示映射(dialog.toolStepView)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/')
+    await page.waitForSelector('.chat-dialog')
+    await clearChat(page)
+  })
+
+  test('映射命中 → 自定义标题 + args 动态补充说明;未映射工具回退原始名', async ({ page }) => {
+    // page-demo 配了 toolStepView:write → 「修改页面」(detail=jsonPath)、read → 「读取页面数据」、其余回退原名
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'read', arguments: { jsonPath: 'title' } }] },
+      { tool_calls: [{ name: 'write', arguments: { value: '映射测试', patch: { op: 'set', jsonPath: 'title' } } }] },
+      { text: '已完成。' },
+    ])
+
+    await fillInput(page, '把标题改成「映射测试」')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+
+    // read 映射:步骤行显示自定义标题,原始工具名不再出现
+    await expect(page.locator('.step-name')).toHaveText(['读取页面数据', '修改页面'])
+    // write 映射:detail 单次调用展示 args 里的 jsonPath(动态补充说明)
+    await expect(page.locator('.step-detail-hint')).toHaveText(['title'])
+
+    // 展开细节面板的 args/result 仍是原始数据(映射只改步骤行标题,排查通道不受影响)
+    await page.locator('.step-detail-toggle').first().click()
+    await expect(page.locator('.step-detail-pre').first()).toContainText('title')
+
+    // 数据侧照常落地(纯展示层,不影响工具执行/校验)
+    const pageTitle = await page.evaluate(() => (window as any).page.title)
+    expect(pageTitle).toBe('映射测试')
+  })
+
+  test('未映射工具 → 原始工具名直显(默认路径行为零变化)', async ({ page }) => {
+    // write_todos 不在 page-demo 映射表 → 步骤行显示原始名(回退语义)
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'write_todos', arguments: { todos: [{ content: '占位', status: 'pending' }] } }] },
+      { text: '已完成。' },
+    ])
+
+    await fillInput(page, '占位任务')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+
+    await expect(page.locator('.step-name').first()).toHaveText('write_todos')
+    await expect(page.locator('.step-detail-hint')).toHaveCount(0)
   })
 })
 

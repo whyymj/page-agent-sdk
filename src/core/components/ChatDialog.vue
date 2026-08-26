@@ -21,7 +21,7 @@ import SkillPanel from './SkillPanel.vue'
 import type { DebugLog } from '../harness/createAgent'
 import type { DialogIcons } from './icons'
 import type { DialogMessages, DialogLocale } from './messages'
-import type { AgentMessage, AgentInfo, StreamHandler } from '../types'
+import type { AgentMessage, AgentInfo, StreamHandler, ToolStepViewFn } from '../types'
 import type { PendingConflict } from '../sdk/createChatSdk'
 import type { ConflictResolution } from '../tools/dataOps'
 import type { SessionMeta } from '../backends/storage'
@@ -118,6 +118,8 @@ const props = withDefaults(defineProps<{
   headerLabels?: boolean
   /** 国际化(顶层 i18n 配置透传;locale 切语言 + messages 键级覆盖 → ctx.messages/locale;缺省 zh-CN) */
   i18n?: { locale?: DialogLocale; messages?: Partial<DialogMessages> }
+  /** 工具步骤展示映射(dialog.toolStepView 透传;MessageSteps 步骤行工具名/补充说明自定义) */
+  toolStepView?: ToolStepViewFn
 }>(), {
   showAvatar: true,
   showTyping: true,
@@ -147,6 +149,7 @@ const ctx = createChatContext({
   icons: props.icons,
   locale: props.i18n?.locale,
   dialogMessages: props.i18n?.messages,
+  toolStepView: props.toolStepView,
 })
 provide(chatContextKey, ctx)
 
