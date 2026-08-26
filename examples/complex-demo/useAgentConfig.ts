@@ -3,7 +3,7 @@
  *
  * 从 .env 环境变量读取 Agent 配置,供 examples/complex-demo/App.vue 使用。
  * 独立于 SDK 核心(不依赖通用核心的类型)。
- * 优先 Anthropic 协议组(VITE_ANTHROPIC_*,经 vite 同源代理 /llm → modelverse,
+ * 优先 Anthropic 协议组(VITE_ANTHROPIC_*,经 vite 同源代理 /llm → 网关(随 .env 切换,现为 openhubs),
  * 对齐 editor_fangzhou 真实用法);未配该组 key 时回退 OpenAI 兼容组(VITE_AI_*)。
  * 凭据只进 .env(gitignore),不进代码/仓库。
  */

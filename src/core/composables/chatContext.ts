@@ -148,6 +148,7 @@ export function createChatContext(opts: ChatContextOptions = {}): ChatContext {
     onClear: opts.onClear,
     onQueuedCleared: opts.onQueuedCleared,
     onBeforeRegenerate: opts.onBeforeRegenerate,
+    getFocuses: opts.getFocuses,
   })
   const { state, sendMessage, removeQueuedTask, queuedTasks } = chat
 

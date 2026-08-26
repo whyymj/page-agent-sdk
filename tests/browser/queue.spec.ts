@@ -99,4 +99,39 @@ test.describe('queue: 生成中排队 + 撤销/修改', () => {
     const inputVal = await page.inputValue('.chat-dialog textarea')
     expect(inputVal).toBe('任务B原始')
   })
+
+  test('排队任务开始后 user 消息带 🎯 焦点标识(执行时刻快照)+ 历史 chip 纯展示', async ({ page }) => {
+    // 修前排队的聚焦丢失:sendMessage 排队分支只存文本,finishRound 重建 user 消息无 focuses → 气泡无 🎯 标识
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'read', arguments: {} }] },
+      { text: 'A 完成回复' },
+      { text: 'B 完成回复' },
+    ], [2000, 0, 0])
+
+    // 聚焦 components.0(点选 + 加入聊天)
+    await page.click('[data-path="components.0"]')
+    await page.click('.pick-overlay__btn')
+    await expect(page.locator('[data-test="focus-clear"]').first()).toBeVisible()
+
+    // A 执行中排队 B(聚焦态)
+    await fillInput(page, '任务A')
+    await clickSend(page)
+    await waitLoading(page)
+    await fillInput(page, '任务B')
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.queued-text')).toHaveText('任务B')
+
+    // B 续跑完成
+    await expect.poll(async () => (await page.textContent('.chat-dialog')) || '', { timeout: 30_000 }).toContain('B 完成回复')
+
+    // 排队任务 B 的 user 消息气泡带焦点 chip(执行时刻实时焦点快照,与 invoke-freeze 生效口径一致)
+    const userRows = page.locator('.message-row.user')
+    await expect(userRows.nth(1).locator('.msg-focus-chip')).toHaveCount(1)
+    await expect(userRows.nth(1).locator('.msg-focus-chip')).toContainText('components.0')
+
+    // 历史 chip 纯展示:无点击效果(路径可能已变,不给可点暗示)
+    const chip = userRows.nth(1).locator('.msg-focus-chip')
+    const cursor = await chip.evaluate((el) => getComputedStyle(el).cursor)
+    expect(cursor).not.toBe('pointer')
+  })
 })

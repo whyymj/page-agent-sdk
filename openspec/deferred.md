@@ -480,21 +480,25 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 
 **来源**:`2026-08-23-model-offline-guidance` 实施时明示盲区:网关回 200 + 错误 JSON 体(modelverse 6003 黑洞形态)时 body 不捕获,统一转 `EmptyLLMResponseError`(自动重试 1 次后抛)——该形态下的 `model is offline` 文案检测抓不到,`MODEL_UNAVAILABLE` 码不生效。**为何暂缓**:覆盖需新增 body 捕获 = 流解析行为改动(违零副作用红线),须与 `streamMaxDurationMs`/空转黑洞族一起设计。**重启触发**:真实环境再现「200+错误体且含下线文案」的可复现样本。**重启须知**:`EmptyLLMResponseError` 携带原始 body 摘要(不改变重试语义),`isModelUnavailableError` 对 body 文案复检。
 
-### [2026-08-24] section-orchestrator:真 LLM initialPage 双臂 + 阈值标定 — ⏸ 暂缓(无环境)
+### [2026-08-24] section-orchestrator:真 LLM initialPage 双臂 + 阈值标定 — ✅ 已验证结案(2026-08-26,deepseek v4 flash 直连)
 
-**来源**:section-orchestrator Phase 0/1 真人 LLM 门禁未跑 —— LLM 网关模型面不可用。**内容**:①initialPage 双臂(flash 硬干 vs nudge 分流;fixture 用无 code 字段的 schema 副本防 CUSTOM_CODE_DELEGATION 干扰归因)轮次/完成率/token 三指标;②S1 段规格四要素齐格式抽检;③阈值标定(DELEGATE_NUDGE_THRESHOLD 初值 12,与编排段注入同源)。**重启触发**:网关恢复 / test:real 环境可用。**重启须知**:mock 三态 + e2e 装配链(含 S7 回退保底)已实证机制;真 LLM 重点验证 flash 对 advisory 的分流裁决质量与阈值合理性;基线对比用 `--baseline-diff`。
+**来源**:section-orchestrator Phase 0/1 真人 LLM 门禁未跑 —— LLM 网关模型面不可用。**验证**:`tests/runtime/section-orchestrator-real-llm.mjs`(双臂 fixture `tests/runtime/fixtures/section-fixture.{html,-main.ts}`,无 code 字段 schema 副本,16 骨架板块全量填充)。**结论**:①**nudge 机制真 LLM 触发实证**(B 臂 whole-set 16 ≥ 12 → `delegate_nudge` 留痕);②**flash 对 initialPage 形态的天然解 = 一次性 whole-set 写**(双臂均 5 轮 5 工具 16/16 完成,140s/60K vs 158s/68.7K)——「小步 grind 拖垮上下文」前置假设在该任务形态**不成立**,advisory 随写结果尾附时任务已由单写完成,模型忽略 = 正确裁决(advisory 不阻断设计兑现);③S1 段规格四要素:双臂零委派 → 不适用(无 spawn task 可抽检);④**阈值标定**:grind 形态未复现(flash 自然首选批量写),`DELEGATE_NUDGE_THRESHOLD=12` 敏感性无法从本轮数据判别 —— 维持 12(保守初值),触发面双形态(whole-set 计数 / patches 计数)实证无误伤不误拦;小步 grind 主战场验证见 subtree S4(同日补跑,同结论:nudge 触发、批写一步到位)。**后续触发**:实测出现「逐组件小步 grind」真实轨迹时重新评估阈值。
 
-### [2026-08-24] subtree-summary:真 LLM 门禁(单干细节场景 + flash 三场景 + 阈值校准)— ⏸ 暂缓(无环境)
+### [2026-08-24] subtree-summary:真 LLM 门禁(单干细节场景 + flash 三场景 + 阈值校准)— ✅ 已验证结案(2026-08-26 补跑收口)
 
-**来源**:subtree-summary Phase 1 真 LLM 门禁未跑 —— LLM 网关模型面不可用。**内容**:①无子 agent 单干细节场景(轮次/token/完成率三指标;S1/S2/S5 行为符合预期);②flash 三场景(深改单组件/占位下内容问答/猜路径盲写 → 守卫拦截与自纠质量);③据数据调阈值(只升 `SUBTREE_SUMMARY_THRESHOLD` 常量,机制不回退)。**重启触发**:网关恢复 / test:real 套件环境可用。**重启须知**:mock 四态 + complex-demo 重页面真浏览器闭环已实证机制;真 LLM 重点验证弱模型对 NEED_NARROW_READ 回灌的自纠质量与阈值合理性(初始 3072 字符);跑法参考 `doc/real-llm-regression.md`(idle 双条件 + 跑前重启 dev server)。
+**来源**:subtree-summary Phase 1 真 LLM 门禁未跑 —— LLM 网关模型面不可用。**验证**:`tests/runtime/subtree-real-llm.mjs`(complex-demo ?huge=1)。**结论**:①flash 三场景 **2026-08-24 报告全过**(S1 深改单组件 4/4:占位可见→窄读→改写标准闭环、S2 占位下内容问答 3/3:定位后精确读零写入、S3 猜路径盲写 3/3:对抗指令下模型自发先读);②无子 agent 单干细节场景指标已采(S1/S2/S5 工具链零委派:S1 search→read×3→write 5 工具 87K prompt / S5 read→write 2 工具 41K);③**S4 大批量改造(delegate_nudge)2026-08-26 补跑 4/4**:20 组件 patches 批写一步到位,nudge=true 触发实证,advisory 不阻断零误伤(与 section 双臂同日同结论:flash 自然首选批量写,「小步 grind」形态未复现);④阈值校准:`SUBTREE_SUMMARY_THRESHOLD=3072` 无反向证据(占位可见时窄读引导生效、无 thrash、无过度拦截),维持现值。**报告**:`local/_real-llm-subtree.json`(S1-S5 全量)。
+
+### [2026-08-26] render-check:verify 预算跨委派无总闸(render-check 真 LLM 验证新发现)— ⏸ 暂缓(单实例行为面观察)
+
+**来源**:render-check 真 LLM 验证 S5(对抗性坏 script):主 agent 对同一组件**重委派 3 次** `use_html`,每次委派子 agent 各有 2 次 verify 预算(结构+渲染共享池),累计 6 次 render check —— 单委派硬闸有效,但「反复委派改同一组件」形态下总检查次数无上限(既有语义:主 agent 重委派自由;轮次预算/子 agent 超时 600s 间接约束)。**触发条件**:实测出现「重委派 ≥3 次烧 render 预算」真实案例,或下次动 subagent/verify 预算面。**候选修法**(届时按案例定):组件级 render check 结果短 TTL 缓存(同 code hash 复检免重跑)/ 委派层同组件 verify 总预算。
 
 ### [2026-08-24] render-check:S4 主 agent 验收工具 + 整页组装钩子 — ⏸ 暂缓(评审裁决 deferred)
 
 **来源**:`2026-08-24-render-check` 评审:①新增主栈默认工具与 main-surface-slim 方向相逆且收益与门禁重复 → S4 砍除;②SDK 无页面树、非 code 组件宿主渲染、N 份自包含文档拼合引入选择器/脚本冲突假错 → 整页组装不做。**重启触发**:①出现门禁覆盖不到的验收缺口(如主 agent 收口前需主动抽检渲染,实测有需求再立项,形态走「非默认工具/能力包」);②宿主提供组装函数(页面树/布局容器)的钩子形态需求出现(集成方反馈「组件各自能跑但整页拼起来坏了」)。**重启须知**:组件级隔离渲染已上线(3.48),增量面只剩「跨组件信号归因」与「宿主组装钩子」;S4 工具须过 main-surface-slim 的工具面税评估。
 
-### [2026-08-24] render-check:真 LLM 坏 script 自纠闭环 — ⏸ 暂缓(无环境)
+### [2026-08-24] render-check:真 LLM 坏 script 自纠闭环 — ✅ 已验证结案(2026-08-26,deepseek v4 flash 直连)
 
-**来源**:render-check 实施期真 LLM 门禁(坏 script → 自检-修复-复检 ≤2 次预算含降级不假绿)未跑 —— LLM 网关模型面不可用。**重启触发**:网关恢复 / test:real 套件环境可用时跑 `render-check` 场景(html-page-demo 注入坏 script)。**重启须知**:机制面已由真沙箱 browser e2e(7 项)+ mock 集成闭环实证;真 LLM 只验证「弱模型对渲染 feedback 的自纠质量」,跑法参考 `doc/real-llm-regression.md`。
+**来源**:render-check 实施期真 LLM 门禁(坏 script → 自检-修复-复检 ≤2 次预算含降级不假绿)未跑 —— LLM 网关模型面不可用。**验证脚本**:`tests/runtime/render-check-real-llm.mjs`(5 场景)+ 报告 `local/_real-llm-render-check.json`。**结论**:①自检-修复-复检**全链路真 LLM 实证**(S5 同步坏 script:js-error fail×3 → 修复 pass;对抗性指令拉回坏写法后终态诚实 fail 收口,不假绿 ✓);②flash **天然防御化率 3/3**(契约调用 typeof 守卫 / fetch AbortController+res.ok+.catch 全套)——自然坏 script 产生率极低,门禁实战价值主要在资源 404 与异步错误;③**「异步晚到错误漏报」残余实测复现**(S4:禁守卫指令下 unhandledrejection 落在收集窗关闭后,render_check 仍 pass —— 设计文档明示残余,非新缺陷);④**行为面新发现:主 agent 重委派可绕过单委派 2 次 verify 预算**(S5:3 次 use_html 共 6 次 render check)——单委派硬闸有效,跨委派无总闸,登记下方行为面观察条目。
 
 ### [2026-08-24] 团队审查(3 agent:回归/并发/场景)遗留 P2 清单 — ⏸ 暂缓(P0/P1 已当场修)
 
@@ -513,9 +517,9 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 
 **更正记录**:「offload 吞 delegate-nudge advisory 尾巴」观察证伪(4a3539a commit message 结论有误)—— offload 在 coreExecTool 洋葱最内层,nudge 尾附在外层 wrapToolCall 追加恒可见;且写结果 safeStringify 封顶 600 字符触不到 offload 阈值。真实残余 = 历史轮压缩「保首砍尾」(一次性 advisory 生命周期内可接受)。
 
-### [2026-08-24] image-input 真 LLM 旁路三场景(image-input-vision 收尾遗留)— ⏸ 暂缓(无环境)
+### [2026-08-24] image-input 真 LLM 旁路三场景(image-input-vision 收尾遗留)— ✅ 已验证结案(2026-08-26,modelverse vision 旁路)
 
-**来源**:`2026-08-18-image-input-vision` 归档时收尾:describe 内置工具与 vision_tokens 分离已在原 tasks 划线否决(转述经集成方 LLM,SDK 侧无 token 可计),余真 LLM 验证未跑。**内容**:贴截图问组件 / 贴设计稿还原 custom / OCR 问答三场景(flash 量级视觉模型)。**重启触发**:集成方(如 editor)接入 images.describe 后的真实使用反馈,或网关模型面恢复视觉模型可用。**重启须知**:复用 `examples/images-demo` 的 `window.__VISION_CONFIG` 运行时端点覆盖;三场景各 ≥3 轮新会话。
+**来源**:`2026-08-18-image-input-vision` 归档时收尾:describe 内置工具与 vision_tokens 分离已在原 tasks 划线否决(转述经集成方 LLM,SDK 侧无 token 可计),余真 LLM 验证未跑。**验证环境解锁**:modelverse 凭据(用户提供,只进 .env)+ `deepseek-v4-flash-vision-exp` 图像输入实测可用 → images-demo describe 新增 **anthropic 协议识图通道**(`VITE_VISION_MODEL` + `VITE_VISION_BASE_URL`(.env)/ `__VISION_CONFIG`(运行时)双入口;**浏览器直调 modelverse /v1/messages 因 CORS 失败,须走 vite 同源代理 /llm** —— chat/completions 直调不受影响)。**验证脚本**:`tests/runtime/image-input-real-llm.mjs`(三场景,Playwright 渲染 HTML 截图产真实 PNG)+ 报告 `local/_real-llm-image-input.json`。**结论**:①**三场景核心链路全通**——转述注入(user 消息 images[].description 非空)+ 图→结构化 HTML 产出(S2 ```html 代码块含设计稿文案)+ **OCR 字符级精确转写**(S3 优惠码 SMZDM-8826 + 有效期逐字正确);②**vision 转述质量是旁路上游瓶颈**:弱转述(只述布局不转写文字)时主模型诚实不编造但会过度探索自救(S1 首跑 10 工具烧轮次)——describe 提示词加「逐字转写所有可见文字」硬性要求后 S1 复跑转述完整、答案精确;③**lib 的 reload 快速失败在 describe 在途时误杀**(debugLogs 恒空 ≠ reload;真 LLM 脚本须先等首条日志再 waitIdle,已在该脚本内桥接)。**原内部 VITE_VISION_URL 端点**(需登录态)保留为通道②,集成方带会话环境仍可用。
 
 ## 2026-08-25 flow-robustness 登记(P2 残项,五路审计评估不进本 change)
 
@@ -529,7 +533,7 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 | vfs_json_patch isUnsafePath 预检 | `__proto__` 段预检加固(与已登记 SE #3/#4 同型) | 与 SE 加固组一起做 |
 | query/search 环数据误标 | 环数据下 query/search 的体积估算误标;环已被写路径前置拦截,读路径残留 | 环数据实测读路径异常 |
 | Worker OOM 文档明示 | eval_script 沙箱 OOM 行为文档化(非代码修) | 下次动 usage-guide eval 段 |
-| hostScript 主线程死循环 | `skillHostScript` opt-in 且已在 4.1.0 移除清单(deprecation)—— 随移除自动消亡 | 随 config-surface-pruning-round2 收口 |
+| hostScript 主线程死循环 | ✅ 已消亡(4.1.0 随 config-surface-pruning-round2 移除 `skillHostScript`;2026-08-26 结案) | — |
 | stream SYSTEM_PROMPT_OVER_BUDGET 早退仍推空 assistant | 与已登记「send-invoke 吞 error 事件」(循环/终止面 #3)同族不同路径 | 超预算实测案例(两路径一起修) |
 | auditWritePaths 跨会话残留 | 已接受(证据审计基线跨会话累积,语义可辩护) | 不修,留痕 |
 | 单轮 tool_calls 数量无上限 | 仅 maxIterations 90 轮间接约束;单轮爆发百级 tool_calls 会拖慢派发 | 弱模型实测单轮爆发 |

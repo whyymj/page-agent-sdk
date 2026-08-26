@@ -31,7 +31,8 @@ const props = defineProps<{
 
 defineEmits<{ (e: 'toggle-reasoning'): void; (e: 'copy'): void; (e: 'regenerate'): void }>()
 
-// chip 交互(同 ChatInput 输入框 chip:本体点击 → focusChipClick 滚动/高亮;✕ → removeFocus 移除单个当前焦点)
+// chip 展示:历史消息的焦点 chip 纯只读(2026-08-26 用户反馈:历史路径可能已变 —— 如组件被打乱/删除,
+// 点击聚焦/回看会误导;当前焦点的交互(点击/✕)在 ChatInput 输入框 chip 上)
 const ctx = useChatContext()
 const isAssistant = computed(() => props.message.role === 'assistant')
 const reasoning = computed<string>(() =>
@@ -56,14 +57,13 @@ const showCursor = computed(() => isAssistant.value && props.loading && props.is
     <div class="message-content">
       <MessageReasoning v-if="isAssistant" :text="reasoning" :total="reasoningTotal" :expanded="reasoningExpanded" :running="loading && isLast" @toggle="$emit('toggle-reasoning')" />
       <MessageSteps v-if="isAssistant" :steps="steps" :icons="ctx.icons" :messages="ctx.messages" />
-      <!-- user 消息发送时的焦点快照:历史记录只读(本体点击回看滚动);不带 ✕ —— 删历史 chip 改不了已发消息的上下文,还会误删当前焦点 -->
+      <!-- user 消息执行时刻的焦点快照:纯展示(路径可能已变,不给点击效果);不带 ✕ —— 删历史 chip 改不了已发消息的上下文,还会误删当前焦点 -->
       <div v-if="message.role === 'user' && message.focuses?.length" class="msg-focuses">
         <span
           v-for="f in message.focuses"
           :key="f.path"
           class="msg-focus-chip"
           :title="ctx.messages.historyFocusChipTitlePrefix + f.path"
-          @click="ctx.focusChipClick(f)"
         ><IconGlyph :icon="ctx.icons.focus" /> {{ f.path }}</span>
       </div>
       <!-- user 消息附带图片(image-input-vision):气泡上方缩略图行(thumb 优先,恢复后轻形态仍有;LRU 淘汰且无 thumb 显示占位框) -->
@@ -110,8 +110,7 @@ const showCursor = computed(() => isAssistant.value && props.loading && props.is
 .message-content { width: 80%; min-width: 0; }
 /* user 消息发送时焦点快照 chip(背景组件限制标注) */
 .msg-focuses { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; margin-bottom: 4px; }
-.msg-focus-chip { display: inline-flex; align-items: center; gap: 2px; padding: 1px 4px 1px 6px; border-radius: 10px; background: rgba(var(--cs-primary-rgb, 31, 77, 58), 0.12); color: var(--cs-primary, #1f4d3a); font-size: 11px; line-height: 1.6; cursor: pointer; white-space: nowrap; }
-.msg-focus-chip:hover { background: rgba(var(--cs-primary-rgb, 31, 77, 58), 0.2); }
+.msg-focus-chip { display: inline-flex; align-items: center; gap: 2px; padding: 1px 4px 1px 6px; border-radius: 10px; background: rgba(var(--cs-primary-rgb, 31, 77, 58), 0.12); color: var(--cs-primary, #1f4d3a); font-size: 11px; line-height: 1.6; white-space: nowrap; }
 .message-row.user .message-content { display: flex; flex-direction: column; align-items: flex-end; }
 /* user 消息图片缩略图行(image-input-vision):右对齐(user 侧),点开原图新窗(rel=noopener) */
 .msg-images { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; margin-bottom: 4px; max-width: 100%; }

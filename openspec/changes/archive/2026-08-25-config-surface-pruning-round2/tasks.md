@@ -36,4 +36,5 @@
   - ✅ inspect.mjs 四键残键负向断言(tracing/skillHostScript/preferences/bulkGuard 装配不 throw 零 warn)+ custom-injection skillHostScript 残值断言
 - [x] 12. grep 净空核查(`src/ types/` 四能力标识符零残留)
   - ✅ grep 净空:src/ types/ 四能力标识符零残留(仅历史注释「已于 4.1.0 移除」标记);skills/ 核查零命中
-- [ ] 13. `npm version minor` → 4.1.0 发布(master squash 双远程 + npm publish + CDN 验证)
+- [x] 13. `npm version minor` → 4.1.0 发布(master squash 双远程 + npm publish + CDN 验证)
+  - ✅ 已随 4.1.0 发布(commit d4c192a;后续 4.2.x 递进,2026-08-26 补勾)

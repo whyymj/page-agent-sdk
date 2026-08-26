@@ -51,11 +51,12 @@ export default defineConfig({
     // (实测 20min 流 3 次 reload;关闭后无 ws 可断,页面恒稳)。日常 dev 不传该 env,HMR 照常。
     ...(process.env.REAL_LLM_NO_HMR ? { hmr: false } : {}),
     // dev 代理:绕过浏览器 CORS。部分第三方 API(modelverse 等)的 preflight 不允许 openai SDK 自动附加的
-    // x-stainless-* 遥测头 → 浏览器直连被拒。.env 用 VITE_AI_BASE_URL=/llm/v1(同源),请求经 vite 转发到真实 API。
-    // 切换 API 提供商时改 target;仅 dev 用(库构建不用 server)。
+    // x-stainless-* 遥测头 → 浏览器直连被拒。openhubs(2026-08-26 起)实测 CORS 全开可直连,本代理仅兜底。
+    // .env 用 VITE_AI_BASE_URL=/llm/v1(同源),请求经 vite 转发到真实 API。
+    // 切换 API 提供商时改 target;仅 dev 用(库构建不用 server)。[旧 target 回滚:https://api.modelverse.cn]
     proxy: {
       '/llm': {
-        target: 'https://api.modelverse.cn',
+        target: 'https://openhubs.zhidemai.com',
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/llm/, ''),
       },

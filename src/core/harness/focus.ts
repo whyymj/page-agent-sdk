@@ -12,6 +12,11 @@
  * 触发方式:① sdk.setFocus(替换)/addFocus(累积)/removeFocus/clearFocus ② agent 工具 set_focus/add_focus/remove_focus/clear_focus
  * ③ ChatDialog chip(✕ 移除单个)。capabilities.focus 默认开。
  *
+ * **invoke-freeze(2026-08-26 实测事故驱动)**:宿主来源(UI/API)的焦点变更**下一次输入生效** ——
+ * beforeAgent 取生效快照,在途 invoke 的 guard/prompt 全读快照,不追溯掐住正在跑的流程(事故:用户在
+ * 方案确认挂起窗口点选深层组件 → mid-run 到达的聚焦立刻 PATH_DENIED 掐住整页打乱)。agent 自己的
+ * focus 工具变更立即生效(含在途 invoke;clear_focus 自救依赖立即生效)。
+ *
  * 兼容:getFocus() 返 focuses[0](旧单焦点代码零改);setFocus(f)=替换全部(旧覆盖语义);getFocuses/addFocus/removeFocus 为多焦点新增。
  *
  * 与 mission 共存:mission 管任务级目标,Focus 管对象级精修目标,可同时聚焦多个对象。
@@ -80,24 +85,33 @@ export interface FocusController {
   /**
    * 替换全部焦点(传 null 清空)。**注意**:path 合法性校验在 createChatSdk 层(有 schema getter);
    * 中间件只负责赋值 + 注入/拦截。
+   *
+   * @param source 变更来源(invoke-freeze,2026-08-26 实测事故驱动):
+   *  - 'host'(默认)= 宿主 API/UI/applySnapshot → **下一次输入生效**(在途 invoke 的生效快照冻结,防 mid-run 到达的聚焦掐住正在跑的流程)
+   *  - 'agent' = agent focus 工具 → **立即生效**(含在途 invoke;clear_focus 自救等依赖立即生效)
    */
-  setFocus: (focus: Focus | null) => void
+  setFocus: (focus: Focus | null, source?: FocusMutationSource) => void
   /** 兼容旧 API:返回首个焦点(focuses[0]);无焦点 → undefined */
   getFocus: () => Focus | undefined
   /** 全量焦点(副本,防外部 mutate) */
   getFocuses: () => Focus[]
   /**
    * 累积追加焦点(去重 by path:已存在则更新 label,否则 push)。
-   * **注意**:path 校验在 createChatSdk 层;中间件只去重追加。
+   * **注意**:path 校验在 createChatSdk 层;中间件只去重追加。source 语义同 setFocus。
    */
-  addFocus: (focus: Focus) => void
-  /** 移除单个焦点(by path) */
-  removeFocus: (path: string) => void
-  /** 清空所有焦点 */
-  clearFocus: () => void
-  /** 重置为初始态(切会话/清空聊天):清焦点 */
+  addFocus: (focus: Focus, source?: FocusMutationSource) => void
+  /** 移除单个焦点(by path)。source 语义同 setFocus。 */
+  removeFocus: (path: string, source?: FocusMutationSource) => void
+  /** 清空所有焦点。source 语义同 setFocus。 */
+  clearFocus: (source?: FocusMutationSource) => void
+  /** 重置为初始态(切会话/清空聊天):清焦点(含在途快照) */
   reset: () => void
+  /** 是否有在途 invoke(focus 快照冻结中;宿主改焦点 → 下一次输入生效) */
+  isInvokeActive: () => boolean
 }
+
+/** 焦点变更来源:'host' = 宿主 API/UI(下一次输入生效);'agent' = agent focus 工具(立即生效,含在途 invoke) */
+export type FocusMutationSource = 'host' | 'agent'
 
 export interface FocusMiddlewareOptions {
   /** 取当前主数据 schema 的 getter(适配 sdk.setData 运行时替换;取子树视野用;path 校验在 createChatSdk 层) */
@@ -123,8 +137,27 @@ export interface FocusMiddlewareOptions {
 
 export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware & FocusController {
   let focuses: Focus[] = opts.initialFocuses ? [...opts.initialFocuses] : []
+  /**
+   * invoke-freeze(2026-08-26 实测事故驱动):beforeAgent 对 focuses 取快照,整个 invoke 内
+   * guard(wrapToolCall)与 prompt 注入(augmentPrompt)都读快照 —— 宿主 mid-run 到达的聚焦
+   * (用户在方案确认/长流期间点选组件)不追溯掐住在途流程,下一次输入才生效。
+   * null = 无在途 invoke(读写实时 focuses)。
+   */
+  let invokeFocuses: Focus[] | null = null
+  /** 当前生效焦点:在途 invoke 用快照;invoke 间用实时态 */
+  const activeFocuses = (): Focus[] => invokeFocuses ?? focuses
   /** mutation 后统一通知(副本防外部 mutate) */
   const notify = () => opts.onChange?.([...focuses])
+  /**
+   * 统一 mutation:实时态恒更新(UI chip/事件同步);在途快照仅 'agent' 来源同步更新
+   * (agent focus 工具是在途任务的主动决策,clear_focus 自救等依赖立即生效;
+   * 宿主来源冻结快照,下一次输入 beforeAgent 重取)。
+   */
+  const mutate = (source: FocusMutationSource | undefined, apply: (list: Focus[]) => Focus[]): void => {
+    focuses = apply(focuses)
+    if (invokeFocuses !== null && source === 'agent') invokeFocuses = apply(invokeFocuses)
+    notify()
+  }
   // 解焦指引文案(按 unfocusGuidance 分支;默认目标引导通用 —— 实测用户拾取按钮后说「文字红色」,agent 先误解为全页改)
   const guidance = opts.unfocusGuidance ?? 'tool'
   // 目标归属引导(focus-intent-steering,2026-08-25 实测事故驱动):「增加 tab」被 flash 误解为
@@ -148,16 +181,23 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
   const mw: Middleware & FocusController = {
     name: 'focus',
     beforeAgent: () => {
+      // invoke-freeze:invoke 开始取生效快照(宿主 mid-run 改焦点不动快照;afterAgent 释放)
+      invokeFocuses = [...focuses]
       // 焦点进 state(供其他中间件/工具观测;同 mission 模式)。augmentPrompt 读闭包 focuses。
       // focuses(数组,多焦点)+ focus(首个别名,兼容旧读 state.focus 的代码)
-      return focuses.length ? { focuses: [...focuses], focus: focuses[0] } : {}
+      return invokeFocuses.length ? { focuses: [...invokeFocuses], focus: invokeFocuses[0] } : {}
+    },
+    afterAgent: () => {
+      // invoke 结束释放快照:焦点读写回到实时态(宿主在上一 invoke 期间设置的焦点自此可见)
+      invokeFocuses = null
     },
     augmentPrompt: () => {
-      if (!focuses.length) return undefined
+      const foci = activeFocuses()
+      if (!foci.length) return undefined
       const lines = [
         '## 当前精修目标',
-        focuses.map((f) => `· ${f.path}${f.label ? `(${f.label})` : ''}`).join('\n'),
-        `仅操作上述 ${focuses.length} 个聚焦子树${focuses.length > 1 ? '之一' : ''},${defaultTarget}不要改动其他组件;${unfocusHint}`,
+        foci.map((f) => `· ${f.path}${f.label ? `(${f.label})` : ''}`).join('\n'),
+        `仅操作上述 ${foci.length} 个聚焦子树${foci.length > 1 ? '之一' : ''},${defaultTarget}不要改动其他组件;${unfocusHint}`,
         // 指代锚定(2026-08-26 实测事故:用户点选深层组件后问「这是啥」,flash 答了整页概况 —— 旧段
         // 全是写向话术,指代类问句零引导)。问答与操作同权重:指示代词默认指聚焦目标
         '用户用指示代词提问(「这是啥/这个/它是干什么的」等)时,所指默认是聚焦目标 —— 先 read 聚焦子树,再围绕聚焦组件回答,勿泛答整页',
@@ -166,7 +206,7 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
       // 视野收敛:注入每个焦点子树 schema 描述(LLM 每轮看到所有焦点组件结构)
       const schema = opts.getSchema()
       if (schema) {
-        const subs = focuses
+        const subs = foci
           .map((f) => {
             const sub = getSchemaAtPath(schema, f.path)
             return sub ? extractSchemaHint(sub) : null
@@ -183,11 +223,13 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
       next: (ctx: ToolCallContext) => Promise<ToolExecResult>,
     ) => {
       // 范围收紧(strict):聚焦时写工具的 jsonPath 必须在【任一】焦点子树内,全不在才 PATH_DENIED 回灌 LLM 自纠
+      // 生效焦点 = 在途 invoke 快照(invoke-freeze:宿主 mid-run 改焦点不追溯作用于本 invoke)
       // 例外:尾部追加(<arrayPath>.<N>,N>=数组长度)放行 —— 追加新元素不破坏焦点子树(聚焦模式可新建组件)
-      if (focuses.length) {
-        const labels = focuses.map((f) => (f.label ? `${f.path}(${f.label})` : f.path)).join(', ')
+      const foci = activeFocuses()
+      if (foci.length) {
+        const labels = foci.map((f) => (f.label ? `${f.path}(${f.label})` : f.path)).join(', ')
         // 子路径示例用实际焦点路径(deny 引导随数据走,不硬编码)
-        const example = focuses.length === 1 ? `${focuses[0].path}.props.xxx` : undefined
+        const example = foci.length === 1 ? `${foci[0].path}.props.xxx` : undefined
         const deny = (scope: string): ToolExecResult => ({
           content: `PATH_DENIED · 聚焦越界:当前聚焦 [${labels}],不可操作「${scope}」。${denyHint(example)}`,
           status: 'error' as const,
@@ -199,7 +241,7 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
           const scopes = extractScopes(ctx.args)
           if (!scopes.length) return deny('(整体数据)')
           for (const scope of scopes) {
-            if (!focuses.some((f) => isUnderFocus(scope, f.path)) && !isTailAppend(scope, opts.getBind?.())) return deny(scope)
+            if (!foci.some((f) => isUnderFocus(scope, f.path)) && !isTailAppend(scope, opts.getBind?.())) return deny(scope)
           }
           return next(ctx)
         }
@@ -209,7 +251,7 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
           // 原「空 scopes 放行」与 strict 承诺冲突 —— 整体写无法校验子树归属 = 越界
           if (!scopes.length) return deny('(整体数据)')
           for (const scope of scopes) {
-            if (!focuses.some((f) => isUnderFocus(scope, f.path)) && !isTailAppend(scope, opts.getBind?.())) return deny(scope)
+            if (!foci.some((f) => isUnderFocus(scope, f.path)) && !isTailAppend(scope, opts.getBind?.())) return deny(scope)
           }
         }
         // focus-scoped-read(用户反馈驱动,openspec 2026-08-16):read 空参(无 jsonPath/jsonPaths)→ 注入焦点路径,
@@ -219,10 +261,10 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
           // subtree-summary 聚焦全文通道:聚焦态 read 目标落在焦点子树内 → 该子树(含嵌套大子树)读全文。
           // 经 ctx.callConfig 透传 __pgFullTextPaths(同 __pgDataScope per-call 通道),read 侧按绝对路径前缀豁免摘要;
           // 范围外读前缀不匹配不受影响。豁免是无子 agent 可用通道(主 agent 自有 set_focus 工具族)
-          ctx.callConfig = { ...(ctx.callConfig ?? {}), __pgFullTextPaths: focuses.map((f) => f.path) }
+          ctx.callConfig = { ...(ctx.callConfig ?? {}), __pgFullTextPaths: foci.map((f) => f.path) }
           const a = ctx.args as Record<string, unknown> | undefined
           if (!a?.jsonPath && !a?.jsonPaths) {
-            const paths = focuses.map((f) => f.path)
+            const paths = foci.map((f) => f.path)
             const res = await next({ ...ctx, args: { ...a, jsonPaths: paths } })
             const note = `【聚焦模式】read 未带路径 → 默认返回聚焦子树(${paths.join(', ')});需要全量主数据时显式列顶层键,如 read({jsonPaths:['<顶层键1>','<顶层键2>']})\n`
             return { ...res, content: note + res.content }
@@ -231,31 +273,36 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
       }
       return next(ctx)
     },
-    setFocus: (f) => {
-      focuses = f ? [f] : []
-      notify()
+    setFocus: (f, source) => {
+      mutate(source, () => (f ? [f] : []))
     },
     getFocus: () => focuses[0],
     getFocuses: () => [...focuses],
-    addFocus: (f) => {
+    addFocus: (f, source) => {
       // 去重 by path:已存在则更新 label(覆盖),否则追加
-      const idx = focuses.findIndex((x) => x.path === f.path)
-      if (idx >= 0) focuses[idx] = f
-      else focuses.push(f)
-      notify()
+      mutate(source, (list) => {
+        const idx = list.findIndex((x) => x.path === f.path)
+        if (idx >= 0) {
+          const next = [...list]
+          next[idx] = f
+          return next
+        }
+        return [...list, f]
+      })
     },
-    removeFocus: (path) => {
-      focuses = focuses.filter((f) => f.path !== path)
-      notify()
+    removeFocus: (path, source) => {
+      mutate(source, (list) => list.filter((f) => f.path !== path))
     },
-    clearFocus: () => {
-      focuses = []
-      notify()
+    clearFocus: (source) => {
+      mutate(source, () => [])
     },
     reset: () => {
+      // 会话边界(resetSession/switchSession):实时态与在途快照全清(在途流会被 abort,快照清空是安全方向)
       focuses = []
+      invokeFocuses = null
       notify()
     },
+    isInvokeActive: () => invokeFocuses !== null,
   }
   return mw
 }

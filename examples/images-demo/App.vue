@@ -24,6 +24,25 @@ function visionUrl(): string {
   return o.url ?? import.meta.env.VITE_VISION_URL ?? ''
 }
 
+/**
+ * 识图配置双通道:①运行时 window.__VISION_CONFIG = { baseUrl, apiKey, model } 覆盖(真 LLM 回归/联调);
+ * ②.env 配 VITE_VISION_MODEL(anthropic 协议多模态模型,如 deepseek-v4-flash-vision-exp)+
+ *   VITE_ANTHROPIC_BASE_URL/VITE_ANTHROPIC_API_KEY 复用既有凭据组。
+ * 配了任一通道 → describe 走 anthropic messages 图像块协议;都没配 → 走原 analyze 形态端点。
+ */
+function visionAnthropic(): { baseUrl: string; apiKey: string; model: string } | null {
+  const o = (window as unknown as { __VISION_CONFIG?: { baseUrl?: string; apiKey?: string; model?: string; url?: string } }).__VISION_CONFIG ?? {}
+  // 显式 analyze 端点覆盖(__VISION_CONFIG = { url })优先走通道② —— 既有运行时覆盖语义,勿被 env 的 vision 模型配置顶掉
+  if (o.url) return null
+  // VITE_VISION_BASE_URL 支持相对路径(/llm 走 vite 同源代理 —— 部分网关如 modelverse 浏览器直调 /v1/messages 会因 CORS 失败;openhubs 实测 CORS 全开,直连亦可,保留代理形态与既有脚本一致)
+  const relBase = (import.meta.env.VITE_VISION_BASE_URL as string | undefined) ?? ''
+  const proxiedBase = relBase.startsWith('/') ? `${location.origin}${relBase}` : relBase
+  const baseUrl = o.baseUrl || proxiedBase || (import.meta.env.VITE_ANTHROPIC_BASE_URL as string | undefined) || ''
+  const apiKey = o.apiKey ?? (import.meta.env.VITE_ANTHROPIC_API_KEY as string | undefined) ?? ''
+  const model = o.model ?? (import.meta.env.VITE_VISION_MODEL as string | undefined) ?? ''
+  return baseUrl && apiKey && model ? { baseUrl, apiKey, model } : null
+}
+
 let agent: ChatSdk | null = null
 
 onMounted(() => {
@@ -40,11 +59,36 @@ onMounted(() => {
     images: {
       // 识图转述旁路:发送前逐图调用,返回文本写 im.description 拼入该轮 user 上下文(随消息持久化,重发不重复转述)
       describe: async (image: AgentImage) => {
-        const url = visionUrl()
-        if (!url) throw new Error('未配置识图端点:本地 .env 配 VITE_VISION_URL,或运行时 window.__VISION_CONFIG = { url }')
-        // dataURI → {base64, mime}(analyze 形态端点收裸 base64,非 dataURI)
+        // dataURI → {base64, mime}
         const m = /^data:([^;,]+);base64,(.*)$/s.exec(image.dataUri ?? '')
         if (!m) throw new Error('图片缺 dataUri(无法转 base64)')
+        // 通道①:anthropic 协议多模态模型(图像块直发;vision 模型带 thinking 时耗时较长,超时给足)
+        const va = visionAnthropic()
+        if (va) {
+          const res = await fetch(`${va.baseUrl.replace(/\/$/, '')}/v1/messages`, {
+            method: 'POST',
+            headers: { 'x-api-key': va.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+            body: JSON.stringify({
+              model: va.model,
+              max_tokens: 1024,
+              messages: [{
+                role: 'user',
+                content: [
+                  { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } },
+                  { type: 'text', text: '描述这张图片。硬性要求:①逐字转写图中所有可见文字(标题/价格/数字/编码/按钮文案),不得只描述布局或概括;②说明主要颜色与整体用途。用中文,先转写后概述。' },
+                ],
+              }],
+            }),
+          })
+          if (!res.ok) throw new Error(`识图模型 HTTP ${res.status}`)
+          const data = (await res.json()) as { content?: Array<{ type: string; text?: string }> }
+          const text = (data.content ?? []).filter((c) => c.type === 'text').map((c) => c.text ?? '').join('\n').trim()
+          if (!text) throw new Error('识图模型零文本输出(仅 thinking?)')
+          return text
+        }
+        // 通道②:原 analyze 形态端点(收裸 base64,非 dataURI)
+        const url = visionUrl()
+        if (!url) throw new Error('未配置识图端点:本地 .env 配 VITE_VISION_URL 或 VITE_VISION_MODEL,或运行时 window.__VISION_CONFIG = { url } / { baseUrl, apiKey, model }')
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -55,7 +99,7 @@ onMounted(() => {
         if (data.error_code !== 0) throw new Error(data.error_msg || `识图端点 error_code ${data.error_code}`)
         return data.data?.description ?? ''
       },
-      describeTimeoutMs: 20000,
+      describeTimeoutMs: 60000,  // vision 模型带 thinking 实测可超 20s;原图上传失败自动回退 dataURI 内联,留痕不阻塞
       // upload: async (dataUri) => (await fetch('/my-oss', { method: 'POST', body: dataUri })).json().url,
       // ↑ 可选:原图上传换 https URL(消息/持久化只存轻 URL,请求不发大 base64;失败自动回退 dataURI 内联,留痕不阻塞)
     },
@@ -65,6 +109,8 @@ onMounted(() => {
     },
   })
   agent.mount('#chat-root')
+  // 调试/真 LLM 脚本采样口(同 complex-demo/html-page-demo 惯例;不承载业务)
+  ;(window as unknown as Record<string, unknown>).__sdk = agent
 })
 onUnmounted(() => agent?.unmount())
 </script>

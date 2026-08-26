@@ -1191,7 +1191,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       const schema = liveData()?.schema
       if (!schema) return '聚焦失败:当前无主数据 schema,无法聚焦。'
       if (!getSchemaAtPath(schema, path)) return `PATH_DENIED · 聚焦失败:path "${path}" 不在 schema 内。请先用 read 查看可操作路径再聚焦。`
-      focusMw.setFocus({ path, ...(label ? { label } : {}) })
+      focusMw.setFocus({ path, ...(label ? { label } : {}) }, 'agent')
       return `已聚焦到 ${path}${label ? `(${label})` : ''}。后续仅可写该子树(越界被拒),每轮只看到该组件结构。完成精修后调 clear_focus 退出。`
     },
     {
@@ -1202,7 +1202,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   )
   const clearFocusTool = tool(
     async () => {
-      focusMw.clearFocus()
+      focusMw.clearFocus('agent')
       return '已清除聚焦,恢复全量可操作范围(可读写所有组件)。'
     },
     { name: 'clear_focus', description: '清除当前聚焦,退出精修模式,恢复对全部组件的读写权限。', schema: z.object({}).optional() },
@@ -1213,7 +1213,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       const schema = liveData()?.schema
       if (!schema) return '聚焦失败:当前无主数据 schema,无法聚焦。'
       if (!getSchemaAtPath(schema, path)) return `PATH_DENIED · 聚焦失败:path "${path}" 不在 schema 内。请先用 read 查看可操作路径再聚焦。`
-      focusMw.addFocus({ path, ...(label ? { label } : {}) })
+      focusMw.addFocus({ path, ...(label ? { label } : {}) }, 'agent')
       const foci = focusMw.getFocuses()
       return `已聚焦 ${path}${label ? `(${label})` : ''}(当前共 ${foci.length} 个焦点:${foci.map((f) => f.path).join(', ')})。后续仅可写这些子树之一(越界被拒)。`
     },
@@ -1227,7 +1227,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const removeFocusTool = tool(
     async ({ path }: { path: string }) => {
       const before = focusMw.getFocuses().length
-      focusMw.removeFocus(path)
+      focusMw.removeFocus(path, 'agent')
       const after = focusMw.getFocuses()
       if (after.length === before) return `path "${path}" 不在当前焦点列表中(当前:${after.map((f) => f.path).join(', ') || '无'})。`
       return after.length ? `已移除焦点 ${path}(剩余 ${after.length} 个:${after.map((f) => f.path).join(', ')})。` : `已移除焦点 ${path},聚焦已清空,恢复全量操作范围。`
@@ -2378,6 +2378,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       const r = validateFocusInput(focus, 'setFocus', useFocus, () => liveData()?.schema, options.debug)
       if (!r.ok) return r
       focusMw.setFocus(focus)
+      if (options.debug && focusMw.isInvokeActive()) console.info('[page-agent-sdk][focus] 在途流程进行中,聚焦将在下一次输入生效(当前流程不受影响)')
       core.infoTick.value++ // 触发 DebugDrawer 刷新
       return { ok: true }
     },
@@ -2391,6 +2392,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         return { ok: false, error: '焦点数上限 8(避免 system prompt 撑爆)' }
       }
       focusMw.addFocus(focus)
+      if (options.debug && focusMw.isInvokeActive()) console.info('[page-agent-sdk][focus] 在途流程进行中,聚焦将在下一次输入生效(当前流程不受影响)')
       core.infoTick.value++
       return { ok: true }
     },

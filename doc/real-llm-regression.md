@@ -9,7 +9,10 @@
 | `npm run test:real` | `tests/runtime/real-llm.mjs` | **统一入口**(套件编排 + 基线对比;下三行浏览器族套件均可单独跑) |
 | ↳ `… test:real uispec` | `tests/runtime/uispec-real-llm.mjs` | **浏览器路径全场景回归**(complex-demo S1–S10:委派/规范/精修/调序/属性/新建/删除/容器/错误恢复/开放指令) |
 | ↳ `… test:real rag` | `tests/runtime/rag-demo-real-llm.mjs` | rag-demo 四模式(A memory 直答 / B mock 检索 / C 真实 MCP / D MCP 直连;Anthropic 协议) |
-| ↳ `… test:real parallel` | `tests/runtime/parallel-delegation-real.mjs` | 同轮并行委派复验(单场景 7 判定) |
+| `npm run test:real parallel` ↘ | `tests/runtime/parallel-delegation-real.mjs` | 同轮并行委派复验(单场景 7 判定) |
+| 直跑 | `tests/runtime/render-check-real-llm.mjs` | render-check 坏 script 自纠 5 场景(html-page-demo;2026-08-26 补验:flash 天然防御化 3/3、异步晚到漏报复现、fail→fix→pass 闭环实证、重委派绕 verify 预算登记 deferred) |
+| 直跑 | `tests/runtime/section-orchestrator-real-llm.mjs` | initialPage 双臂(fixture `?arm=grind\|nudge`;2026-08-26 补验:nudge 触发实证、flash 天然解 = 一次性 whole-set 写,grind 形态未复现) |
+| 直跑 | `tests/runtime/image-input-real-llm.mjs` | images-demo 识图旁路 3 场景(describe 走 modelverse vision,**须经 vite 代理 /llm 防浏览器 CORS**;2026-08-26 补验:三场景核心链路全通,OCR 字符级精确;vision 转述质量是上游瓶颈,弱转述时主模型诚实但过度探索) |
 | `npm run test:draft-real` | `tests/runtime/draft-real-llm.ts` | 大 JSON 分块写(draft_write/draft_commit) |
 | `npm run test:trace-real` | `tests/runtime/trace-real-llm.ts` | 结构化追踪 TraceSpan |
 | `npm run test:maliang-real` | `tests/runtime/maliang-real-llm.ts` | 马良模型场景 |

@@ -1,6 +1,6 @@
 # Proposal: subtree-summary(大子树摘要泛化 —— 复杂任务的上下文经济地基)
 
-> 状态:**已实施待发版**(2026-08-24 Phase 0 + Phase 1 全部完成:四门禁 2984/967/111;真 LLM 门禁登记 deferred 待网关。实施修正:placeholder 指纹用 hashValue 避免 tools→sdk 层倒置;complex-demo 实测重页面全量读下 components.0 整体被摘要 → 「骨架直写」精确为「写路径未落入摘要面」)。优先级 P1(SDK)。目标仓库:zhuanti-agent。
+> 状态:**✅ 已实施并随 4.0.0 发布**(2026-08-24 Phase 0 + Phase 1 全部完成:四门禁 2984/967/111;真 LLM 门禁登记 deferred 待网关。实施修正:placeholder 指纹用 hashValue 避免 tools→sdk 层倒置;complex-demo 实测重页面全量读下 components.0 整体被摘要 → 「骨架直写」精确为「写路径未落入摘要面」)。优先级 P1(SDK)。目标仓库:zhuanti-agent。
 > 驱动:目标演进到「多种页面任务 / 复杂 JSON 编写 / 纯 H5」—— 大数据下主 agent 上下文是头号瓶颈。main-surface-slim 实测了问题(42 工具 + 3.9K 提示词,单任务 ~70 万 prompt token,遵循率随规模衰减)但解法形态错(配置开关,3.43 回退)。本 change 是同一问题的**正形解**:砍内容面,不砍工具面,自动阈值零配置。
 
 ## Why(现状核实,复审纠正)

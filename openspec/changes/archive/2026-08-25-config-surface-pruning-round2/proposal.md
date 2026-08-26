@@ -1,6 +1,6 @@
 # Proposal: config-surface-pruning 第二轮(四能力移除,目标 4.1.0)
 
-> 状态:**已立项待实施;移除面已实盘盘点补全(2026-08-25 五路讨论)**。优先级 P2(SDK 治理)。目标仓库:zhuanti-agent。
+> 状态:**✅ 已实施并随 4.1.0 发布**(2026-08-25 五路讨论实盘盘点补全;全 13 任务收口)。优先级 P2(SDK 治理)。目标仓库:zhuanti-agent。
 > **盘点补全(评审新增,下方「移除面盘点」表之上追加)**:
 > - **P0 编译级耦合(原提案漏)**:`delegateNudge.ts:16/93` import `measureWriteScale` from bulkGuard.ts —— 删整个文件不迁移即编译炸;且 delegateNudge(默认装,欠委派 nudge + 分段编排)是存活能力。**measureWriteScale(57-114)必须迁出保留**(挪 delegateNudge.ts 或独立 util),其公共导出(index.ts:66/headless:74)随迁保留防二次 breaking。
 > - **静默坏**:`tests/runtime/maliang-real-llm.ts:33-34` 工具链审计靠 `inspect().trace.spans` 收工具名,trace 移除后审计恒空 → 改造(换 debugLogs 数据源)或删(package.json `test:maliang-real` 同步)。skill `exec.context:'host'` 残值:类型 union 收窄为 `'sandbox'`,残值静默落 sandbox 执行(语义从宿主全权反转为沙箱,CHANGELOG 明示,可留一行 warn)。

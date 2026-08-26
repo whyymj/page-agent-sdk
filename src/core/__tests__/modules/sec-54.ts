@@ -296,4 +296,45 @@ export async function run(ctx: TestCtx): Promise<void> {
     const dRp = await mwRp.wrapToolCall!({ name: 'write', args: { patch: { jsonPath: 'components.0', op: 'set', value: { type: 'x' } } } } as any, callNext)
     assert(dRp.status === 'error' && dRp.content.includes('收口回复'), '✓ unfocusGuidance report-parent → PATH_DENIED 文案引导收口反馈')
   }
+
+  // ===== invoke-freeze:宿主 mid-run 改焦点不作用于在途流程,下一次输入才生效(2026-08-26 实测事故)=====
+  // 事故形态:用户发「随机打乱页面结构」→ 方案确认挂起窗口里点选深层组件(setFocus mid-run 到达)
+  // → 在途 eval_script 整页操作被 mid-run 焦点 PATH_DENIED 掐住,被迫 clear_focus 绕路
+  {
+    const schema = z.object({ components: z.array(z.object({ type: z.string() })) })
+    const mw = createFocusMiddleware({ getSchema: () => schema })
+    const callNext = async () => ({ content: 'ok', status: 'done' as const })
+    const writeOutside = () => mw.wrapToolCall!({ name: 'write', args: { patch: { jsonPath: 'components.0', op: 'set', value: { type: 'x' } } } } as any, callNext)
+
+    // invoke 1 启动(快照:无焦点)
+    mw.beforeAgent!({} as any)
+    assert(mw.isInvokeActive() === true, '✓ invoke-freeze: beforeAgent 后 isInvokeActive true')
+    // 宿主 mid-run setFocus(默认 host 来源)→ 实时态更新(UI chip 可见),在途快照冻结
+    mw.setFocus({ path: 'components.1' })
+    assert(mw.getFocuses().length === 1, '✓ invoke-freeze: 宿主 mid-run setFocus → 实时态已见(UI 同步)')
+    const r1 = await writeOutside()
+    assert(r1.status === 'done', '✓ invoke-freeze: 宿主 mid-run 焦点不掐在途写(快照无焦点 → 放行,下一次输入才生效)')
+    assert(mw.augmentPrompt!({} as any) === undefined, '✓ invoke-freeze: 在途 augmentPrompt 不注入 mid-run 焦点(prompt 与 guard 口径一致)')
+    // invoke 1 结束 → 快照释放
+    mw.afterAgent!({} as any)
+    assert(mw.isInvokeActive() === false, '✓ invoke-freeze: afterAgent 后 isInvokeActive false')
+
+    // invoke 2:beforeAgent 重取快照 → 上一 invoke 期间宿主设的焦点自此生效
+    mw.beforeAgent!({} as any)
+    const r2 = await writeOutside()
+    assert(r2.status === 'error' && String(r2.content).includes('PATH_DENIED'), '✓ invoke-freeze: 下一次输入焦点生效(焦点外写被拒)')
+    const p2 = mw.augmentPrompt!({} as any)!
+    assert(p2.includes('components.1'), '✓ invoke-freeze: 下一次输入 augmentPrompt 注入焦点段')
+
+    // agent 侧来源('agent')立即生效:mid-run set_focus → 在途快照同步收紧
+    mw.setFocus(null, 'agent')
+    assert(mw.isInvokeActive() === true && (await writeOutside()).status === 'done', '✓ invoke-freeze: agent clear(清焦)立即生效(在途快照同步)')
+    mw.setFocus({ path: 'components.1' }, 'agent')
+    const r3 = await writeOutside()
+    assert(r3.status === 'error', '✓ invoke-freeze: agent mid-run set_focus 立即生效(clear_focus 自救等依赖立即性)')
+
+    // reset(会话边界):实时态 + 在途快照全清
+    mw.reset()
+    assert(mw.isInvokeActive() === false && mw.getFocuses().length === 0, '✓ invoke-freeze: reset 清实时态与快照')
+  }
 }

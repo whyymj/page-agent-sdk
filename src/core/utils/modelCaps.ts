@@ -39,7 +39,9 @@ const MODEL_TABLE: Array<{ pattern: RegExp; caps: ModelCaps }> = [
   { pattern: /claude-3-opus/i, caps: { contextWindow: 200000, maxOutputTokens: 4096, vision: true } },
   { pattern: /claude-3-haiku/i, caps: { contextWindow: 200000, maxOutputTokens: 4096, vision: true } },
   { pattern: /qwen2\.5-vl|qwen2-vl|qwen-vl|qvq/i, caps: { contextWindow: 32768, maxOutputTokens: 2048, vision: true } }, // Qwen-VL 系:32K / 2K,多模态
-  { pattern: /qwen-max|qwen-plus/i, caps: { contextWindow: 32768, maxOutputTokens: 8192 } }, // Qwen-Max/Plus:默认 32K(128K 需申请)/ 8K 输出
+  { pattern: /qwen3(\.\d+)?-vl/i, caps: { contextWindow: 262144, maxOutputTokens: 32768, vision: true } }, // Qwen3-VL 系:256K / 32K,多模态(2026 网关模型面)
+  { pattern: /qwen3(\.\d+)?-(max|plus|flash)/i, caps: { contextWindow: 262144, maxOutputTokens: 32768, thinking: true } }, // Qwen3.x 新代:256K / 32K;实测响应带 reasoning_content(qwen3.8-max 经 openhubs,2026-08)。注意「qwen3.8-max」不含子串「qwen-max」,旧条目不命中
+  { pattern: /qwen-max|qwen-plus/i, caps: { contextWindow: 32768, maxOutputTokens: 8192 } }, // Qwen-Max/Plus(旧代):默认 32K(128K 需申请)/ 8K 输出
   { pattern: /qwen2\.5-1m|qwen-1m/i, caps: { contextWindow: 1048576, maxOutputTokens: 8192 } }, // Qwen2.5-1M:1M / 8K
   { pattern: /qwen2\.5/i, caps: { contextWindow: 32768, maxOutputTokens: 8192 } }, // Qwen2.5:默认 32K / 8K
   { pattern: /glm-5\.2/i, caps: { contextWindow: 1048576, maxOutputTokens: 65536, thinking: true } }, // GLM-5.2:1M / 64K;实测默认带 reasoning

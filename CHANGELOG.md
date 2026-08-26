@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+## [4.2.3] - 2026-08-26
+
+### Fixed(invoke-freeze:聚焦锚定下一次输入,不作用于在途流程;实测事故驱动)
+
+- **事故形态**:用户发「随机打乱页面结构」→ 方案确认(request_human_confirmation)挂起窗口里点选深层组件(宿主 `setFocus` mid-run 到达)→ 在途的整页 `eval_script` 立即被「PATH_DENIED · 聚焦越界」掐住,agent 被迫 `clear_focus` 绕路后重试
+- **修**:focus 中间件 `beforeAgent` 对焦点列表取**生效快照**,整个 invoke 的 guard(wrapToolCall)与 prompt 注入(augmentPrompt)统一读快照;`afterAgent` 释放。宿主来源(API/UI/applySnapshot)的焦点变更只更新实时态(chip/事件立即同步),**下一次输入生效**;agent 自己的 `set_focus`/`clear_focus` 工具变更(标 `'agent'` 来源)**立即生效**含在途 invoke(clear_focus 自救路径依赖立即性,不受影响)
+- 控制器 mutation 方法加可选 `source` 参数('host' 默认/'agent'),`isInvokeActive()` 反射;`reset()` 会话边界清实时态 + 快照;宿主 setFocus/addFocus 在途时 debug 留痕「下一次输入生效」
+- selftest +10(sec-54 invoke-freeze 五组:冻结/下一次生效/agent 立即/reset 清双态/isInvokeActive)
+
+### Fixed(focus-ui:排队任务焦点标识丢失 + 历史焦点 chip 去点击;同日用户反馈)
+
+- **排队任务开始后 user 消息无 🎯 焦点标识**:`sendMessage` 排队分支(loading 中再发)只存文本,`finishRound` 重建 user 消息时焦点快照丢失 → 气泡无焦点路径标识;修:排队任务开始执行时取**当下实时焦点**快照写入消息(与 invoke-freeze 生效口径一致 —— 排队 invoke 的实际作用域 = 启动那一刻的实时焦点,展示与真实作用域对齐;`useChat` opts 新增 `getFocuses` 由 chatContext 透传)
+- **历史消息焦点 chip 改纯展示**:历史路径可能已变(组件被打乱/删除),点击的聚焦/回看效果会误导 → 去掉 `@click`(focus_chip_click 事件仅剩 ChatInput 当前焦点 chip 触发)+ 去 cursor/hover 样式;title 文案改「发送时聚焦(路径可能已变)」
+- browser +1(排队任务带焦点标识 + 历史 chip 无 pointer)
+
+- **modelCaps 表补 qwen3.x 新代条目**:「qwen3.8-max」不含子串「qwen-max」,旧条目不命中 → 落 DEFAULT_CAPS 32K 撞 `MIN_CONTEXT_WINDOW`(200K)启动即 throw;新增 `qwen3(\.\d+)?-(max|plus|flash)`(256K / 32K 输出 / thinking:true,实测响应带 reasoning_content)与 `qwen3(\.\d+)?-vl`(256K / 32K / vision)两条目(openhubs 网关 2026-08 实测驱动)
+- selftest +3(qwen3.8-max 不落缺省 / qwen3.5-flash 命中新代条目 / qwen3-vl-plus vision 优先)
+
 ## [4.2.2] - 2026-08-26
 
 ### Fixed(reasoning-ui:思考计数与子思考展开控件)

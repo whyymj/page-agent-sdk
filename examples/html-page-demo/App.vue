@@ -183,6 +183,8 @@ onMounted(() => {
   agent.mount('#chat-root')
   // 调试/脚本钩子:暴露 sdk(同 complex-demo;收集子 agent 事件、读 data 状态用)
   ;(window as any).__sdk = agent
+  // 真 LLM 脚本采样口(同 complex-demo window.page 惯例;render-check 回归读 components 用,不承载业务)
+  ;(window as any).__page = pageBind
 
   // iframe 自适应高度:监听子 iframe 量高消息(经 postMessage 报回,保 sandbox 隔离)
   window.addEventListener('message', onPreviewMessage)

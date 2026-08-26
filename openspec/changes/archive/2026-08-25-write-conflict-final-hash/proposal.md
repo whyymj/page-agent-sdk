@@ -1,6 +1,6 @@
 # Proposal: write-conflict-final-hash(并发写互锁 TOCTOU 根因修复)
 
-> 状态:**已立项待实施;方案已评审改判**。优先级 P1(SDK 正确性;团队审查 2026-08-24 定级 P1,既有已文档化缺口)。目标仓库:zhuanti-agent。
+> 状态:**✅ 已实施并随 4.1.0 发布**(C 收窄形态,全 13 任务收口)。优先级 P1(SDK 正确性;团队审查 2026-08-24 定级 P1,既有已文档化缺口)。目标仓库:zhuanti-agent。
 > **2026-08-25 五路讨论改判:定稿 C 收窄形态(闭包级 async mutex + ask 恢复点单发补校验),见 `design.md`**;本文件下方「原理」段为原案(final hash + 豁免),保留作决策溯源 —— 深审证明其两条豁免路线(effHash+账本 / live vs 基线)要么过拦不相交双写、要么恰好豁免掉同子树双写主场景;对抗论证证明纯 mutex 修不了 ask×外部写无界窗口。写入口勘误:实际 **7 个 commit 位**(原案写 3,漏 write del 与 eval 三模式);条件装配须 `maxParallelTools>1 && lockOn` 相与。
 > 驱动:3 agent 团队审查(并发冲突链)确认 —— `maxParallelTools>1` 时**同轮并发写互不互锁,后写静默覆盖前写**;`dataOps.ts` 代码注释自认根因修复方向(commit 入口 final hash 校验)但至今未落地,装配期 console.warn 只是临时缓解。用户拍板立项。
 

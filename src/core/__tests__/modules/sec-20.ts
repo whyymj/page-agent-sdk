@@ -42,6 +42,13 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(kimi.contextWindow === 262144 && kimi.maxOutputTokens === 32768, 'resolveModelCaps: kimi-k2 256K/32K(非 128K/8K)')
     const qmax = resolveModelCaps({ model: 'qwen-max' })
     assert(qmax.contextWindow === 32768 && qmax.maxOutputTokens === 8192, 'resolveModelCaps: qwen-max 默认 32K/8K(128K 需申请,取保守)')
+    // qwen3.x 新代(openhubs 2026-08 实测驱动):「qwen3.8-max」不含子串「qwen-max」,旧条目不命中曾落 DEFAULT_CAPS 32K 撞 MIN_CONTEXT_WINDOW 闸
+    const q38 = resolveModelCaps({ model: 'qwen3.8-max' })
+    assert(q38.contextWindow === 262144 && q38.maxOutputTokens === 32768 && q38.thinking === true, 'resolveModelCaps: qwen3.8-max 256K/32K/thinking(非 DEFAULT_CAPS 32K 撞闸)')
+    const q35f = resolveModelCaps({ model: 'qwen3.5-flash' })
+    assert(q35f.contextWindow === 262144, 'resolveModelCaps: qwen3.5-flash 命中 qwen3.x 新代条目(256K)')
+    const q3vl = resolveModelCaps({ model: 'qwen3-vl-plus' })
+    assert(q3vl.vision === true && q3vl.contextWindow === 262144, 'resolveModelCaps: qwen3-vl-plus → vision true/256K(vl 条目优先于文本条目)')
 
     // 缺省(未知模型 / 无 model)
     const unk = resolveModelCaps({ model: 'unknown-xyz' })

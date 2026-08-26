@@ -49,6 +49,8 @@ export function useChat(
     onQueuedCleared?: (dropped: string[]) => void
     /** regenerate 前回调(清代码资产复用缓存,强制子 agent 重新生成而非复用工作副本) */
     onBeforeRegenerate?: () => void
+    /** 取当前实时焦点(排队任务开始执行时快照进 user 消息;与 invoke-freeze 生效口径一致 —— 排队 invoke 的实际作用域 = 启动那一刻的实时焦点) */
+    getFocuses?: () => Focus[]
   } = {},
 ) {
   const { fetchResponse, fetchStream, onPersist, onClear, onQueuedCleared, onBeforeRegenerate } = opts
@@ -270,9 +272,11 @@ export function useChat(
     state.loading = false
     currentController = null
     // 取队首任务:此时才 addMessage 进 messages(保证它是"最后 user",runAssistantStream 正确定位,不被后续排队任务干扰)
+    // 焦点快照取执行时刻的实时焦点(排队路径曾把发送时的 focuses 丢弃 → 排队任务开始后消息气泡无 🎯 标识;
+    // 与 invoke-freeze 口径一致:排队 invoke 的实际作用域 = 启动那一刻的实时焦点,展示与真实作用域对齐)
     const nextContent = queuedTasks.value.shift()
     if (nextContent !== undefined) {
-      addMessage('user', nextContent)
+      addMessage('user', nextContent, opts.getFocuses?.())
       state.loading = true
       state.error = null
       currentController = new AbortController()

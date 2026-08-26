@@ -1,6 +1,6 @@
 # Proposal: render-check(渲染级自检 —— 纯 H5 从「生成」到「开发」的质量闭环)
 
-> 状态:**已实施待发版**(2026-08-24 实施完成:mock + 真沙箱 browser 门禁全绿 2947/957/111;真 LLM 场景待环境网关可用,机制面已由真沙箱实证。实施期修正两处:①白屏口径 documentElement.scrollHeight 恒≥视口高不可用 → body 口径;②node 守卫须判 createElement+body,e2e 桩 document 穿透纯 typeof 判定)。优先级 P1(SDK)。目标仓库:zhuanti-agent。
+> 状态:**✅ 已实施并随 4.0.0 发布**(2026-08-24 实施完成:mock + 真沙箱 browser 门禁全绿 2947/957/111;真 LLM 场景待环境网关可用,机制面已由真沙箱实证。实施期修正两处:①白屏口径 documentElement.scrollHeight 恒≥视口高不可用 → body 口径;②node 守卫须判 createElement+body,e2e 桩 document 穿透纯 typeof 判定)。优先级 P1(SDK)。目标仓库:zhuanti-agent。
 > 驱动:纯 H5 线已能产完整自包含页面,但质量验收停在**结构层**(formatCheck = validate_code 只验标签闭合)——「白屏 / script 运行时错 / 资源加载失败」靠人眼。SDK 本就跑在浏览器,沙箱 iframe 渲染检查**零新依赖**。
 
 ## Why(现状核实,复审纠正)

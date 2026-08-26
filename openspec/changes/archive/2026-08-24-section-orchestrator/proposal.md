@@ -1,6 +1,6 @@
 # Proposal: section-orchestrator(分段编排 + 欠委派 nudge —— 复杂任务的行为面)
 
-> 状态:**已实施待发版**(2026-08-24 Phase 0 + Phase 1 全部完成:四门禁 3017/978/111;真 LLM 双臂与阈值标定登记 deferred 待网关。实施修正:装配条件按 useSubagent 能力判定(默认只读 spawn_agent 也算);e2e S7 走 spawn_agents allSettled 既有错误隔离路径)。优先级:P2 主体 / Phase 0 为 P1(独立可先行)。目标仓库:zhuanti-agent。
+> 状态:**✅ 已实施并随 4.0.0 发布**(2026-08-24 Phase 0 + Phase 1 全部完成:四门禁 3017/978/111;真 LLM 双臂与阈值标定登记 deferred 待网关。实施修正:装配条件按 useSubagent 能力判定(默认只读 spawn_agent 也算);e2e S7 走 spawn_agents allSettled 既有错误隔离路径)。优先级:P2 主体 / Phase 0 为 P1(独立可先行)。目标仓库:zhuanti-agent。
 > 驱动:复杂任务下主 agent「该委派不委派、独自硬干」的后果链:上下文膨胀→压缩→指令衰减(平铺/漏需求)→轮次耗尽→**诚实但部分完成**;且无失败隔离、无并行。「过度委派」已修(多方案先文本 3.46),「欠委派」零机制 —— 本 change 补另一半,并泛化 html 线已验证的委派优先编排到 JSON 分段。
 
 ## Why(现状核实,复审纠正)

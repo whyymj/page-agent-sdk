@@ -30,14 +30,14 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,3055 项断言)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,3068 项断言)
 npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,972 项;tests/e2e/<module>.mjs 按模块拆分)
-npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,124 项;tests/browser/<demo>.spec.ts)
+npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,125 项;tests/browser/<demo>.spec.ts)
 ```
 
 ## 环境配置
 
-AI 配置通过 `.env`(前缀 `VITE_`):`VITE_AI_API_KEY` / `VITE_AI_BASE_URL` / `VITE_AI_MODEL` / `VITE_AI_TEMPERATURE`(操作大 JSON 建议低温 0.3)/ `VITE_AI_MAX_TOKENS` / `VITE_AI_SYSTEM_PROMPT`(必须单行)。Anthropic 协议另用 `VITE_ANTHROPIC_API_KEY` / `VITE_ANTHROPIC_BASE_URL` / `VITE_ANTHROPIC_MODEL`(rag-demo 走此组;dev 缺省经 vite 代理 `location.origin/llm` → modelverse,**baseUrl 必须绝对 URL**—— @anthropic-ai/sdk buildURL 直接 `new URL(baseURL+path)`,相对路径抛 Invalid URL)。识图端点 `VITE_VISION_URL`(images-demo 的 describe 调用,analyze 形态 `{image:base64,mime}` → `{data:{description}}`;**内部接口地址只进本地 .env 勿入库**)。凭据只进 `.env`(gitignore),不进代码/仓库。
+AI 配置通过 `.env`(前缀 `VITE_`):`VITE_AI_API_KEY` / `VITE_AI_BASE_URL` / `VITE_AI_MODEL` / `VITE_AI_TEMPERATURE`(操作大 JSON 建议低温 0.3)/ `VITE_AI_MAX_TOKENS` / `VITE_AI_SYSTEM_PROMPT`(必须单行)。Anthropic 协议另用 `VITE_ANTHROPIC_API_KEY` / `VITE_ANTHROPIC_BASE_URL` / `VITE_ANTHROPIC_MODEL`(rag-demo 走此组;dev 可经 vite 代理 `location.origin/llm` → 网关(目标随 .env 同步,现为 openhubs),**baseUrl 必须绝对 URL** —— @anthropic-ai/sdk buildURL 直接 `new URL(baseURL+path)`,相对路径抛 Invalid URL)。识图端点 `VITE_VISION_URL`(images-demo 的 describe 调用,analyze 形态 `{image:base64,mime}` → `{data:{description}}`;**内部接口地址只进本地 .env 勿入库**)。凭据只进 `.env`(gitignore),不进代码/仓库。
 
 上下文压缩策略不经 `.env`,由 `createChatSdk({ contextOptions, summaryLlm, maxMemoryRounds, contextPreset })` 显式配置。
 
@@ -92,7 +92,7 @@ skills/                         # 分发给使用者的 Agent Skill(入 npm 包 
 - **问句意图守卫**(默认开,无开关):正则三档启发式(句尾问号 / 疑问词+吗呢 / 查询词「是什么|怎么用|有哪些」)逐消息定性,命中注入「先答勿做」pin 段(`PIN_SEGMENT_NAMES` 白名单保跨压缩/预算裁剪存活);只递信号不阻断工具,裁决归 LLM(文案带「除非同条消息明确要求操作」逃生门);防长对话问句被历史轨迹拖着误路由成操作(「这是啥组件」→ use_html 事故)
 - **Mission**(默认开):会话级目标锚定,启发式 capture(宁漏不误)+ `send({mission})`;pin 段天然跨压缩
 - **workingMemory**(默认开):捕获 read/query/search 的 locatedPaths + read hash(LRU ≤10),防压缩后重复检索/凭记忆写致 autoLock 误冲突
-- **Focus**(默认开,opt-in 聚焦):三层收敛(提示 + 子树 schema 视野 + strict `PATH_DENIED`);**意图归属引导 + 正路出口(4.1+)**:「增加/修改 X」默认归属聚焦组件本身(写焦点子路径),PATH_DENIED 文案先给子路径出口(动态示例)再给解焦出口(实测「增加tab」被误读为新建组件驱动);**指代问句锚定(4.2+)**:「这是啥/这个/它」类指示代词问句默认指聚焦目标(先 read 焦点子树再答,勿泛答整页 —— 实测点选深层组件后问「这是啥」答了整页概况);API `setFocus`/`addFocus`/`removeFocus`/`clearFocus`/`getFocuses`;子 agent 继承全部焦点
+- **Focus**(默认开,opt-in 聚焦):三层收敛(提示 + 子树 schema 视野 + strict `PATH_DENIED`);**invoke-freeze(4.2.3+)**:焦点锚定下一次输入 —— beforeAgent 取生效快照,宿主 API/UI mid-run 到达的焦点变更不追溯掐在途流程(实测事故:方案确认挂起窗口点选组件 → 整页打乱被 PATH_DENIED),agent 自己的 focus 工具变更立即生效(clear_focus 自救依赖);**意图归属引导 + 正路出口(4.1+)**:「增加/修改 X」默认归属聚焦组件本身(写焦点子路径),PATH_DENIED 文案先给子路径出口(动态示例)再给解焦出口(实测「增加tab」被误读为新建组件驱动);**指代问句锚定(4.2+)**:「这是啥/这个/它」类指示代词问句默认指聚焦目标(先 read 焦点子树再答,勿泛答整页 —— 实测点选深层组件后问「这是啥」答了整页概况);API `setFocus`/`addFocus`/`removeFocus`/`clearFocus`/`getFocuses`;子 agent 继承全部焦点
 
 ### 子 agent 与并行编排(详见 architecture.md §⑨⑮)
 - `spawn_agent`/`spawn_agents`(默认开)只返回最终结论(省 token);预声明 `subagents:[{id, description, …}]` 生成 `use_<id>`;`maxDepth`(默认 1)物理切断
@@ -136,7 +136,7 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test    # tsx 跑 src/core/__tests__/selftest.ts,3055 项断言
+npm test    # tsx 跑 src/core/__tests__/selftest.ts,3068 项断言
 ```
 按模块拆分:`src/core/__tests__/modules/sec-NN.ts`(54+ 个模块)各导出 `run(ctx)`,runner 汇总;共享 `TestCtx` 在 `modules/_ctx.ts`。tsx 跑源码(不经构建),触不到 createChatSdk 顶层 API 作用域。**改任何核心模块后必跑**。
 
@@ -156,7 +156,7 @@ npm run test:browser  # 124 项;也可 /browser-test 斜杠命令。**并行分�
 `npm run dev` 逐个 demo 验证(见目录结构 examples 清单;各 demo 侧重点见 `doc/usage-guide.md`)。
 
 #### 3.5 真 LLM 场景回归(`npm run test:real`,统一入口)
-**统一入口** `npm run test:real [套件] [场景号…]`(套件:`uispec` complex-demo 10 场景 / `rag` 四模式 / `parallel` 并行复验;共享基建 `tests/runtime/_real-llm-lib.mjs`,新套件只写场景+checks);另有两类独立套件直接 `node tests/runtime/<名>.mjs`:`subtree-real-llm.mjs`(subtree/守卫/nudge 5 场景,?huge=1)/ `complex-ops-real-llm.mjs`(complex-demo 升级后调整/修改操作 6 场景:新建含委派/调序/层级/属性/聚焦纯代码/RAG ?rag=1;LLM 走 `VITE_ANTHROPIC_*` 组);**基线对比已机械化**:`--baseline-diff`(读现有报告秒回 diff,▲疑似回归/▼改善,阈值 token ±15% 且 ±2000 / toolCount ±3)/ `--baseline-update`(确认预期后采集,`tests/runtime/real-llm-baseline.json` 随代码提交)。报告 `_real-llm-*.json` gitignore,断点续跑传场景号。**方法论详见 `doc/real-llm-regression.md`**(idle 双条件判定/超时 dump 诊断/reload 诊断)。要点:idle 判定 = debugLogs 静默 90s + `getActiveSubagents()===0`(reasoning 不打日志,只看日志会误判);**跑前必重启 dev server**(遗留旧 vite server 的 optimizeDeps 状态过期 → 页面强制 reload → memory 后端会话清空,msgs 归零假性失败,3.11 排查烧 1h);**跑中禁并发 test:browser**;`.env` 无 key 自动 skip。headless 族(draft/trace/maliang,`tests/runtime/*-real-llm.ts`)不经统一入口,各自 `npm run test:*-real`。3.10/3.11 系列修复全部由真 LLM 复测驱动发现。
+**统一入口** `npm run test:real [套件] [场景号…]`(套件:`uispec` complex-demo 10 场景 / `rag` 四模式 / `parallel` 并行复验;共享基建 `tests/runtime/_real-llm-lib.mjs`,新套件只写场景+checks);另有两类独立套件直接 `node tests/runtime/<名>.mjs`:`subtree-real-llm.mjs`(subtree/守卫/nudge 5 场景,?huge=1)/ `complex-ops-real-llm.mjs`(complex-demo 升级后调整/修改操作 6 场景:新建含委派/调序/层级/属性/聚焦纯代码/RAG ?rag=1;LLM 走 `VITE_ANTHROPIC_*` 组)/ `render-check-real-llm.mjs`(html-page-demo 坏 script 自纠 5 场景,2026-08-26 补验归档)/ `section-orchestrator-real-llm.mjs`(双臂 fixture `tests/runtime/fixtures/section-fixture.html`,?arm=grind|nudge,2026-08-26 补验归档)/ `image-input-real-llm.mjs`(images-demo 识图旁路 3 场景,describe 走 modelverse vision 经 vite 代理 /llm—— 浏览器直调 /v1/messages 因 CORS 失败;2026-08-26 补验归档;**注意 `loadReport` 的 only 过滤会把未跑场景从报告剔除,单跑前先备份报告**);**基线对比已机械化**:`--baseline-diff`(读现有报告秒回 diff,▲疑似回归/▼改善,阈值 token ±15% 且 ±2000 / toolCount ±3)/ `--baseline-update`(确认预期后采集,`tests/runtime/real-llm-baseline.json` 随代码提交)。报告 `_real-llm-*.json` gitignore,断点续跑传场景号。**方法论详见 `doc/real-llm-regression.md`**(idle 双条件判定/超时 dump 诊断/reload 诊断)。要点:idle 判定 = debugLogs 静默 90s + `getActiveSubagents()===0`(reasoning 不打日志,只看日志会误判);**跑前必重启 dev server**(遗留旧 vite server 的 optimizeDeps 状态过期 → 页面强制 reload → memory 后端会话清空,msgs 归零假性失败,3.11 排查烧 1h);**跑中禁并发 test:browser**;`.env` 无 key 自动 skip。headless 族(draft/trace/maliang,`tests/runtime/*-real-llm.ts`)不经统一入口,各自 `npm run test:*-real`。3.10/3.11 系列修复全部由真 LLM 复测驱动发现。
 
 #### 4. 运行时手动验证(依赖 LLM/server)
 子 agent 委派 / MCP / verify 自纠 / 真实 LLM 流式 / draft 真 LLM(`npm run test:draft-real`,无 key 自动 skip)。
@@ -181,7 +181,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(3055/972/124)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(3068/972/125)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判)→ `npm run test:size` → `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证

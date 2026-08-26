@@ -266,7 +266,7 @@ onMounted(() => {
     id: 'complex-demo',
     storage: 'memory',
     llm: {
-      provider: cfg.provider, // 'anthropic' = Claude 原生协议(默认组;deepseek-v4-flash 经 modelverse /llm 同源代理)
+      provider: cfg.provider, // 'anthropic' = Claude 原生协议(默认组;经 /llm 同源代理或直连,网关随 .env 配置)
       apiKey: cfg.apiKey,
       baseUrl: cfg.baseUrl,
       model: cfg.model,

@@ -1587,6 +1587,8 @@ sdk.clearFocus() // 退出精修,恢复全量可操作范围
 - **视野收敛**:只看到该组件子树的 schema 描述(`getSchemaAtPath` 取子树,`extractSchemaHint` 渲染),不看其他组件
 - **范围收紧(strict)**:写该子树之外(如 `components.0`)→ `PATH_DENIED` 越界错误回灌,agent 自纠;**文案先给「正路」出口(4.1+)**:被拦时优先提示「若意图是修改聚焦组件本身,改写焦点路径的子路径重试(附实际焦点路径示例)」,解焦出口(remove_focus/clear_focus/换焦点)列后 —— 防 agent 照方抓药清焦后把误读执行到底;读工具不限制(用户仍需看全量上下文)。**例外:尾部追加放行** —— 写 `<arrayPath>.<N>`(N ≥ 当前数组长度,即追加新元素)不破坏焦点子树,故聚焦模式下仍可新建组件(如聚焦 hero 时 `write components.2` 追加 banner)
 
+**生效时机(invoke-freeze,4.2.3+)**:焦点锚定的是**下一次输入** —— 宿主 API/UI 的焦点变更(点击拾取、`setFocus`/`clearFocus`)在**在途流程进行中**到达时,不追溯作用于当前流程(焦点条 chip 立即更新,但当前正在跑的轮次不受影响),下一次发送时生效。agent 自己调 `set_focus`/`clear_focus` 工具则**立即生效**(含当前轮次)。实测事故驱动:用户发「随机打乱页面结构」后在方案确认挂起窗口点选了深层组件,mid-run 到达的聚焦立刻把在途的整页打乱操作 `PATH_DENIED` 掐住,agent 被迫 clear_focus 绕路。
+
 > **× code-as-data-asset 强化(子 agent 代码精修)**:用 `createHtmlSubagent` 时,子 agent 改代码走 `vfs_edit`(非数据写),`focus.ts` 的数据写拦截不覆盖 vfs,故 `codeAssetMiddleware` 在执行前补一道 **vfs 白名单**:子 agent(继承主焦点)只能 `vfs_edit` 焦点组件的代码文件(按 `__pgId` 归属判定),越界 `PATH_DENIED` —— 即使子 agent 误解也改不到别的组件代码。这是「点选组件 → 对话精修」的硬约束基础。焦点为整个数组 / 非代码字段时放行(无法精确到组件)。**聚焦模式下不能新建组件**(数据写被 focus.ts 拦),新建前先 `clearFocus`。完整示例见 `examples/html-page-demo`(预览区点选组件 → 🎯 聚焦 → 对话精修)。
 
 **三种触发方式**:

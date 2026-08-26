@@ -61,7 +61,7 @@ export interface DialogMessages {
   // ===== MessageRow / ChatInput 焦点 chip =====
   focusChipTitlePrefix: string    // 精修中: / Focus:(+ path)
   focusChipTitleHint: string      // (点击回看 · ✕ 移除)
-  historyFocusChipTitlePrefix: string // 回看 / View(+ path)
+  historyFocusChipTitlePrefix: string // 发送时聚焦(路径可能已变) / Focused at send(+ path)
   removeFocus: string
   // ===== ChatInput =====
   sendHint: string
@@ -297,7 +297,7 @@ export const MESSAGES_ZH_CN: DialogMessages = {
   copyThinkingTruncTitle: '复制完整思考(渲染已截尾,复制取全量)',
   focusChipTitlePrefix: '精修中:',
   focusChipTitleHint: '(点击回看 · ✕ 移除)',
-  historyFocusChipTitlePrefix: '回看 ',
+  historyFocusChipTitlePrefix: '发送时聚焦(路径可能已变):',
   removeFocus: '移除此焦点',
   sendHint: 'Enter 发送 · Shift+Enter 换行',
   sendTitle: '发送',
@@ -526,7 +526,7 @@ export const MESSAGES_EN_US: DialogMessages = {
   copyThinkingTruncTitle: 'Copy full reasoning (display truncated, copy gets all)',
   focusChipTitlePrefix: 'Focus:',
   focusChipTitleHint: '(click to view · ✕ remove)',
-  historyFocusChipTitlePrefix: 'View ',
+  historyFocusChipTitlePrefix: 'Focused at send (path may have changed): ',
   removeFocus: 'Remove this focus',
   sendHint: 'Enter to send · Shift+Enter for newline',
   sendTitle: 'Send',

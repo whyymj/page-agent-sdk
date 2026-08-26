@@ -15,7 +15,7 @@
  *      与 C 对照:直连 = 主 agent 直接调 MCP 工具(工具结果进主上下文);C = 检索过程隔离在子 agent。
  *
  * 顶部切模式 = unmount + 重建 agent(各模式的配置面完全不同)。
- * LLM 走 Anthropic 原生协议(provider:'anthropic',动态 import @langchain/anthropic),网关为 modelverse。
+ * LLM 走 Anthropic 原生协议(provider:'anthropic',动态 import @langchain/anthropic),网关经 .env 配置(现为 openhubs)。
  * A 模式知识库文档为内联 mock(无真实 fetch 依赖),实际使用时替换为 fetch('/kb/xxx.md');
  * B 模式 retriever 为关键词匹配 mock(无真实向量库依赖),实际替换为 vectorDB.search(embed(query))。
  */
@@ -163,16 +163,16 @@ async function retriever(query: string, opts?: { topK?: number }): Promise<RagHi
 
 /** 按当前模式创建 agent(两模式配置面完全不同:memory vs subagents) */
 function buildAgent(): ChatSdk {
-  // Anthropic 协议(modelverse 网关):provider:'anthropic' 动态加载 @langchain/anthropic,
+  // Anthropic 协议:provider:'anthropic' 动态加载 @langchain/anthropic,
   // SDK 在 baseUrl 后拼 /v1/messages 发 Claude 原生协议请求。
   // 凭据走 .env(VITE_ANTHROPIC_*,不进代码/仓库;模板见 .env.example)
   const llm = {
     provider: 'anthropic',
     apiKey: import.meta.env.VITE_ANTHROPIC_API_KEY,
     // baseUrl 必须是绝对 URL(@anthropic-ai/sdk buildURL 直接 new URL(baseURL+path),相对路径抛 Invalid URL)。
-    // dev 走 vite 同源代理(vite.config.ts server.proxy:/llm → https://api.modelverse.cn):
-    // modelverse preflight 拒绝 SDK 自动附加的 x-stainless-* 遥测头,浏览器直连被 CORS 挡;
-    // 生产环境直连经 VITE_ANTHROPIC_BASE_URL 配 https://api.modelverse.cn/
+    // 部分网关(如 modelverse)preflight 拒绝 SDK 自动附加的 x-stainless-* 遥测头 → 走 vite 同源代理
+    // (vite.config.ts server.proxy:/llm,目标随 .env 网关同步,现为 openhubs);
+    // openhubs 实测 CORS 全开,直连经 VITE_ANTHROPIC_BASE_URL 配绝对 URL 亦可
     baseUrl: import.meta.env.VITE_ANTHROPIC_BASE_URL || `${location.origin}/llm`,
     model: import.meta.env.VITE_ANTHROPIC_MODEL || 'deepseek-v4-flash',
     // prompt caching(Anthropic 协议专属):多轮 ReAct 前缀(system+tools+历史)命中缓存,input 价格降至 ~1/10;
