@@ -2,6 +2,23 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [Unreleased]
+
+## [4.2.0] - 2026-08-26
+
+### Added(chunked-code-write:append 字符串拼接,大 code 分块写入)
+
+- **patch `append` 扩展字符串拼接语义**:目标为 string 且 value 为 string → 尾接(与数组 push 并列,op 枚举不变)。场景:30KB+ 组件代码单次 write 受 max_tokens 上限截断(实测 flash 4096 反复撞墙)—— 先 `set` 组件+code 首块,再 `append components.N.code` 逐块尾接(每块 ≤4K 字符),**单次工具调用参数只带一小块,彻底脱离单次输出上限**;局部校验按「拼接后终值」(裸片段可能过不了 enum 等约束),live 重放走外科手术式 `appendStr` 计划(不经整体 clone 回写,大 bind 下省深拷贝)
+- html 子 agent systemPrompt 补「大段 code 分块写」硬约束(预计 code >8K 字符必分块,含具体流程与每块上限;工具 schema 的 append 描述同步教学 —— 工具 schema 反向引导强于 system prompt,thinking-taming 结论)
+- write 工具错误 hint 同步('append 需数组或字符串');selftest +4(拼接/多块累积/类型不匹配/PATCH_FAILED)/ e2e +2(真 ReAct 三块拼接成完整 code)
+
+### Fixed(freeze-container-clear:含保护字段容器整体清空显式拒,实测「清空组件」15 轮事故驱动)
+
+- **事故形态**:complex-demo 配了 `freeze` 保护 `components.0.props.trackId`,用户「清空所有组件」→ `set components=[]`(及 eval `return []`)被受保护字段回填层(H1)凭空捏造成 `[{props:{trackId}}]` 骨架 → 骨架元素缺 `type` 过不了 schema → 报 `SCHEMA_INVALID "0.type"` **完全不提保护**,模型无从诊断,7 次原样重试 + eval/remove/resource_delete 探路,15 轮 78s/257K prompt tokens 才摸到「保留 components.0 删其余」出路
+- **修**:回填分支按「容器仍在 → 照常回填(H1)/ merge 语义根键未传 → skip 不捏造(bind 整树保留)/ 根键在场但保护链断 → 显式 `FROZEN_FIELD` 带可执行出口(保留含保护字段的元素 / 逐个 remove 其余;verbatim 给 `resource_delete` 释放出口)」三路;顺带修掉 **merge 模式捏造骨架经 safeMerge 覆盖原数组的静默数据丢失**(whole-set 部分提交 + 嵌套 freeze 字段组合下旧实现会拿骨架顶掉整棵子树)
+- **resource 工具定向文案**:`resource_delete` 撞静态 freeze 路径由「资源不存在(无需释放)」改为 `FROZEN_FIELD` 定向说明(无句柄不可释放,指集成方 `data.resources`);`resource_list` 空池时列出静态 freeze 路径面(旧「无已注册」文案诱导模型误判保护不存在反而去撞冻结墙,实测带偏 2 轮)
+- 同参重复失败提醒(C2,3.44.1)在本事故中 R3 起即已注入 ToolMessage 但 flash 无视连发 7 次 —— 机制在场,根因是错误本身不可解,本次修的就是错误可解性;selftest +14(sec-58 白盒三路判定 / sec-59 集成含正路出口真的通)
+
 ## [4.1.0] - 2026-08-25
 
 ### Fixed(completion-truncated:截断检测回灌,实测「无限重委派」事故驱动)

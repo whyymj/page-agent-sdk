@@ -40,6 +40,18 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(t['write'], { patch: { op: 'append', jsonPath: 'list', value: '{"id":3,"text":"c"}' } })
     assert(appObj.list.length === 3 && appObj.list[2].id === 3, 'edit append 追加元素')
 
+    // write(edit) append 字符串拼接(chunked-code-write:大 code 分块写入,单次输出脱离 max_tokens 约束)
+    r = await invoke(t['write'], { patch: { op: 'set', jsonPath: 'cfg.name', value: '"<html><head>"' } })
+    assert(appObj.cfg.name === '<html><head>', 'append 前置:set 首块到字符串字段')
+    r = await invoke(t['write'], { patch: { op: 'append', jsonPath: 'cfg.name', value: '"<style>body{}</style>"' } })
+    assert(/已 write\(edit\)/.test(r) && appObj.cfg.name === '<html><head><style>body{}</style>', 'edit append 字符串拼接(第二块尾接)')
+    r = await invoke(t['write'], { patch: { op: 'append', jsonPath: 'cfg.name', value: '"</head><body></body></html>"' } })
+    assert(appObj.cfg.name === '<html><head><style>body{}</style></head><body></body></html>', 'edit append 字符串多块累积(三块成完整文档)')
+    // 类型不匹配:字符串目标 append 非字符串 → 结构化错误,live 不变
+    const nameBefore = appObj.cfg.name
+    r = await invoke(t['write'], { patch: { op: 'append', jsonPath: 'cfg.name', value: '123' } })
+    assert(/PATCH_FAILED/.test(r) && /字符串/.test(r) && appObj.cfg.name === nameBefore, 'append 字符串目标 + 非字符串 value → PATCH_FAILED 提示拼接语义(live 不变)')
+
     // write(edit) remove 删字段
     r = await invoke(t['write'], { patch: { op: 'remove', jsonPath: 'cfg.extra' } })
     assert(!('extra' in appObj.cfg), 'edit remove 删字段')

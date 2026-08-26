@@ -283,17 +283,42 @@ type CheckResult =
   | { ok: false; code: string; path: string; message: string; hint: string }
 
 /** 共享:遍历受保护路径,在 normalized 上做 C1 回显识别 + verbatim 定点展开(A2/D1)+ freeze/verbatim 比对。
- *  就地改 normalized。valAt undefined(LLM 未传该字段,整体 set 部分提交/merge)→ skip(merge 保留当前值,不算改)。 */
-function normalizeAndCheck(normalized: unknown, ctx: ProtectedCtx): CheckResult {
+ *  就地改 normalized。valAt undefined 且容器仍在 → 回填(H1 防静默丢失);容器链断按 mergeMode/根键在场分路(见函数体)。
+ *  mergeMode:写入是否 merge 语义(allowKeys 整体 set;缺省 falsy = whole-replace/enforcePatches 全量语境)。 */
+function normalizeAndCheck(normalized: unknown, ctx: ProtectedCtx, mergeMode?: boolean): CheckResult {
   const bind = ctx.getBind()
   for (const [path, spec] of ctx.resourcesByPath) {
     const cur = getByPath(bind, path)  // bind 当前原始值
     const valAt = getByPath(normalized, path)
     if (valAt === undefined) {
-      // LLM 未传该字段(整体 set 部分提交)或祖先 set 丢弃了受保护子字段 → 回填当前值保留(防静默丢失,H1);
-      //   bind 无值(cur undefined)才 skip(§7c B4)
-      if (cur !== undefined) setByPath(normalized, path, cur)
-      continue
+      // bind 无值(cur undefined)才 skip(§7c B4)
+      if (cur === undefined) continue
+      const segs = path.split('.')
+      const parentPath = segs.length > 1 ? segs.slice(0, -1).join('.') : ''
+      if (getByPath(normalized, parentPath) !== undefined) {
+        // H1:容器仍在(LLM 部分提交漏写该字段)→ 回填当前值保留(防静默丢失)
+        setByPath(normalized, path, cur)
+        continue
+      }
+      // 容器链断。按「根键是否显式在场」分三路(2026-08-26 complex-demo「清空组件」15 轮事故驱动):
+      //   旧实现一律 setByPath 回填 → 凭空捏造骨架(如 [{props:{trackId}}])→ merge 模式下 safeMerge
+      //   用骨架覆盖原数组(静默数据丢失);显式删除场景则后续 schema 校验失败且报错完全不提保护,模型无从诊断。
+      const rootPresent = !!normalized && typeof normalized === 'object' && segs[0] in (normalized as Record<string, unknown>)
+      if (!rootPresent) {
+        if (mergeMode) continue  // merge 语义:根键未传 → bind 整树保留(本就不该动,也无需回填)
+        setByPath(normalized, path, cur)  // whole-replace:键缺失 → 回填保全(H1 原语义,restoreInPlace 全量替换语境正确)
+        continue
+      }
+      // 根键在场但受保护链被显式删除(set components=[] / 换掉含冻结字段的元素)→ 与 remove patch 同语义显式拒绝
+      return {
+        ok: false,
+        code: spec.mode === 'freeze' ? 'FROZEN_FIELD' : 'VERBATIM_PROTECTED',
+        path,
+        message: `整体替换会移除受保护字段 "${path}"(${spec.mode}),已拒绝`,
+        hint: spec.mode === 'freeze'
+          ? '含冻结字段的容器不可整体清空/替换:保留包含该字段的元素(补齐其必填字段,如 type),或逐个 remove 其余元素;彻底移除该字段需集成方调整 data.resources'
+          : '含 verbatim 字段的容器不可整体清空/替换:保留包含该字段的元素,或先 resource_delete({path}) 释放保护后再整体替换',
+      }
     }
     if (spec.mode === 'freeze') {
       // C1 回显:LLM 原样带回 ⟦frozen:path⟧ → 视为未改,保留当前值(不把占位符串落 bind)
@@ -347,11 +372,13 @@ function formatCheckError(r: Exclude<CheckResult, { ok: true }>, patchIndex?: nu
 export function enforceSet(args: {
   value: unknown
   ctx: ProtectedCtx | undefined
+  /** merge 语义(allowKeys 整体 set:根键未传 = bind 保留);缺省 = whole-replace/全量语境 */
+  mergeMode?: boolean
 }): { ok: true; value: unknown } | { ok: false; error: string } {
-  const { value, ctx } = args
+  const { value, ctx, mergeMode } = args
   if (!ctx || !ctx.resourcesByPath.size) return { ok: true, value }
   const normalized = deepClone(value)
-  const r = normalizeAndCheck(normalized, ctx)
+  const r = normalizeAndCheck(normalized, ctx, mergeMode)
   if (!r.ok) return { ok: false, error: formatCheckError(r) }
   return { ok: true, value: normalized }
 }

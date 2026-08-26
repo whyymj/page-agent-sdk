@@ -81,4 +81,21 @@ export async function run(ctx: TestCtx) {
   const t3 = byName(tools3)
   const r5 = await invoke(t3.read, {})
   assert(/⟦frozen:id⟧/.test(r5), '✓ 无 vfsStore → freeze 仍工作(protectedCtx 不依赖 resourceStore;仅 verbatim 需 vfsStore)')
+
+  // ===== H1b:整体清空含 freeze 字段的容器 → 显式拒 + 正路出口真的通(2026-08-26「清空组件」15 轮事故驱动)=====
+  // 造一个非冻结元素(components.1) → set components=[] 应拒(旧:捏造骨架 → SCHEMA_INVALID "0.type" 不提保护)
+  const h1a = await invoke(t.write, { patch: { op: 'append', jsonPath: 'components', value: { type: 'banner' } } })
+  assert(/append/.test(h1a) || !/ERROR/.test(h1a), '✓ H1b 前置:append 非冻结元素(components.1)')
+  const h1b = await invoke(t.write, { patch: { op: 'set', jsonPath: 'components', value: [] } })
+  assert(/FROZEN_FIELD/.test(h1b) && /整体替换会移除受保护字段/.test(h1b) && /逐个 remove/.test(h1b), '✓ H1b write patch set components=[] → 显式 FROZEN_FIELD + 可执行出口(旧:捏造骨架 → SCHEMA_INVALID 误导)')
+  assert(bind.components.length === 2, '✓ H1b 整体清空被拒 → bind 不变')
+  // 引导文案指的正路:逐个 remove 非冻结元素 → 成功;冻结元素所在的 components.0 保留
+  const h1c = await invoke(t.write, { patches: [{ op: 'remove', jsonPath: 'components.1' }] })
+  assert(!/ERROR/.test(h1c) && bind.components.length === 1 && bind.components[0].verification === 'v0', '✓ H1b 正路出口:remove 非冻结元素成功,冻结元素(components.0)保留')
+
+  // ===== resource 工具对静态 freeze 的定向文案(旧:「不存在(无需释放)」/「无已注册」把模型带偏两轮)=====
+  const rd = await invoke(t.resource_delete, { path: 'id' })
+  assert(/FROZEN_FIELD/.test(rd) && /静态保护/.test(rd) && /集成方/.test(rd), '✓ resource_delete freeze 静态路径 → 定向文案(无句柄不可释放,指集成方)而非「不存在」')
+  const rl = await invoke(t.resource_list, {})
+  assert(/freeze 只读字段/.test(rl) && /id/.test(rl) && /resource_delete 仅对 verbatim/.test(rl), '✓ resource_list 空池 + 静态 freeze → 列出 freeze 路径面(不再「无已注册」误导)')
 }

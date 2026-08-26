@@ -245,12 +245,14 @@ export function validateRootValueLocally(args: {
  * 返回逐目标写回计划(op 按原 patch 序重放到 live bind)。纯函数,applyPatchesToBind 内联消费 + selftest 直测。
  */
 export interface LocalWriteBack {
-  op: 'set' | 'remove' | 'move' | 'mergeKeys' | 'appendElems'
+  op: 'set' | 'remove' | 'move' | 'mergeKeys' | 'appendElems' | 'appendStr'
   jp: string
   value?: unknown
   toPath?: string
   entries?: [string, unknown][]
   elems?: unknown[]
+  /** appendStr:字符串拼接的追加片段(chunked-code-write) */
+  str?: string
 }
 
 export interface LocalValidationPlan {
@@ -351,6 +353,21 @@ export function validateWriteLocally(args: {
       // append:只校验新增元素(逐个对元素 schema,any-option-accepts);既有兄弟元素不过堂(防株连复刻)
       const cap = appendCaptures[appendIdx++]
       const elems = cap?.elems ?? []
+      // 字符串目标(chunked-code-write:大 code 分块拼接)→ 片段 = 局部 parse 结果(cap.elems[0]),
+      // 校验「拼接后终值」(终值才是落盘形态;裸片段可能过不了 enum 等约束)+ appendStr 写回计划
+      const liveCur = getByPath(bindRef, jp)
+      if (typeof liveCur === 'string' && typeof elems[0] === 'string') {
+        const chunk = elems[0] as string
+        const tresS = resolveSchemaPath(schema, jp)
+        if (tresS.kind === 'missing') return { ok: false, error: stripError([jp]), writeBacks: [], notices }
+        const finalStr = liveCur + chunk
+        if (tresS.kind !== 'open') {
+          const bad = tresS.schemas.map((sc) => sc.safeParse(finalStr)).find((r) => !r.success)
+          if (bad) return { ok: false, error: mkError(jp, bad.error?.issues ?? []), writeBacks: [], notices }
+        }
+        writeBacks.push({ op: 'appendStr', jp, str: chunk })
+        continue
+      }
       if (!elems.length) { writeBacks.push({ op: 'appendElems', jp, elems: [] }); continue }
       const tres = resolveSchemaPath(schema, jp)
       if (tres.kind === 'missing') {
@@ -497,7 +514,8 @@ export function commitSetToBind(args: {
   if (leak) return { ok: false, error: placeholderLeakError(leak) }
   // 强制层(§7c F1):normalize(C1 回显 + verbatim 展开 + D1)+ freeze/verbatim 比对,先于 schema 校验
   if (protectedCtx) {
-    const er = enforceSet({ value, ctx: protectedCtx })
+    // mergeMode = allowKeys 整体 set 的 merge 语义(根键未传 → bind 保留;受保护字段回填分支按此分路)
+    const er = enforceSet({ value, ctx: protectedCtx, mergeMode: !!allowKeys })
     if (!er.ok) return { ok: false, error: er.error }
     value = er.value
   }
@@ -599,7 +617,7 @@ export function applyPatchesToBind(args: {
     if (op === 'append') appendCaptures.push({ jp, elems: Array.isArray(pVal) ? [...(pVal as unknown[])] : [pVal] })
     if (op === 'move') moveCaptures.push({ jp, toPath: String(pVal), elem: getByPath(clone, jp) })
     const patchErr = applyPatchToClone(clone, op, jp, pVal)
-    if (patchErr) return { ok: false, error: toolError({ code: 'PATCH_FAILED', message: `patches[${i}]: ${patchErr}`, hint: '检查 op 与目标类型:merge 需对象,append 需数组' }) }
+    if (patchErr) return { ok: false, error: toolError({ code: 'PATCH_FAILED', message: `patches[${i}]: ${patchErr}`, hint: '检查 op 与目标类型:merge 需对象,append 需数组或字符串' }) }
     snapshotAfter(op, jp)
     applied.push({ op, jp, value: pVal })
   }
@@ -639,6 +657,10 @@ export function applyPatchesToBind(args: {
     } else if (wb.op === 'appendElems') {
       const arr = wb.jp ? getByPath(bindRef, wb.jp) : bindRef
       if (Array.isArray(arr) && wb.elems?.length) arr.push(...(wb.elems as unknown[]))
+    } else if (wb.op === 'appendStr') {
+      // chunked-code-write:字符串片段尾接到 live(目标类型已在校验计划确认 string)
+      const cur = wb.jp ? getByPath(bindRef, wb.jp) : bindRef
+      if (typeof cur === 'string' && typeof wb.str === 'string') setByPath(bindRef as object, wb.jp, cur + wb.str)
     }
   }
   args.internalAfterWrite?.(bindRef, beforeBind)  // B __pgId 补齐(成功路径,before 用于按位置回填原 id)
@@ -1770,7 +1792,13 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     const rlist = tool(
       async () => {
         const list = resourceStore!.list()
-        if (!list.length) return '当前无已注册的受保护资源(read 受保护路径会懒注册)'
+        if (!list.length) {
+          // freeze 静态配置无句柄不进资源池 → 空池时同步告知静态 freeze 面(实测:模型 resource_list 见
+          // 「无已注册」会误判保护不存在,反而去撞冻结墙)
+          const frozenPaths = [...protectedCtx!.resourcesByPath.entries()].filter(([, s]) => s.mode === 'freeze').map(([p]) => p)
+          if (frozenPaths.length) return `资源池为空,但集成方静态配置了 freeze 只读字段:${frozenPaths.join('、 ')}(freeze 无句柄、不可释放;resource_delete 仅对 verbatim 生效)`
+          return '当前无已注册的受保护资源(read 受保护路径会懒注册)'
+        }
         return safeStringify({ resources: list })
       },
       { name: 'resource_list', description: '列出所有已注册的受保护资源(path/mode/handle/bytes)。', schema: z.object({}) },
@@ -1781,7 +1809,12 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         if (!target && handle) target = resourceStore!.get(handle)?.path
         if (!target) return toolError({ code: 'RESOURCE_NOT_FOUND', message: '未提供 path 或有效 handle', hint: '传要释放的受保护字段 path 或 handle' })
         const ok = resourceStore!.delete(target)
-        return ok ? `已释放资源 "${target}"(后续 read 该字段会重新懒注册)` : `资源 "${target}" 不存在(无需释放)`
+        if (ok) return `已释放资源 "${target}"(后续 read 该字段会重新懒注册)`
+        // freeze 静态配置不在资源池 → 原「不存在(无需释放)」文案把模型带偏(实测:清空受阻时模型试图
+        // resource_delete 解冻,两轮探路无果)。静态 freeze 给定向指引
+        if (protectedCtx!.resourcesByPath.get(target)?.mode === 'freeze')
+          return toolError({ code: 'FROZEN_FIELD', message: `字段 "${target}" 为 freeze 静态保护(不在资源池、无句柄、不可释放)`, hint: 'freeze 由集成方在 data.resources 静态配置,只读不可解;含冻结字段的元素无法整体删除,请保留该元素或由集成方调整 data.resources' })
+        return `资源 "${target}" 不存在(无需释放)`
       },
       {
         name: 'resource_delete',

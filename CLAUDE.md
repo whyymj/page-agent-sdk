@@ -30,9 +30,9 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,3035 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,965 项;tests/e2e/<module>.mjs 按模块拆分)
-npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,118 项;tests/browser/<demo>.spec.ts)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,3054 项断言)
+npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,972 项;tests/e2e/<module>.mjs 按模块拆分)
+npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,122 项;tests/browser/<demo>.spec.ts)
 ```
 
 ## 环境配置
@@ -74,8 +74,8 @@ skills/                         # 分发给使用者的 Agent Skill(入 npm 包 
 - **零桥接**:工具直接读写 `bind`(reactive);改数据必经写工具(范围 + schema 校验 + 自动快照 + 自动乐观锁)
 - **schema 白名单**(ZodObject):顶层 key 白名单;读统一 `projectBySchemaDeep` 深投影(未声明不泄露);写 `isPathAllowed` 逐段校验;整体 set = merge 语义(未声明保留防误删);**path 级局部校验(path-scoped-validation)**:write 只校验被写子树(union-tolerant 任一 option 命中即过 / append 只校验新增元素 / remove 只查父容器结构约束),兄弟节点脏数据不株连(script:"" 事故根因);写回 = 逐 patch 外科手术式(局部 parse 值重放,未触达子树原样保留);strip/原型污染防线 per-path 平移(声明节点未声明键照拒,开放节点 record/any/unknown/passthrough 放行留痕);根级 refine 不在 write 时执行(notices 留痕,全局约束走 verify);`write del` 意图无校验(现状锁定)
 - **乐观锁契约**(3.32 opt-in 翻转):`read` 附 `hash=xxx`(乐观锁标识);**自动检测默认不开** —— `conflictWatchFields`(白名单,任意深度字段名,位置不敏感)声明后仅监听字段值变动触发冲突;`['*']` 通配 = 旧版全字段检测(editor_fangzhou 实测宿主每秒回写 minHeight 类元数据噪声驱动翻转;autoLock 已废弃);hash 不匹配 → 挂起 `sdk.pendingConflict` → `resolveConflict('keep_external'|'overwrite'|'restore')`;**per-scope 基线**(子不污染主);**同 scope 连续写永不互相冲突**;**并发写互锁(4.1+,C 形态)**:`maxParallelTools>1 && conflictWatchFields 武装` 相与时 dataOps 闭包级 async mutex(单锁 bind 域,主×子共享闭包)串行化全部写工具 `[取 effHash → handleConflict → commit → setBaseline]` 段(7 个 commit 位:write set/edit+patches/del/draft_commit/eval transform 三模式;effHash 在 acquire 后取保 N1 时序)—— 后写锁内取前写刷新后基线,**陈旧基线同轮双写从「后者静默覆盖」变「前者落地 + 后者被裁决恢复点校验显式拦下」**;ask 挂起拆段放锁(防饥饿,兄弟写照常)+ 裁决恢复点单发校验(锚 = 裁决者所见 hash,非 effHash —— 对 effHash 校验会把每次 overwrite 裁决都打回自我否决);overwrite 裁决吸收基线 + restore 裁决补基线刷新;串行/未武装直通 no-op(conflictWatchFields 仍是唯一旋钮,未武装并行「后写覆盖」为既有明文语义);**abort→keep_external 联动全入口**(stream/send/batch,flow-robustness P0#2;conflictManager.set 另接受可选 signal race,按 id 比对防 ref 深代理);**conflictPolicy**(3.29,默认 `'ask'` 挂起等人工 / `'overwrite'` agent 强制覆盖不挂起 / `'keep_external'` 自动保留外部):宿主与 agent 争同一份数据、无人值守场景声明 overwrite 防流程永挂;自动裁决仍外发 conflict 事件(`autoResolved` 标记)
-- **高层 read/write**:`read` 多路径/裁剪/分页;`write` 四意图(set/patch/**patches 原子任一失败回滚**/del;patch op 枚举 set/remove/merge/append/**move**(value=目标路径字符串,数组元素同数组重排/跨数组移动一步原子))+ `dryRun`;快照 per-path 栈 + `restore_data` + `history_data`(**deepClone 环防御 4.1+**:环数据抛可诊断错误含环路径 `$.a.b`,非「Converting circular structure」零线索;checkpoint save 克隆失败跳过本轮快照 + warn,不再 reject beforeModel 炸整轮);`eval_script` Worker 沙箱;`draft_*` opt-in(大 JSON 建议 maxToolRounds 20-30)。**写路径成本收敛(3.25.1)**:同调用 hash 单算(`commitBaseline`,基线+消息复用)+ codeAsset 改前态单拷贝(beforeBind 复用为快照条目,restore 防御性深拷贝兜底),1MB 单写 median -12~-22%;**不变量:冲突检查 hash 恒实时计算,禁跨调用缓存**(人工直改 reactive bind 不经 SDK 写路径,脏标记失明 → keep_external 失效)
-- **工具面恒全暴露**(3.31 移除 `toolMode`/`interceptors`;4.0 legacy-crud-dedup 移除 get/set/edit/delete_data 四件):`createDataOps` 直出 10 工具,无呈现模式筛选;usageHints 无档位,提示词只随能力开关变化;受保护资源 freeze/verbatim(占位符只在读写边界替换,bind 恒持原值);**vfs 四池** LRU + 大结果外存
+- **高层 read/write**:`read` 多路径/裁剪/分页;`write` 四意图(set/patch/**patches 原子任一失败回滚**/del;patch op 枚举 set/remove/merge/append(数组 push **或字符串尾接** —— 大 code 分块写入:先 set 首块再 append 逐块拼接,单次输出脱离 max_tokens 上限,4.1+)/**move**(value=目标路径字符串,数组元素同数组重排/跨数组移动一步原子))+ `dryRun`;快照 per-path 栈 + `restore_data` + `history_data`(**deepClone 环防御 4.1+**:环数据抛可诊断错误含环路径 `$.a.b`,非「Converting circular structure」零线索;checkpoint save 克隆失败跳过本轮快照 + warn,不再 reject beforeModel 炸整轮);`eval_script` Worker 沙箱;`draft_*` opt-in(大 JSON 建议 maxToolRounds 20-30)。**写路径成本收敛(3.25.1)**:同调用 hash 单算(`commitBaseline`,基线+消息复用)+ codeAsset 改前态单拷贝(beforeBind 复用为快照条目,restore 防御性深拷贝兜底),1MB 单写 median -12~-22%;**不变量:冲突检查 hash 恒实时计算,禁跨调用缓存**(人工直改 reactive bind 不经 SDK 写路径,脏标记失明 → keep_external 失效)
+- **工具面恒全暴露**(3.31 移除 `toolMode`/`interceptors`;4.0 legacy-crud-dedup 移除 get/set/edit/delete_data 四件):`createDataOps` 直出 10 工具,无呈现模式筛选;usageHints 无档位,提示词只随能力开关变化;受保护资源 freeze/verbatim(占位符只在读写边界替换,bind 恒持原值;**含保护字段的容器整体清空/替换显式拒** —— 回填分支按「容器仍在→回填 / merge 根键未传→skip 不捏造 / 根键在场链断→FROZEN_FIELD 带出路」三路,修「set components=[] 捏造骨架→SCHEMA_INVALID 不提保护→模型 15 轮摸路」+ merge 模式骨架覆盖原数组的静默丢失;resource_delete/list 对静态 freeze 给定向文案不误导);**vfs 四池** LRU + 大结果外存
 - **code-as-data-asset 扩展(3.0,createHtmlSubagent 单模式触发)**:`__pgId` 无感注入(schema extend → safeParse 不剥离 + read 投影隐藏 `__pg*` + 写 `isPathAllowed` 拒 `__pg*` 段,框架 afterWrite 独占补;**checkout 入口幂等补齐宿主路径组件** —— 宿主自定义工具原生流程加的组件不经 SDK write,无 __pgId 会让 checkout/文件地图/commit 全链路失明〔2026-08-21 editor 诊断:「说干完了实际没写入」根因〕);**主 scope read 大文本摘要**(标记字段如 `code` → `<code Nkb>`,子 scope 完整);**两条 data 写路径** —— ① LLM write 工具(经完整契约:schema/乐观锁/快照栈/path guard)② 框架钩子(afterAgent commit 直改 bind,快路径,仅 code 字段豁免 write 契约,不进快照栈 + `recomputeBaseline` 防主 agent autoLock 误冲突)。详见子 agent 段「能力包」
 
 ### 记忆与上下文管理(详见 architecture.md §⑥⑮ + context-management.md)
@@ -136,7 +136,7 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test    # tsx 跑 src/core/__tests__/selftest.ts,3035 项断言
+npm test    # tsx 跑 src/core/__tests__/selftest.ts,3054 项断言
 ```
 按模块拆分:`src/core/__tests__/modules/sec-NN.ts`(54+ 个模块)各导出 `run(ctx)`,runner 汇总;共享 `TestCtx` 在 `modules/_ctx.ts`。tsx 跑源码(不经构建),触不到 createChatSdk 顶层 API 作用域。**改任何核心模块后必跑**。
 
@@ -181,7 +181,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(3035/965/118)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(3054/972/122)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判)→ `npm run test:size` → `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证

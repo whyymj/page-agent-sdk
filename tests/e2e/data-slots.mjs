@@ -1,5 +1,6 @@
 // data:schema 类型(8 种字段)+ 嵌套字段 + 空 / 不传
 import { setupEnv, createAssert, FAKE_LLM, MIN_CAPS, createChatSdk, z } from './_helpers.mjs'
+import { stubModel } from './_stub-model.mjs'
 
 export async function run() {
   setupEnv()
@@ -286,6 +287,29 @@ export async function run() {
     assert(typeof reply === 'string', 'write patches 返回文本')
     // 验证 bind 全未改(任一路径在空 schema 下都是 PATH_DENIED,整批回滚)
     assert(bind.a === 1 && bind.b === 2, '空 schema write patches → 任一 PATH_DENIED 拒绝,整批回滚(bind.a=1,bind.b=2)')
+    sdk.unmount()
+  }
+
+
+  console.log('[e2e:data-slots] chunked-code-write:append 字符串拼接分块写大 code(30KB+ 组件脱离 max_tokens 约束)')
+  {
+    const bind = { components: [] }
+    const llm = stubModel(
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.0', value: { type: 'custom', name: 'big', code: '<section class="part1">' } } } }] },
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'append', jsonPath: 'components.0.code', value: '<div class="part2">中段内容</div>' } } }] },
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'append', jsonPath: 'components.0.code', value: '</section>' } } }] },
+      { text: '大组件已分三块写入完成' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-chunk-code', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false, subagent: false },
+      data: { schema: z.object({ components: z.array(z.object({ type: z.string(), name: z.string(), code: z.string() })) }), bind, description: 'd' },
+    })
+    await sdk.mount()
+    const reply = await sdk.send('生成大组件')
+    const code = bind.components[0]?.code
+    assert(code === '<section class="part1"><div class="part2">中段内容</div></section>', `✓ 三块拼接成完整 code(实际:${String(code).slice(0, 60)}…)`)
+    assert(/完成/.test(reply), '✓ 分块写全程无错,正常收口')
     sdk.unmount()
   }
 

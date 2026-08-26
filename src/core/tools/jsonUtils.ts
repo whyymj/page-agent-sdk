@@ -246,7 +246,15 @@ export function applyPatchToClone(clone: any, op: EditOp, jsonPath: string, valu
   }
   if (op === 'move') return moveByPath(clone, jsonPath, value)
   const arr = jsonPath ? getByPath(clone, jsonPath) : clone
-  if (!Array.isArray(arr)) return `append 目标${jsonPath ? `(${jsonPath})` : '(根)'}不是数组`
+  // 大 code 分块写入(chunked-code-write,2026-08-25 实测需求驱动):目标为字符串 + value 为字符串 → 尾接。
+  // 场景:30KB+ 组件代码单次 write 装不下(max_tokens 上限)—— 先 set 首块,再 append 逐块拼接,
+  // 每次工具调用参数只带一小块,彻底脱离单次输出上限;与数组 push 语义并列,op 枚举不变
+  if (typeof arr === 'string') {
+    if (typeof value !== 'string') return `append 目标(${jsonPath})是字符串,value 必须也是字符串(拼接语义)`
+    setByPath(clone, jsonPath, arr + value)
+    return null
+  }
+  if (!Array.isArray(arr)) return `append 目标${jsonPath ? `(${jsonPath})` : '(根)'}不是数组(也不支持非字符串标量拼接)`
   if (Array.isArray(value)) arr.push(...value)
   else arr.push(value)
   return null

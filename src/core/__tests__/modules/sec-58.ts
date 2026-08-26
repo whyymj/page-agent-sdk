@@ -166,6 +166,31 @@ export async function run(ctx: TestCtx) {
   const h1fr = enforceSet({ value: { title: 'new' }, ctx: makeCtx(makeMap([{ path: 'id', mode: 'freeze' }]), new ResourceStore(createVfs()), { id: 'frozen', title: 't' }) })
   assert(h1fr.ok && (h1fr as { value: { id: string } }).value.id === 'frozen', '✓ H1 freeze 祖先 set 未传 → 回填保留')
 
+  // ===== H1b:祖先整体替换把受保护字段的容器链删了 → 显式拒(2026-08-26 complex-demo「清空组件」15 轮事故)=====
+  // 旧实现:set components=[] → setByPath 凭空捏造 [{props:{trackId}}] → SCHEMA_INVALID "0.type" 不提保护,模型无从诊断
+  const h1bctx = makeCtx(makeMap([{ path: 'components.0.props.trackId', mode: 'freeze' }]), new ResourceStore(createVfs()), { components: [{ type: 'navbar', props: { trackId: 'trk_1', title: 't' } }] })
+  const h1b1 = enforceSet({ value: { components: [] }, ctx: h1bctx })
+  assert(!h1b1.ok && /FROZEN_FIELD/.test(h1b1.error) && /整体替换会移除受保护字段/.test(h1b1.error) && /逐个 remove 其余元素/.test(h1b1.error), '✓ H1b freeze 容器整体清空(set [])→ 显式 FROZEN_FIELD + 可执行出口(不再捏造骨架)')
+  const h1b2 = enforceSet({ value: { components: [{ type: 'banner' }] }, ctx: h1bctx })
+  assert(!h1b2.ok && /FROZEN_FIELD/.test(h1b2.error), '✓ H1b 新元素不含容器链(无 props)→ 同拒(旧实现会捏造 props 注入 trackId)')
+  const h1b3 = enforceSet({ value: { components: [{ type: 'navbar', props: { title: 't2' } }] }, ctx: h1bctx })
+  assert(h1b3.ok && (h1b3 as { value: { components: { props: { trackId?: string } }[] } }).value.components[0].props.trackId === 'trk_1', '✓ H1b 容器仍在 + 漏传受保护字段 → 照常回填(H1 不回归)')
+  const h1b4 = enforcePatches({ patches: [{ op: 'set', jsonPath: 'components', value: [] }], clone: { components: [] }, ctx: h1bctx })
+  assert(!h1b4.ok && /FROZEN_FIELD/.test(h1b4.error) && /patches\[0\]/.test(h1b4.error), '✓ H1b patches 通道 set components=[] → FROZEN_FIELD + patches[0] 定位')
+  const h1bstore = new ResourceStore(createVfs())
+  h1bstore.ensure('components.0.props.trackId', 'trk_1', 'verbatim')
+  const h1b5 = enforceSet({ value: { components: [] }, ctx: makeCtx(makeMap([{ path: 'components.0.props.trackId', mode: 'verbatim' }]), h1bstore, { components: [{ type: 'navbar', props: { trackId: 'trk_1' } }] }) })
+  assert(!h1b5.ok && /VERBATIM_PROTECTED/.test(h1b5.error) && /resource_delete/.test(h1b5.error), '✓ H1b verbatim 容器整体清空 → VERBATIM_PROTECTED + resource_delete 释放出口')
+  // 根键未传的两路:merge 语义 → skip 不捏造(旧实现捏造骨架进 writeData → safeMerge 覆盖原数组 = 静默丢失);
+  // whole-replace → 回填保全(H1 原语义)
+  const h1b6 = enforceSet({ value: { title: 'x' }, ctx: h1bctx, mergeMode: true })
+  assert(h1b6.ok && !('components' in (h1b6 as { value: Record<string, unknown> }).value), '✓ H1b merge 根键未传 → skip 不捏造骨架(safeMerge 由 bind 保留整树,修静默覆盖)')
+  const h1b7 = enforceSet({ value: { title: 'x' }, ctx: h1bctx })
+  assert(h1b7.ok && (h1b7 as { value: { components?: { props: { trackId?: string } }[] } }).value.components?.[0]?.props?.trackId === 'trk_1', '✓ H1b whole-replace 根键未传 → 回填保全(H1 原语义不回归)')
+  // merge 语义 + 根键在场链断 → 仍显式拒(与 h1b1 同判,mergeMode 不放宽显式删除)
+  const h1b8 = enforceSet({ value: { components: [] }, ctx: h1bctx, mergeMode: true })
+  assert(!h1b8.ok && /FROZEN_FIELD/.test(h1b8.error), '✓ H1b merge 根键在场但链断 → 照拒(mergeMode 只放行「未提及」,不放行显式删除)')
+
   // ===== M3:bind 已删字段 + 池有旧值 → 不复活(RESOURCE_NOT_FOUND)=====
   const m3store = new ResourceStore(createVfs())
   m3store.ensure('token', 'oldval', 'verbatim')

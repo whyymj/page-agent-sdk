@@ -300,7 +300,7 @@ Agent 自主调用这些内置工具(无需你写):
 // write:三种意图
 // ① 整体替换(value 直传 JSON 对象,无需 stringify)
 write({ value: { title: '新标题', theme: 'dark' } })
-// ② 增量 patch(op=set/remove/merge/append,jsonPath 相对主数据根)
+// ② 增量 patch(op=set/remove/merge/append,jsonPath 相对主数据根;append 目标为数组→尾加元素,为字符串→尾接文本〔4.1+ 大 code 分块写入:先 set 首块再 append 逐块拼接,单次输出脱离 max_tokens 上限〕)
 write({ value: 'c', patch: { op: 'append', jsonPath: 'items' } })
 write({ value: { title: '合并标题' }, patch: { op: 'merge' } })
 write({ value: 180, patch: { op: 'set', jsonPath: 'components.0.price' } })
@@ -353,7 +353,7 @@ const sdk = createChatSdk({
 - `bind` 必填:直连 reactive/普通对象,工具直接读写 bind(响应式刷新);SDK 不再自动挂 window,集成方按需自己挂 `window.app = app` 供页面读取
 - `schema` 字段的 `.describe()` 自动提取(经 `extractSchemaHint`)注入 systemPrompt「可操作数据」段,集成方不用手写 description
 - 预览将注入的提示:`extractSchemaHint(schema)`(已导出)
-- **受保护资源(精确值保护,opt-in)**:声明 `data.resources: [{ path, mode }]` 保护需精确保存的字段(id/hash/token/长 verbatim/关键配置)。`freeze` = 只读(精确值经 `⟦frozen:path⟧` 占位符不入 LLM 消息流,写撞 `FROZEN_FIELD`);`verbatim` = 原样保留(`⟦res:handle⟧` 占位符,原值在资源池,改值经 `resource_update` 同步 bind 否则 `VERBATIM_MISMATCH`)。写侧强制在 `commitSetToBind`/`applyPatchesToBind`/eval 三处(先于 schema);**bind 恒持原始值**(占位符只在读写边界 → hash/快照/乐观锁不受影响)。opt-in(配 `data.resources` + `capabilities.vfs`):暴露 `resource_get`/`update`/`list`/`delete` 工具(advanced)+ 跨压缩 pin + SDK API `createResource`/`getResource`/`updateResource`/`deleteResource`/`listResources`/`releaseResources`。详见 `skills/precise-value-protection`。
+- **受保护资源(精确值保护,opt-in)**:声明 `data.resources: [{ path, mode }]` 保护需精确保存的字段(id/hash/token/长 verbatim/关键配置)。`freeze` = 只读(精确值经 `⟦frozen:path⟧` 占位符不入 LLM 消息流,写撞 `FROZEN_FIELD`);`verbatim` = 原样保留(`⟦res:handle⟧` 占位符,原值在资源池,改值经 `resource_update` 同步 bind 否则 `VERBATIM_MISMATCH`)。写侧强制在 `commitSetToBind`/`applyPatchesToBind`/eval 三处(先于 schema);**bind 恒持原始值**(占位符只在读写边界 → hash/快照/乐观锁不受影响)。**含保护字段的容器整体清空**:`set components=[]` 这类把保护字段连同容器一起删的整体替换会被显式拒(`FROZEN_FIELD`,文案给出路:保留含保护字段的元素 / 逐个 remove 其余元素);merge 语义下未提及的顶层键照常由 bind 保留(不回填捏造)。`resource_delete`/`resource_list` 对静态 `freeze` 配置返回定向说明(freeze 无句柄不可释放,需集成方调整 `data.resources`)。opt-in(配 `data.resources` + `capabilities.vfs`):暴露 `resource_get`/`update`/`list`/`delete` 工具(advanced)+ 跨压缩 pin + SDK API `createResource`/`getResource`/`updateResource`/`deleteResource`/`listResources`/`releaseResources`。详见 `skills/precise-value-protection`。
   ```ts
   data: { schema, bind, resources: [{ path: 'id', mode: 'freeze' }, { path: 'token', mode: 'verbatim' }] }
   ```
