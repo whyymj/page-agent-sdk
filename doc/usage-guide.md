@@ -859,6 +859,7 @@ storage: 'session'                          // sessionStorage(标签页内)
 storage: 'local'                            // localStorage(持久)
 storage: 'memory'                           // 纯内存(测试/降级)
 storage: { backend: 'local', maxBytes: 2*1024*1024 }  // 配置对象
+storage: { backend: createHttpBackend('/api/agent-store') }  // 自定义后端实例(服务端持久化,见下)
 storage: false                              // 显式关闭
 ```
 
@@ -867,6 +868,42 @@ storage: false                              // 显式关闭
 **多 agent 隔离**:靠 `id` 区分。同页多个 Agent 传不同 `id`,数据互不串扰。
 
 **容量与淘汰**:各后端达上限自动按 LRU 淘汰最旧会话;隐私模式 / 撞配额自动降级内存,**不崩溃**。
+
+**服务端持久化(自定义后端注入)**:`backend` 传 `StorageBackend` 实例(5 个 KV 方法)即可把落盘指向任意远端 —— REST API / 自建 BFF / 云 KV 都行,SDK 的 debounce 批写/多会话切换/配额淘汰/降级语义全部照常套用:
+
+```ts
+import { createChatSdk, type StorageBackend } from 'page-agent-sdk'
+
+/** REST 版后端:5 个方法对应服务端 KV 接口 */
+function createHttpBackend(baseUrl: string): StorageBackend {
+  const q = (prefix: string) => `${baseUrl}/kv?prefix=${encodeURIComponent(prefix)}`
+  return {
+    async get(key) {
+      const r = await fetch(`${baseUrl}/kv/${encodeURIComponent(key)}`)
+      return r.ok ? await r.json() : undefined          // 404/不存在 → undefined
+    },
+    async set(key, value) {
+      const r = await fetch(`${baseUrl}/kv/${encodeURIComponent(key)}`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(value),
+      })
+      if (!r.ok) throw new Error(`kv set ${r.status}`)   // 抛错安全:SDK 吞错留痕,交后续 flush/pagehide 重试
+    },
+    async del(key) { await fetch(`${baseUrl}/kv/${encodeURIComponent(key)}`, { method: 'DELETE' }) },
+    async scan(prefix, cb) {
+      const items = await (await fetch(q(prefix))).json() // 服务端返回 [{key, value},...]
+      for (const it of items) if (cb(it.key, it.value) === false) break
+    },
+    async clearPrefix(prefix) { await fetch(q(prefix), { method: 'DELETE' }) },
+  }
+}
+
+createChatSdk({
+  storage: { backend: createHttpBackend('/api/agent-store'), maxBytes: Infinity },
+  // maxBytes: Infinity 关闭客户端 LRU 淘汰(容量管理交服务端;不传默认按 50MB 客户端口径)
+})
+```
+
+服务端契约要点:**key 形如 `v:1::<dbName>::<agentId>::<sessionId>::<kind>`**(kind = messages/vfs/todos/memory/checkpoints/usage/mission/workingMemory/focus/planConfirmation + 会话元数据 `__meta__`;按 key 整存整取,值为 JSON 快照);`scan`/`clearPrefix` 必须实现(`listSessions`/`deleteSession` 依赖前缀扫描);写入经 debounce(默认 500ms)批量落盘,不会逐条打接口;后端抛错不炸 SDK(吞错留痕,后续 flush 重试,与内置后端降级同口径)。多端并发同一会话为 last-writer-wins,无合并。直连工厂 `createSessionStoreWithBackend` 亦已导出(不经 createChatSdk 单独用持久化层时)。
 
 **会话切换(命令式)**:
 

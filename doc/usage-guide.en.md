@@ -731,6 +731,42 @@ defineSkill({
 
 `storage: 'indexed'` (or `'session'`/`'local'`/`'memory'`) — persists dialog/workspace/todos/memory; `id` isolates multiple agents; `switchSession(id?)` switches; `shareContext:true` lets same-id instances share one agent.
 
+**Server-side persistence (custom backend injection)** — pass a `StorageBackend` instance (5 KV methods) as `backend` to point persistence at any remote (REST API / your BFF / cloud KV); the SDK's debounced batch writes, multi-session switching, quota eviction and degradation semantics all apply unchanged:
+
+```ts
+import { createChatSdk, type StorageBackend } from 'page-agent-sdk'
+
+/** REST-backed StorageBackend: 5 methods mapped to your server's KV endpoints */
+function createHttpBackend(baseUrl: string): StorageBackend {
+  const q = (prefix: string) => `${baseUrl}/kv?prefix=${encodeURIComponent(prefix)}`
+  return {
+    async get(key) {
+      const r = await fetch(`${baseUrl}/kv/${encodeURIComponent(key)}`)
+      return r.ok ? await r.json() : undefined          // missing → undefined
+    },
+    async set(key, value) {
+      const r = await fetch(`${baseUrl}/kv/${encodeURIComponent(key)}`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(value),
+      })
+      if (!r.ok) throw new Error(`kv set ${r.status}`)   // throwing is safe: SDK swallows + retries on later flush
+    },
+    async del(key) { await fetch(`${baseUrl}/kv/${encodeURIComponent(key)}`, { method: 'DELETE' }) },
+    async scan(prefix, cb) {
+      const items = await (await fetch(q(prefix))).json() // server returns [{key, value},...]
+      for (const it of items) if (cb(it.key, it.value) === false) break
+    },
+    async clearPrefix(prefix) { await fetch(q(prefix), { method: 'DELETE' }) },
+  }
+}
+
+createChatSdk({
+  storage: { backend: createHttpBackend('/api/agent-store'), maxBytes: Infinity },
+  // maxBytes: Infinity disables client-side LRU eviction (capacity managed server-side; default 50MB client quota otherwise)
+})
+```
+
+Server contract notes: **keys look like `v:1::<dbName>::<agentId>::<sessionId>::<kind>`** (kind = messages/vfs/todos/memory/checkpoints/usage/mission/workingMemory/focus/planConfirmation + session metadata `__meta__`; each key holds a whole JSON snapshot); `scan`/`clearPrefix` are required (`listSessions`/`deleteSession` rely on prefix scanning); writes are debounced (default 500ms) and batched — not one request per keystroke; backend errors never crash the SDK (swallowed + retried by later flush, same degradation as built-in backends). Concurrent writers to the same session are last-writer-wins; no merging. The direct factory `createSessionStoreWithBackend` is exported too (for using the persistence layer standalone, outside createChatSdk).
+
 **Clear session `resetSession()` (2.41.0+, sync)** — same semantics as the UI "clear conversation": aborts in-flight streams + resolves any pending conflict (as "keep external") + resets messages/vfs/todos/memory/mission/workingMemory/focus/checkpoint/debugLogs + fresh sessionId + emits `session_restored`. **Fully resets in-memory state even when storage is off** (fixed in 2.41.0: previously it early-returned without storage, leaking mission/focus/todos into the new conversation); with storage on it also creates a new persisted session. Use it for a headless "new chat" button.
 
 **Resume notice (on by default)** — when a **non-empty history** is restored from persistence (refresh autoResume / `session.id` / `switchSession`), the **first** turn after restore injects a system-prompt notice: "the host data may have changed while you were away (e.g. a refresh reverted it to the last saved state, unsaved edits lost); verify with read/list before asserting 'already generated/done'". Rationale: the restored dialog/todos are a historical snapshot, but **`bind` is not persisted** — if the integrator resets `bind` to the last saved state on refresh, the history's "done" no longer matches reality, and the agent once answered a "regenerate" request with "done" without checking. The notice is one-shot (cleared when the turn ends), signals only (never blocks tools); logged as `debugLogs stage:'resume_notice'`.

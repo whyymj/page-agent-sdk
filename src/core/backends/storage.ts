@@ -79,8 +79,8 @@ export interface PersistedSkill {
 export type StorageBackendType = 'indexed' | 'session' | 'local' | 'memory'
 
 export interface StorageConfig {
-  /** 后端类型,默认 'indexed' */
-  backend?: StorageBackendType
+  /** 后端类型,默认 'indexed';也可传自定义 StorageBackend 实例(服务端持久化注入点:实现 get/set/del/scan/clearPrefix 指向 REST API 即可) */
+  backend?: StorageBackendType | StorageBackend
   /** 是否启用(默认 true;false 等同 storage:false 关闭) */
   enabled?: boolean
   /** DB 命名空间,默认 'chat-sdk'(作为 key 前缀段) */
@@ -363,17 +363,20 @@ function runSerial<T>(chains: Map<string, Promise<unknown>>, key: string, fn: ()
 
 // ===== SessionStore(编排层)=====
 export function createSessionStore(config: StorageConfig = {}): SessionStore {
-  return createSessionStoreImpl(config)
+  // backend 传实例(服务端持久化注入点)→ 直达就绪,不走内置后端启动分支
+  const custom = typeof config.backend === 'object' && config.backend ? config.backend : undefined
+  return createSessionStoreImpl(config, custom)
 }
 
-/** @internal 测试注入口:指定后端实例构造 store(不进公共导出/d.ts;selftest 验证 flush 超时/淘汰吞错等故障注入) */
+/** 指定后端实例构造 store(selftest 故障注入/自定义后端直连;createChatSdk 集成走 storage:{backend: 实例} 即可,无需直接调它) */
 export function createSessionStoreWithBackend(config: StorageConfig, backendOverride: StorageBackend): SessionStore {
   return createSessionStoreImpl(config, backendOverride)
 }
 
 function createSessionStoreImpl(config: StorageConfig = {}, backendOverride?: StorageBackend): SessionStore {
   const dbName = config.dbName ?? DEFAULT_DB_NAME
-  const backendType = config.backend ?? 'indexed'
+  // 自定义后端实例时按 'indexed' 口径取默认配额(50MB;服务端存储一般不受浏览器配额约束,可 maxBytes 显式覆盖)
+  const backendType: StorageBackendType = typeof config.backend === 'string' ? (config.backend ?? 'indexed') : 'indexed'
   const maxBytes = config.maxBytes ?? defaultMaxBytesFor(backendType)
   const maxBytesPerSession = config.maxBytesPerSession ?? DEFAULT_MAX_BYTES_PER_SESSION
   const watermark = config.evictionWatermark ?? DEFAULT_WATERMARK
@@ -647,7 +650,11 @@ function createSessionStoreImpl(config: StorageConfig = {}, backendOverride?: St
       const sid = sessionId ?? makeId()
       const now = Date.now()
       const meta: SessionMeta = { agentId, sessionId: sid, createdAt: now, lastAccessed: now, bytes: 0, title }
-      await backend.set(encodeKey(dbName, agentId, sid, META_KIND), meta)
+      try {
+        await backend.set(encodeKey(dbName, agentId, sid, META_KIND), meta)
+      } catch {
+        /* 后端写失败不冒泡(降级语义,与 commit 同口径):会话 id 照常返回;未落盘的 meta 由后续 commit/save 补写自愈 */
+      }
       return sid
     },
     onEvent(cb) {

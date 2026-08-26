@@ -132,6 +132,55 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:storage] 自定义后端实例(storage:{backend: StorageBackend},服务端持久化注入点)')
+  {
+    // Map 版 StorageBackend:模拟「REST API 后端」(get/set/del/scan/clearPrefix 五方法),记录调用
+    const map = new Map()
+    const calls = { set: 0, get: 0, scan: 0 }
+    const customBackend = {
+      async get(key) { calls.get++; return map.get(key) },
+      async set(key, value) { calls.set++; map.set(key, value) },
+      async del(key) { map.delete(key) },
+      async scan(prefix, cb) { calls.scan++; for (const [k, v] of map) if (k.startsWith(prefix)) { if (cb(k, v) === false) break } },
+      async clearPrefix(prefix) { for (const k of map) if (k.startsWith(prefix)) map.delete(k) },
+    }
+    const sdk = createChatSdk({ ui: false, id: 'e2e-custom-backend', storage: { backend: customBackend, maxBytes: Infinity }, llm: FAKE_LLM, capabilities: MIN_CAPS })
+    await sdk.mount()
+    assert(sdk.inspect().id === 'e2e-custom-backend', '自定义后端实例 → mount 成功(ready 直达,不走内置后端)')
+    sdk.setMission({ goal: '自定义后端会话的目标' })
+    const idA = sdk.sessionId
+    await sdk.switchSession()
+    assert(sdk.inspect().mission === undefined, '自定义后端 → 切新会话 mission 空')
+    assert(calls.set > 0, '自定义后端 set 被调用(写入走了注入实例)')
+    await sdk.switchSession(idA)
+    assert(sdk.inspect().mission?.goal === '自定义后端会话的目标', '自定义后端 → 切回原会话 mission 恢复(往返经注入实例)')
+    const sessions = await sdk.listSessions()
+    assert(Array.isArray(sessions) && sessions.length >= 2, '自定义后端 listSessions ≥2(scan 走注入实例)')
+    assert(calls.scan > 0, '自定义后端 scan 被调用(listSessions 经 scan)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:storage] 自定义后端 set 抛错 → flush 吞错不炸(flush 超时/失败既有语义)')
+  {
+    const badBackend = {
+      async get() { return undefined },
+      async set() { throw new Error('server 500') },
+      async del() {},
+      async scan() {},
+      async clearPrefix() {},
+    }
+    const sdk = createChatSdk({ ui: false, id: 'e2e-bad-backend', storage: { backend: badBackend, maxBytes: Infinity }, llm: FAKE_LLM, capabilities: MIN_CAPS })
+    await sdk.mount()
+    let threw = false
+    try {
+      sdk.setMission({ goal: '会失败落盘的目标' })
+      await sdk.switchSession() // 切会话触发 flush → set 抛错 → PERSIST_FLUSH_FAILED 留痕放行,不 reject
+      await new Promise((r) => setTimeout(r, 100)) // debounce 落定
+    } catch { threw = true }
+    assert(!threw, '后端 set 抛错 → switchSession 不 reject(落盘失败吞错放行,交后续 flush 兜底)')
+    sdk.unmount()
+  }
+
   console.log('[e2e:storage] shareContext:true 同 id 两实例共享 messages 数组')
   {
     const sdkA = createChatSdk({ ui: false, id: 'e2e-share', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS, shareContext: true })

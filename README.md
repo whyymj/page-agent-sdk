@@ -256,7 +256,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `maxMemoryRounds` | `number` · default `30` | Dialog history memory round cap (`0` disables trim) |
 | | `staleReadInvalidation` | `boolean` · default `true` | 3.42+ write-driven stale read invalidation: within one invoke's ReAct window, old `read`/`query_data`/`search_data` results hit by a later successful write are replaced with an invalidation placeholder (keeps the model from answering state from stale snapshots; anti-thrash copy references the write's own new value/hash). `false` = off for main + subagent stacks |
 | | `vfs` | `{initialFiles?,maxBytes?,poolBytes?}` · default 4MB | In-memory workspace cap (LRU evict on overflow) |
-| **Persistence** | `storage` | `'indexed' \| 'session' \| 'local' \| 'memory' \| config \| false` · default off | Assign to enable; multi-agent isolated by `id` |
+| **Persistence** | `storage` | `'indexed' \| 'session' \| 'local' \| 'memory' \| config (incl. custom backend instance) \| false` · default off | Assign to enable; multi-agent isolated by `id`; pass a `StorageBackend` instance as `backend` for server-side persistence (5 KV methods) |
 | | `session` | `{id?,autoResume?,title?}` | Session control |
 | | `shareContext` | `boolean` · default `false` | Same `id` instances share one agent |
 | **Robustness/other** | `maxRetries` / `maxParallelTools` / `maxToolRounds` | `number` · 2 / 1 / 30 | Model retries / per-round tool concurrency (>1 enables same-round parallel delegation with failure isolation + per-component mutex locks) / max rounds |
@@ -500,7 +500,7 @@ function switchTo(i: number) {
 
 ```bash
 npm test            # 2894 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 972 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm run test:e2e    # 979 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test

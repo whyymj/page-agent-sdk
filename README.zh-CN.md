@@ -252,7 +252,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `maxMemoryRounds` | `number` · 默认 `30` | 对话历史内存上限轮次（`0` 关裁剪） |
 | | `staleReadInvalidation` | `boolean` · 默认 `true` | 3.42+ 写驱动过期读失效：单次 invoke 窗口内，后续成功写击中路径的旧 `read`/`query_data`/`search_data` 结果替换为失效占位（防模型凭旧快照答状态；占位引用写结果自带新值/hash 防 thrash）。`false` = 主/子栈一致关闭 |
 | | `vfs` | `{initialFiles?,maxBytes?,poolBytes?}` · 默认 4MB | 内存工作区上限（超限 LRU 淘汰） |
-| **持久化** | `storage` | `'indexed' \| 'session' \| 'local' \| 'memory' \| 配置 \| false` · 默认关 | 赋值开启；多 agent 靠 `id` 隔离 |
+| **持久化** | `storage` | `'indexed' \| 'session' \| 'local' \| 'memory' \| 配置(含自定义后端实例) \| false` · 默认关 | 赋值开启；多 agent 靠 `id` 隔离；`backend` 传 `StorageBackend` 实例可接服务端 REST(5 个 KV 方法) |
 | | `session` | `{id?,autoResume?,title?}` | 会话控制 |
 | | `shareContext` | `boolean` · 默认 `false` | 同 `id` 多实例共享同一 agent |
 | **鲁棒/其他** | `maxRetries` / `maxParallelTools` / `maxToolRounds` | `number` · 2 / 1 / 30 | 模型重试 / 同轮工具并发(>1 启用同轮并行委派,失败隔离 + 同组件锁互斥)/ 最大轮次 |
@@ -503,7 +503,7 @@ function switchTo(i: number) {
 
 ```bash
 npm test            # 2894 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 972 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm run test:e2e    # 979 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试

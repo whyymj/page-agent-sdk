@@ -1058,7 +1058,8 @@ export declare function createCheckpointMiddleware(mgr: CheckpointManager): any;
 // ===== 持久化存储 =====
 export type StorageBackendType = 'indexed' | 'session' | 'local' | 'memory';
 export interface StorageConfig {
-  backend?: StorageBackendType;
+  /** 后端类型,默认 'indexed';也可传自定义 StorageBackend 实例(服务端持久化注入点:实现 get/set/del/scan/clearPrefix 指向 REST API) */
+  backend?: StorageBackendType | StorageBackend;
   enabled?: boolean;
   dbName?: string;
   maxBytes?: number;
@@ -1827,6 +1828,8 @@ export declare function htmlOrchestratorPrompt(id: string): string;
 /** 从 zod schema 提取字段说明(io 契约注入 systemPrompt 用);非 object schema 用 description 兜底 */
 export declare function extractSchemaHint(schema: any, opts?: SchemaHintOptions): string;
 export declare function createSessionStore(config?: StorageConfig): SessionStore;
+/** 指定后端实例构造 store(自定义后端直连;createChatSdk 集成走 storage:{backend: 实例} 即可,无需直接调它) */
+export declare function createSessionStoreWithBackend(config: StorageConfig, backend: StorageBackend): SessionStore;
 export declare function createMemoryBackend(): StorageBackend;
 export declare function createWebStorageBackend(storage: Storage): StorageBackend;
 export declare function isQuotaError(err: unknown): boolean;

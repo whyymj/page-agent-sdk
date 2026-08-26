@@ -2,6 +2,16 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.4.0] - 2026-08-26
+
+### Added(server-storage:服务端持久化注入)
+
+- **`storage: { backend: StorageBackend 实例 }`**:`backend` 除内置四类型外可传自定义后端实例(5 个 KV 方法:`get/set/del/scan/clearPrefix`)—— 实现 5 方法指向 REST API 即把落盘切到服务端;SDK 的 debounce 批写(默认 500ms)/多会话切换/配额淘汰/降级语义全部照常套用;`maxBytes: Infinity` 可关闭客户端 LRU 淘汰(容量管理交服务端)
+- key 契约:`v:1::<dbName>::<agentId>::<sessionId>::<kind>`(kind = messages/vfs/todos/memory/checkpoints/usage/mission/workingMemory/focus/planConfirmation + 会话元数据 `__meta__`,整存整取 JSON 快照);`scan`/`clearPrefix` 必须实现(`listSessions`/`deleteSession` 依赖前缀扫描);后端抛错不炸 SDK(吞错留痕交后续 flush 重试,与内置后端同口径)
+- 新导出 `createSessionStoreWithBackend`(自定义后端直连工厂,不经 createChatSdk 单独用持久化层时);类型 `StorageConfig.backend` 放宽为 `StorageBackendType | StorageBackend`(主包 + headless)
+- **Fixed(createSession 落盘冒泡)**:会话元数据直写 `backend.set` 失败会 reject mount(与「storage 永不冒泡」降级语义相悖,自定义 REST 后端遇瞬时 500 即打断 SDK 启动)→ 改吞错(会话 id 照常返回,未落盘 meta 由后续 commit/save 补写自愈)
+- e2e +7(自定义后端 mount/mission 往返/set·scan 走注入实例/listSessions + 后端 set 抛错吞错不炸);usage-guide 中英 §6.6 补「服务端持久化」段(REST 版 createHttpBackend 完整示例 + 服务端契约要点)
+
 ## [4.3.0] - 2026-08-26
 
 ### Added(tool-step-view:工具步骤展示映射/拦截器)

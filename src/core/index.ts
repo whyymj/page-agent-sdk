@@ -118,7 +118,7 @@ export type { PermissionRule, PermissionOp } from './harness/permissions'
 // 虚拟工作区
 export { createVfs } from './backends/vfs'
 // 持久化存储(IndexedDB + 多 agent 隔离 + 全局配额/LRU 淘汰)
-export { createSessionStore, createMemoryBackend, createWebStorageBackend, isQuotaError } from './backends/storage'
+export { createSessionStore, createSessionStoreWithBackend, createMemoryBackend, createWebStorageBackend, isQuotaError } from './backends/storage'
 export type { StorageConfig, StorageBackendType, SessionStore, SessionMeta, SessionSnapshot, StorageEvent, StorageBackend } from './backends/storage'
 export { createSkillStore } from './backends/skillStore'
 export type { SkillStore, SkillStoreConfig, PersistedSkill } from './backends/skillStore'
