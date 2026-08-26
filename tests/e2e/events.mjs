@@ -155,5 +155,96 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:events] ✓ eval_script transform → data_change 映射(修前漏发:page-demo 非 reactive bind 宿主「打乱布局」数据变了页面不动)')
+  // node 无 Worker 沙箱:transform 脚本本身不落地(落地 + DOM 重渲染断言在 browser page-demo.spec.ts);
+  // 此处验证事件映射契约:transform 调用发 data_change(operation=edit),query 只读不发。
+  {
+    const events = []
+    const bind = { title: 't', items: [1, 2, 3] }
+    const llm = stubModel(
+      { toolCalls: [{ name: 'eval_script', args: { jsonPath: 'items', mode: 'query', script: 'return data.length;' } }] },
+      { toolCalls: [{ name: 'eval_script', args: { jsonPath: 'items', mode: 'transform', script: 'return data.slice().reverse();' } }] },
+      { text: '完成' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-eval-transform-event', storage: 'memory', llm, capabilities: MIN_CAPS,
+      data: { schema: z.object({ title: z.string(), items: z.array(z.number()) }), bind },
+      onEvent: (e) => { if (e.type === 'data_change') events.push(e) },
+    })
+    await sdk.mount()
+    await sdk.send('处理 items')
+    assert(events.length === 1 && events[0].operation === 'edit', '✓ eval_script transform → 恰发 1 次 data_change(operation=edit;query 不发;修前 transform 也不发)')
+    assert(events.every((e) => ['set', 'edit', 'delete', 'restore'].includes(e.operation)), '✓ data_change operation 取值在既有契约内')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:events] ✓ draft_commit 落地 → data_change(同漏发面;opt-in draftWrite 经 vfs 装配)')
+  {
+    const events = []
+    const bind = { title: 't' }
+    const llm = stubModel(
+      { toolCalls: [{ name: 'draft_write', args: { draftId: 'd1', chunk: '{"title":"新标题"}', mode: 'start' } }] },
+      { toolCalls: [{ name: 'draft_commit', args: { draftId: 'd1' } }] },
+      { text: '完成' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-draft-commit-event', storage: 'memory', llm, capabilities: { ...MIN_CAPS, vfs: true, draftWrite: true },
+      data: { schema: z.object({ title: z.string() }), bind },
+      onEvent: (e) => { if (e.type === 'data_change') events.push(e) },
+    })
+    await sdk.mount()
+    await sdk.send('分块写标题')
+    assert(bind.title === '新标题', '✓ draft_commit 落地(bind.title 已更新)')
+    assert(events.length === 1 && events[0].operation === 'edit', '✓ draft_commit → 恰发 1 次 data_change(operation=edit;修前 draft_write/commit 均不发)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:events] ✓ write patches 批量意图 → operation=edit;dryRun 探演不落地 → 不发(code-review 收口:修前 patches 误标 set / dryRun 空刷新)')
+  {
+    const events = []
+    const bind = { title: 't', tags: ['a'] }
+    const llm = stubModel(
+      // dryRun 探演:不落地 → 不发 data_change
+      { toolCalls: [{ name: 'write', args: { dryRun: true, patch: { op: 'append', jsonPath: 'tags', value: 'b' } } }] },
+      // patches 批量意图(原子)→ operation=edit(修前误标 set)
+      { toolCalls: [{ name: 'write', args: { patches: [{ op: 'append', jsonPath: 'tags', value: 'b' }, { op: 'set', jsonPath: 'title', value: '新标题' }] } }] },
+      { text: '完成' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-write-op-infer', storage: 'memory', llm, capabilities: MIN_CAPS,
+      data: { schema: z.object({ title: z.string(), tags: z.array(z.string()) }), bind },
+      onEvent: (e) => { if (e.type === 'data_change') events.push(e) },
+    })
+    await sdk.mount()
+    await sdk.send('加个标签')
+    assert(bind.tags.join(',') === 'a,b' && bind.title === '新标题', '✓ dryRun 未落地 + patches 原子落地(tags/title 均新)')
+    assert(events.length === 1 && events[0].operation === 'edit', '✓ dryRun 零事件 + patches → 恰 1 次 data_change(operation=edit;修前 dryRun 也发 + patches 标 set)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:events] ✓ resource_update 同步 verbatim 真值进 bind → data_change(修前漏发面收口)')
+  {
+    const events = []
+    const bind = { title: 't', token: 'secret-token' }
+    const llm = stubModel(
+      { toolCalls: [{ name: 'resource_update', args: { path: 'token', value: 'new-token' } }] },
+      { text: '完成' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-resource-update-event', storage: 'memory', llm, capabilities: { ...MIN_CAPS, vfs: true },
+      data: {
+        schema: z.object({ title: z.string(), token: z.string() }),
+        bind,
+        resources: [{ path: 'token', mode: 'verbatim' }],
+      },
+      onEvent: (e) => { if (e.type === 'data_change') events.push(e) },
+    })
+    await sdk.mount()
+    await sdk.send('更新 token')
+    assert(bind.token === 'new-token', '✓ resource_update 落地(bind.token 已更新)')
+    assert(events.length === 1 && events[0].operation === 'edit', '✓ resource_update → 恰发 1 次 data_change(operation=edit;修前不发)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

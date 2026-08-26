@@ -896,7 +896,7 @@ The return value for offloaded tool results (above threshold) is upgraded to `Of
 
 | Event | When | Fields |
 |---|---|---|
-| `data_change` | After Agent calls a write tool (high-level `write`, or low-level `set`/`edit`/`delete`/`restore_data`) | `operation` (`set`/`edit`/`delete`/`restore`; `write` infers from args) / `value` (post-change value, i.e. the entire bind) |
+| `data_change` | After Agent calls a write tool (high-level `write` / `restore_data` / `eval_script` transform mode / `draft_commit` / `resource_update`) | `operation` (`set`/`edit`/`delete`/`restore`; `write` infers from args [del→delete, patch/patches→edit, else set], eval_script transform / draft_commit / resource_update always `edit`; a `dryRun` write doesn't land and doesn't fire) / `value` (post-change value, i.e. the entire bind) |
 | `message_update` | After each Agent round | `count` (message count) |
 | `tool_call` | Before tool call (stream mode) | `name` / `args` |
 | `tool_result` | After tool returns (stream mode) | `name` / `result` / `status` |

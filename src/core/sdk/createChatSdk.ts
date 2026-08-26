@@ -806,15 +806,24 @@ const sharedCores = new Map<string, AgentCore>()
 
 /**
  * 数据写工具名 → operation 映射(供 onEvent 的 data_change 推断操作类型)。
- * 非数据写工具返回 null。write 高层入口按 args 推断(del→delete,patch→edit,否则 set)。
+ * 非数据写工具返回 null。write 高层入口按 args 推断(del→delete,patch/patches→edit,否则 set;
+ * dryRun 显式不落地 → 不发);eval_script 仅 transform 模式落地主数据(query 只读不发);
+ * draft_commit 走 commitSetToBind、resource_update setByPath 同步 verbatim 真值进 bind,均为 bind 写。
+ * (修前漏发:eval_script transform / draft_commit / resource_update 改了 bind 却无 data_change →
+ * 非 reactive bind 宿主依赖 data_change 驱动重渲染〔page-demo :key=tick〕,数据变了页面不动
+ * —— 2026-08-26 用户实测「打乱布局没变化」)
  */
 function matchDataOp(name: string, args?: any): 'set' | 'edit' | 'delete' | 'restore' | null {
   if (name === 'restore_data') return 'restore'
   if (name === 'write') {
+    if (args?.dryRun) return null // 探演不落地(优先级最高:del/patch 组合的 dryRun 同样不发)
     if (args?.del) return 'delete'
-    if (args?.patch) return 'edit'
+    if (args?.patch || args?.patches) return 'edit'
     return 'set'
   }
+  if (name === 'eval_script') return args?.mode === 'transform' ? 'edit' : null
+  if (name === 'draft_commit') return 'edit'
+  if (name === 'resource_update') return 'edit'
   return null
 }
 
@@ -825,7 +834,8 @@ function isDelegationTool(name: string): boolean {
 
 /**
  * 内部事件中间件:把常用时机经 onEvent 外发给集成方。
- * - wrapToolCall:数据写工具(set/edit/delete/restore)执行后发 data_change(operation/value);
+ * - wrapToolCall:数据写工具(write 四意图 / restore_data / eval_script transform / draft_commit / resource_update)
+ *   执行后发 data_change(operation/value);
  *   委派类工具(spawn_agent / spawn_agents / use_<id>)成功收口后也补发 —— 子 agent 写 data(如 html 子 agent 写 code 字段)
  *   经主循环的 use_<id> 内部落地,非 reactive bind 宿主只监听 data_change 时无从感知刷新(修前漏发)
  * - afterModel:每轮 LLM 调用后提取 usage 累加到 core.usage,发 usage 事件(单轮 + 累计)

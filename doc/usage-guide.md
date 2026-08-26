@@ -1348,7 +1348,7 @@ createChatSdk({
 
 | 事件 | 时机 | 字段 |
 |---|---|---|
-| `data_change` | Agent 调写工具后(`write` 高层入口,或底层 `set`/`edit`/`delete`/`restore_data`) | `operation`(`set`/`edit`/`delete`/`restore`,`write` 按 args 推断) / `value`(改后值,即整个 bind) |
+| `data_change` | Agent 调写工具后(`write` 高层入口 / `restore_data` / `eval_script` transform 模式 / `draft_commit` / `resource_update`) | `operation`(`set`/`edit`/`delete`/`restore`;`write` 按 args 推断〔del→delete,patch/patches→edit,否则 set〕,eval_script transform / draft_commit / resource_update 恒 `edit`;`write` 带 `dryRun` 探演不落地不发) / `value`(改后值,即整个 bind) |
 | `message_update` | 每轮 Agent 结束 | `count`(消息数) |
 | `tool_call` | 工具调用前(stream 模式) | `name` / `args` |
 | `tool_result` | 工具返回后(stream 模式) | `name` / `result` / `status` |

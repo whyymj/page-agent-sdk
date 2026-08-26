@@ -511,6 +511,32 @@ test.describe('page-demo: read → write → read', () => {
   })
 
   /**
+   * eval_script transform → data_change 事件(2026-08-26 实测事故:打乱布局数据变了页面不动)。
+   * page-demo 是非 reactive bind 集成(普通对象 + onEvent('data_change') → tick++ → :key 强制重渲染);
+   * 修前 matchDataOp 只映射 write/restore_data,eval_script transform 落地后不发事件 → 宿主无从感知刷新。
+   * ground truth = DOM 顺序反转(修前 window.page 已反转但画布仍渲染旧顺序)。
+   */
+  test('eval_script transform 打乱 → data_change → 画布重渲染(修前数据变了页面不动)', async ({ page }) => {
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'read', arguments: { jsonPath: 'components', fields: ['type'] } }] },
+      { tool_calls: [{ name: 'eval_script', arguments: { jsonPath: 'components', mode: 'transform', script: 'return data.slice().reverse();' } }] },
+      { text: '已反转组件顺序。' },
+    ])
+    await fillInput(page, '随机打乱布局')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+
+    // 数据侧:数组已反转(首位 list,末位 heading)
+    const first = await page.evaluate(() => (window as any).page.components[0].type)
+    const last = await page.evaluate(() => (window as any).page.components[(window as any).page.components.length - 1].type)
+    expect(first).toBe('list')
+    expect(last).toBe('heading')
+    // DOM 侧:画布重渲染(data_change → tick → PageRenderer 重建;修前 DOM 停留在旧顺序 heading 在顶)
+    await expect(page.locator('[data-path="components.0"]')).toContainText('需求收集')
+    await expect(page.locator('[data-path="components.7"]')).toContainText('你好,页面内 Agent')
+  })
+
+  /**
    * 聚焦嵌套组件(getSchemaAtPath union 下探配套):两步拾取嵌套 data-path → addFocus 成功
    * (修前 union 节点返 null 被拒,嵌套组件无法聚焦)→ 聚焦内写放行 / 聚焦外 PATH_DENIED。
    */

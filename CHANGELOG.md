@@ -2,6 +2,15 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.4.1] - 2026-08-26
+
+### Fixed(data_change 事件漏发:eval_script transform / draft_commit)
+
+- **`eval_script` transform 模式落地主数据后不发 `data_change` 事件**(2026-08-26 page-demo 真 LLM 实测:「随机打乱布局」经 eval_script transform 洗牌 components,`window.page` 数据已变、页面渲染不动 —— 非 reactive bind 宿主依赖 `onEvent('data_change')` 驱动重渲染,收不到通知;「清空」走 `write` 有事件故正常)→ `matchDataOp` 补映射(transform → `operation:'edit'`;query 只读仍不发)
+- 同型补齐(code-review 收口):**`draft_commit`**(opt-in 分块写)与 **`resource_update`**(verbatim 真值同步进 bind)落地后同样漏发 → 补映射(恒 `edit`)
+- 顺带修正 `write` 意图推断:**`patches` 批量意图修前误标 `operation:'set'`**(应为 `edit`);**`dryRun` 探演修前也发事件**(数据未落地,宿主空刷新/误判)→ dryRun 不发(判定优先级最高,del/patch 组合同样适用)
+- e2e +8(events:transform 映射/query 不发/operation 契约 + draft_commit 落地事件 + patches→edit 与 dryRun 零事件 + resource_update 事件);browser +1(page-demo:eval_script transform 反转 components → DOM 画布重渲染,锁定实测事故形态)
+
 ## [4.4.0] - 2026-08-26
 
 ### Added(server-storage:服务端持久化注入)
