@@ -124,6 +124,12 @@ export interface DataOpsOptions {
    * 「是否校验」的唯一旋钮,不越权给未武装用户加冲突;未武装并行的「后写覆盖」为既有明文语义)。
    */
   maxParallelTools?: number
+  /**
+   * 沙箱执行器注入(内部测试缝,team-audit P1#3):缺省 createSandboxRunner 的 Worker 实现,零变化;
+   * node 无 Worker 环境的自测注入 in-process 执行器走通 eval_script transform 真实落地分支。
+   * 形态与 runSandboxedScript 同:(data, script, timeoutMs) → {ok, result?, error?, elapsedMs}。
+   */
+  sandboxRunner?: (data: unknown, script: string, timeoutMs: number) => Promise<{ ok: boolean; result?: unknown; error?: string; elapsedMs: number }>
 }
 
 export interface DataSnapshotEntry {
@@ -858,6 +864,8 @@ function redactPgInPlace(obj: any): void {
 export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): StructuredToolInterface[] {
   // code-as-data-asset:pgIdPaths 触发 schema extend(加 __pgId → safeParse 不剥离)+ afterWrite(supplementPgId 补 __pgId)
   const pgIdPaths = opts.pgIdPaths ?? []
+  // 沙箱执行器(P1#3 测试缝:缺省 Worker 实现,自测可注入 in-process 执行器)
+  const runScript = opts.sandboxRunner ?? runSandboxedScript
   // B __pgId 补齐(全写路径收敛点):① 写前快照回填原 __pgId(read 投影隐藏 → agent 整体替换的 value 不含,
   // 不回填则映射键重生成,checkout/commit 按 __pgId 定位断链)。回填两段式(rv-code 复审:纯按位置在 move/重排
   // 后会错配到不同组件):先按内容深度相等匹配(剥 __pgId 比较,未改元素无论挪到哪都找回自己的 id),未匹配项
@@ -1301,7 +1309,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       }
       const data = deepClone(source)
       const timeout = jp && JSON.stringify(data).length > 100000 ? 8000 : 3000  // 子树较大时延长超时(默认 3s,>100KB 延至 8s)
-      const res = await runSandboxedScript(data, script, timeout)
+      const res = await runScript(data, script, timeout)
       if (!res.ok) {
         const isTimeout = /超时/.test(res.error || '')
         return toolError({ code: isTimeout ? 'SCRIPT_TIMEOUT' : 'SCRIPT_ERROR', message: `脚本执行失败: ${res.error}`, hint: isTimeout ? '脚本可能有死循环或过重计算;加边界检查/分批;transform 返回完整新值勿返回巨大中间结果' : '检查脚本语法与运行时错误;入参为 data(主数据深拷贝),沙箱内禁用 fetch/XHR/WebSocket', details: { elapsedMs: res.elapsedMs, scriptLen: script.length } })
@@ -1355,6 +1363,10 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         if (bindRef === null || typeof bindRef !== 'object') {
           return toolError({ code: 'LEAF_BIND', message: `主数据 bind 为原始类型(${bindRef === null ? 'null' : typeof bindRef}),eval transform 无法就地替换外部持有的值引用`, hint: '主数据 bind 必须为对象/数组;叶子值请用对象包裹或集成方通过 sdk.setData 替换 bind' })
         }
+        // team-audit P1#3:整体替换前捕写前快照(internalAfterWrite 回填原 __pgId 用;照 commitSetToBind :508 模式)。
+        // 修前本分支零 internalAfterWrite 调用 → 脚本入参 data 经投影已剥 __pg* → 整组换掉后已有组件 id 也被 wipe,
+        // vfs 工作副本按旧 id 定位断链 → 孤儿清理删副本、子 agent 未 commit 成果丢(2026-08-21 editor 同族事故)
+        const beforeBind = internalAfterWrite ? deepClone(bindRef) : null
         const evalLock = await acquireWriteMutex()
         try {
           const vr = validateRootValueLocally({ schema, allowKeys, value: evalResult, bindRef })
@@ -1369,6 +1381,8 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
             safeMerge(bindRef as Record<string, any>, vr.assembly)
           }
           markDataDirty()
+          // team-audit P1#3:补齐收敛点(照 write del :1552 模式)—— 回填原 __pgId + 补全新增,防映射断链
+          if (internalAfterWrite) { internalAfterWrite(bindRef, beforeBind); markDataDirty() }
           audit({ op: 'edit', detail: 'eval_transform', timestamp: Date.now() })
           setBaseline(hashBind(), scope)
           return `已通过脚本 transform 更新主数据(耗时 ${res.elapsedMs}ms)。当前值: ${safeStringify(bindRef, 600)}`

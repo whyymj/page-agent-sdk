@@ -90,21 +90,40 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
   // 后续压缩命中缓存时,LLM 前缀 + 新增尾部索引增量拼接。fire-and-forget 只写闭包缓存(不触 messages/store),
   // unmount 后完成也无副作用(随闭包 GC),无需竞态守卫。trimMemoryMessages(OOM splice)致 rounds 错位时缓存不命中,
   // 自然回退模板 + 重新 fire(最多摘要质量降级,无正确性影响)。
+  //
+  // team-audit P1#2(llmCache 跨会话泄漏):llmCache 闭包与 SDK 实例同生命周期(单例非 per-session),
+  // switchSession/resetSession 必须调 reset() 清缓存,否则会话 A 的 LLM 摘要前缀/全量命中拼进会话 B 的【对话历史摘要】。
+  // epoch 代数:reset 后在飞的旧摘要 .then 按 epoch 丢弃(只清缓存不挡在飞回调 = 假修:
+  // reset 后 llmCache=null,单调守卫恒过,在飞 .then 落缓存复活泄漏);
+  // in-flight 防重入按 epoch 隔离(旧代在飞不阻塞新会话 fire —— 伴生缺陷:B 自身后台摘要被 llmInFlight 吞)。
+  // llmInFlight 状态不手工清(交 .finally 按 flight 所有权自然回落,手工清会双重 fire)。
   let llmCache: { coveredCount: number; text: string } | null = null
-  let llmInFlight = false  // 防同轮重复 fire(重试/双触发)
+  let llmEpoch = 0
+  let inFlightEpoch = -1 // 进行中后台摘要所属 epoch(-1 = 无在飞;仅同 epoch 防重入)
+  let flightId = 0       // 在飞所有权:.finally 只由最新 flight 回落(旧代孤儿化后不误清新代在飞态)
 
-  /** 后台 LLM 摘要:完成时按 coveredCount 单调守卫更新缓存;失败不更新(下次触发重试) */
+  /** 后台 LLM 摘要:完成时按 epoch + coveredCount 单调守卫更新缓存;失败不更新(下次触发重试) */
   function fireBackgroundLlmSummary(n: number, idxText: string): void {
-    if (llmInFlight || !config.llmInvoke) return
-    llmInFlight = true
+    if (!config.llmInvoke) return
+    if (inFlightEpoch === llmEpoch) return // 同 epoch 防重入(重试/双触发);跨 epoch 旧代在飞已被孤儿化,不阻塞新会话 fire
+    const epoch = llmEpoch
+    const id = ++flightId
+    inFlightEpoch = epoch
     void config.llmInvoke(idxText)
       .then((t) => {
-        if (typeof t === 'string' && t && (!llmCache || llmCache.coveredCount <= n)) {
+        if (epoch === llmEpoch && typeof t === 'string' && t && (!llmCache || llmCache.coveredCount <= n)) {
           llmCache = { coveredCount: n, text: t }
         }
       })
       .catch(() => { /* 保留索引模板;下次压缩触发时重试 */ })
-      .finally(() => { llmInFlight = false })
+      .finally(() => { if (id === flightId) inFlightEpoch = -1 })
+  }
+
+  /** 会话切换/重置(team-audit P1#2):清 LLM 摘要前缀缓存 + epoch 翻转让在飞旧摘要结果失效。
+   *  由 createChatSdk 的 switchSession/resetSession 调用(summarization 控制面透传)。 */
+  function reset(): void {
+    llmEpoch++
+    llmCache = null
   }
 
   /**
@@ -304,7 +323,7 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
     }
   }
 
-  return { compress, config }
+  return { compress, config, reset }
 }
 
 

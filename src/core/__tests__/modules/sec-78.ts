@@ -2,7 +2,8 @@
  * sec-78:team-review-hardening 阶段 A/B —— 写能力标注单一真相源 + __pgId 补齐全写路径
  * - A4 标注完整性:写语义工具集都有 writeCapable 标注(新写工具漏标即红,防清单再漂移)/ 只读工具无标注
  * - B2 __pgId 补齐:write 整体替换 / write patch / draft_commit 三路径组件 __pgId 保留 + 新增组件补 id
- *   (eval_script(transform) 走 Node 不可测的 Worker 沙箱,与 write patch 共用 applyPatchesToBind 收敛点)
+ * - team-audit P1#3:eval_script transform **整体替换**分支 __pgId 保活(node 经 opts.sandboxRunner 注入缝走通真实分支;
+ *   修前该分支漏调 internalAfterWrite → 已有组件 id 也被整体 wipe,vfs 工作副本孤儿化、子 agent 成果丢)
  */
 import { z } from 'zod'
 import { createDataOps } from '../../tools/dataOps'
@@ -88,8 +89,41 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(typeof bind.components[1].__pgId === 'string' && bind.components[1].__pgId.startsWith('c_'),
       '✓ B2 draft_commit → 新增组件补 __pgId')
     // eval_script(transform)同走 applyPatchesToBind 收敛(与 write patch 路径同一 internalAfterWrite 注入);
-    // Worker 沙箱 Node 不可测(sec-21 既有约定),此处留痕不重复测
-    assert(true, '✓ B2 eval_script(transform) 与 write patch 共用 internalAfterWrite 收敛点(留痕)')
+    // Worker 沙箱 Node 不可测 → 下方 P1#3 段经 sandboxRunner 注入缝覆盖(更强:走通真实落地分支)
+    assert(true, '✓ B2 eval_script(transform) patches/子树 两模式与 write patch 共用 internalAfterWrite 收敛点(留痕)')
+  }
+
+  // ===== team-audit P1#3:eval_script transform 整体替换 __pgId 保活 =====
+  {
+    // node 无 Worker:dataOps opts.sandboxRunner 注入缝(缺省 Worker 实现,零变化);
+    // 注入 in-process 执行器(受控脚本,fn(data) 与沙箱同形)走通「脚本返回完整新值 → 整体替换」真实分支
+    const fakeRunner = (data: unknown, script: string) => new Promise((resolve) => {
+      const fn = new Function('data', script)
+      resolve({ ok: true, result: fn(data), elapsedMs: 1 })
+    })
+    const bind: any = { title: 't', components: [{ name: 'a', code: 'x', __pgId: 'c_ev1' }, { name: 'b', code: 'y', __pgId: 'c_ev2' }] }
+    const t = byName(makeOps(bind, { sandboxRunner: fakeRunner }))
+    // 脚本入参 data 经投影已剥 __pg*(与真实沙箱同口径)→ 返回值天然无 id,触发整体替换分支
+    const r = await invoke(t['eval_script'], {
+      mode: 'transform',
+      script: 'return { title: data.title, components: ['
+        + '{ name: data.components[0].name, code: "x2" },'
+        + '{ name: data.components[1].name, code: data.components[1].code },'
+        + '{ name: "new", code: "z" } ] }',
+    })
+    assert(/已通过脚本 transform 更新主数据/.test(String(r)), `✓ P1#3 eval transform 整体替换落地(注入 runner 走通真实分支;实际:${String(r).slice(0, 80)}`)
+    assert(bind.components[0].code === 'x2' && bind.components.length === 3, '✓ P1#3 整体替换数据生效(改 a + 保 b + 新增 new)')
+    const idOf = Object.fromEntries(bind.components.map((c: any) => [c.name, c.__pgId]))
+    assert(idOf['a'] === 'c_ev1' && idOf['b'] === 'c_ev2',
+      `✓ P1#3 整体替换后已有组件 __pgId 保留(修前:分支漏调 internalAfterWrite → id 全量 wipe,checkout/commit 按 id 定位断链)`)
+    assert(typeof idOf['new'] === 'string' && idOf['new'].startsWith('c_'), '✓ P1#3 新增组件补 __pgId')
+    // write(set) 对照组:同数据形态经 write 路径(既有收敛点)行为一致 —— 两条整体替换路径对齐
+    const bind2: any = { title: 't', components: [{ name: 'a', code: 'x', __pgId: 'c_w1' }, { name: 'b', code: 'y', __pgId: 'c_w2' }] }
+    const t2 = byName(makeOps(bind2))
+    await invoke(t2['write'], { value: { title: 't', components: [{ name: 'a', code: 'x2' }, { name: 'b', code: 'y' }, { name: 'new', code: 'z' }] } })
+    const idOf2 = Object.fromEntries(bind2.components.map((c: any) => [c.name, c.__pgId]))
+    assert(idOf2['a'] === 'c_w1' && idOf2['b'] === 'c_w2' && typeof idOf2['new'] === 'string',
+      '✓ P1#3 对照:write(set) 同形态 id 保留/补齐一致(两整体替换路径行为对齐)')
   }
   {
     // rv-code 复审补充:move/重排后按位置回填会错配 → 内容相等匹配优先(剥 __pgId 比较)

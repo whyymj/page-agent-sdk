@@ -230,4 +230,78 @@ export async function run(ctx: TestCtx) {
       assert(dec.startsWith('已完成') && dec.includes('[keep_external]') && dec.includes('beer、nav') && dec.includes('勿直接重写'), '✓ 装饰 → keep_external 清单非空时结果尾追加提示行(组件名 + 勿直写)')
     }
   }
+
+  // ===== team-audit P1#6:per-组件委派世代号 —— 旧代 wind-down commit 跳过(超时重委派竞态) =====
+  // 竞态形态(核实员真模块确定性复现):子 A 超时 → 锁放 + 错误回灌 → 主重委派子 B → B 开始编辑共享 vfs
+  // → A 的 wind-down afterAgent 读 vfs 当前内容(= B 的中间态/最终态)提前 commit → B 收口 hash 失配
+  // → keep_external 误报 + B 最终成果被静默丢弃。修:touch/复用即 bump 世代,afterAgent 查世代旧代跳过。
+  {
+    const mk = () => ({
+      vfs: { files: {} as Record<string, { content: string; updatedAt: number }> },
+      bind: {
+        components: [
+          { name: 'beer', __pgId: 'pg1', code: '<div>ORIGIN</div>' },
+        ],
+      },
+      ctrl: null as null | { get: () => { bind: unknown }; markDataDirty: () => void; recomputeBaseline: () => void },
+    })
+    const build = (m: ReturnType<typeof mk>) => createCodeAssetMiddleware({
+      writablePaths: ['components'], codeVfsPrefix: 'html/', ext: 'html',
+      getController: () => (m.ctrl ??= { get: () => ({ bind: m.bind }), markDataDirty() {}, recomputeBaseline() {} }) as any,
+      vfsStore: m.vfs as any,
+    })
+
+    // —— 竞态主场景:A 超时 wind-down 与 B 重委派交错 ——
+    {
+      const m = mk()
+      const mw = build(m)
+      // 委派 A(旧代):checkout + touch 中间态
+      const stateA = { ...((mw.beforeAgent as (s: unknown) => unknown)({} as never) as object) } as never
+      const wrapA = mw.wrapToolCall as (ctx: unknown, next: (ctx: unknown) => Promise<{ content: string; status: string }>) => Promise<{ content: string; status: string }>
+      m.vfs.files['html/pg1.html'] = { content: '<div>NEW-INTERMEDIATE</div>', updatedAt: Date.now() }
+      await wrapA(
+        { name: 'vfs_write', args: { path: 'html/pg1.html', content: '<div>NEW-INTERMEDIATE</div>' }, state: stateA },
+        async () => ({ content: 'ok', status: 'done' }),
+      )
+      // 委派 B(新代,重委派):checkout 复用分支(vfs 有 A 未提交代码且 data 未变 → pendingRetry)+ touch 最终态
+      const stateB = { ...((mw.beforeAgent as (s: unknown) => unknown)({} as never) as object) } as never
+      const wrapB = mw.wrapToolCall as typeof wrapA
+      m.vfs.files['html/pg1.html'] = { content: '<div>NEW-FINAL-RESULT</div>', updatedAt: Date.now() }
+      await wrapB(
+        { name: 'vfs_write', args: { path: 'html/pg1.html', content: '<div>NEW-FINAL-RESULT</div>' }, state: stateB },
+        async () => ({ content: 'ok', status: 'done' }),
+      )
+      // A 的 wind-down afterAgent 在 B 之后跑(超时竞态核心交错;修前:A 读 vfs 当前内容提前 commit)
+      ;(mw.afterAgent as (s: unknown) => void)(stateA)
+      assert((m.bind.components[0] as { code: string }).code === '<div>ORIGIN</div>',
+        '✓ P1#6 旧代 wind-down commit 被世代号跳过(修前:A 把 B 的内容提前 commit,数据变中间态)')
+      const keptA = (stateA as unknown as Record<string, unknown>).__pgKeepExternal as string[] | undefined
+      assert(!keptA?.length, '✓ P1#6 旧代跳过不误报 keep_external(世代过期 ≠ 人工修改)')
+      // B 的 afterAgent(新代):最终成果正常落地
+      ;(mw.afterAgent as (s: unknown) => void)(stateB)
+      assert((m.bind.components[0] as { code: string }).code === '<div>NEW-FINAL-RESULT</div>',
+        '✓ P1#6 新代最终成果正常落地(data.code = 最终值;修前:keep_external 误判 → FINAL 被静默丢弃)')
+      const keptB = (stateB as unknown as Record<string, unknown>).__pgKeepExternal as string[] | undefined
+      assert(!keptB?.length, '✓ P1#6 新代收口零 keep_external 误报')
+    }
+
+    // —— 并行异组件零回归:A、B 各锁各组件,世代互不干扰 ——
+    {
+      const m = mk()
+      m.bind.components.push({ name: 'nav', __pgId: 'pg2', code: '<div>NAV</div>' })
+      const mw = build(m)
+      const stateA = { ...((mw.beforeAgent as (s: unknown) => unknown)({} as never) as object) } as never
+      const stateB = { ...((mw.beforeAgent as (s: unknown) => unknown)({} as never) as object) } as never
+      const wrap = mw.wrapToolCall as (ctx: unknown, next: (ctx: unknown) => Promise<{ content: string; status: string }>) => Promise<{ content: string; status: string }>
+      m.vfs.files['html/pg1.html'] = { content: '<div>A-FINAL</div>', updatedAt: Date.now() }
+      m.vfs.files['html/pg2.html'] = { content: '<div>B-FINAL</div>', updatedAt: Date.now() }
+      await wrap({ name: 'vfs_write', args: { path: 'html/pg1.html' }, state: stateA }, async () => ({ content: 'ok', status: 'done' }))
+      await wrap({ name: 'vfs_write', args: { path: 'html/pg2.html' }, state: stateB }, async () => ({ content: 'ok', status: 'done' }))
+      // 交错收口:B 先 A 后(任意序都不误跳)
+      ;(mw.afterAgent as (s: unknown) => void)(stateB)
+      ;(mw.afterAgent as (s: unknown) => void)(stateA)
+      assert((m.bind.components[0] as { code: string }).code === '<div>A-FINAL</div>', '✓ P1#6 并行异组件:A 成果落地(世代按组件隔离,不株连)')
+      assert((m.bind.components[1] as { code: string }).code === '<div>B-FINAL</div>', '✓ P1#6 并行异组件:B 成果落地(3.13 并行零回归)')
+    }
+  }
 }

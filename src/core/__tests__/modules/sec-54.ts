@@ -337,4 +337,26 @@ export async function run(ctx: TestCtx): Promise<void> {
     mw.reset()
     assert(mw.isInvokeActive() === false && mw.getFocuses().length === 0, '✓ invoke-freeze: reset 清实时态与快照')
   }
+
+  // ===== team-audit P1#5:getActiveFocuses(生效快照)暴露 —— 委派继承读冻结口径,其余消费面保持实时态 =====
+  {
+    const mw = createFocusMiddleware({ getSchema: () => null })
+    mw.setFocus({ path: 'components.0' }, 'host')
+    // 进 invoke(beforeAgent 取快照)
+    ;(mw.beforeAgent as () => unknown)()
+    // 宿主 mid-run 变更:实时态变,生效快照冻结(getFocuses/getActiveFocuses 一测双通道,锁「其余消费面实时态」红线)
+    mw.setFocus({ path: 'components.9' }, 'host')
+    assert(mw.getFocuses()[0]?.path === 'components.9', '✓ P1#5 getFocuses 保持实时态(UI chip/persist/inspect/宿主 API 消费面不变)')
+    assert(typeof mw.getActiveFocuses === 'function' && mw.getActiveFocuses()[0]?.path === 'components.0',
+      '✓ P1#5 getActiveFocuses 返回生效快照(委派继承用;修前:子继承读实时态 → 主/子写面口径不一致)')
+    // 未进 invoke 时两者等价(零回归基线)
+    ;(mw.afterAgent as () => unknown)()
+    assert(mw.isInvokeActive() === false && mw.getActiveFocuses()[0]?.path === mw.getFocuses()[0]?.path,
+      '✓ P1#5 invoke 间隙 getActiveFocuses === getFocuses(等价回退)')
+    // agent 来源 mid-run 变更:快照同步(既有语义,委派继承同样感知 agent 主动决策)
+    ;(mw.beforeAgent as () => unknown)()
+    mw.setFocus({ path: 'components.5' }, 'agent')
+    assert(mw.getActiveFocuses()[0]?.path === 'components.5' && mw.getFocuses()[0]?.path === 'components.5',
+      '✓ P1#5 agent 来源 mid-run 变更:快照与实时态同步(委派继承与主写面一致)')
+  }
 }

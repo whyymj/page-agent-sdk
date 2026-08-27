@@ -10,7 +10,7 @@
  * D. flush 超时后同 kind 新 save 接管:identity 守卫防误删新值(旧项收口不吞新项)
  */
 import type { TestCtx } from './_ctx'
-import { createSessionStoreWithBackend, type StorageBackend } from '../../backends/storage'
+import { createSessionStoreWithBackend, encodeKey, type StorageBackend } from '../../backends/storage'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -111,5 +111,68 @@ export async function run(ctx: TestCtx): Promise<void> {
     const loaded = await store.load('ag', 's1')
     assert(!!loaded && (loaded as any).messages?.[0]?.content === 'v2', '✓ 新值落盘(v1 迟到收口未误删接管的 v2;无守卫时 pending 被清 → v2 丢失)')
     store.dispose()
+  }
+
+  // ===== team-audit P1#4:load 的 meta touch(lastAccessed 刷新)单独吞错,不连坐快照读取 =====
+  {
+    // set 全炸(QuotaExceeded 形态);meta/messages 种子经 encodeKey 预置 → load 应成功返回数据(修前:meta touch 裸 await → load reject)
+    const mem = new Map<string, unknown>()
+    const dbName = 'sec111-p14', agentId = 'ag', sid = 's1'
+    mem.set(encodeKey(dbName, agentId, sid, '__meta__'), { agentId, sessionId: sid, createdAt: 1, lastAccessed: 1, bytes: 0 })
+    mem.set(encodeKey(dbName, agentId, sid, 'messages'), [{ role: 'user', content: 'hi', timestamp: 1 }])
+    const quotaBackend: StorageBackend = {
+      get: async (k) => mem.get(k),
+      set: async () => { throw new Error('QuotaExceededError') },
+      del: async (k) => { mem.delete(k) },
+      scan: async () => {},
+      clearPrefix: async () => {},
+    }
+    const store = createSessionStoreWithBackend({ backend: 'memory', dbName, debounceMs: 10_000 }, quotaBackend)
+    const snap = await store.load(agentId, sid)
+    assert(!!snap && (snap as any).messages?.[0]?.content === 'hi',
+      '✓ P1#4 meta touch 后端炸(set 抛)→ 快照读取照常返回数据(lastAccessed 刷新失败不连坐;修前:load 整体 reject)')
+    store.dispose()
+  }
+
+  // ===== team-audit P1#7:maxBytes:Infinity 联动关闭 maxBytesPerSession 默认 10MB 上限 =====
+  {
+    // 直测 store 层(11MB 经 agent 管线过重);mem 后端记录 set 调用观察拒写/放行
+    const mkMemBackend = () => {
+      const mem = new Map<string, unknown>()
+      return { mem, backend: { get: async (k: string) => mem.get(k), set: async (k: string, v: unknown) => { mem.set(k, v) }, del: async (k: string) => { mem.delete(k) }, scan: async () => {}, clearPrefix: async () => {} } satisfies StorageBackend }
+    }
+    const BIG = [{ role: 'user', content: 'q', timestamp: 1 }, { role: 'assistant', content: 'A'.repeat(11 * 1024 * 1024), timestamp: 2 }]
+    // messages kind 落盘值 = 数组本体(save 按 kind 拆包存,非 {messages:[...]} 包装)
+    const hasMessages = (mem: Map<string, unknown>) => [...mem.values()].some((v) => Array.isArray(v) && v.length > 0)
+    // ① Infinity(容量交服务端,usage-guide 承诺口径)→ >10MB 照常落盘(修前:10MB 默认上限静默拒写)
+    {
+      const { mem, backend } = mkMemBackend()
+      const store = createSessionStoreWithBackend({ backend: 'memory', dbName: 'sec111-p7a', maxBytes: Infinity, debounceMs: 0 }, backend)
+      await store.createSession('ag', undefined, 's1')
+      await store.save('ag', 's1', { messages: BIG } as any)
+      await store.flush()
+      assert(hasMessages(mem), '✓ P1#7 maxBytes:Infinity + >10MB 会话 → messages kind 落盘(修前:默认 10MB 上限静默拒写,刷新回退旧快照)')
+      store.dispose()
+    }
+    // ② 显式 maxBytesPerSession 优先(Infinity 联动不覆盖显式值)
+    {
+      const { mem, backend } = mkMemBackend()
+      const store = createSessionStoreWithBackend({ backend: 'memory', dbName: 'sec111-p7b', maxBytes: Infinity, maxBytesPerSession: 1024, debounceMs: 0 }, backend)
+      await store.createSession('ag', undefined, 's1')
+      await store.save('ag', 's1', { messages: BIG } as any)
+      await store.flush()
+      assert(!hasMessages(mem), '✓ P1#7 显式 maxBytesPerSession=1024 优先(超限拒写;联动仅对未显式传值生效)')
+      store.dispose()
+    }
+    // ③ 非 Infinity 不传 maxBytesPerSession → 10MB 默认零变化(超限照拒)
+    {
+      const { mem, backend } = mkMemBackend()
+      const store = createSessionStoreWithBackend({ backend: 'memory', dbName: 'sec111-p7c', debounceMs: 0 }, backend)
+      await store.createSession('ag', undefined, 's1')
+      await store.save('ag', 's1', { messages: BIG } as any)
+      await store.flush()
+      assert(!hasMessages(mem), '✓ P1#7 默认(非 Infinity)10MB 上限零变化(超限照拒)')
+      store.dispose()
+    }
   }
 }

@@ -177,8 +177,8 @@ SDK 定位是**框架无关的轻量页面 JSON 操作 Agent**(自研 Deep Agent
 ### 循环/终止面(6 项)
 
 1. ⏸ **工具错误回灌无重复检测**(H17 证实;审计标注「建议优先修」)——【中】LLM 反复以同参重试同工具(schema 误解/前置不满足)烧满 maxToolRounds(~10 轮)token 才 wrap-up;复现:mock LLM 在工具返回 SCHEMA_INVALID 后连续回同参调用。有 wrap-up 收口(非破坏),危害=token 浪费。方向:近错指纹(tool+参数哈希+错误码)连续相同 → 提前换策略提示/终止。**→ 2026-08-23 并入 [`2026-08-23-tool-call-economy`](./changes/2026-08-23-tool-call-economy/) C2 统一设计(同病灶两面:报错后瞎猜 = 错误即向导治,报错后死磕 = 本项治),随其实施收口。**
-2. ⏸ wrap-up 收口 filter 掉全部 SystemMessage,与 P0-1 修复(排除框架工具保留 SystemMessage)语义矛盾 ——【低】读码级;wrap-up 轮消息过滤丢 system 上下文。
-3. ⏸ send-invoke 吞掉 SYSTEM_PROMPT_OVER_BUDGET 等 error 事件 ——【低】需 systemPrompt 超预算 + 走 send(invoke)路径;onEvent('error') 不触发(stream 路径正常外发)。
+2. ✅ wrap-up 收口 filter 掉全部 SystemMessage ——【已修销账 2026-08-26:E2 修复后 createAgent wrap-up 保留中部 SystemMessage(createAgent.ts:1151-1153),team-audit-hardening 主循环审查核实】
+3. ✅ send-invoke 吞掉 SYSTEM_PROMPT_OVER_BUDGET 等 error 事件 ——【已修销账 2026-08-26:makeStreamWatch(F1,createChatSdk.ts:1657-1663)全量转发 send 路径流内事件,e2e events.mjs 有断言;team-audit-hardening 主循环审查核实】
 4. ⏸ 被拒写入(SCHEMA_INVALID)也退出 planning 重置预算 ——【中】需 planning 开启 + 首次写即校验失败;规划阶段被提前退出(应仅写成功才退出)。复现:planning + write 传违反 schema 的值。
 5. ⏸ planPhaseRounds 按模型调用计数且跨 send 残留 ——【低-中】planning 开启多 send 场景:计数不清零,第二个 send 提前触顶回灌「停止调研」。
 6. ⏸ isRetryable 把无 status 错误(含 ContextOverflowError)当网络错空烧重试 ——【低】构造无 status 的 Error → 2 次无效重试;与 severity 路由正交。
@@ -203,8 +203,8 @@ SDK 定位是**框架无关的轻量页面 JSON 操作 Agent**(自研 Deep Agent
 
 ### 数据写链(7 项)
 
-1. ⏸ write({}) 配 resources 触发 TypeError 非结构化错误 ——【低】LLM 传空参 + data.resources 配置时;应为结构化错误码。
-2. ⏸ merge op 非对象 value 静默假成功 ——【中-低】LLM 对 merge 传非对象(误解字段类型)→ no-op 返回「已 edit」成功,数据完整性风险。方向:类型校验 + 结构化错误。
+1. ✅ write({}) 配 resources 触发 TypeError 非结构化错误 ——【已修实测销账 2026-08-26:现返回结构化 `SCHEMA_INVALID` 错误码 + hint,不抛异常(team-audit-hardening 审查期 tsx 直调验证)】
+2. ✅ merge op 非对象 value 静默假成功 ——【已修实测销账 2026-08-26:现返回结构化 `PATCH_FAILED`("merge 目标不是对象")且 bind 未动(team-audit-hardening 审查期 tsx 直调验证)】
 3. ⏸ eval 子树(jsonPath 模式)缺 isUnsafePath ——【低】eval_script({jsonPath:'__proto__…'});加固项(与 P3「read jsonPaths 缺 isUnsafePath」同型)。
 4. ⏸ interceptors 仅守高层 read/write,advanced 底层全绕过 ——【中】需集成方依赖 interceptors 做脱敏/审计 + toolMode:'advanced' → set_data/edit_data/delete_data 直调不过拦截器。方向:底层也接入,或文档明示「advanced 底层工具绕过 interceptors」让集成方知情。
 5. ⏸ eval transform fork 写链未共用 commitSetToBind ——【低】读码级:eval transform 整体替换回写链与 write(set) 在个别校验项口径分叉(commitSetToBind 抽离时的遗漏分支)。
@@ -534,7 +534,7 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 | query/search 环数据误标 | 环数据下 query/search 的体积估算误标;环已被写路径前置拦截,读路径残留 | 环数据实测读路径异常 |
 | Worker OOM 文档明示 | eval_script 沙箱 OOM 行为文档化(非代码修) | 下次动 usage-guide eval 段 |
 | hostScript 主线程死循环 | ✅ 已消亡(4.1.0 随 config-surface-pruning-round2 移除 `skillHostScript`;2026-08-26 结案) | — |
-| stream SYSTEM_PROMPT_OVER_BUDGET 早退仍推空 assistant | 与已登记「send-invoke 吞 error 事件」(循环/终止面 #3)同族不同路径 | 超预算实测案例(两路径一起修) |
+| stream SYSTEM_PROMPT_OVER_BUDGET 早退仍推空 assistant | 与已修「send-invoke 吞 error 事件」(循环/终止面 #3,✅ 2026-08-26 销账)同族不同路径;2026-08-26 team-audit-hardening 审查补**第三入口**:automation budget-abort 走 send 同落空气泡(budget.ts 返 `content:''` → createChatSdk.ts:1912 照常 push;三入口一起修:send push 前对 `!reply.trim()` 且本轮有 BUDGET_EXCEEDED 类事件跳过或占位) | 超预算/budget-abort 实测案例(三路径一起修) |
 | auditWritePaths 跨会话残留 | 已接受(证据审计基线跨会话累积,语义可辩护) | 不修,留痕 |
 | 单轮 tool_calls 数量无上限 | 仅 maxIterations 90 轮间接约束;单轮爆发百级 tool_calls 会拖慢派发 | 弱模型实测单轮爆发 |
 | 启动段超时未 inner.abort(资源级) | 启动闸超时后未 abort 底层 fetch(资源泄漏级非挂起级) | 下次动 streamer 启动段 |
@@ -550,3 +550,61 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 - 原 change 目录保留(proposal / design / tasks 不删),作为详细底稿;各 proposal.md 顶部已加 `⏸ 已评估暂缓` 标注块指向本文件。
 - **重启某项时**:从本文件移除 → 立项进 `project.md`「进行中」→ 按正常 OpenSpec 流程推进(先修行号 + apply)。
 - 本文件随评估持续维护;新增暂缓项追加到表尾。
+
+## 2026-08-26 team-audit-hardening 登记(六路团队审查 P2/P3 残项,评估不进本 change)
+
+> 来源:`2026-08-26-team-audit-hardening` 六路审查(对话主循环/数据写链/子 agent 编排/持久化会话/上下文管理/规划门禁 focus)+ 二轮对抗核实;P1×7 + P2×2 已进本 change,以下为评估后暂缓项(均经 deferred 去重,与新发现不同点才登记)。**重启触发** = 各项所述实例出现或相关模块下次改动时顺手。
+
+### 存储恢复面(P2×4 + 低危×3)
+
+| 项 | 说明 | 触发条件 |
+|---|---|---|
+| resetSession 未走 runSerial 串行闸 | createChatSdk.ts:2978 直调 + mountChatDialog.ts:63 onClear 直调;switchSession 在慢 store.load 挂起时用户点清空 → 恢复后覆写 sessionId 旧内容回屏(「清空」被静默吞)。修:入 runSerial 或 switch 恢复点校验 sessionId 未变 | 自定义慢后端实测交错案例 |
+| UI 删会话按钮无错误收口 | mountChatDialog.ts:115 onRemoveSession 裸 await 无 .catch(同文件 onNewSession/onOpenSession 均有);clearPrefix 500 → unhandled rejection + 列表不刷新。修:补 .catch + SESSION_DELETE_FAILED observable | 自定义后端删会话失败实测 |
+| 自定义后端方法契约零装配期校验 | storage.ts:367-368 实例直接透传;缺 scan → mount 即 TypeError(经恢复路径放大)、缺 clearPrefix → deleteSession reject。修:装配期查 5 方法,缺失 warn + degraded 降级(scan 缺 → listSessions 返 [];clearPrefix 缺 → no-op)。与 #315(字符串面 warn)不同面 | 集成方残缺后端实测报错案例 |
+| commit 通用错误路径零留痕 | storage.ts:496-497「其它写失败静默不抛」无 emit 无 debugLogs;4.4.0 CHANGELOG/usage-guide 写「吞错留痕」仅 quota 分支成立(文档-实现偏差)。修:补 StorageEvent | REST 500 实测案例 |
+| maybeEvict 不随 maxBytes:Infinity 短路 | storage.ts:525-551;Infinity 下 selectForEviction 恒空但每 send 轮 2-3 次全库 `backend.scan`(跨 agent 全量 key 枚举 = REST 服务端全表扫)+ 偶发 degraded 刷屏。修:一行短路 return | REST 后端性能实测 |
+| encodeKey 不转义 `::` | storage.ts:147-149;自定义 sessionId 含 `::` 时 clearPrefix('a') 可误删 id 'a::b' 的会话 key | 集成方用 `::` 做 sessionId |
+| vfs hydrate 不清 clear 的 pending timer | 2026-08-26 原疑似 P1 已证伪(clear→同步 hydrate 间零 await,竞态不可达);残余 = 切回后 800ms 一笔冗余自写(hydrated 内容写回本会话,无害)。修:hydrate 里 clearTimeout 一行洁癖 | 下次动 vfs.ts hydrate 顺手 |
+
+### 上下文面(P2×4 + P3×1)
+
+| 项 | 说明 | 触发条件 |
+|---|---|---|
+| 摘要缓存前缀对齐在 trim/restore 后失效 | useContextManager.ts:88-93 注释宣称「trim 错位时缓存不命中」与实现不符(命中判定只比 coveredCount 数值,③trim 后轮号重编 → 错位摘要);近窗原文无损纯质量问题。修:缓存条目存 older 首轮 user 指纹做对齐锚 | 长会话过 ③trim 后摘要质量异常实测 |
+| token 估算计入 steps/reasoning 而 toLC 从不发送 | contextIndex.ts:26-37 vs createAgent.ts:501;editor 类会话估算虚高数倍 → 系统性过早压缩 + 近窗被不必要压小(纯质量损失)。修:触发/窗口估算只计 content,steps 留给内存预算参考 | UI 长工具链会话压缩时机异常实测 |
+| 批读失效占位文案不实 | readInvalidation.ts:170-171 称「兄弟子树仍可参考」,实际 :252-256 整条 ToolMessage 原子替换未触及路径一并吞掉 → 模型凭旧值直写(恰是机制要消灭的行为);usageHints 明文鼓励批读。修:readPaths>1 改文案或失效判定逐路径 | 批读 + 部分击中后模型引用旧值实测 |
+| invoke 内新 offload 不进保护集 | createChatSdk.ts:1882/1956/2109 refs 均在 invoke 前算;单 invoke 连续大子树整读撑超 4MB 池 → 本轮早前 offload 被 LRU 淘汰 → 同轮 vfs_read 404(4.1 修的残留变体,主路径 mid-invoke 盲区,#217/#542 只登记子 agent 面)。修:offload 后回调并入保护集或「当轮创建恒保护」 | 单 invoke 多次大整读实测 404 |
+| userImages 保护判定带 isLarge 前置 | vfs.ts:128/139 仅 largeResults 池查 _protectedRefs → 图片池 LRU 淘汰保护不生效(vfsGc.ts:24 注释宣称的口径);优雅降级剩缩略图故 P3 | 多轮带图超 2MB 池后需原图实测 |
+
+### 门禁面(P2×4 + P3×3)
+
+| 项 | 说明 | 触发条件 |
+|---|---|---|
+| 零工具门禁无「用户已拒绝/诚实做不到」出口 | gateChain.ts:182-213;用户拒绝后模型陈述句收口「已停止,未做任何修改」→ lastHumanContent 仍原祈使句 → 回灌×2 烧满 + 误报 ZERO_TOOL_GATE_EXHAUSTED;出口③诚实回答零机械化识别。修:否定完成态词豁免或 turnUsage 含 RHC 且收口无位置说明时降级 | RHC 拒绝场景实测误报 |
+| COMPONENT_BUSY 计入等效写 | actionGate.ts:67-74 只看工具名不看结果;撞锁零执行的委派被计等效写 → 零工具门禁被抑制谎报放行。修:委派结果 content 命中 COMPONENT_BUSY/PATH_OUT_OF_SCOPE 前缀不计 | 同组件撞锁后谎报实测 |
+| caps.vfs:false + codeAsset 并存无守卫 | createChatSdk.ts:1019-1024 自动装配不查 caps.vfs → 子 agent 引导走 vfs_edit「工具不存在」白烧轮次,修改路径静默失效。修:装配期 warn 或强制开 | 集成方显式关 vfs + schema 含 code 数组 |
+| detectActionImperative 缺全角标点 | actionGate.ts:50 首子句切分字符类除「。」外全半角 → 全角逗号常态下 16 字窗口退化为整句,readonly 反例误入 → 真写指令漏拦。修:补 `！？；，` | 全角标点输入实测漏拦 |
+| QUESTION_TAIL_RE 缺全角问号 | intentGuard.ts:24 `[??]` 两个 ASCII 问号;当前零行为影响(tier-1 已覆盖),复制到别处即踩的地雷。修:补 `？` | 下次动 intentGuard 顺手 |
+| draft_commit 不退出 planning | todos.ts:19 PLAN_EXIT_TOOLS 只含 write;draftWrite 场景合法修订被 5 次上限误耗。修:draft_commit 并入退出集 | draftWrite + planning 实测 |
+| 超限拒 update_todo 混合调用不说明「本次未生效」 | todos.ts:179-183 整笔拒但文案含糊 + planRevisions 虚高。修:拒绝文案补「重发仅含 status/evidence」 | 弱模型混传实测状态机断拍 |
+
+### 数据写链面(P2×3 + P3×4)
+
+| 项 | 说明 | 触发条件 |
+|---|---|---|
+| eval transform 三模式无乐观锁检查 | dataOps.ts:1309-1377 有 mutex+commit+setBaseline 但无 effHash/handleConflict(CLAUDE.md 把三模式列进互锁七 commit 位,文档-实现分叉);armed 场景外部修改被静默覆盖。修:三处 commit 段补 handleConflict(锁内取 hash) | conflictWatchFields + eval transform 实测静默覆盖 |
+| restore_last_checkpoint 不发 data_change | checkpoint.ts:197 经 writeData 整体还原 bind,matchDataOp/isDelegationTool 均不覆盖;非 reactive 宿主(page-demo :key=tick)回退不重渲染「回退没生效」。修:matchDataOp 补 'restore' + sdk.restoreLastCheckpoint() 手动 emit | checkpoint 开 + 非 reactive bind 宿主实测 |
+| 同批 set+append 同字符串路径误拒 | dataOps.ts:358 append 校验取写前 live 值而非批内中间值 → 合法终值整批 SCHEMA_INVALID,错误信息指向不存在的状态。修:liveCur 改取 clone(getByPath(clone, jp) 在 append apply 后已含此前 set) | chunked-code-write 模型把首块+次块并进一个 patches 批实测 |
+| restore_data 绕受保护资源强制层 | dataOps.ts:1169-1188 无 protectedCtx/enforce;多轮快照回放可把 freeze 字段回写旧值(借 restore 绕 freeze 只读)。修:restore 前对受保护路径差异比对拒或 warn | freeze 字段 + 历史快照 restore 实测 |
+| commitSetToBind codeAsset 模式双深拷贝 | dataOps.ts:508/:532 两次全量 deepClone(applyPatchesToBind:640 已做单拷贝复用);1MB bind ≈ +10ms/写。修:同款 beforeBind 复用 | 下次动写路径成本面顺手 |
+| write(del) 目标不存在仍 pushSnapshot+audit+data_change | dataOps.ts:1548-1554「无需删除」文案但快照栈位/审计条目已产生。修:dryRun 同款 clone 预检存在性 | 下次动 del 路径顺手 |
+| setData 不发 data_change 而 importData 发 | createChatSdk.ts:3035-3041 vs :3099-3111 两条整体替换 API 事件口径不一致。修:文档明示或对齐 | 集成方依赖事件口径实测疑惑 |
+
+### 主循环面(P2低×2)
+
+| 项 | 说明 | 触发条件 |
+|---|---|---|
+| runSerial 排队中的 send 被外部 abort 后白等 | serialRunner.ts:13-20 无信号语义;B 排队 + 1 分钟后 abort → 仍等 A 跑完才以 '' 收口。修:sdk.send 包装内挂 signal 提前 reject race | headless 长任务排队 + abort 实测 |
+| automation budget-abort 空气泡消息 | 已并入上方 flow-robustness 登记「SYSTEM_PROMPT_OVER_BUDGET 空气泡」行(三入口一起修) | 同上 |
+| switchSession 中止在途流后 UI 留空 content 的 partial assistant 占位 | team-audit P2#9 实施发现:streaming:false 改走 core.stream 后,switchSession 的 abort 正确掐断旧流(内容/写入零孤儿,已修),但 useChat 的 abort-保留-partial 语义会把空串 assistant push 进新会话消息列表(空气泡;streaming:true 同款既有形态,非本项引入)。修:useChat 非流式分支 abort 收口不 addMessage 空串(流式分支已有空 splice 守卫) | 用户反馈空气泡困扰,或下次动 useChat 收口路径时顺手 |

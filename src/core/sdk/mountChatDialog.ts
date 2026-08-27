@@ -31,14 +31,11 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
       return () =>
         h(ChatDialog, {
           fetchStream: ctx.streaming ? core.stream : undefined,   // P1-c:走 core.stream 包装(事件转发 onEvent/hook + abort 收口冲突),非裸 core.agent.stream
-          fetchResponse: ctx.streaming ? undefined : (msgs: AgentMessage[], signal?: AbortSignal) => {
-            if (signal) {
-              const abortConflict = () => core.resolveConflict('keep_external')
-              if (signal.aborted) abortConflict()
-              else signal.addEventListener('abort', abortConflict, { once: true })
-            }
-            return core.agent!.invoke(msgs, signal)
-          },
+          // team-audit P2#9:非流式同样走 core.stream(修前直调 core.agent.invoke 绕过 trackActive/串行闸/
+          // protectedRefs/abortConflict:unmount 的 abortAllActive 注册表无此流 → 幽灵流继续跑继续写;
+          // 编程式 switchSession 后旧流收口 push 进新会话 messages)。core.stream 聚合返回最终文本,
+          // 与 fetchResponse 契约等价;手工 abortConflict 复制删(包装内置)
+          fetchResponse: ctx.streaming ? undefined : (msgs: AgentMessage[], signal?: AbortSignal) => core.stream(msgs, () => {}, signal),
           title: dialogCfg.title,
           placeholder: dialogCfg.placeholder,
           // slice() 每次 Wrapper 重渲染(createAgent push 后 triggerRef 触发)给出新数组引用 →

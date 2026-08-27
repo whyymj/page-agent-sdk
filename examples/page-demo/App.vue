@@ -89,10 +89,13 @@ const analyticsMiddleware: Middleware = {
 }
 
 onMounted(() => {
+  // ?streaming=0:非流式模式(browser e2e 覆盖 streaming:false 路径 —— P2#9 幽灵流/孤儿写用例的载体)
+  const nonStreaming = typeof location !== 'undefined' && new URLSearchParams(location.search).get('streaming') === '0'
   agent = createChatSdk({
     container: root.value!,
     id: 'page-demo',                             // ← 稳定 id:刷新后恢复历史(多 agent 共存各自隔离)
     storage: 'indexed',                          // ← 开启落盘持久化(默认 'memory' 纯内存,3.9+);可选 'session'/'local'
+    streaming: !nonStreaming,
     llm: {
       apiKey: cfg.apiKey,
       baseUrl: cfg.baseUrl,

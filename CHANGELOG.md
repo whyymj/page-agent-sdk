@@ -2,6 +2,28 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.5.0] - 2026-08-27
+
+### Fixed(team-audit-hardening:六路团队审查 P1×7 + P2×2,均经二轮对抗核实)
+
+- **授权面:spawn_agent `tools` 自授写工具剥离失效**(filter 对工具名字符串调 `isWriteCapableTool` 恒 no-op)→ 子 agent 经 `spawn_agent({tools:['write']})` 拿到主池裸 write(无 path guard,实测落盘零拦截;e2e 假绿:断言只验 use_worker 且未传 data)。修:按名解析主池工具对象再判定(`stripSelfGrantedWriteTools`);未知名保留(报「工具不存在」同语义);条件写工具(eval_script)同通道剥离;`writablePaths` 授权路径零变化
+- **隐私面:LLM 摘要前缀缓存跨会话泄漏** —— llmCache 单例闭包,switchSession/resetSession 重置清单漏 summarization → 会话 A 的 LLM 摘要前缀/全量命中拼进会话 B 的【对话历史摘要】。修:epoch 代数(reset bump + 在飞摘要 .then 不匹配丢弃 —— 只清缓存不挡在飞回调 = 假修)+ in-flight 防重入按 epoch 隔离(伴生缺陷:B 自身摘要被吞);控制面暴露 `reset()` 并接线两个会话入口
+- **数据映射:eval_script transform 整体替换漏调 internalAfterWrite → `__pgId` 全量断链**(不止新增,已有组件 id 也被 wipe;vfs 工作副本孤儿化、子 agent 未提交成果丢,与 2026-08-21 editor「说干完了实际没写入」同族)。修:分支内补钩子调用(照 write(set) 同款模式);内部测试缝 `DataOpsOptions.sandboxRunner`(node 无 Worker 注入 in-process 执行器)
+- **会话流程:恢复路径 load/listSessions 裸 await 炸 mount**(REST 瞬时 500 / 内置 IDB QuotaExceeded → initDone reject → core.agent 永不构造,SDK 整体不可用;文档「后端抛错不炸 SDK」承诺原只覆盖写路径)。修:吞错降级空会话 + `SESSION_RESTORE_FAILED` observable;load 的 meta touch(lastAccessed 刷新)单独吞错不连坐快照读取
+- **focus:invoke-freeze 被子 agent 继承面穿透**(主写面按冻结快照、子继承读实时态 → 主/子 PATH_DENIED 口径打架)。修:`FocusController.getActiveFocuses()`(生效快照)供委派接线两处;其余 getFocuses 消费面(UI chip/persist/inspect/宿主 API)保持实时态不动
+- **子 agent 超时竞态(核实员真模块确定性复现)**:超时即放锁 + 错误立即回灌 → 主重委派 → 旧委派 wind-down 读共享 vfs 新委派内容提前 commit → 新委派收口 keep_external 误判 → **最终成果被静默丢弃**。修:①组件锁 release 挂子流彻底 settle(超时错误仍立即回灌;窗口内重委派撞 COMPONENT_BUSY 语义自洽;180s 兜底防永挂)②per-组件委派世代号(touch/pendingRetry 复用即 bump,afterAgent 旧代 commit 跳过不重放;顺带消除 keep_external 误报 + baselines 泄漏)
+- **streaming:false 绕过安全闸**:fetchResponse 直调 `core.agent.invoke` → unmount 的 abortAllActive 注册表无此流(幽灵流继续跑继续写)、编程式 switchSession 后旧回复 push 进新会话。修:改走 `core.stream` 包装(trackActive/串行闸/protectedRefs/abortConflict 全接上);该路径此前全 demo 零覆盖,page-demo 加 `?streaming=0` 钩子 + browser spec ×3
+
+### Changed(语义收敛,随本批修复)
+
+- **`data_change` 失败写不再发**(SCHEMA_INVALID/PATH_DENIED/VERSION_CONFLICT/freeze 拒绝等返回 `ERROR:` 的失败原 args-only 推断照发):operation 语义从「写尝试」收敛为「数据已落地」—— 以事件驱动「标脏/自动存草稿/落库」的宿主不再为零变更触发保存(4.4.1 同族反向);委派失败同口径不发;dryRun 不发保持不变
+- **`maxBytes: Infinity` 联动关闭 `maxBytesPerSession` 默认 10MB 上限**(原两配置独立,文档「容量管理交服务端」承诺落空,超限静默拒写零可观察面):显式传 `maxBytesPerSession` 恒优先;非 Infinity 场景 10MB 默认零变化;quota 拒写留痕进 debugLogs(`stage:'storage_quota'`)+ usage-guide 中英补说明
+- 恢复路径降级语义:后端读失败从「mount reject」改为「降级空会话 + `SESSION_RESTORE_FAILED` observable」(监听该事件判断后端健康)
+
+### 测试
+
+- selftest 3117(+38)/ e2e 1013(+26)/ browser 132(+3);全部红测先行(修前以缺陷形态失败后转绿);真 LLM complex-ops S5(委派链路)复跑 3/3 ✅ 零回归
+
 ## [4.4.1] - 2026-08-26
 
 ### Fixed(data_change 事件漏发:eval_script transform / draft_commit)

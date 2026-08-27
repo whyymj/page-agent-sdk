@@ -1,5 +1,6 @@
 // 存储:switchSession(开/未开/指定 id) / 后端 session/local / 对象配置 / shareContext 开/关
-import { setupEnv, createAssert, FAKE_LLM, MIN_CAPS, createChatSdk, makeStore } from './_helpers.mjs'
+import { setupEnv, createAssert, FAKE_LLM, MIN_CAPS, createChatSdk, makeStore, z } from './_helpers.mjs'
+import { stubModel } from './_stub-model.mjs'
 
 export async function run() {
   setupEnv()
@@ -289,6 +290,101 @@ export async function run() {
     assert(!allValues.includes('迟到的LLM标题'), '✓ 迟到标题未写入存储(保持规则 title 兜底,不覆盖已释放会话)')
     process.off('unhandledRejection', onUnhandled)
     delete globalThis.localStorage
+  }
+
+  console.log('[e2e:storage] team-audit P1#4 坏后端(get/scan 抛错)→ mount 成功 + SESSION_RESTORE_FAILED 留痕 + 降级空会话可用')
+  {
+    // 修前:resolveAndLoad 裸 await → load/listSessions reject → initDone reject → core.agent 永不构造,SDK 整体不可用
+    // (doc/usage-guide「后端抛错不炸 SDK」承诺只覆盖写路径;内置 IDB QuotaExceeded 同炸)
+    const errors = []
+    const badBackend = {
+      get: async () => { throw new Error('backend 500') },
+      set: async () => { throw new Error('backend 500') },
+      del: async () => { throw new Error('backend 500') },
+      scan: async () => { throw new Error('backend 500') },
+      clearPrefix: async () => { throw new Error('backend 500') },
+    }
+    const llm = stubModel({ text: 'ok' })
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-badbackend-mount', storage: { backend: badBackend }, llm, autoTitle: false,
+      capabilities: MIN_CAPS,
+      data: { schema: z.object({ title: z.string() }), bind: { title: 't' } },
+      onEvent: (e) => { if (e.type === 'error' && e.code === 'SESSION_RESTORE_FAILED') errors.push(e) },
+    })
+    let mounted = true
+    try { await sdk.mount() } catch { mounted = false } // 修前:此处 reject
+    assert(mounted, '✓ P1#4 坏后端 mount 成功(修前:initDone reject,SDK 整体不可用)')
+    assert(errors.length >= 1, `✓ P1#4 SESSION_RESTORE_FAILED observable 外发(修前:零可观察面;实际 ${errors.length} 条)`)
+    // 降级空会话可用:send 正常收口(落盘失败走既有 flush 吞错语义)
+    const reply = await sdk.send('hi')
+    assert(typeof reply === 'string', '✓ P1#4 降级空会话 send 可用(恢复失败不炸运行面)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:storage] team-audit P1#4 meta touch 后端炸(set 抛/get 正常)→ 快照读取不连坐')
+  {
+    // 两阶段录制式后端(key 格式全程经真实 encodeKey,不手拼):阶段1 正常跑出真实数据落 mem;
+    // 阶段2 set 翻转为炸(QuotaExceeded 形态)→ 新实例恢复:load 的 lastAccessed 刷新失败不应连坐快照读取
+    const mem = new Map()
+    let setThrows = false
+    const quotaBackend = {
+      get: async (k) => mem.get(k),
+      set: async (k, v) => { if (setThrows) throw new Error('QuotaExceededError'); mem.set(k, v) },
+      del: async (k) => { mem.delete(k) },
+      scan: async (prefix, cb) => { for (const [k, v] of mem) if (k.startsWith(prefix)) cb(k, v) },
+      clearPrefix: async (prefix) => { for (const k of Array.from(mem.keys())) if (k.startsWith(prefix)) mem.delete(k) },
+    }
+    // 阶段1:正常落盘产生真实快照(同 id 固定 sessionId)
+    const s1 = createChatSdk({
+      ui: false, id: 'e2e-quota-mount', storage: { backend: quotaBackend }, llm: stubModel({ text: 'ok' }), autoTitle: false,
+      session: { id: 's-meta' }, capabilities: MIN_CAPS,
+    })
+    await s1.mount()
+    await s1.send('hi')
+    await s1.unmount() // flush 落盘
+    assert(mem.size >= 2, '前置:阶段1 真实数据已落 backend(meta + kinds)')
+    // 阶段2:set 炸 → 恢复照常(get 正常读快照 + meta touch 吞错)
+    setThrows = true
+    const errors = []
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-quota-mount', storage: { backend: quotaBackend }, llm: stubModel({ text: 'ok' }), autoTitle: false,
+      session: { id: 's-meta' }, capabilities: MIN_CAPS,
+      onEvent: (e) => { if (e.type === 'error' && e.code === 'SESSION_RESTORE_FAILED') errors.push(e) },
+    })
+    let mounted = true
+    try { await sdk.mount() } catch { mounted = false }
+    assert(mounted, '✓ P1#4 meta touch 炸不连坐:mount 成功')
+    assert(errors.length === 0, '✓ P1#4 meta touch 吞错不升级为 SESSION_RESTORE_FAILED(只在快照本体读取失败时外发)')
+    assert(sdk.messages.some((m) => m.role === 'user' && m.content === 'hi'),
+      '✓ P1#4 快照数据完整恢复(get 正常 + meta touch 吞错 → applySnapshot 照常灌入;修前:load 整体 reject → mount 炸)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:storage] team-audit P1#7 quota 拒写留痕 + 显式 maxBytesPerSession 优先(Infinity 联动本体在 selftest sec-111 直测 store)')
+  {
+    // 11MB 全量走 agent 管线过重(tokenize/压缩估算逐字符)→ 本组用显式小上限 + 常规消息验证:
+    // ① 显式 maxBytesPerSession 优先于 Infinity 联动(拒写)② quota 留痕进 debugLogs(去静默);
+    // Infinity 关闭默认 10MB 上限 / 默认值零变化 两断言在 selftest 直测 store 层(等价且快)
+    const mem = new Map()
+    const backend = {
+      get: async (k) => mem.get(k),
+      set: async (k, v) => { mem.set(k, v) },
+      del: async (k) => { mem.delete(k) },
+      scan: async (prefix, cb) => { for (const [k, v] of mem) if (k.startsWith(prefix)) cb(k, v) },
+      clearPrefix: async (prefix) => { for (const k of Array.from(mem.keys())) if (k.startsWith(prefix)) mem.delete(k) },
+    }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-quota-logs', storage: { backend, maxBytes: Infinity, maxBytesPerSession: 128 },
+      llm: stubModel({ text: '常规回复' }), autoTitle: false, capabilities: MIN_CAPS,
+    })
+    await sdk.mount()
+    await sdk.send('hi')
+    await sdk.unmount() // flush 落盘
+    // messages kind 落盘值 = 数组本体(save 按 kind 拆包存)
+    const msgs = [...mem.values()].find((v) => Array.isArray(v) && v.length > 0)
+    assert(!msgs, '✓ P1#7 显式 maxBytesPerSession=128 优先(Infinity 联动不覆盖显式配置;超限拒写)')
+    const quotaLogs = sdk.debugLogs.value.filter((l) => l?.data?.stage === 'storage_quota')
+    assert(quotaLogs.length >= 1, `✓ P1#7 quota 拒写留痕进 debugLogs(修前:仅 debug 模式 console.log,零可观察面;实际 ${quotaLogs.length} 条)`)
   }
 
   return { pass: ctx.pass, fail: ctx.fail }

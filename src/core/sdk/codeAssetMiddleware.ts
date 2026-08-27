@@ -19,6 +19,12 @@ import { validateHtmlFormat } from '../tools/htmlValidate'
 
 /** state 上挂载的「本轮子 agent touch 过的 vfs 路径」(子 agent 私有 Set,经 applyUpdate 浅合并保留引用;并发 use_html 互不污染) */
 const TOUCHED = '__pgTouched'
+/**
+ * state 上挂载的「本轮委派各组件的世代号快照」(Map<__pgId, gen>,子 agent 私有;team-audit P1#6)。
+ * 共享 vfsStore 命名空间挂当前世代 __pgTouchGen;委派 touch/复用组件即 bump 并快照进本轮 state,
+ * afterAgent commit 前比对 —— 不一致 = 新委派已接管该组件(超时重委派竞态),旧代 commit 跳过。
+ */
+const GEN_SNAPSHOT = '__pgGenSnapshot'
 /** state 上挂载的「本轮子 agent 最终回复文本」holder(对象引用,wrapModelCall mutate / afterAgent 读;并发子 agent 实例天然隔离) */
 const FINAL = '__pgFinalText'
 
@@ -180,9 +186,13 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
   //  - __pgLastCheckout:上次 checkout 时 data.code 的 hash(判「data 是否被人工/宿主改过」)
   //  - __pgPendingRetry:vfs 有「未提交的生成代码」且 data 未变 → 保留工作副本并在 afterAgent 重试提交,
   //    修「子 agent 耗时生成的代码被拦后重委派又重生成、浪费 token/时间」(重试写入而非重生成)
-  const vfsAny = vfsStore as unknown as { __pgLastCheckout?: Map<string, string>; __pgPendingRetry?: Set<string> }
+  const vfsAny = vfsStore as unknown as { __pgLastCheckout?: Map<string, string>; __pgPendingRetry?: Set<string>; __pgTouchGen?: Map<string, number> }
   const lastCheckoutHash = (vfsAny.__pgLastCheckout ??= new Map<string, string>())
   const pendingRetry = (vfsAny.__pgPendingRetry ??= new Set<string>())
+  // team-audit P1#6:per-组件委派世代号(共享 vfsStore 命名空间,跨委派持久;同 __pgLastCheckout 先例)。
+  // bump 时机 = 本轮 touch 代码文件 / checkout 走 pendingRetry 复用分支 —— 只锚定「本委派接管了该组件」的信号,
+  // 全量 checkout 不 bump(并行异组件委派互不株连);afterAgent 比对,旧代 commit 跳过
+  const touchGen = (vfsAny.__pgTouchGen ??= new Map<string, number>())
   return {
     name: 'code-asset-checkout-commit',
     beforeAgent: (state) => {
@@ -200,6 +210,8 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
       // commit 前比对 —— 不一致 = 人工/宿主在委派窗口内直改了 bind(锁防不了人工,零桥接合法路径),
       // 人工优先(keep_external,对齐乐观锁哲学):跳过该组件 commit + observable 留痕,不覆盖人工值
       const codeHashes: Map<string, string> = new Map()
+      // P1#6:本轮世代快照 holder(对象引用,经 state 浅合并保留;复用分支 bump 时写入,touch 时补写)
+      const genSnapshot: Map<string, number> = new Map()
       forEachCodeItem(bind, writablePaths, (o) => {
         codeTotal++
         const code = getByPath(o, codeField)
@@ -217,6 +229,10 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
           // 否则(首次/vfs 干净/data 被人工改=人工优先)→ 覆盖式刷新 vfs=data 最新快照
           if (existing && typeof existing.content === 'string' && existing.content !== code && prev === curHash) {
             pendingRetry.add(vfsPath)
+            // P1#6:复用分支 = 接管「上一委派未提交的代码」→ bump 世代(旧委派的 wind-down 若迟到,commit 被旧代判定拦下)
+            const gen = (touchGen.get(pgId) ?? 0) + 1
+            touchGen.set(pgId, gen)
+            genSnapshot.set(pgId, gen)
           } else {
             vfsStore.files[vfsPath] = { content: code, updatedAt: Date.now() }
             pendingRetry.delete(vfsPath)
@@ -237,7 +253,7 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
       //    + __pgFinalText holder(wrapModelCall 捕获子 agent 最终回复,工匠笔记提取源;对象引用 mutate,并发实例隔离)
       // ③ 注入 vfsStore.files 引用到 state.files(verify 门禁扫 state.files 见 code 工作副本;与 vfs-bridge 同引用,覆盖无副作用)
       //    __pgTouched/__pgFinalText 是框架内部 state 扩展(类 __pgId);TS 上以 Partial<typeof state> 表达,运行时浅合并保留引用
-      return { files: vfsStore.files, [TOUCHED]: new Set<string>(), [FINAL]: { text: '' }, [CODE_HASHES]: codeHashes, [KEEP_EXTERNAL]: [] as string[] } as unknown as Partial<typeof state>
+      return { files: vfsStore.files, [TOUCHED]: new Set<string>(), [FINAL]: { text: '' }, [CODE_HASHES]: codeHashes, [KEEP_EXTERNAL]: [] as string[], [GEN_SNAPSHOT]: genSnapshot } as unknown as Partial<typeof state>
     },
     // 捕获子 agent 收口回复(无 tool_calls 的模型响应 = 最终文本;wrap-up 收口轮同经洋葱):工匠笔记提取源。
     // 不用 beforeReturn(maxVerifyAttempts>0 才跑,formatCheck:false 不覆盖)/afterAgent state.messages(createAgent 消息流
@@ -315,9 +331,17 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
       const result = await next(ctx)
 
       // ③ hook vfs 改动 → 记 touched(只认 codeVfsPrefix 下:防误记 offload/drafts 等无关 vfs 写)
+      //    + P1#6 世代 bump:本委派首次 touch 该组件 → 接管信号(本轮快照记 gen;重复 touch 不再 bump,防自抬)
       if (isCodeFile) {
         const touched = (ctx.state as unknown as Record<string, unknown>)[TOUCHED] as Set<string> | undefined
         if (touched) touched.add(p!)
+        const snap = (ctx.state as unknown as Record<string, unknown>)[GEN_SNAPSHOT] as Map<string, number> | undefined
+        const pgId = pgIdFromVfsPath(p!, codeVfsPrefix)
+        if (snap && pgId && !snap.has(pgId)) {
+          const gen = (touchGen.get(pgId) ?? 0) + 1
+          touchGen.set(pgId, gen)
+          snap.set(pgId, gen)
+        }
       }
       return result
     },
@@ -337,6 +361,16 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
           dataPgIds.add(pgId)
           const vfsPath = `${codeVfsPrefix}${pgId}.${ext}`
           if (!touched.has(vfsPath) && !pendingRetry.has(vfsPath)) return
+          // P1#6 委派世代判定:本轮快照 gen ≠ 共享当前 gen = 新委派已接管该组件(超时重委派竞态,
+          // 核实员确定性复现:旧 wind-down 读共享 vfs 新委派内容提前 commit → 新委派收口 keep_external
+          // 误判 → 最终成果静默丢弃)。旧代 commit 跳过(红线:跳过不排队不重放),且不记 keep_external
+          // (世代过期 ≠ 人工修改,误报会让主 agent 得到错误的「人工改过」叙事)
+          const genSnap = ((state as unknown as Record<string, unknown>)[GEN_SNAPSHOT] as Map<string, number> | undefined)
+          const myGen = genSnap?.get(pgId)
+          if (myGen !== undefined && touchGen.get(pgId) !== myGen) {
+            console.warn(`[page-agent-sdk][code-asset] 组件 ${o.name ?? pgId}(${vfsPath})已有更新的委派接管,跳过本次旧代 commit(不排队不重放;新委派的 commit 为准)`)
+            return  // 跳过该组件 commit;dataPgIds 已加(孤儿清理仍认此组件在 data 中)
+          }
           try {
             const f = vfsStore.files[vfsPath]
             if (f && typeof f.content === 'string') {

@@ -1167,5 +1167,54 @@ export async function run() {
     sdk2.unmount()
   }
 
+  console.log('[e2e:capability-packs] team-audit P1#6 超时 + 立即重委派同组件 → COMPONENT_BUSY(release 挂 wind-down settle)')
+  {
+    const { stubModel } = await import('./_stub-model.mjs')
+    const { defineTool } = await import('./_helpers.mjs')
+    // 时序载体:慢「工具」而非慢模型响应 —— 模型调用随 abort 立即打断(stream settle 无窗口),
+    // 本地工具 promise 不可取消:子流要等慢工具收尾才 break(abort 检查每轮开始)→ wind-down settle ≈ 慢工具时长,
+    // 这正是真实竞态形态(超时瞬间子 agent 卡在集成方慢工具/看门狗上限内的调用)
+    const slowProbe = defineTool({
+      name: 'slow_probe',
+      description: '慢探针(测试用,600ms)',
+      schema: z.object({}),
+      handler: async () => { await new Promise((r) => setTimeout(r, 600)); return 'slow-done' },
+    })
+    const llm = stubModel(
+      { toolCalls: [{ name: 'use_html', args: { task: '慢改 hero', components: ['hero'] } }] },
+      { toolCalls: [{ name: 'slow_probe', args: {} }] },   // 子 A 卡在慢工具(600ms;timeoutMs=150 超时)
+      { toolCalls: [{ name: 'use_html', args: { task: '重试 hero', components: ['hero'] } }] },  // 主立即重委派(窗口内)
+      { text: '主收口(委派忙稍后再试)' },
+    )
+    const bind = { title: 't', components: [
+      { type: 'custom', name: 'hero', code: '<section>旧 hero</section>', __pgId: 'c_hero' },
+    ] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-lock-timeout', storage: false, llm,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      subagent: { timeoutMs: 150 },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false, extraTools: [slowProbe] })],
+    })
+    await sdk.mount()
+    const toolResults = []
+    await sdk.stream([{ role: 'user', content: '改 hero', timestamp: Date.now() }], (e) => {
+      if (e.type === 'tool_result') toolResults.push(e)
+    })
+    const attempts = toolResults.filter((r) => r.name === 'use_html')
+    assert(attempts.length === 2, `✓ P1#6 前置:两次 use_html 调用都回灌(超时错误 + 重试结果;实际 ${attempts.length})`)
+    assert(/超时/.test(String(attempts[0]?.result)), '✓ P1#6 第一次委派超时错误立即回灌(响应性不因 release 推迟而变)')
+    assert(/COMPONENT_BUSY/.test(String(attempts[1]?.result)),
+      `✓ P1#6 超时后立即重委派同组件 → COMPONENT_BUSY(锁 release 挂 wind-down settle;修前:超时即放锁,重委派放行 = 旧 wind-down commit 与新委派竞态窗口)`)
+    // wind-down settle 后锁最终释放(轮询等待,防 sleep 死等)
+    let released = false
+    for (let i = 0; i < 40; i++) {
+      if (Object.keys(sdk.inspect().subagent.lockedComponents ?? {}).length === 0) { released = true; break }
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    assert(released, '✓ P1#6 wind-down settle 后锁最终释放(180s 兜底之上,正常路径及时释放)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

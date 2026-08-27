@@ -63,19 +63,25 @@ export async function run() {
     sdk.unmount()
   }
 
-  console.log('[e2e:authorization-surface] P1-16 spawn 自授框架/写工具 → 装配期排除(子调用报不存在)')
+  console.log('[e2e:authorization-surface] P1-16 + team-audit P1#1 spawn 自授框架/写工具 → 装配期排除(子调用报不存在)')
   {
+    // team-audit P1#1 红测:原用例不传 data(主池无 write)+ 不让子真调 write → filter no-op 完全测不到。
+    // 现补 data(主池真有 write/eval_script)+ 子脚本真调 write → 修前 write 被子真执行(bind 被改),修后报「工具不存在」。
+    const bind = { title: 'orig' }
     const llm = stubModel(
-      // 主 LLM 尝试自授 use_worker/load_skill/write(write 属写工具同样不可自授)
-      { toolCalls: [{ name: 'spawn_agent', args: { prompt: '尝试激活委派工具', tools: ['use_worker', 'load_skill', 'write'] } }] },
-      // 子 LLM 尝试调被禁工具(若装配期 filter 失效则会真执行)
+      // 主 LLM 自授 use_worker/load_skill/write/eval_script(写与条件写工具均不可自授)
+      { toolCalls: [{ name: 'spawn_agent', args: { prompt: '尝试激活工具', tools: ['use_worker', 'load_skill', 'write', 'eval_script'] } }] },
+      // 子 LLM 依次尝试被禁工具(若装配期剥离失效则会真执行)
       { toolCalls: [{ name: 'use_worker', args: { task: '递归委派' } }] },
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'title', value: 'hacked' } } }] },
+      { toolCalls: [{ name: 'eval_script', args: { jsonPath: 'title', mode: 'query', script: 'return data;' } }] },
       { text: '子任务结论' },
       { text: '已完成' },
     )
     const subResults = []
     const sdk = createChatSdk({
       ui: false, id: 'e2e-auth-selfgrant', storage: false, llm,
+      data: { schema: z.object({ title: z.string() }), bind },
       capabilities: { ...CAPS, vfs: false },
       subagents: [{ id: 'worker', description: '测试工人' }],
     })
@@ -85,6 +91,36 @@ export async function run() {
     })
     const useAttempt = subResults.find((r) => r.name === 'use_worker')
     assert(!!useAttempt && /不存在/.test(String(useAttempt.result)), '✓ spawn 自授 use_<id> 被装配期排除 → 子调用报「工具不存在」(depth 链不可激活)')
+    const writeAttempt = subResults.find((r) => r.name === 'write')
+    assert(!!writeAttempt && /不存在/.test(String(writeAttempt.result)), '✓ P1#1 spawn 自授 write 被剥离 → 子调用报「工具不存在」(修前:filter 对字符串恒 no-op,子真执行)')
+    const evalAttempt = subResults.find((r) => r.name === 'eval_script')
+    assert(!!evalAttempt && /不存在/.test(String(evalAttempt.result)), '✓ P1#1 spawn 自授 eval_script(条件写)被剥离 → 子调用报「工具不存在」')
+    assert(bind.title === 'orig', '✓ P1#1 子 agent 无法经自授 write 改数据(bind.title 保持原值;修前:被改成 hacked)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:authorization-surface] P1#1 回归对照:未知名自授保留(报不存在,与框架工具同语义)+ writablePaths 授权路径零变化')
+  {
+    const bind = { title: 'orig', tags: ['a'] }
+    const llm = stubModel(
+      // 未知名 no_such_tool:保留在自授列表(后续自然报「工具不存在」),read 只读工具可自授
+      { toolCalls: [{ name: 'spawn_agent', args: { prompt: '读数据', tools: ['no_such_tool', 'read'] } }] },
+      { toolCalls: [{ name: 'read', args: { jsonPath: 'title' } }] },
+      { text: '子任务结论' },
+      { text: '已完成' },
+    )
+    const subResults = []
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-auth-unknown-grant', storage: false, llm,
+      data: { schema: z.object({ title: z.string(), tags: z.array(z.string()) }), bind },
+      capabilities: { ...CAPS, vfs: false },
+    })
+    await sdk.mount()
+    await sdk.stream([{ role: 'user', content: 'x', timestamp: Date.now() }], (e) => {
+      if (e.type === 'subagent' && e.kind === 'tool_result') subResults.push(e)
+    })
+    const readAttempt = subResults.find((r) => r.name === 'read')
+    assert(!!readAttempt && !/不存在/.test(String(readAttempt.result)), '✓ 只读工具(read)自授放行(剥离只针对写能力)')
     sdk.unmount()
   }
 

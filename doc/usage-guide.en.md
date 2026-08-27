@@ -761,11 +761,13 @@ function createHttpBackend(baseUrl: string): StorageBackend {
 
 createChatSdk({
   storage: { backend: createHttpBackend('/api/agent-store'), maxBytes: Infinity },
-  // maxBytes: Infinity disables client-side LRU eviction (capacity managed server-side; default 50MB client quota otherwise)
+  // maxBytes: Infinity disables client-side LRU eviction AND the per-session cap maxBytesPerSession (capacity fully server-side; default 50MB client quota otherwise)
 })
 ```
 
 Server contract notes: **keys look like `v:1::<dbName>::<agentId>::<sessionId>::<kind>`** (kind = messages/vfs/todos/memory/checkpoints/usage/mission/workingMemory/focus/planConfirmation + session metadata `__meta__`; each key holds a whole JSON snapshot); `scan`/`clearPrefix` are required (`listSessions`/`deleteSession` rely on prefix scanning); writes are debounced (default 500ms) and batched — not one request per keystroke; backend errors never crash the SDK (swallowed + retried by later flush, same degradation as built-in backends). Concurrent writers to the same session are last-writer-wins; no merging. The direct factory `createSessionStoreWithBackend` is exported too (for using the persistence layer standalone, outside createChatSdk).
+
+**Per-session cap `maxBytesPerSession`** (default 10MB): when a session's total bytes across kinds exceed the cap, that kind's write is **rejected** (old value kept — data is not deleted), preventing one runaway session from hogging the client quota; rejections are logged to `debugLogs` (`stage: 'storage_quota'`, with sessionBytes/limit). Also disabled when `maxBytes: Infinity` (capacity fully server-side); an explicitly passed `maxBytesPerSession` always wins over the linkage.
 
 **Clear session `resetSession()` (2.41.0+, sync)** — same semantics as the UI "clear conversation": aborts in-flight streams + resolves any pending conflict (as "keep external") + resets messages/vfs/todos/memory/mission/workingMemory/focus/checkpoint/debugLogs + fresh sessionId + emits `session_restored`. **Fully resets in-memory state even when storage is off** (fixed in 2.41.0: previously it early-returned without storage, leaking mission/focus/todos into the new conversation); with storage on it also creates a new persisted session. Use it for a headless "new chat" button.
 

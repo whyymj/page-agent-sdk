@@ -34,10 +34,12 @@ export interface SummarizationOptions extends Partial<ContextManagerOptions> {
   getSnapshot?: () => ContextSnapshot | undefined
 }
 
-/** summarization 中间件 + controller(setLlm 后回灌 contextWindow) */
+/** summarization 中间件 + controller(setLlm 后回灌 contextWindow;切/重置会话清 LLM 摘要缓存) */
 export type SummarizationMiddleware = Middleware & {
   /** 更新 contextWindow(下轮 compress 即用新阈值);config 共享引用,compress 读取即生效 */
   setContextWindow(cw: number): void
+  /** 会话切换/重置:清 LLM 摘要前缀缓存 + epoch 翻转(team-audit P1#2 跨会话泄漏;createChatSdk switchSession/resetSession 调) */
+  reset(): void
 }
 
 export function createSummarizationMiddleware(
@@ -84,6 +86,10 @@ export function createSummarizationMiddleware(
   return Object.assign(middleware, {
     setContextWindow(cw: number) {
       ctxManager.config.contextWindow = cw
+    },
+    // team-audit P1#2:切/重置会话清 LLM 摘要缓存(单例闭包,不 reset 则旧会话摘要前缀命中泄进新会话)
+    reset() {
+      ctxManager.reset()
     },
   })
 }

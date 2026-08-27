@@ -174,6 +174,12 @@ export interface SubagentOptions {
   enterDataScope?: (scopeId: string) => () => void
   /** 退出数据 scope(委派结束清子 scope 基线条目) */
   exitDataScope?: (scopeId: string) => void
+  /**
+   * 子流 settle 通知(team-audit P1#6,内部 per-call):子 agent 完整流(含超时 abort 后的 wind-down
+   * afterAgent)settle 时回调。use_<id> 组件锁的 release 挂此点 —— 修「超时即放锁 + 旧 wind-down commit
+   * 与重委派竞态」。per-call opts(configToSubOpts 每次新对象)上设置,并发委派互不串扰。
+   */
+  onStreamSettled?: (p: Promise<unknown>) => void
   /** 子 agent LLM usage 回传(P1-17a:createChatSdk 累加进 core.usage;子栈无 sdk-events,经 sub-usage 中间件提取)。不传=不回传 */
   onUsage?: (u: TokenUsage) => void
   /** 单个子 agent 执行超时 ms(P1-17b:opt-in 默认关;超时 abort 子流 + 错误回灌 recoverable,主 LLM 可重试/拆分) */
@@ -206,6 +212,11 @@ const DEFAULT_MAX_DEPTH = 1
 const DEFAULT_MAX_PARALLEL = 4
 /** 子 agent 单次执行默认总时长(flow-robustness P1#4 挂起兜底;opts.timeoutMs 显式覆盖,0/负 = 关) */
 const DEFAULT_SUBAGENT_TIMEOUT_MS = 600_000
+/**
+ * 组件锁释放兜底上限(team-audit P1#6):release 挂子流彻底 settle,若 wind-down 因未预期路径永挂,
+ * 兜底超时后仍放锁防「该组件委派永久 COMPONENT_BUSY」。裕量 = 工具看门狗 120s 上限 + verify wind-down 余量。
+ */
+const LOCK_RELEASE_FALLBACK_MS = 180_000
 const DEFAULT_CHILD_ROUNDS = 6
 const SPAWN_TOOL_NAMES = ['spawn_agent', 'spawn_agents']
 
@@ -256,6 +267,21 @@ export function isWriteCapableTool(t: StructuredToolInterface | string, args?: u
     return args !== undefined ? wc(args) : true
   }
   return false
+}
+
+/**
+ * spawn 自授剥离:按名解析到主池工具对象再判定写能力(team-audit-hardening P1#1)。
+ * 原缺陷:filter 对工具名字符串调 isWriteCapableTool(字符串形态恒 false)→ 剥离纯 no-op,
+ * 子 agent 经 spawn_agent({tools:['write']}) 拿到主池裸 write(无 path guard)。
+ * 未知名保留(主池不存在 → 不在此剥,后续调用自然报「工具不存在」,与框架工具同语义);
+ * 条件写工具(eval_script)无 args 时保守按写剥离(宁误拦不漏放)。
+ */
+export function stripSelfGrantedWriteTools(names: string[], pool: StructuredToolInterface[]): string[] {
+  const byName = new Map(pool.map((t) => [t.name, t]))
+  return names.filter((name) => {
+    const t = byName.get(name)
+    return t ? !isWriteCapableTool(t) : true
+  })
 }
 
 /** 提取写工具 args 的所有 jsonPath(jsonPath / patch.jsonPath / patches[].jsonPath / path) */
@@ -378,6 +404,8 @@ async function runSubagent(
   // 递归物理切断:depth+1 >= maxDepth 时子 agent 不装本中间件 → 无 spawn 工具
   const childMiddleware = depth + 1 < maxDepth ? [createSubagentMiddleware({ ...opts, depth: depth + 1 })] : []
   // focus-auto-switch:子 agent 继承主焦点(主聚焦 → 子默认同焦点,三层收敛;主未聚焦 → 空数组不装,零回归)
+  // team-audit P1#5:createChatSdk 委派接线传**生效快照**(getActiveFocuses)—— 宿主 mid-run 焦点不穿透
+  // invoke-freeze(主/子写面口径一致);agent 主动变更经 mutate 同步快照,继承同样感知
   const inheritedFocuses = opts.getFocuses?.() ?? []
   const childFocusMw = inheritedFocuses.length
     // unfocusGuidance 'report-parent':子 agent 授权面永不带 focus 工具(见保留工具排除表),文案引导「收口反馈」而非调工具
@@ -495,6 +523,12 @@ async function runSubagent(
     // 转发工具调用进度 + 思考过程(reasoning)到主 UI(text 不转发:是生成内容,经 vfs/data 落地;UI 可见 ≠ 进主上下文,隔离不破)
     if (forward && (e.type === 'tool_call' || e.type === 'tool_result' || e.type === 'reasoning')) forward(e)
   }, childAc.signal)
+  // team-audit P1#6 ①:scope 基线清理挂子流**彻底 settle** —— 超时路径 cleanup 先删条目,wind-down afterAgent
+  // 的 setBaseline 会重建(scope 已删仍写进 Map)→ baselines Map 每次超时委派泄一条;settle 后再删一次闭环
+  // (exitDataScope 幂等删;catch 吞 rejection 防 unhandled,原 rejection 由上方 await/race 消费)
+  streamP.catch(() => {}).then(() => opts.exitDataScope?.(scopeId))
+  // team-audit P1#6 ②:子流 settle 通知(含 wind-down)—— use_<id> 组件锁 release 挂此点(修超时即放锁竞态)
+  opts.onStreamSettled?.(streamP)
   // flow-robustness P1#4:默认总时长 10min(原 opt-in → 默认开;0/负 = 关,opts.timeoutMs 显式覆盖)。
   // 单模型调用 600s 闸只兜单次调用,多轮工具循环无外层闸时理论最坏 ~70min 且主循环同轮 await。
   const subTimeoutMs = opts.timeoutMs !== undefined ? opts.timeoutMs : DEFAULT_SUBAGENT_TIMEOUT_MS
@@ -562,8 +596,10 @@ export function createSubagentMiddleware(opts: SubagentOptions): Middleware {
       const call = callCtxOf(config)
       // A2 spawn 自授 tools 剥离写工具(按 writeCapable 标注)—— 写权限只能经 writablePaths(path guard)获得;
       // 框架/保留工具(use_*/spawn/load_skill 等)由 buildChildTools 装配期兜底排除
-      // 保守策略:条件写工具(eval_script)无 args 时按写剥离,spawn 自授不接受条件写(防漏放)
-      const granted = (tools ?? []).filter((t) => !isWriteCapableTool(t))
+      // team-audit P1#1:按名解析到主池工具对象再判定(原对字符串判定恒 no-op,子拿到裸 write);
+      // 池支持 getter(setTools 动态注册后自授解析到最新工具集)
+      const pool = typeof opts.allTools === 'function' ? opts.allTools() : opts.allTools
+      const granted = stripSelfGrantedWriteTools(tools ?? [], pool)
       const subOpts = granted.length || writablePaths?.length
         ? { ...opts, ...(granted.length ? { allowedTools: granted } : {}), ...(writablePaths?.length ? { writablePaths } : {}) }
         : opts
@@ -907,6 +943,14 @@ export function createSubagentsMiddleware(
               : baseForward
             const startedAt = Date.now()
             tracker?.start(observeId, task, s.id, startedAt)
+            // team-audit P1#6:锁 release 挂子流**彻底 settle**(wind-down commit 完成后)—— 修「超时即放锁 +
+            // 旧 wind-down commit 与重委派竞态(新委派最终成果被 keep_external 静默丢弃)」。
+            // 超时错误仍立即回灌保响应性(本工具 catch/throw 不变);窗口内重委派撞 COMPONENT_BUSY,
+            // 其文案本就引导「等该委派结束后再重试」,语义自洽。finally 只调度延迟释放:
+            // 等 streamP settle(经 onStreamSettled 捕获)或 180s 兜底(wind-down 各段有界,看门狗 120s 上限;
+            // runSubagent 同步失败路径 streamP 未建 → 立即释放);release 幂等(兜底与 settle 双触发安全)
+            const settled = { p: null as Promise<unknown> | null }
+            opts.onStreamSettled = (p) => { settled.p = p }
             try {
               const result = await runSubagent({ prompt: task }, opts, call.signal, forward, onLog, call.emit)
               tracker?.finish(observeId, 'done', result)
@@ -915,8 +959,11 @@ export function createSubagentsMiddleware(
               tracker?.finish(observeId, 'error', String((e as Error)?.message ?? e))
               throw e
             } finally {
-              // 幂等 release(finally 兜底覆盖正常/异常/abort 全路径)
-              if (lockRelease) { lockRelease(); logLock('release') }
+              if (lockRelease) {
+                const base = settled.p ? Promise.resolve(settled.p).catch(() => {}) : Promise.resolve()
+                void Promise.race([base, new Promise<void>((r) => setTimeout(r, LOCK_RELEASE_FALLBACK_MS))])
+                  .finally(() => { lockRelease(); logLock('release') })
+              }
             }
           },
           {

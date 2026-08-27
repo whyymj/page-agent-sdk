@@ -155,10 +155,12 @@ export async function run() {
     sdk.unmount()
   }
 
-  console.log('[e2e:events] ✓ eval_script transform → data_change 映射(修前漏发:page-demo 非 reactive bind 宿主「打乱布局」数据变了页面不动)')
-  // node 无 Worker 沙箱:transform 脚本本身不落地(落地 + DOM 重渲染断言在 browser page-demo.spec.ts);
-  // 此处验证事件映射契约:transform 调用发 data_change(operation=edit),query 只读不发。
+  console.log('[e2e:events] eval_script → data_change(node 无 Worker:transform 失败不发〔P2#8 口径〕;成功落地映射由 browser page-demo 覆盖)')
   {
+    // node 无 Worker 沙箱:transform 脚本实际不落地(dataOps 返回 ERROR: 无法创建 Worker 沙箱)→ P2#8 口径下
+    // 失败写不发 data_change(修前:失败写照发 —— 旧断言曾把该照发当「映射契约」断言,实为假绿);
+    // query 只读不发不变。transform 成功落地的映射(transform → operation=edit → 宿主重渲染)由
+    // browser page-demo.spec.ts「打乱 → data_change → 画布重渲染」用例覆盖(Worker 可用真跑)。
     const events = []
     const bind = { title: 't', items: [1, 2, 3] }
     const llm = stubModel(
@@ -173,8 +175,8 @@ export async function run() {
     })
     await sdk.mount()
     await sdk.send('处理 items')
-    assert(events.length === 1 && events[0].operation === 'edit', '✓ eval_script transform → 恰发 1 次 data_change(operation=edit;query 不发;修前 transform 也不发)')
-    assert(events.every((e) => ['set', 'edit', 'delete', 'restore'].includes(e.operation)), '✓ data_change operation 取值在既有契约内')
+    assert(bind.items.join(',') === '1,2,3', '前置:node 无 Worker → transform 未落地(bind 保持原序)')
+    assert(events.length === 0, `✓ P2#8 eval transform 在 node 失败(Worker 不可用)→ 零 data_change(query 只读本就不发;修前:失败写照发 1 次假事件)`)
     sdk.unmount()
   }
 
@@ -219,6 +221,35 @@ export async function run() {
     await sdk.send('加个标签')
     assert(bind.tags.join(',') === 'a,b' && bind.title === '新标题', '✓ dryRun 未落地 + patches 原子落地(tags/title 均新)')
     assert(events.length === 1 && events[0].operation === 'edit', '✓ dryRun 零事件 + patches → 恰 1 次 data_change(operation=edit;修前 dryRun 也发 + patches 标 set)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:events] ✓ team-audit P2#8 失败写不发 data_change(修前:args-only 推断,SCHEMA_INVALID/freeze 拒绝照样发,宿主为零变更触发保存)')
+  {
+    const events = []
+    const bind = { title: 't', tags: ['a'], token: 'secret-token' }
+    const llm = stubModel(
+      // SCHEMA_INVALID:number 写 string 字段(dataOps 失败不 throw,返回 ERROR: 字符串且 status 恒 done)
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'title', value: 123 } } }] },
+      // FROZEN_FIELD:受保护 freeze 字段直写被拒
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'token', value: 'hacked' } } }] },
+      // 成功写对照(失败抑制不误伤成功路径)
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'append', jsonPath: 'tags', value: 'b' } } }] },
+      { text: '完成' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-write-fail-noevent', storage: 'memory', llm, capabilities: { ...MIN_CAPS, vfs: true },
+      data: {
+        schema: z.object({ title: z.string(), tags: z.array(z.string()), token: z.string() }),
+        bind,
+        resources: [{ path: 'token', mode: 'freeze' }],
+      },
+      onEvent: (e) => { if (e.type === 'data_change') events.push(e) },
+    })
+    await sdk.mount()
+    await sdk.send('写几个')
+    assert(bind.title === 't' && bind.token === 'secret-token' && bind.tags.join(',') === 'a,b', '✓ 前置:两次失败写不落地 + 成功写落地')
+    assert(events.length === 1 && events[0].operation === 'edit', `✓ P2#8 失败写(SCHEMA_INVALID + FROZEN_FIELD)零 data_change,仅成功写发 1 次(修前:失败写照发 3 次;实际 ${events.length})`)
     sdk.unmount()
   }
 

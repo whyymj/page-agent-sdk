@@ -1,5 +1,6 @@
 // focus 上下文聚焦:setFocus/getFocus/clearFocus API + inspect().focus + set_focus/clear_focus 工具 + capabilities.focus
 import { setupEnv, createAssert, FAKE_LLM, MIN_CAPS, createChatSdk, z } from './_helpers.mjs'
+import { stubModel } from './_stub-model.mjs'
 
 export async function run() {
   setupEnv()
@@ -174,6 +175,41 @@ export async function run() {
     assert(events[1].focuses.length === 2, '✓ addFocus → focuses 累积到 2 个')
     assert(events[2].focuses.length === 1 && events[2].focuses[0].path === 'title', '✓ removeFocus → 移除 components.0 剩 title')
     assert(events[3].focuses.length === 0, '✓ clearFocus → focuses 清空')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:focus] team-audit P1#5 子 agent 继承生效快照(宿主 mid-run 焦点变更不穿透委派)')
+  {
+    // 时序:stream 启动前 setFocus(components.0)→ 流内收到 use_worker tool_call 事件时(= 主 invoke 在途)
+    // 宿主 setFocus(components.1)→ 子 agent 按**冻结快照**(components.0)继承:写 components.0 子路径放行,
+    // 写 components.1 子路径被 PATH_DENIED 拒(修前:子读实时态 → 口径与主 agent 打架/越权面穿透)
+    const bind2 = { title: 't', components: [{ type: 'a', props: { title: 'x' } }, { type: 'b', props: { title: 'y' } }] }
+    const llm = stubModel(
+      { toolCalls: [{ name: 'use_worker', args: { task: '改导航' } }] },
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.1.props.title', value: '越界写' } } }] },
+      { text: '子完成' },
+      { text: '已完成' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-focus-sub-freeze', storage: false, llm, autoTitle: false,
+      capabilities: { ...MIN_CAPS, subagent: true },
+      data: { schema, bind: bind2, description: '页面' },
+      subagents: [{ id: 'worker', description: '工人', writablePaths: ['components'] }],
+    })
+    await sdk.mount()
+    sdk.setFocus({ path: 'components.0', label: '导航' })
+    const subResults = []
+    await sdk.stream([{ role: 'user', content: '改导航', timestamp: Date.now() }], (e) => {
+      if (e.type === 'subagent' && e.kind === 'tool_result') subResults.push(e)
+      // mid-invoke 宿主变更:委派 tool_call 已发出(主 invoke 在途),此刻用户点选了另一组件
+      if (e.type === 'subagent' && e.kind === 'tool_call' && e.name === 'use_worker') {
+        sdk.setFocus({ path: 'components.1', label: '主视觉' })
+      }
+    })
+    const denied = subResults.find((r) => r.name === 'write')
+    assert(!!denied && /PATH_DENIED/.test(String(denied.result)),
+      `✓ P1#5 子 agent 按冻结快照继承(components.0):写 components.1 被 PATH_DENIED(修前:子读实时态 components.1 放行,穿透 invoke-freeze)`)
+    assert(bind2.components[1].props.title === 'y', '✓ P1#5 越界写未落地(components.1 保持原值)')
     sdk.unmount()
   }
 

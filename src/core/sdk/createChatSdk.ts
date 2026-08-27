@@ -849,10 +849,15 @@ function createSdkEventMiddleware(emit: SdkEventHandler, messages: AgentMessage[
     wrapToolCall: async (ctx: ToolCallContext, next) => {
       const result = await next(ctx)
       const op = matchDataOp(ctx.name, ctx.args)
-      if (op) {
+      // team-audit P2#8:失败写不发 data_change —— dataOps 业务失败(SCHEMA_INVALID/PATH_DENIED/VERSION_CONFLICT/
+      // freeze 拒绝)不 throw 而返回 `ERROR: {...}` 字符串且到达此处时 status 恒 'done',**必须判内容前缀**(单查 status 无效)。
+      // 修前 args-only 推断照发 → 以事件驱动「标脏/自动存草稿/落库」的宿主为零变更触发保存(4.4.1 同族反向)。
+      // operation 语义收敛为「数据已落地」;dryRun 不发(4.4.1)保持不变。
+      const failed = typeof result.content === 'string' && result.content.startsWith('ERROR:')
+      if (op && !failed) {
         emit({ type: 'data_change', operation: op, value: liveData()?.bind } as any)
-      } else if (result.status === 'done' && isDelegationTool(ctx.name)) {
-        // 委派工具内部可能改 data(读多写少,误报仅多一次无害刷新;operation 统一 edit)
+      } else if (result.status === 'done' && !failed && isDelegationTool(ctx.name)) {
+        // 委派工具内部可能改 data(读多写少,误报仅多一次无害刷新;operation 统一 edit;失败委派同口径不发)
         emit({ type: 'data_change', operation: 'edit', value: liveData()?.bind } as any)
       }
       return result
@@ -918,8 +923,15 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
 
   // ===== 持久化(默认关闭;赋值后端字符串或配置对象开启)=====
   const store = resolveStorage(options.storage)
-  if (options.debug && store) {
-    store.onEvent((e) => console.log('[page-agent-sdk][storage]', e))
+  if (store) {
+    if (options.debug) store.onEvent((e) => console.log('[page-agent-sdk][storage]', e))
+    // team-audit P1#7:quota 拒写去静默 —— 原唯一消费者是 debug console.log,非 debug 集成方零可观察面
+    // (长会话单会话超 maxBytesPerSession 静默拒写该 kind,刷新回退旧快照无感知;留痕进 debugLogs)
+    store.onEvent((e) => {
+      if (e.type === 'quota') {
+        core.agent?.debugLogs?.value?.push({ timestamp: Date.now(), type: 'middleware', data: { stage: 'storage_quota', sessionBytes: e.sessionBytes, limit: e.limit === Infinity ? 'Infinity' : e.limit } })
+      }
+    })
   }
 
   // ===== 模型能力 + 摘要 LLM invoke(统一由 resolveLlm 解析;声明优先 > model 名查表 > 缺省)=====
@@ -1359,8 +1371,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           // 思考深度锁定(subagent-thinking-mode-lock):顶层 subagent.thinkingMode 全局缺省,spawn 路径同样生效
           thinkingMode: subOpts?.thinkingMode,
           debug: options.debug,
-          // focus-auto-switch:子 agent 继承主焦点(focusMw/liveData 在该闭包可见)
-          getFocuses: () => focusMw.getFocuses(),
+          // focus-auto-switch:子 agent 继承主焦点;P1#5 读**生效快照**(invoke-freeze 口径)——
+          // 宿主 mid-run 焦点不穿透委派(主/子写面一致);agent 主动变更经 mutate 同步快照,继承同样感知
+          getFocuses: () => focusMw.getActiveFocuses(),
           getSchema: () => liveData()?.schema ?? null,
           tracker: subagentTracker,
           // fix-authorization-surface:子栈把关中间件(P1-16)+ 子 offload 桥接主 vfs 池(P1-15)
@@ -1422,7 +1435,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ? createSubtreeWriteGuardMiddleware({ getSummarizedPaths: () => dataOpsController.getSummarizedPaths!(), clearSummarizedPaths: () => dataOpsController.clearSummarizedPaths!() })
     : undefined
   const subagentsMw = useSubagent && subagentsForAssemble !== undefined
-    ? createSubagentsMiddleware(subagentsForAssemble, { llm: options.llm, thinkingModeDefault: options.subagent?.thinkingMode, staleReadInvalidation: options.staleReadInvalidation, allTools: () => core.agent?.allTools ?? allTools, debug: options.debug, getFocuses: () => focusMw.getFocuses(), getSchema: () => liveData()?.schema ?? null, getBind: () => liveData()?.bind, tracker: subagentTracker, guardMiddleware: childGuards.length ? childGuards : undefined, getVfsFiles: useVfs ? () => vfsStore.files : undefined, enterDataScope: dataOpsController?.enterScope ? (id) => dataOpsController.enterScope!(id) : undefined, exitDataScope: dataOpsController?.exitScope ? (id) => dataOpsController.exitScope!(id) : undefined, onUsage: (u) => { usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0); usage.completion_tokens = (usage.completion_tokens ?? 0) + (u.completion_tokens ?? 0); usage.total_tokens = (usage.total_tokens ?? 0) + (u.total_tokens ?? 0); if (u.reasoning_tokens) usage.reasoning_tokens = (usage.reasoning_tokens ?? 0) + u.reasoning_tokens }, timeoutMs: options.subagent?.timeoutMs,
+    ? createSubagentsMiddleware(subagentsForAssemble, { llm: options.llm, thinkingModeDefault: options.subagent?.thinkingMode, staleReadInvalidation: options.staleReadInvalidation, allTools: () => core.agent?.allTools ?? allTools, debug: options.debug, getFocuses: () => focusMw.getActiveFocuses(), getSchema: () => liveData()?.schema ?? null, getBind: () => liveData()?.bind, tracker: subagentTracker, guardMiddleware: childGuards.length ? childGuards : undefined, getVfsFiles: useVfs ? () => vfsStore.files : undefined, enterDataScope: dataOpsController?.enterScope ? (id) => dataOpsController.enterScope!(id) : undefined, exitDataScope: dataOpsController?.exitScope ? (id) => dataOpsController.exitScope!(id) : undefined, onUsage: (u) => { usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0); usage.completion_tokens = (usage.completion_tokens ?? 0) + (u.completion_tokens ?? 0); usage.total_tokens = (usage.total_tokens ?? 0) + (u.total_tokens ?? 0); if (u.reasoning_tokens) usage.reasoning_tokens = (usage.reasoning_tokens ?? 0) + u.reasoning_tokens }, timeoutMs: options.subagent?.timeoutMs,
       ...(componentLock ? { componentLock, resolveComponents: (args: { components?: string[]; task: string }) => resolveTargetComponents(args, collectComponentNames(liveData()?.bind, codeAssetPgIdPaths)) } : {}) })
     : undefined
 
@@ -2035,6 +2048,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       missionMw.reset()
       workingMemoryMw.reset()
       focusMw.reset()
+      summarizationMw?.reset() // team-audit P1#2:清 LLM 摘要前缀缓存 + epoch 翻转(防旧会话摘要泄进新会话压缩)
       resumeNoticeMw.reset() // 切会话:清待注入恢复标记(下方 applySnapshot 若灌入历史会重新标记)
       lastPlanConfirmation = undefined // 切会话:清方案确认留痕(方案时效限本会话;回原会话经 applySnapshot 恢复)
       // session-history S1:切会话清 checkpoint 栈,防旧会话快照污染新会话(开 checkpoint 时,否则 restore 会回退到旧会话态)
@@ -2076,6 +2090,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       missionMw.reset()
       workingMemoryMw.reset()
       focusMw.reset()
+      summarizationMw?.reset() // team-audit P1#2:清 LLM 摘要前缀缓存 + epoch 翻转(防旧会话摘要泄进新会话压缩)
       resumeNoticeMw.reset() // 清空会话:新会话无恢复历史,清待注入标记
       lastPlanConfirmation = undefined // 清空会话:清方案确认留痕(save-and-plan-gates 3c)
       if (checkpointMgr) checkpointMgr.importStack([])
@@ -2433,6 +2448,26 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   /** 解析会话 id + 载入快照(仅 store 非 null 时) */
   async function resolveAndLoad(): Promise<void> {
     if (!store) return
+    // team-audit P1#4:恢复读路径吞错降级 —— load/listSessions 失败不再上抛(原裸 await → initDone reject →
+    // core.agent 永不构造 → mount/send 全 reject,SDK 整体不可用;REST 瞬时 500/内置 IDB QuotaExceeded 同炸,
+    // doc/usage-guide「后端抛错不炸 SDK」承诺原只覆盖写路径)。降级空会话 + SESSION_RESTORE_FAILED observable
+    // (与 switchSession 的 SESSION_SNAPSHOT_LOAD_FAILED 同口径);createSession 自身已吞 backend.set 错(降级语义)。
+    const safeLoad = async (sid: string): Promise<SessionSnapshot | undefined> => {
+      try {
+        return await store.load(agentId, sid)
+      } catch (e) {
+        emit({ type: 'error', message: `会话快照读取失败,已降级空会话:${e instanceof Error ? e.message : String(e)}`, severity: 'observable', code: 'SESSION_RESTORE_FAILED', context: { sessionId: sid } } as any)
+        return undefined
+      }
+    }
+    const safeList = async (): Promise<{ sessionId: string }[]> => {
+      try {
+        return await store.listSessions(agentId)
+      } catch (e) {
+        emit({ type: 'error', message: `会话列表读取失败,已降级新建会话:${e instanceof Error ? e.message : String(e)}`, severity: 'observable', code: 'SESSION_RESTORE_FAILED' } as any)
+        return []
+      }
+    }
     // flow-robustness P1#5:ready 包 race 5s —— IDB open 卡 blocked(跨 tab 版本锁)时原实现拖死
     // initDone → mount 永不 resolve;超时放行(backend 预置内存,窗口内读写降级不炸),留痕可见。
     // 注意 ready(false)(后端不可用降级内存)是合法快速落定,自带 degraded 事件,不算超时不重复留痕
@@ -2448,17 +2483,17 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     const sessOpts = options.session || {}
     if (sessOpts.id) {
       core.sessionId = sessOpts.id
-      const snap = await store.load(agentId, core.sessionId)
+      const snap = await safeLoad(core.sessionId)
       if (snap) {
         core.applySnapshot(snap)
         emit({ type: 'session_restored', sessionId: core.sessionId, rounds: snap.messages?.length ?? 0 })
       } else await store.createSession(agentId, sessOpts.title, core.sessionId)
     } else if (sessOpts.autoResume !== false) {
-      const sessions = await store.listSessions(agentId)
+      const sessions = await safeList()
       if (options.debug) console.log('[page-agent-sdk][restore] listSessions', agentId, sessions.length, sessions.map((s) => s.sessionId))
       if (sessions.length) {
         core.sessionId = sessions[0].sessionId
-        const snap = await store.load(agentId, core.sessionId)
+        const snap = await safeLoad(core.sessionId)
         if (snap) {
           core.applySnapshot(snap)
           emit({ type: 'session_restored', sessionId: core.sessionId, rounds: snap.messages?.length ?? 0 })

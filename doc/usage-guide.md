@@ -899,11 +899,13 @@ function createHttpBackend(baseUrl: string): StorageBackend {
 
 createChatSdk({
   storage: { backend: createHttpBackend('/api/agent-store'), maxBytes: Infinity },
-  // maxBytes: Infinity 关闭客户端 LRU 淘汰(容量管理交服务端;不传默认按 50MB 客户端口径)
+  // maxBytes: Infinity 关闭客户端 LRU 淘汰 + 单会话上限 maxBytesPerSession(容量管理完全交服务端;不传默认按 50MB 客户端口径)
 })
 ```
 
 服务端契约要点:**key 形如 `v:1::<dbName>::<agentId>::<sessionId>::<kind>`**(kind = messages/vfs/todos/memory/checkpoints/usage/mission/workingMemory/focus/planConfirmation + 会话元数据 `__meta__`;按 key 整存整取,值为 JSON 快照);`scan`/`clearPrefix` 必须实现(`listSessions`/`deleteSession` 依赖前缀扫描);写入经 debounce(默认 500ms)批量落盘,不会逐条打接口;后端抛错不炸 SDK(吞错留痕,后续 flush 重试,与内置后端降级同口径)。多端并发同一会话为 last-writer-wins,无合并。直连工厂 `createSessionStoreWithBackend` 亦已导出(不经 createChatSdk 单独用持久化层时)。
+
+**单会话上限 `maxBytesPerSession`**(默认 10MB):单会话各 kind 字节和超上限时**拒写该 kind**(保留旧值,非删数据),防一条失控会话挤占客户端配额;拒写留痕进 `debugLogs`(`stage: 'storage_quota'`,含 sessionBytes/limit)。`maxBytes: Infinity` 时同关(容量完全交服务端);显式传 `maxBytesPerSession` 恒优先于联动。
 
 **会话切换(命令式)**:
 

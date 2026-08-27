@@ -378,7 +378,9 @@ function createSessionStoreImpl(config: StorageConfig = {}, backendOverride?: St
   // 自定义后端实例时按 'indexed' 口径取默认配额(50MB;服务端存储一般不受浏览器配额约束,可 maxBytes 显式覆盖)
   const backendType: StorageBackendType = typeof config.backend === 'string' ? (config.backend ?? 'indexed') : 'indexed'
   const maxBytes = config.maxBytes ?? defaultMaxBytesFor(backendType)
-  const maxBytesPerSession = config.maxBytesPerSession ?? DEFAULT_MAX_BYTES_PER_SESSION
+  // team-audit P1#7:maxBytes:Infinity(容量管理交服务端,usage-guide 承诺口径)→ 单会话上限同关;
+  // 显式传 maxBytesPerSession 优先不变;非 Infinity 场景 10MB 默认零变化
+  const maxBytesPerSession = config.maxBytesPerSession ?? (maxBytes === Infinity ? Infinity : DEFAULT_MAX_BYTES_PER_SESSION)
   const watermark = config.evictionWatermark ?? DEFAULT_WATERMARK
   const debounceMs = config.debounceMs ?? DEFAULT_DEBOUNCE_MS
 
@@ -570,7 +572,9 @@ function createSessionStoreImpl(config: StorageConfig = {}, backendOverride?: St
           if (v != null) (s as unknown as Record<string, unknown>)[kind] = v
         }
         meta.lastAccessed = Date.now()
-        await backend.set(metaKey, meta)
+        // team-audit P1#4:lastAccessed 刷新单独吞错 —— meta touch 后端炸(QuotaExceeded/REST 500)不连坐快照读取,
+        // 调用方(createChatSdk resolveAndLoad)拿到数据照常恢复;排序新鲜度损失无害(LRU 依据,非正确性)
+        try { await backend.set(metaKey, meta) } catch { /* 刷新失败跳过 */ }
         return s
       })
       return snap

@@ -93,8 +93,15 @@ export interface FocusController {
   setFocus: (focus: Focus | null, source?: FocusMutationSource) => void
   /** 兼容旧 API:返回首个焦点(focuses[0]);无焦点 → undefined */
   getFocus: () => Focus | undefined
-  /** 全量焦点(副本,防外部 mutate) */
+  /** 全量焦点(副本,防外部 mutate)。**实时态** —— UI chip/事件同步/persist/inspect/宿主 API 消费面用 */
   getFocuses: () => Focus[]
+  /**
+   * **生效**焦点(invoke-freeze 口径):在途 invoke 用 beforeAgent 快照,invoke 间隙回退实时态(team-audit P1#5)。
+   * 仅供**委派继承接线**(createChatSdk spawn/预声明两处)—— 子 agent 与主 agent 同一 invoke 内写面口径一致
+   (修前:子继承读实时态 → 宿主 mid-run 焦点穿透冻结,主/子 PATH_DENIED 口径打架)。
+   * 其余消费面一律用 getFocuses(实时态)。
+   */
+  getActiveFocuses: () => Focus[]
   /**
    * 累积追加焦点(去重 by path:已存在则更新 label,否则 push)。
    * **注意**:path 校验在 createChatSdk 层;中间件只去重追加。source 语义同 setFocus。
@@ -278,6 +285,8 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
     },
     getFocus: () => focuses[0],
     getFocuses: () => [...focuses],
+    // P1#5:生效快照暴露(委派继承接线专用;与 guard/augmentPrompt 同读 activeFocuses 闭包)
+    getActiveFocuses: () => [...activeFocuses()],
     addFocus: (f, source) => {
       // 去重 by path:已存在则更新 label(覆盖),否则追加
       mutate(source, (list) => {

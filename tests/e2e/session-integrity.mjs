@@ -217,5 +217,52 @@ export async function run() {
     }
   }
 
+  console.log('[e2e:session-integrity] team-audit P1#2 llmCache 跨会话:switchSession 清摘要缓存(A 的 LLM 摘要不泄进 B 压缩)')
+  {
+    // 通道:summaryLlm 独立 stub(A 摘要带标记词 ALPHA-SECRET);压缩经 contextOptions 阈值压低触发;
+    // 观察面 = 主模型收到的 messages 里【对话历史摘要】system 消息内容(mainStub.lastMessages)
+    const CAPS_SUM = { fetch: false, planning: false, skills: false, memory: false, subagent: false, vfs: false }
+    const mainLlm = stubModel()
+    const summaryLlm = stubModel(
+      { text: 'ALPHA-SECRET 会话A的机密摘要' },
+      { text: 'ALPHA-SECRET 会话A前缀扩展后的全量摘要' },  // A 第4轮前缀命中同时 fire 全量更新(sec-71 既有语义)
+      { text: 'BETA 会话B的正常摘要' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-si-llmcache-epoch', storage: 'memory', llm: mainLlm, summaryLlm, autoTitle: false,
+      capabilities: CAPS_SUM,
+      // contextWindow:0 显式走轮数模式(默认注入 200K 窗口 → token 模式,小消息永不触发)
+      contextOptions: { contextWindow: 0, windowRounds: 1, summaryThresholdRounds: 2, enableLLMSummary: true, enableRecall: false },
+    })
+    await sdk.mount()
+    const summaryOf = () => {
+      const ms = mainLlm.lastMessages ?? []
+      return ms.find((m) => String(m.content ?? '').includes('【对话历史摘要】'))?.content ?? ''
+    }
+    // 会话 A:3 轮 → 触发压缩(older=2)→ 后台 fire 摘要 → 落缓存
+    for (let i = 1; i <= 3; i++) await sdk.send(`A-问题${i}`)
+    await new Promise((r) => setTimeout(r, 50)) // 等后台摘要 .then 落缓存
+    const sA = summaryOf()
+    assert(!sA.includes('ALPHA-SECRET'), '前置:A 首压为索引模板(后台摘要尚未命中,零阻塞语义)')
+    await sdk.send('A-问题4') // 第 4 轮再压 → 缓存命中
+    const sA2 = summaryOf()
+    assert(String(sA2).includes('ALPHA-SECRET'), '前置:A 同会话缓存命中(命中通道本身正常)')
+    // 切会话 B:3 轮触发压缩 —— 修前 reset 清单漏 summarization → B 前缀/全量命中 A 缓存,机密摘要泄进 B
+    await sdk.switchSession()
+    for (let i = 1; i <= 3; i++) await sdk.send(`B-问题${i}`)
+    const sB = summaryOf()
+    assert(!String(sB).includes('ALPHA-SECRET'), `✓ P1#2 switchSession 后 B 压缩不含 A 的 LLM 摘要(修前:llmCache 单例跨会话命中泄漏;实际含:${String(sB).slice(0, 60)}…)`)
+    await new Promise((r) => setTimeout(r, 50)) // B 自身后台摘要落缓存(不被 A 在飞吞)
+    await sdk.send('B-问题4')
+    const sB2 = summaryOf()
+    assert(String(sB2).includes('BETA') && !String(sB2).includes('ALPHA'), '✓ P1#2 B 自身后台摘要正常落缓存(内容纯 B)')
+    // resetSession 同口径
+    sdk.resetSession()
+    for (let i = 1; i <= 3; i++) await sdk.send(`C-问题${i}`)
+    const sC = summaryOf()
+    assert(!String(sC).includes('ALPHA-SECRET') && !String(sC).includes('BETA'), '✓ P1#2 resetSession 后压缩不含旧会话摘要(同口径)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }
