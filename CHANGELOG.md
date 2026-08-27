@@ -2,6 +2,24 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [Unreleased]
+
+## [4.6.0] - 2026-08-27
+
+### Added(tool-surface-economy W1/W2)
+
+- **`query_data` 批量 `queries`(多条件筛选一次取回)**:`queries: string[2..10]` 与 `expr` 互斥(同传按 queries、两者都缺返回参数错误);返回 `{batch:true, results:[{expr, ok, matched, results | error}]}` —— 逐条结果与单次调用输出同构(`path/index/value` 行),单条非法该项标 error 不整批(容错口径同 read jsonPaths);stale-read 失效面联动扩为 **queries 逐条前缀并集**(修前形态 `String(undefined)` 塌缩 ROOT 过度失效);usageHints 批量段补引导
+- **读类职责标注(W2,纯文本)**:`describe_data` description 补「等价于 read 不传 jsonPath;优先用 read 单一入口」(工具不删,引导归一);usageHints 读类段升级五路分流表(值/结构→read、字段约束→schema_data、条件筛选→query_data、模糊找→search_data、整体说明→read 不传路径)
+
+### Changed(tool-surface-economy W3 + 附带修正)
+
+- **工具 description 三批瘦身(-38%,每轮固定 schema 成本直降)**:read/write/eval_script/restore_data/history_data 五工具的工具级 + 字段级描述重写,与 usageHints 双份教学去重(单一真相源划分:description 留「何时用 + 形态一句话 + 边界」,详细教学归 usageHints —— 恒注入无能力开关,下沉零丢失);五工具合计 1892 → 1168 字符(恒全暴露契约下工具 schema 每次模型调用全量重发);selftest 静态长度锁三把 ratchet:单条 ≤200 / 12 工具工具级合计 ≤1600 / 字段级合计 ≤1200(实测 1471/1102)+ 语义锚点断言防「盖错对象」
+- **批读失效占位文案如实**(team-audit P2 登记「文案不实」文案-only 修):整条 ToolMessage 原子替换后不再称「兄弟子树仍为读取时原值可参考」(原表述诱导模型凭旧值直写,恰是失效机制要消灭的行为),改为如实声明「原读取结果整体已过期」;逐路径行级重写仍 deferred
+
+### 测试
+
+- selftest 3134(+17)/ e2e 1020(+7)/ browser 132(+0);W1 红测先行(修前以「expr 必填、批量入参被 zod 拒」的缺陷形态失败)
+
 ## [4.5.0] - 2026-08-27
 
 ### Fixed(team-audit-hardening:六路团队审查 P1×7 + P2×2,均经二轮对抗核实)

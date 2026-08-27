@@ -1,76 +1,66 @@
 {
-  "recordedAt": "2026-08-16T03:52:58.476Z",
+  "recordedAt": "2026-08-27T08:22:06.635Z",
   "suites": {
     "uispec": {
       "S1": {
-        "prompt": 165656,
-        "completion": 2867,
-        "toolCount": 10,
-        "elapsedSec": 366,
-        "cacheRead": 103424
+        "prompt": 29852,
+        "completion": 1384,
+        "toolCount": 4,
+        "elapsedSec": 171
       },
       "S2": {
-        "prompt": 58016,
-        "completion": 937,
-        "toolCount": 5,
-        "elapsedSec": 140,
-        "cacheRead": 55552
+        "prompt": 56388,
+        "completion": 1235,
+        "toolCount": 4,
+        "elapsedSec": 148
       },
       "S3": {
-        "prompt": 42717,
-        "completion": 416,
-        "toolCount": 2,
-        "elapsedSec": 103,
-        "cacheRead": 29696
+        "prompt": 52299,
+        "completion": 9408,
+        "toolCount": 3,
+        "elapsedSec": 205
       },
       "S4": {
-        "prompt": 42943,
-        "completion": 237,
+        "prompt": 29846,
+        "completion": 3875,
         "toolCount": 2,
-        "elapsedSec": 103,
-        "cacheRead": 20224
+        "elapsedSec": 148
       },
       "S5": {
-        "prompt": 270628,
-        "completion": 3467,
-        "toolCount": 16,
-        "elapsedSec": 215,
-        "cacheRead": 199680
+        "prompt": 133010,
+        "completion": 4789,
+        "toolCount": 11,
+        "elapsedSec": 165
       },
       "S6": {
-        "prompt": 43822,
-        "completion": 191,
-        "toolCount": 2,
-        "elapsedSec": 103,
-        "cacheRead": 42240
+        "prompt": 28642,
+        "completion": 501,
+        "toolCount": 4,
+        "elapsedSec": 110
       },
       "S7": {
-        "prompt": 60735,
-        "completion": 1495,
-        "toolCount": 3,
-        "elapsedSec": 193,
-        "cacheRead": 47104
+        "prompt": 88962,
+        "completion": 3474,
+        "toolCount": 10,
+        "elapsedSec": 261
       },
       "S8": {
-        "prompt": 115417,
-        "completion": 2024,
-        "toolCount": 6,
-        "elapsedSec": 123,
-        "cacheRead": 70656
+        "prompt": 175407,
+        "completion": 7974,
+        "toolCount": 16,
+        "elapsedSec": 220
       },
       "S9": {
-        "prompt": 30180,
-        "completion": 220,
+        "prompt": 38264,
+        "completion": 743,
         "toolCount": 2,
-        "elapsedSec": 100,
-        "cacheRead": 29184
+        "elapsedSec": 110
       },
       "S10": {
-        "prompt": 62680,
-        "completion": 1711,
-        "toolCount": 11,
-        "elapsedSec": 115,
-        "cacheRead": 35840
+        "prompt": 19525,
+        "completion": 1809,
+        "toolCount": 1,
+        "elapsedSec": 118
       }
     },
     "rag": {

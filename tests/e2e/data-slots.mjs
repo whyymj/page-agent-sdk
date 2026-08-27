@@ -157,6 +157,38 @@ export async function run() {
     assert(!/<subtree/.test(r6), '✓ search 维持现状不摘要(既有片段截断口径)')
   }
 
+  console.log('[e2e:data] query_data 批量 queries:batch 信封 + 逐条与单次同构 + 单条失败不整批(tool-surface-economy W1)')
+  {
+    const { createDataOps } = await import('../../dist/page-agent-sdk.js')
+    const schema = z.object({
+      components: z.array(z.object({ name: z.string(), type: z.string(), price: z.number() })),
+      meta: z.object({ total: z.number(), owner: z.string() }),
+    })
+    const bind = {
+      components: [
+        { name: 'a', type: 'card', price: 50 },
+        { name: 'b', type: 'list', price: 200 },
+        { name: 'c', type: 'card', price: 80 },
+      ],
+      meta: { total: 3, owner: 'z' },
+    }
+    const t = Object.fromEntries(createDataOps({ schema, bind, description: 'd' }).map((x) => [x.name, x]))
+    const r = String(await t.query_data.invoke({ queries: ['$.components[?(@.type=="card" && @.price<100)]', '$.meta.owner', '$[?(@.x=='] }))
+    const parsed = JSON.parse(r)
+    assert(parsed.batch === true && parsed.results.length === 3, '✓ query 批量 → batch 信封 + 三条逐项')
+    assert(parsed.results[0].ok === true && parsed.results[0].matched === 2 && parsed.results[0].results[0].path === 'components.0', '✓ query 批量 → 首条输出与单次同构(path/index/value)')
+    assert(parsed.results[1].ok === true && /z/.test(parsed.results[1].results[0].value), '✓ query 批量 → 次条独立求值')
+    assert(parsed.results[2].ok === false && /JSONPATH/.test(parsed.results[2].error), '✓ query 批量 → 非法条目该项 error 不整批')
+    const r2 = String(await t.query_data.invoke({ queries: ['$.meta.total', '$.meta.owner'], expr: '$.nope' }))
+    const p2 = JSON.parse(r2)
+    assert(p2.batch === true && p2.results.every((x) => x.ok), '✓ query 批量 → expr 同传被忽略(按 queries)')
+    const r3 = String(await t.query_data.invoke({}))
+    assert(/^ERROR:/.test(r3) && /queries/.test(r3), '✓ query → expr/queries 都缺返回参数错误')
+    let threw = false
+    try { await t.query_data.invoke({ queries: ['$.meta.total'] }) } catch { threw = true }
+    assert(threw, '✓ query → queries 单条(<2)被 schema 拒(zod 前置)')
+  }
+
   console.log('[e2e:data] read-before-write 守卫:占位子树直写被拦 → 窄读后放行(subtree-summary Phase 1)')
   {
     const { StubChatModel } = await import('./_stub-model.mjs')

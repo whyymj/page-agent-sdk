@@ -273,7 +273,7 @@ Agent 自主调用这些内置工具(无需你写):
 |---|---|
 | **`read`** / **`write`**(推荐) | 高层读写入口,合并 describe/get 与 set/edit/delete + 自动乐观锁 + 自动快照,LLM 认知负担最低 |
 | `describe_data` | 查看主数据说明 + schema 字段描述(底层,推荐 `read`) |
-| `query_data` / `search_data` / `eval_script` | 大 JSON 查询(JSONPath)/ 模糊搜索 / 沙箱脚本 |
+| `query_data` / `search_data` / `eval_script` | 大 JSON 查询(JSONPath;4.6+ 多条件筛选传 `queries` 数组 2-10 条一次取回,单条失败不整批)/ 模糊搜索 / 沙箱脚本 |
 | `restore_data` / `history_data` | 快照回退 / 查历史快照列表与值 |
 
 **要点**:

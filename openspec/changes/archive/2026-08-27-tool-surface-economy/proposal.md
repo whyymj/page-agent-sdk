@@ -1,13 +1,13 @@
 # Proposal: tool-surface-economy(内置工具面无风险优化)
 
-> 状态:**📋 已立项待实施**。优先级 P2(体验/成本优化,零行为破坏)。目标:提升单次调用处理量、降低每轮固定 schema 成本、收敛读类工具理解边界。
+> 状态:**✅ 已实施并随 4.6.0 发布(2026-08-27,实施 commit b8ef9e0;全 11 任务收口,红测先行;真 LLM 复跑 2 跑判读 = 方差主导零系统性回退,4.6 基线已采 run5)。**优先级 P2(体验/成本优化,零行为破坏)。目标:提升单次调用处理量、降低每轮固定 schema 成本、收敛读类工具理解边界。
 > 范围纪律:**只含无风险项** —— 纯增量参数 / 纯文本引导 / 文本瘦身;不删工具、不改工具名、不动参数 schema 既有字段、不碰「工具面恒全暴露」契约(3.31)。
 > 用户拍板(2026-08-27):「先规划无风险的」—— query/search 合并、低频工具按需注入两项已评估为有风险/需契约决策,不在本 change(见「不立项项」)。
 
 ## W1. query_data 批量 queries(单次调用处理量)
 
 - **现状**:`query_data({expr, limit})` 单表达式一次;多条件筛选(如「找所有 type=card 且 price<100」+「找所有 hidden」)需多轮。usageHints 已教 read 批量(jsonPaths)/write 批量(patches),query 是唯一无批量形态的读工具。
-- **修法**:schema 增 `queries: z.array(z.string()).min(2).max(10).optional()`(与 expr 互斥;传 queries 则忽略 expr;两者都缺 → 参数错误 toolError)。返回 `{ batch: true, results: [{ expr, ok, matched, results | error }] }`;**逐条结果保持现有 `@ path` 命中行格式**(命中路径前缀 `@ `,workingMemory 捕获正则 `/@\s([a-zA-Z0-9_.[\]]+)/g` 兼容,零联动改动);单条表达式非法/空命中只标该项 error/空,不整批失败(与 read jsonPaths 容错口径一致)。
+- **修法**:schema 增 `queries: z.array(z.string()).min(2).max(10).optional()`(与 expr 互斥;传 queries 则忽略 expr;两者都缺 → 参数错误 toolError)。返回 `{ batch: true, results: [{ expr, ok, matched, results | error }] }`;**逐条结果与单次调用输出同构**(`{"path":...,"index":...,"value":...}` JSON 行)。〔2026-08-27 实施前勘察更正:原稿称「保持现有 `@ path` 命中行格式」不实 —— query_data 现行结果即 JSON 行,无 `@` 前缀;workingMemory 的 query 捕获(args.jsonPath + `@ ` 正则)对 query_data 实为死代码(expr 非 jsonPath、JSON 无 `@ `),故「零联动改动」结论不变但依据是捕获本就不生效,而非格式兼容〕;单条表达式非法/空命中只标该项 error/空,不整批失败(与 read jsonPaths 容错口径一致)。
 - **联动(必改,防隐性失效面失准)**:`readInvalidation.ts:109` extractReadPaths 对 query_data 只读 `args.expr` —— queries 数组下 String(undefined)→ 空串 → ROOT(过度失效,安全但浪费)。改为 `Array.isArray(a.queries) ? a.queries.map((q) => queryPrefixPath(String(q))) : [queryPrefixPath(String(a.expr || ''))]`(逐条前缀并集)。
 - **引导**:usageHints 批量段(:71 附近)补一句「多条件筛选用 query_data({queries:[...]}) 一次取回」。
 - **风险**:纯增量可选参数;单 expr 路径零变化;stale-read 失效面只会更准(并集 vs 现状 ROOT)。

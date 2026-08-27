@@ -103,6 +103,40 @@ export async function sendPrompt(page, prompt) {
 }
 
 /**
+ * 场景间挂起门禁清理:上一场景若以 RHC/approval/冲突挂起收口(UI hold() 接管后不限时等用户),
+ * 下一场景消息会卡 useChat 排队 → msgs 不增 → waitIdle 的 `msgs > prevMsgCount` 永假干等 900s 超时。
+ * (2026-08-27 uispec S3 首次中位 RHC 挖出:flash 撞 components.0 冻结字段转人工确认,S4-S10 全毒化;
+ *  旧 8-16 基线 RHC 只在末位 S10 出现过,缺口从未暴露。)
+ * 保守处置:RHC/approval 点末位选项(通常是「其他/拒绝」类不动数据项);冲突条 keep_external(保外部值);
+ * 放行后原 invoke 继续跑完,排队消息随后正常消费。循环 ≤3 次防「放行后连环再挂」。
+ */
+export async function resolvePendingGates(page) {
+  let total = 0
+  for (let i = 0; i < 3; i++) {
+    const acted = await page.evaluate(() => {
+      const dlg = document.querySelector('.chat-dialog')
+      if (!dlg) return ''
+      // RHC 带 options:点末位(通常「其他/拒绝」类不动数据项;ApprovalBar 该形态无 allow 按钮)
+      const opts = dlg.querySelectorAll('.approval-options .approval-opt')
+      if (opts.length) { opts[opts.length - 1].click(); return `RHC 选项×${opts.length}(末位)` }
+      // 工具确认 / RHC 无 options:点「同意」放行挂起动作(如 delete_component 破坏性删除确认;
+      // 2026-08-27 实测 S6 以此形态挂起,首版 selector 只认 options 形态 → S7 卡排队 900s)
+      const allow = dlg.querySelector('.approval-actions .approval-allow')
+      if (allow) { allow.click(); return 'approval-allow' }
+      // 冲突条:保守保外部值
+      const keep = dlg.querySelector('.conflict-actions .conflict-keep')
+      if (keep) { keep.click(); return 'conflict keep_external' }
+      return ''
+    })
+    if (!acted) break
+    total++
+    console.log(`  [gate] 清理挂起门禁:${acted}`)
+    await sleep(2500)
+  }
+  return total
+}
+
+/**
  * idle 判定双条件(核心方法论):
  * ① debugLogs 静默 >90s(连续 3 次采样确认,防采样间隙误判)② 活动子 agent = 0(子 reasoning 不打日志,只看日志会误判)
  * 快速失败:页面 reload(debugLogs 清零)→ quietMs 为 epoch 毫秒(>1e12)→ 立即抛(vite HMR 掉线/崩溃,续跑无意义)。
@@ -169,6 +203,7 @@ export async function runScenario(cfg) {
   const t0 = Date.now()
   const uninstall = await installEventHook(page)
   if (cfg.before) await cfg.before(page)
+  await resolvePendingGates(page)  // 上一场景遗留的 RHC/approval/冲突挂起先放行,防本场景消息卡排队
   const prevMsgs = await page.evaluate(() => window.__sdk.messages.length)
   await sendPrompt(page, prompt)
   await waitIdle(page, prevMsgs, { timeoutMs: quietTimeoutMs })

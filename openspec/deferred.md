@@ -468,9 +468,9 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 
 **重启触发**:editor 生产出现「schema/校验全绿但任务意图未达成、且非意图误路由类」的用户反馈(真实案例 ≥1);或 evidence-audit-gate A 运行数据显示谎报率高到本地判定不够。
 
-### [2026-08-23] query_data 多 expr(C3 of tool-call-economy)— ⏸ 暂缓(零数据支持)
+### [2026-08-23] query_data 多 expr(C3 of tool-call-economy)— ✅ 已实施(tool-surface-economy W1,2026-08-27)
 
-**来源**:`2026-08-23-tool-call-economy` 评审裁决:query→read 配对率无任何数据支持,最可能白做的一项。**重启须知**(回归面评审):复活时必须同步扩 `readInvalidation.ts` `readReadPaths` 的 expr 通道(现只认字符串 `expr`,C3 加 `exprs` 数组后走旧逻辑 → 空 expr 按 ROOT 定界 → 写后过度失效/漏失效)+ workingMemory.ts:96 的 query 路径捕获;结果分组返回单项失败不整批(照 read jsonPaths 先例)。
+**来源**:`2026-08-23-tool-call-economy` 评审裁决:query→read 配对率无任何数据支持,最可能白做的一项。**重启须知**(回归面评审):复活时必须同步扩 `readInvalidation.ts` `readReadPaths` 的 expr 通道(现只认字符串 `expr`,C3 加 `exprs` 数组后走旧逻辑 → 空 expr 按 ROOT 定界 → 写后过度失效/漏失效)+ workingMemory.ts:96 的 query 路径捕获;结果分组返回单项失败不整批(照 read jsonPaths 先例)。【✅ 2026-08-27 随 tool-surface-economy W1 实施收口:`queries: string[2..10]`(与 expr 互斥、同传按 queries、逐条与单次输出同构、单条失败不整批);readInvalidation extractReadPaths queries 逐条前缀并集(重启须知第 1 条兑现);workingMemory 侧经实施前勘察证伪 —— query 捕获本就不生效(expr 非 args.jsonPath、JSON 结果无 `@ ` 前缀),零联动;selftest sec-21/sec-99 + e2e data-slots 锁定】
 
 ### [2026-08-23] C1 read 结构预告(tool-call-economy)— ⏸ 暂缓(数据不支持)
 
@@ -607,4 +607,16 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 |---|---|---|
 | runSerial 排队中的 send 被外部 abort 后白等 | serialRunner.ts:13-20 无信号语义;B 排队 + 1 分钟后 abort → 仍等 A 跑完才以 '' 收口。修:sdk.send 包装内挂 signal 提前 reject race | headless 长任务排队 + abort 实测 |
 | automation budget-abort 空气泡消息 | 已并入上方 flow-robustness 登记「SYSTEM_PROMPT_OVER_BUDGET 空气泡」行(三入口一起修) | 同上 |
+
+### [2026-08-27] UI 挂起门禁期间的排队消息永不消费 — ⏸ 暂缓(产品行为待裁决)
+
+**来源**:tool-surface-economy 重立基线实测(uispec S3):flash 撞 components.0 冻结字段后调 `request_human_confirmation` 转人工确认,场景以挂起收口;S4 消息进 useChat `queuedTasks` 后 **永不消费**(RHC hold() 被响应方接管后不限时)→ `msgs` 不增 → runner idle 判定永假干等 900s(测试侧已修:`_real-llm-lib.mjs` 场景间 `resolvePendingGates` 点保守选项放行;旧 8-16 基线 RHC 只在末位 S10 出现过,缺口从未暴露)。**真实用户面同款**:RHC/approval/conflict 条挂起时用户不打断直接输入新指令 → 消息排队但确认条不点则永不处理,且无任何提示。**候选修法**(产品裁决):①挂起期间禁用输入框 + 提示先处理确认条;②新输入视为隐式应答/取代(语义复杂);③排队提示条上显示「等待确认中」状态。**重启触发**:用户反馈排队消息丢失/困惑,或下次动 useChat/ApprovalBar。
+
+### [2026-08-27] 低频工具按需注入(restore/history/diff/resource_delete/schema_data 走 skill 按需)— ⏸ 暂缓(tool-surface-economy「不立项项」登记)
+
+**来源**:tool-surface-economy 立项评估(2026-08-27 用户拍板「先规划无风险的」)。与 3.31「工具面恒全暴露」契约(移除 toolMode 的刻意反转)冲突 —— 该契约的价值是工具面稳定可预期(集成方文档/调试/教学不随上下文变化),按需注入会让「什么工具存在」变成运行时动态面,属产品决策非无风险项。**收益侧**(若做):每轮 schema 固定成本再降(低频五工具工具级+字段级合计 ~700 字符);**代价侧**:低频工具的「可发现性」依赖 skill/提示引导,弱模型可能不知道能 restore 而直接重写。**重启触发**:出现明确的小上下文模型(<32K 窗口)集成诉求,或恒全暴露契约被产品层重新裁决。
+
+### [2026-08-27] describe_data 删除(与 read 冗余)— ⏸ 暂缓(W2 引导归一后看数据)
+
+**来源**:tool-surface-economy W2 评估。describe_data 与 read 不传 jsonPath 功能完全重复(read description 已自称合并 describe 语义);删工具改变工具面属有风险项,故 W2 先做等价标注引导归一(description 补「等价于 read 不传 jsonPath;优先用 read 单一入口」)。**重启触发**:真 LLM 基线中 describe_data 调用量连续两版 ≈0(8-16 基线实测 13 次/报告;W2 落地后观察 4.6 基线,连续两版归零即删)。
 | switchSession 中止在途流后 UI 留空 content 的 partial assistant 占位 | team-audit P2#9 实施发现:streaming:false 改走 core.stream 后,switchSession 的 abort 正确掐断旧流(内容/写入零孤儿,已修),但 useChat 的 abort-保留-partial 语义会把空串 assistant push 进新会话消息列表(空气泡;streaming:true 同款既有形态,非本项引入)。修:useChat 非流式分支 abort 收口不 addMessage 空串(流式分支已有空 splice 守卫) | 用户反馈空气泡困扰,或下次动 useChat 收口路径时顺手 |

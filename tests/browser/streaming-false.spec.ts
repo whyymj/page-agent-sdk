@@ -24,10 +24,11 @@ test.describe('streaming:false 路径(P2#9 改走 core.stream 包装)', () => {
     ])
     await fillInput(page, '改标题')
     await clickSend(page)
-    // write 落地 + 助手回复上屏(非流式路径收口正常)
+    // write 落地 + 助手回复上屏(非流式路径收口正常)。
+    // 回复文本须 waitForFunction:title 是第 1 轮 write 落的,回复在第 2 轮模型调用后 —— 立即 textContent
+    // 是固有竞态(4 workers 满载时第 2 轮延迟拉大,2026-08-27 连续两次全量跑挂、单跑恒过的根因)
     await page.waitForFunction(() => (window as any).page.title === '非流式标题')
-    const dialogText = await page.textContent('.chat-dialog')
-    expect(dialogText).toContain('已完成')
+    await page.waitForFunction(() => ((document.querySelector('.chat-dialog') as HTMLElement)?.textContent ?? '').includes('已完成'))
   })
 
   test('unmount 中止在途流:非流式生成中卸载 → 零幽灵写入(修前:abortAllActive 注册表无此流照跑照写)', async ({ page }) => {

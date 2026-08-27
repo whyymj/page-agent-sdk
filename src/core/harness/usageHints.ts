@@ -61,14 +61,14 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
       }
       if (hasDataOps) {
         hints.push('改主数据前先 read({jsonPath}) 读其当前真实值(返回末尾 hash=xxx 为乐观锁标识),基于真实值改,不要凭记忆。写入是否被自动校验由集成方 conflictWatchFields 声明决定:若已声明且主数据在你 read 之后被外部改过,会触发冲突——集成方若开启人工介入,工具会挂起等用户决定(保留外部/强制覆盖/回退),你应等待工具返回后按结果继续(保留外部→重新 read 再改;强制覆盖→已写入,继续;回退→已回退到历史快照,基于回退值重写);未开启人工介入时返回 VERSION_CONFLICT 不写入,重新 read 拿最新值再改。')
-        hints.push('不确定主数据字段结构时用 describe_data 查看说明。')
+        hints.push('读类分流:取值/结构 → read(多路径用 jsonPaths);字段约束 → schema_data;条件筛选定位 → query_data(多条一次用 queries);名字模糊找 → search_data;整体说明 → read 不传路径(= describe_data)。')
         hints.push('修改大对象/数组优先用 write 增量改({patch:{op,jsonPath,value}} 只发改动部分),避免 write({value}) 整体重传被 max_tokens 截断导致 JSON 不完整、校验失败。')
         hints.push('修改主数据出错时可用 restore_data 回退最近一次。')
         hints.push('在大数组里按条件筛选元素用 query_data(JSONPath,如 $.components[?(@.type=="card" && @.price<100)]),返回匹配元素的 path/index;定位后再 write({patch}) 改。')
         hints.push('找名字记不清的元素用 search_data(支持 substring/regex/fuzzy 模糊搜索)。')
         hints.push('需要过滤/映射/聚合/批量重写大数组时用 eval_script(沙箱脚本,入参 data);只读探查用 mode=query,批量重写用 mode=transform(返回值经校验后落地)。')
         hints.push('读大数组用 read({jsonPath,offset,limit}) 分页(返回 hasMore=true 时 offset+=limit 续读);一次读多个不相关子路径用 read({jsonPaths});复杂改动先 write({...,dryRun:true}) 预检不落盘。')
-        hints.push('【省轮次·批量】≥2 个路径一律 read({jsonPaths:[...]}) 一次取回(路径互不相关也合批,禁止连续单路径 read);改多处用 write({patches:[{op:"set",jsonPath,value},...]}) 一次提交多改动(原子任一失败回滚),勿逐个 write 烧轮次预算。')
+        hints.push('【省轮次·批量】≥2 个路径一律 read({jsonPaths:[...]}) 一次取回(路径互不相关也合批,禁止连续单路径 read);多条件筛选用 query_data({queries:[expr1,expr2,…]}) 一次取回(2-10 条);改多处用 write({patches:[{op:"set",jsonPath,value},...]}) 一次提交多改动(原子任一失败回滚),勿逐个 write 烧轮次预算。')
         hints.push('读到 <subtree Nkb keys:[…] #指纹> 或 <code Nkb> 占位 = 该子树键名/体积可见但内容未见:写入前先窄读全文(read({jsonPath:"该子树路径"}),结果根豁免返全文)或 set_focus 聚焦该区域;勿凭键名印象猜路径/猜值直写(直接写占位子树会被拦下要求先窄读)。')
         hints.push('对比当前与历史快照(或一段 JSON against)的差异用 diff_data({snapshotId?,against?})(返回结构化 path→from/to,verify 自纠/操作审计/"刚才改了啥");只读查历史快照值用 history_data({id?,jsonPath?})。')
       }

@@ -67,23 +67,29 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(t['describe_data'], {})
     assert(/应用配置/.test(r), 'describe_data 返回主数据说明')
 
-    // 工具描述总长回归(context-economy-phase2 二批瘦身;防一阶段「反向锚定把新文案盖错对象」事故重演:
-    // 每条描述须与其工具语义一致(抽查锚点词)+ 单条 ≤330(write 一阶段已压基线)
+    // 工具描述总长回归(context-economy-phase2 二批瘦身 + tool-surface-economy W3 三批;防「反向锚定把新文案盖错对象」事故重演:
+    // 每条描述须与其工具语义一致(抽查锚点词)+ 单条 ≤200(W3 后实测最大 write=192)
     const descAnchors: [string, RegExp][] = [
       ['eval_script', /沙箱/], ['draft_commit', /草稿/], ['draft_write', /drafts/],
       ['query_data', /JSONPath/], ['search_data', /搜索/], ['history_data', /快照/],
-      ['write', /四意图|写入主数据/], ['read', /hash/],
+      ['write', /四意图|写入主数据/], ['read', /hash/], ['describe_data', /read/],
     ]
     for (const [n, anchor] of descAnchors) {
       const d = t[n]?.description ?? ''
       if (!t[n]) continue // draft_write/draft_commit 等 opt-in 工具在本 fixture(schema 小,未开)不装配,跳过
       assert(anchor.test(d), `✓ 描述锚点 → ${n} 描述含语义锚点(未被盖错对象)`)
-      assert(d.length <= 330, `✓ 描述长度 → ${n} ≤330(实际 ${d.length},防描述膨胀)`)
+      assert(d.length <= 200, `✓ 描述长度 → ${n} ≤200(实际 ${d.length},W3 三批瘦身回归线)`)
     }
-    // 总长上限:advanced 可见数据工具描述总和 ≤3200(压缩二批回归线)
+    // 总长上限:advanced 可见数据工具描述合计 ≤1600(W3 后实测 1471;含 W1 queries 增量)
     const ADV_VISIBLE = ['describe_data','restore_data','history_data','query_data','search_data','eval_script','read','write','schema_data','diff_data','draft_write','draft_commit']
     const total = ADV_VISIBLE.reduce((s2, n) => s2 + (t[n]?.description?.length ?? 0), 0)
-    assert(total <= 3200, `✓ 描述总长 → advanced 数据工具描述合计 ≤3200(实际 ${total})`)
+    assert(total <= 1600, `✓ 描述总长 → advanced 数据工具描述合计 ≤1600(实际 ${total},W3 回归线)`)
+    // 字段级 .describe() 总长上限(W3 新增锁;实测 1102):字段文本与工具级同源瘦身,防只盯 description 单点回弹
+    const fieldTotal = ADV_VISIBLE.reduce((s2, n) => {
+      const shape = (t[n] as any)?.schema?.shape ?? {}
+      return s2 + Object.keys(shape).reduce((s3, k) => s3 + (shape[k]?.description?.length ?? 0), 0)
+    }, 0)
+    assert(fieldTotal <= 1200, `✓ 字段描述总长 → advanced 数据工具 .describe() 合计 ≤1200(实际 ${fieldTotal},W3 新增锁)`)
 
     // draft 工具锚点(vfsStore 提供才装配 → 单独小 fixture;仍属描述回归断言)
     const draftTools = createDataOps(

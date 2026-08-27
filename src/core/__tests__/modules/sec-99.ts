@@ -108,6 +108,14 @@ export async function run(ctx: TestCtx) {
     // 非法 expr 保守 root
     const badMsg = [...mkRound([{ name: 'query_data', args: { expr: '$$$[' } }], ['v']), ...mkRound([{ name: 'write', args: {} }], ['ok'])]
     assert(invalidateStaleReads(badMsg, [W('write', { patch: { op: 'set', jsonPath: 'a.b', value: 1 } })]).invalidatedCount === 1, '✓ query → 非法 expr 保守按 root')
+    // W1 批量 queries:失效面 = 逐条前缀并集(修复前 String(undefined)→ 空串 → ROOT 过度失效)
+    const batchMsg = [...mkRound([{ name: 'query_data', args: { queries: ['$.components[?(@.type=="card")]', '$.meta.total'] } }], ['batch']), ...mkRound([{ name: 'write', args: {} }], ['ok'])]
+    assert(invalidateStaleReads(batchMsg, [W('write', { patch: { op: 'set', jsonPath: 'components.2.props.x', value: 1 } })]).invalidatedCount === 1, '✓ query 批量 → 并集内条目前缀内写失效')
+    assert(invalidateStaleReads(batchMsg, [W('write', { patch: { op: 'set', jsonPath: 'meta.total', value: 1 } })]).invalidatedCount === 1, '✓ query 批量 → 第二条前缀内写也失效')
+    assert(invalidateStaleReads(batchMsg, [W('write', { patch: { op: 'set', jsonPath: 'settings.title', value: 1 } })]).invalidatedCount === 0, '✓ query 批量 → 并集外写不失效(不塌缩 ROOT 过度失效)')
+    // 批量含递归条目 → 该条截断 root → 并集含 root → 任意写失效(保守)
+    const batchRecMsg = [...mkRound([{ name: 'query_data', args: { queries: ['$.meta.total', '$..title'] } }], ['batch']), ...mkRound([{ name: 'write', args: {} }], ['ok'])]
+    assert(invalidateStaleReads(batchRecMsg, [W('write', { patch: { op: 'set', jsonPath: 'settings.title', value: 1 } })]).invalidatedCount === 1, '✓ query 批量 → 含递归条目按并集含 root 保守失效')
     // search 恒 root
     const sMsg = [...mkRound([{ name: 'search_data', args: { query: 'x' } }], ['matched 1']), ...mkRound([{ name: 'write', args: {} }], ['ok'])]
     const rs = invalidateStaleReads(sMsg, [W('write', { patch: { op: 'set', jsonPath: 'settings.title', value: 1 } })])
@@ -189,7 +197,9 @@ export async function run(ctx: TestCtx) {
     const c = CONTENT(r.messages[1])
     assert(r.invalidatedCount === 1, '✓ del 文案 → del 写触发兄弟失效')
     assert(!c.includes('最新值与新 hash'), '✓ del 文案 → 不引用「已含新值+hash」(del 无值不撒谎)')
-    assert(c.includes('仍为读取时原值可参考'), '✓ del 文案 → 兄弟子树提示保留')
+    // 文案如实(team-audit P2「批读失效占位文案不实」修):整条已替换,不再称「兄弟子树仍可参考」
+    assert(c.includes('整体已过期'), '✓ del 文案 → 如实声明整条过期(防凭旧值直写)')
+    assert(!c.includes('仍为读取时原值可参考'), '✓ del 文案 → 误导性「兄弟子树可参考」已移除')
   }
 
   // 12. id 缺失顺序兜底配对(宁漏勿误:失配跳过)
@@ -216,5 +226,8 @@ export async function run(ctx: TestCtx) {
     assert(JSON.stringify(extractReadPaths('read', {})) === JSON.stringify(['']), '✓ 读取单元 → read 无参 = ROOT')
     assert(JSON.stringify(extractReadPaths('query_data', { expr: '$.components[0].name' })) === JSON.stringify(['components.0.name']), '✓ 读取单元 → expr 索引段进前缀')
     assert(JSON.stringify(extractReadPaths('query_data', { expr: '$.components[*].id' })) === JSON.stringify(['components']), '✓ 读取单元 → 通配截断前缀')
+    // W1 批量 queries → 逐条前缀并集
+    assert(JSON.stringify(extractReadPaths('query_data', { queries: ['$.components[0].name', '$.meta.owner'] })) === JSON.stringify(['components.0.name', 'meta.owner']), '✓ 读取单元 → queries 逐条前缀并集')
+    assert(JSON.stringify(extractReadPaths('query_data', { queries: ['$.a', '$.a.b'] })) === JSON.stringify(['a', 'a.b']), '✓ 读取单元 → queries 并集不去重(宁重复勿漏)')
   }
 }

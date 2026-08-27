@@ -106,7 +106,11 @@ function queryPrefixPath(expr: string): string {
 /** 读工具的读取范围(归一后;空 = ROOT) */
 export function extractReadPaths(name: string, args: Record<string, unknown> | undefined): string[] {
   const a = args || {}
-  if (name === 'query_data') return [queryPrefixPath(String(a.expr || ''))]
+  // W1 批量 queries:失效面 = 逐条前缀并集(修前 queries 下 String(undefined)→'' → ROOT 过度失效)
+  if (name === 'query_data') {
+    const exprs = Array.isArray(a.queries) && a.queries.length ? a.queries.map(String) : [String(a.expr || '')]
+    return exprs.map((e) => queryPrefixPath(e))
+  }
   if (name === 'search_data') return [ROOT]
   // read:jsonPath ∪ jsonPaths(jsonPaths 不收集会误判 root,任意写整条击穿)
   const out: string[] = []
@@ -167,8 +171,10 @@ function buildPlaceholder(readPaths: string[], readTool: string, writes: Effecti
   const when = round !== undefined ? `第 ${round} 轮写入了 ${writtenDisp}` : `已写入 ${writtenDisp}`
   const lines = [`⏱[过期快照] 此前读取 ${readDisp} 的结果已失效(${when})。`]
   const hasValue = writes.some((w) => w.hasPostValue)
-  if (hasValue) lines.push(`该轮写入结果已含 ${writtenDisp} 最新值与新 hash;${readDisp} 的兄弟子树(未触及部分)仍为读取时原值可参考。`)
-  else lines.push(`${readDisp} 的兄弟子树(未触及部分)仍为读取时原值可参考。`)
+  // 文案如实(team-audit P2 登记「批读失效占位文案不实」修):整条 ToolMessage 已被原子替换,兄弟路径同样不可引用
+  // (原「仍为读取时原值可参考」误导模型凭旧值直写,恰是本机制要消灭的行为);逐路径行级重写仍 deferred
+  if (hasValue) lines.push(`该轮写入结果已含 ${writtenDisp} 最新值与新 hash,直接引用即可;原读取结果整体已过期,未提及路径需引用时按下方指引重读/重跑。`)
+  else lines.push(`原读取结果整体已过期(含未触及的兄弟路径),需引用时按下方指引重读/重跑。`)
   if (readTool === 'query_data' || readTool === 'search_data') {
     lines.push(`需当前结果时重跑 ${readTool}(表达式/条件不变即可)。`)
   } else {

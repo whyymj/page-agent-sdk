@@ -1164,7 +1164,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       `说明: ${description}`,
       `格式: 写入值需为 JSON,且通过声明的 schema 校验(校验失败时 write 会返回结构化错误,含具体字段与期望类型)。`,
     ].join('\n'),
-    { name: 'describe_data', description: '获取主数据的说明与格式要求。', schema: z.object({}) },
+    { name: 'describe_data', description: '获取主数据的说明与格式要求(等价于 read 不传 jsonPath;优先用 read 单一入口)。', schema: z.object({}) },
   )
 
   // get_data/set_data/edit_data/delete_data 已移除(legacy-crud-dedup,4.0):read/write 全覆盖且为唯一入口
@@ -1190,8 +1190,8 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     },
     {
       name: 'restore_data',
-      description: '把主数据回退到某个快照(就地还原,保留响应式)。不传 id 则回退最近一次(快速回退)。可用 history_data({list:true}) 查看快照列表。',
-      schema: z.object({ id: z.number().int().optional().describe('指定快照序号;不传则回退最近一次') }),
+      description: '把主数据回退到某个快照(不传 id 回退最近一次)。快照列表用 history_data({list:true})。',
+      schema: z.object({ id: z.number().int().optional().describe('快照序号;不传回退最近一次') }),
     },
   )
   markWrite(restoreData)
@@ -1227,43 +1227,60 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     },
     {
       name: 'history_data',
-      description: '查看主数据快照(只读不回退当前)。list:true 列时间线;传 id 看某次快照内容(默认最近),jsonPath 可只看子路径。冲突诊断/看上一版用;对比差异用 diff_data;回退用 restore_data。',
+      description: '查看主数据快照(只读不回退):list:true 列时间线;传 id 看某次内容(默认最近),jsonPath 可只看子路径。对比差异用 diff_data;回退用 restore_data。',
       schema: z.object({
-        id: z.number().int().optional().describe('快照序号;不传则最近一次(list:true 时忽略)'),
-        jsonPath: z.string().optional().describe('只看快照的某子路径(相对主数据根);不传则整个快照'),
-        list: z.boolean().optional().describe('true 则列出快照时间线元信息(序号/操作/标签/时间/大小);不传则查看单条快照内容'),
+        id: z.number().int().optional().describe('快照序号;不传看最近一次(list:true 时忽略)'),
+        jsonPath: z.string().optional().describe('只看快照的某子路径'),
+        list: z.boolean().optional().describe('true 列出快照时间线(序号/操作/标签/时间/大小)'),
       }),
     },
   )
 
   const queryData = tool(
-    async ({ expr, limit }, config) => {
+    async ({ expr, queries, limit }, config) => {
       const qScope = scopeOf(config)  // 大文本摘要的 isMain 语义用(主 scope 摘要 / 子 scope 全文)
       if (bindRef == null || typeof bindRef !== 'object') {
         return toolError({ code: 'NOT_OBJECT', message: `主数据不是对象/数组,无法查询(当前为 ${bindRef === undefined ? 'undefined' : typeof bindRef})`, hint: 'query 仅适用于对象/数组;叶子用 read 读' })
       }
       const queryTarget = allowKeys ? projectBySchemaDeep(bindRef, schema) : bindRef
-      let nodes
-      try { nodes = jpEval(queryTarget, expr) } catch (e) {
-        return toolError({ code: 'JSONPATH_SYNTAX', message: `JSONPath 解析错误: ${(e as Error).message}`, hint: '语法子集:$ .key [n] ["key"] [*] [?(filter)] ..key ..*;filter:@.field op literal,&&/||/();对象根需先点出数组字段再过滤,如 $.components[?(@.x>1)]', details: { expr } })
-      }
-      const cap = limit ?? 50
-      const sliced = nodes.slice(0, cap)
-      // 大文本摘要(rv-core F2 + subtree-summary 泛化):query_data(simple 默认可用)原样回灌命中 value → codeAsset 场景大 code
-      // 绕过 read 的 <code Nkb> 机制直灌主上下文;与 read 同 isMain 语义。命中值**不做结果根豁免**(占位+path 正是检索形态:
-      // LLM 钉 path 窄读);聚焦态命中值按焦点前缀全文(focus __pgFullTextPaths)
       const qFullText = fullTextPrefixesOf(config)
-      const parts = sliced.map((n) => `{"path":${JSON.stringify(n.path)},"index":${n.index === undefined ? 'null' : n.index},"value":${safeStringify(summarizeLargeText(n.value, qScope === MAIN_SCOPE, largeTextSpecs, largeTextThreshold, { rootExempt: false, rootPath: String(n.path ?? ''), fullTextPrefixes: qFullText, onSummarized: noteSummarized }))}}`)
-      return `{"matched":${nodes.length},"returned":${sliced.length},"truncated":${nodes.length > cap},"results":[${parts.join(',')}]}`
+      /** 单条求值(批量与单次共用同一输出形态);语法错返回 ERROR: 串由调用方分流 */
+      const evalOne = (e: string): string => {
+        let nodes
+        try { nodes = jpEval(queryTarget, e) } catch (err) {
+          return toolError({ code: 'JSONPATH_SYNTAX', message: `JSONPath 解析错误: ${(err as Error).message}`, hint: '语法子集:$ .key [n] ["key"] [*] [?(filter)] ..key ..*;filter:@.field op literal,&&/||/();对象根需先点出数组字段再过滤,如 $.components[?(@.x>1)]', details: { expr: e } })
+        }
+        const cap = limit ?? 50
+        const sliced = nodes.slice(0, cap)
+        // 大文本摘要(rv-core F2 + subtree-summary 泛化):query_data(simple 默认可用)原样回灌命中 value → codeAsset 场景大 code
+        // 绕过 read 的 <code Nkb> 机制直灌主上下文;与 read 同 isMain 语义。命中值**不做结果根豁免**(占位+path 正是检索形态:
+        // LLM 钉 path 窄读);聚焦态命中值按焦点前缀全文(focus __pgFullTextPaths)
+        const parts = sliced.map((n) => `{"path":${JSON.stringify(n.path)},"index":${n.index === undefined ? 'null' : n.index},"value":${safeStringify(summarizeLargeText(n.value, qScope === MAIN_SCOPE, largeTextSpecs, largeTextThreshold, { rootExempt: false, rootPath: String(n.path ?? ''), fullTextPrefixes: qFullText, onSummarized: noteSummarized }))}}`)
+        return `{"matched":${nodes.length},"returned":${sliced.length},"truncated":${nodes.length > cap},"results":[${parts.join(',')}]}`
+      }
+      // W1 批量模式(tool-surface-economy):多条件一次取回;逐条独立求值,单条失败该项标 error 不整批(容错口径同 read jsonPaths);
+      // 与 expr 同传按 queries。逐条结果 = 单次输出对象体原样(matched/returned/truncated/results)+ expr/ok 外壳
+      if (queries && queries.length) {
+        const items = queries.map((q) => {
+          const one = evalOne(q)
+          return one.startsWith('ERROR:')
+            ? `{"expr":${JSON.stringify(q)},"ok":false,"error":${JSON.stringify(one)}}`
+            : `{"expr":${JSON.stringify(q)},"ok":true,${one.slice(1)}`
+        })
+        return `{"batch":true,"results":[${items.join(',')}]}`
+      }
+      if (expr === undefined) return toolError({ code: 'SCHEMA_INVALID', message: 'query_data 需传 expr(单条 JSONPath)或 queries(2-10 条批量),两者都没传', hint: '单表达式用 expr;多条件筛选一次取回用 queries' })
+      return evalOne(expr)
     },
     {
       name: 'query_data',
       description:
-        '用 JSONPath 查询主数据(只读):$ 根/.key/[n]/[*]/[?(==/!=/</<=/>/>=,&&/||)]/..key 递归。返回匹配元素 path/index/value(path 可作 write patch 的 jsonPath);大数组筛选定位用它。',
+        '用 JSONPath 查询主数据(只读):$ 根/.key/[n]/[*]/[?(==/!=/</<=/>/>=,&&/||)]/..key 递归。返回匹配元素 path/index/value(path 可作 write patch 的 jsonPath);大数组筛选定位用它;多条件筛选传 queries 数组一次取回。',
 
       schema: z.object({
-        expr: z.string().describe('JSONPath 表达式,如 $.components[?(@.type=="card" && @.price<100)] 或 $..title(递归找所有 title)'),
-        limit: z.number().int().min(1).max(200).optional().describe('返回结果上限,默认 50'),
+        expr: z.string().optional().describe('单条 JSONPath 表达式,如 $.components[?(@.type=="card" && @.price<100)] 或 $..title(递归找所有 title)'),
+        queries: z.array(z.string()).min(2).max(10).optional().describe('批量模式:2-10 条 JSONPath 一次取回(与 expr 同传按 queries);逐条独立返回,单条失败该项标 error 不整批'),
+        limit: z.number().int().min(1).max(200).optional().describe('返回结果上限(批量时逐条适用),默认 50'),
       }),
     },
   )
@@ -1395,11 +1412,11 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'eval_script',
       description:
-        '在 Worker 沙箱对主数据跑自定义 JS(无 window/fetch,超时 3s)。入参 data(深拷贝),返回值即结果。mode:query 只读回给 LLM(过滤/映射/聚合)/transform 落地(返回完整新值或 {patches:[...]} 增量)。jsonPath 可只对子树执行。',
+        '在 Worker 沙箱对主数据跑自定义 JS(无网络,超时 3s)。入参 data(深拷贝);mode:query 只读回给 LLM/transform 校验后落地(完整新值或 {patches:[…]} 增量);jsonPath 可限定子树。',
       schema: z.object({
-        script: z.string().describe('JS 脚本体,如 data.filter(c=>c.stock>0).map(c=>c.id);入参名 data;末尾表达式或 return 即返回值'),
-        mode: z.enum(['query', 'transform']).optional().describe('query=只读返回结果(默认),transform=校验后落地为新值'),
-        jsonPath: z.string().optional().describe('子树模式:仅对 jsonPath 指向的子树执行(降低大 JSON 成本);transform 时返回值作为该子树新值'),
+        script: z.string().describe('JS 脚本(入参 data;末尾表达式或 return 即返回值),如 data.filter(c=>c.stock>0)'),
+        mode: z.enum(['query', 'transform']).optional().describe('query=只读返回结果(默认)/transform=校验后落地为新值'),
+        jsonPath: z.string().optional().describe('子树模式:仅对该子树执行;transform 返回值作为子树新值'),
       }),
     },
   )
@@ -1507,14 +1524,14 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'read',
       description:
-        '读取主数据(高层入口,合并 describe/get)。不传 jsonPath → 返回主数据说明 + 格式提示(含字段约束);传 jsonPath → 返回该子路径当前值 + hash;传 jsonPaths → 一次读多个不相关子路径(省多轮往返)。hash 用于乐观锁(声明 conflictWatchFields 后 write 自动比对;未声明不自动校验)。fields(字段裁剪)/depth(深度截断)减体积;offset+limit 对数组目标分页(返回切片 + total/hasMore)。',
+        '读主数据(只读):不传 jsonPath 返回整体说明+格式;传 jsonPath 返回该路径当前值+hash;传 jsonPaths 一次读多个不相关路径。fields/depth 裁剪、offset/limit 数组分页减体积;详细规则见系统提示。',
       schema: z.object({
-        jsonPath: z.string().optional().describe('要读的子路径(相对主数据根,如 components.0.text);不传则读整个主数据并返回说明'),
-        jsonPaths: z.array(z.string()).optional().describe('多路径读取:一次读多个不相关子路径(与 jsonPath 互斥,优先于 jsonPath);返回各路径值,非法路径单项标错不整批失败'),
-        fields: z.array(z.string()).optional().describe('字段裁剪:只返回指定字段(对对象/数组元素投影),减少返回体积,如 ["id","title"]'),
-        depth: z.number().int().min(0).optional().describe('嵌套深度限制:0=只根占位,1=根+子,递归到 depth 层后用 {...}/[...] 占位截断,减少深层返回体积'),
-        offset: z.number().int().min(0).optional().describe('数组分页起始偏移(仅当读取目标是数组时生效,默认 0),配合 limit 分页读大数组'),
-        limit: z.number().int().min(1).max(200).optional().describe('数组分页每页条数(默认 50,上限 200;仅数组时生效),返回切片 + total/hasMore'),
+        jsonPath: z.string().optional().describe('要读的子路径(如 components.0.text);不传读整体+说明'),
+        jsonPaths: z.array(z.string()).optional().describe('多路径一次读(与 jsonPath 互斥,优先);非法路径单项标错不整批'),
+        fields: z.array(z.string()).optional().describe('只返回指定字段(投影减体积),如 ["id","title"]'),
+        depth: z.number().int().min(0).optional().describe('嵌套深度限制(0=只根占位,逐层截断减体积)'),
+        offset: z.number().int().min(0).optional().describe('数组分页起始偏移(仅数组目标,默认 0)'),
+        limit: z.number().int().min(1).max(200).optional().describe('数组分页每页条数(默认 50,上限 200),返回切片+total/hasMore'),
       }),
     },
   )
@@ -1610,22 +1627,22 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     {
       name: 'write',
       description:
-        '写入主数据(高层入口,合并 set/edit/delete + 自动乐观锁 + 自动快照)。四意图:① 整体替换 write({value:整个对象});② 增量 write({patch:{op,jsonPath,value}}) op=set/remove/merge/append/move(move 的 value=目标路径字符串);③ 批量原子 write({patches:[...]})(任一失败整批回滚);④ 删子路径 write({patch:{jsonPath},del:true})。dryRun:true 预检不落盘。写入自动 schema 校验(失败不写,按错误修正重试)+ 自动快照。详细用法见系统提示「能力使用提示」。',
+        '写主数据(唯一写入口;自动 schema 校验+乐观锁+快照)。四意图:整体替换 {value}/增量 {patch:{op,jsonPath,value}}(op set/remove/merge/append/move)/原子批 {patches:[…]}(任一失败回滚)/删子路径 {patch:{jsonPath},del:true};dryRun 预检;详细规则见系统提示。',
 
       schema: z.object({
-        value: z.unknown().optional().describe('JSON 对象(推荐,如 {title:"x"})或 JSON 字符串;set 整体或单个 patch 的 set/merge/append 必填'),
+        value: z.unknown().optional().describe('JSON 对象(推荐)或 JSON 字符串;set 整体或 patch 的 set/merge/append 必填'),
         patch: z.object({
-          op: z.enum(['set', 'remove', 'merge', 'append', 'move']).optional().describe('增量操作:set 设值/remove 删/merge 合并对象/append 追加数组/move 移动数组元素(value=目标路径字符串)。单 patch edit 缺省按 set;del 模式(write({patch:{jsonPath},del:true}))不读 op 可省略'),
-          jsonPath: z.string().optional().describe('相对主数据根的点号路径(如 components.0.text);set/remove 必填,merge/append 不填则作用于根'),
-          value: z.unknown().optional().describe('该 patch 的值(JSON 直传或 JSON 字符串);set/merge/append 必填,remove 不需。与顶层 value 二选一:优先 patch.value,未填则回退顶层 value(向后兼容)。推荐用 patch.value(自带,与 patches 元素一致,无歧义)'),
-        }).optional().describe('单个增量编辑(自带 value,与 patches 元素一致);传 patch(无 patches)走单 patch edit 语义'),
+          op: z.enum(['set', 'remove', 'merge', 'append', 'move']).optional().describe('set 设值/remove 删/merge 合并对象/append 追加数组/move 移动元素(value=目标路径字符串);缺省 set'),
+          jsonPath: z.string().optional().describe('相对主数据根的点号路径(如 components.0.text);set/remove 必填,merge/append 不填作用于根'),
+          value: z.unknown().optional().describe('该 patch 的值(JSON 或 JSON 字符串);与顶层 value 二选一,优先 patch.value'),
+        }).optional().describe('单个增量编辑(自带 value)'),
         patches: z.array(z.object({
           op: z.enum(['set', 'remove', 'merge', 'append', 'move']),
-          jsonPath: z.string().optional().describe('相对主数据根的点号路径;set/remove 必填,merge/append 不填则作用于根'),
-          value: z.unknown().optional().describe('JSON 值(推荐直传)或 JSON 字符串;set/merge/append 必填,remove 不需'),
-        })).optional().describe('批量增量编辑:一次原子应用多个 patch(任一失败则整体不写入,clone 试跑全部 + schema 校验通过才落 live)。适合一次改多处,减少多轮往返'),
+          jsonPath: z.string().optional().describe('相对主数据根的点号路径;set/remove 必填,merge/append 不填作用于根'),
+          value: z.unknown().optional().describe('JSON 值(推荐直传)或 JSON 字符串;set/merge/append 必填'),
+        })).optional().describe('批量原子编辑:一次提交多个 patch,任一失败整体不写入;适合一次改多处'),
         del: z.boolean().optional().describe('true 则删除 patch.jsonPath 指定的子路径'),
-        dryRun: z.boolean().optional().describe('预检模式:走完整校验链(schema + 白名单 + patch 应用到 clone)但不落盘、不入快照,返回预览。四意图(value/patch/patches/del)均支持;乐观锁冲突照常检测(返回 VERSION_CONFLICT 不挂起)'),
+        dryRun: z.boolean().optional().describe('预检:走完整校验链但不落盘不入快照;冲突返回 VERSION_CONFLICT 不挂起'),
       }),
     },
   )

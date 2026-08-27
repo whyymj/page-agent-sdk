@@ -129,6 +129,32 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(t['query_data'], { expr: '$[?(@.x==' })
     assert(/JSONPath/.test(r), 'query_data: 语法错误返回错误信息')
 
+    // ---- W1 批量 queries(tool-surface-economy):batch 信封 + 逐条与单次输出同构;单条失败不整批;与 expr 互斥 ----
+    r = await invoke(t['query_data'], { queries: ['$.components[?(@.stock==0)]', '$..title'] })
+    parsed = JSON.parse(r)
+    assert(parsed.batch === true && parsed.results.length === 2, '✓ query 批量 → batch 信封 + 逐条结果数组')
+    assert(parsed.results[0].ok === true && parsed.results[0].matched === 1 && parsed.results[0].results[0].index === 1, '✓ query 批量 → 首条与单次输出同构(matched/results[].path/index)')
+    assert(parsed.results[1].ok === true && parsed.results[1].matched === 3, '✓ query 批量 → 次条递归表达式独立求值')
+
+    // 单条语法错 → 该项 ok:false 带 error,不整批失败
+    r = await invoke(t['query_data'], { queries: ['$.components[?(@.stock==0)]', '$[?(@.x=='] })
+    parsed = JSON.parse(r)
+    assert(parsed.batch === true && parsed.results[0].ok === true && parsed.results[1].ok === false && /JSONPath/.test(parsed.results[1].error), '✓ query 批量 → 单条失败该项标 error 不整批(容错口径同 read jsonPaths)')
+
+    // 与 expr 同传按 queries(expr 被忽略,不因 expr 非法报错)
+    r = await invoke(t['query_data'], { queries: ['$.meta.total', '$.meta.owner.name'], expr: '$.nope' })
+    parsed = JSON.parse(r)
+    assert(parsed.batch === true && parsed.results.every((x: any) => x.ok === true), '✓ query 批量 → 与 expr 同传按 queries')
+
+    // 两者都缺 → 参数错误(不裸抛)
+    r = await invoke(t['query_data'], {})
+    assert(/^ERROR:/.test(r) && /queries/.test(r), '✓ query → expr/queries 都缺返回参数错误(引导二选一)')
+
+    // 单元素 queries(<2)被 schema 拒(单表达式应走 expr;zod 前置校验经 LC invoke 抛错或结构化错误)
+    let single = ''
+    try { single = await invoke(t['query_data'], { queries: ['$.meta.total'] }) } catch (e) { single = `THREW ${String(e)}` }
+    assert(/^THREW/.test(single) || /ERROR:/.test(single), '✓ query → queries 单条(<2)被拒(防单表达式误走批量)')
+
     // searchJson 子串
     let hits = searchJson(data, '卡片')
     assert(hits.length === 2, 'searchJson: substring "卡片" → 命中 2 个 title')
