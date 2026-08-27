@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+## [4.7.0] - 2026-08-27
+
+### Added(html-design-skill)
+
+- **`createHtmlSubagent` 内置设计品味 skill(`design` 选项,默认挂载)**:子 agent 默认并列挂 `web-design-engineer`(vendored 自 ConardLi garden-skills v1.2.2,MIT,README 含致谢与许可全文)—— 与内置 `html-fragment`(落地规范)分工:design 管品味(设计系统先声明再写码 / 反 AI 俗套规则 / oklch 感知均匀配色 / 25 个具名风格配方 linear·apple-hig·muji·pentagram·bloomberg-terminal… / 5 维自评)。渐进披露零常驻成本:system 索引只多一行,33K 主文仅子 agent 主动 `load_skill` 时进上下文,29 个参考文档再按需 `load_skill(name, ref)` 单个取回。主文三处适配委派场景(无网事实核实 → 以委派 task 为准 + 收口报告标注未核实项 / 不能中途反问 → 保守高级默认 + 收口报告列假设 / 输出形态 → 自包含组件),参考文件保持上游原文。`design:false` 关闭(零注入)/ 传 `SkillSpec` 替换自定义版本;用户传 `skills` 时 design 追加其后不冲突;`_rebuildCodeAssetPaths` 重建后同实例保持;编排段同步注入配方名引导(`htmlOrchestratorPrompt` 第三参 `design` 控制)。上游升级通道:`node scripts/gen-design-skill.mjs <skill目录>` 重新生成 references + 手工对齐主文适配(selftest sec-115 锚点断言护住适配不丢)
+
+### Changed
+
+- **dist 体积有意增长(html-design-skill 全量 vendor)**:各 JS 产物 +160~230K(ESM ~1032→1194K / headless ~457→673K / IIFE ~1999→2206K / legacy ~3021→3189K);`tests/size-check.mjs` 与 e2e headless 体积断言按新基线重校(+~10% 余量)。曾按 proposal 预案评估「精选 90K 降级」,因用户拍板「全量 268K vendor」显式优先,未降级(备案见 openspec/changes/2026-08-27-html-design-skill/proposal.md)
+- **默认行为变化(minor)**:html 子 agent 技能面从 1 skill(html-fragment)变 2(+web-design-engineer);自动装配路径(3.9+)同样生效
+
+### 测试
+
+- selftest 3171(+37:sec-115 design skill 全链 + 主文引用↔ref name 全量对账防漂移)/ e2e 1026(+6:capability-packs design 三态反射)/ browser 132(零回归)
+
 ## [4.6.0] - 2026-08-27
 
 ### Added(tool-surface-economy W1/W2)

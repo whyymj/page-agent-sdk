@@ -84,7 +84,7 @@ export async function run() {
     sdk.unmount()
   }
 
-  console.log('[e2e:headless-subpath] bundle 纯净性:不含 UI 层依赖 + 体积 ≤ 600KB')
+  console.log('[e2e:headless-subpath] bundle 纯净性:不含 UI 层依赖 + 体积 ≤ 760KB')
   {
     const bundle = fs.readFileSync(HEADLESS_DIST, 'utf8')
     // UI 层重依赖(marked/highlight.js/dompurify)+ ChatDialog 组件,确定性不可达 → 文本应为 0
@@ -93,10 +93,11 @@ export async function run() {
     assert(!bundle.includes('marked'), 'bundle 不含 marked')
     assert(!bundle.includes('ChatDialog'), 'bundle 不含 ChatDialog')
 
-    // 体积断言(主 ESM 789KB;headless 实测 ~333KB,阈值 600KB 留余量防回归)
+    // 体积断言(headless 实测 ~673KB —— 2026-08-27 html-design-skill 内置 web-design-engineer 后 +216K;
+    // 阈值 760KB 与 tests/size-check.mjs 同口径,防 UI 层意外拉入回归)
     const sizeKB = fs.statSync(HEADLESS_DIST).size / 1024
     assert(sizeKB > 100, `bundle 非空有内容(${sizeKB.toFixed(0)}KB)`)
-    assert(sizeKB <= 600, `bundle 体积 ≤ 600KB(实测 ${sizeKB.toFixed(0)}KB;超阈值说明 UI 层被意外拉入)`)
+    assert(sizeKB <= 760, `bundle 体积 ≤ 760KB(实测 ${sizeKB.toFixed(0)}KB;超阈值说明 UI 层被意外拉入)`)
   }
 
   return { pass: ctx.pass, fail: ctx.fail }

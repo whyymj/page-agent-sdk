@@ -129,9 +129,9 @@ export async function run(ctx: TestCtx): Promise<void> {
   const cfg3 = createHtmlSubagent({ writablePaths: ['components'], planning: false, formatCheck: false })
   assert(!cfg3.middleware, '✓ planning:false + formatCheck:false → middleware 不装')
 
-  // 单模式(不再 codeKind):默认 html-fragment skill + 完整页面级 prompt
+  // 单模式(不再 codeKind):默认 html-fragment skill + 完整页面级 prompt(4.6+ design 品味 skill 默认并列第二,细测 sec-115)
   const cfg4 = createHtmlSubagent({ writablePaths: ['components'] })
-  assert(cfg4.skills?.length === 1 && cfg4.skills[0].name === 'html-fragment', '✓ 单模式 → 默认 html-fragment skill')
+  assert(cfg4.skills?.length === 2 && cfg4.skills[0].name === 'html-fragment', '✓ 单模式 → 默认 html-fragment skill 首位')
   assert(cfg4.systemPrompt?.includes('.html'), '✓ 单模式 → systemPrompt 引导 .html 文件')
   assert(String(cfg4.skills?.[0].getContent?.()).includes('完整、自包含'), '✓ html-fragment skill 含完整页面输出契约')
   const cfg5 = createHtmlSubagent({ writablePaths: ['components'] })

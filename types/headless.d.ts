@@ -1593,6 +1593,13 @@ export interface CreateHtmlSubagentOptions {
   maxToolRounds?: number;
   temperature?: number;
   skills?: SkillSpec[];
+  /**
+   * 内置设计品味 skill(web-design-engineer,vendored from ConardLi garden-skills v1.2.2,MIT):
+   * 设计系统先声明 / 反 AI 俗套 / oklch 配色 / 25 风格配方 / 5 维自评 —— 与内置落地规范 skill(html-fragment)
+   * 分工并列(design 管品味,htmlFragment 管落地)。缺省 true 挂载(追加在用户 skills 之后);
+   * false 关闭;传 SkillSpec 替换为自定义版本。主文/参考只在子 agent load_skill 时渐进进上下文。
+   */
+  design?: boolean | SkillSpec;
   extraTools?: any[];
   /** 输出格式校验(validate_code 工具 + verify beforeReturn 门禁);默认 true */
   formatCheck?: boolean;

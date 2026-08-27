@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-3134%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-3171%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -244,7 +244,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `verify` | `{check?,maxAttempts?,adversarial?}` | 需 `capabilities.verify:true`；`check` 省略用 `createWriteBackCheck`（读回根对象自动取 `data.bind`，适配 `sdk.setData` 运行时替换） |
 | **子 agent** | `subagent` | `{allowedTools?,systemPrompt?,temperature?,llm?,maxDepth?·1,maxParallel?·4}` | 运行时自由委派（`spawn_agent`/`spawn_agents`） |
 | | `subagents` | `SubagentConfig[]` | 预声明命名子 agent → 每个生成 `use_<id>` 委派工具 |
-| **能力包** (2.37+) | `subagents` | `createRagSubagent({retriever?,loader?,useVfs?})` / `createHtmlSubagent({writablePaths?,codeVfsPrefix?,codeField?,orchestratorPrompt?,formatCheck?,craftNotes?})`(3.9+ 通常无需显式声明 —— createChatSdk 装配期自动装配默认 HTML 子 agent;显式传仅用于定制 codeField/formatCheck 等;开放 schema/嵌套容器/点路径 codeField 需显式传) | 专用子 agent 工厂 —— **RAG**:多源检索(语义 `search_docs` / 异步 `load_doc` / vfs / fetch),只读,独立上下文;**HTML**:代码组件生成 —— **代码作为 data 资产**(代码存 `data.<writablePath>[i].code`,随 data json 持久化;vfs 作编辑工作副本)。框架自动 checkout(data.code→vfs 按 `__pgId`)/ commit(vfs→data.code,直改 bind,不进快照栈),主 agent 透明(主 scope read 见 `<code Nkb>` 摘要)。新建走 `write`;修改走 `vfs_edit` 工作副本。`codeField`(默认 `'code'`,嵌套 jsonPath 如 `'props.html_code'` 适配开放 schema 平台;+ 装配期命中校验填错路径 onWarning);主 agent 编排**装配期自适应注入**(3.9+ 零配置:无显式 html 子 agent + schema 含 code 数组→**自动装配默认 HTML 子 agent**(无开关,info 留痕);有显式子 agent→委派;`orchestratorPrompt:false` opt-out);模型建议:html 代码生成推荐强指令模型(deepseek-v4/claude/gpt-4o),flash 类放大过度思考;**工匠笔记 `craftNotes`**(默认开):子 agent 收口回复 `[note]` 行沉淀为组件 `__pgNotes`(随 data 持久化),下次委派同组件经文件地图注入「前任的交接」(设计决策/用户反馈/踩坑)—— 同组件跨委派设计意图持续,`craftNotes:false` 关闭;`formatCheck` 默认开 = `validate_code` 自检 + verify beforeReturn 门禁回灌自纠;`validateHtmlFormat` 导出。**Breaking(3.0)**:去 `onComplete`/`codeRef`/`codeSnapshots` —— 迁移 `codeRef`→`code` 字段,去 `onComplete`/镜像。可组合/拆分,opt-in,随 `rag-search`/`html-builder` skill 分发。另 `sdk.vfsWrite(path,content)` 异步注入文档。见 [doc/usage-guide.md](doc/usage-guide.md#能力包) |
+| **能力包** (2.37+) | `subagents` | `createRagSubagent({retriever?,loader?,useVfs?})` / `createHtmlSubagent({writablePaths?,codeVfsPrefix?,codeField?,orchestratorPrompt?,formatCheck?,craftNotes?,design?})`(3.9+ 通常无需显式声明 —— createChatSdk 装配期自动装配默认 HTML 子 agent;显式传仅用于定制 codeField/formatCheck 等;开放 schema/嵌套容器/点路径 codeField 需显式传) | 专用子 agent 工厂 —— **RAG**:多源检索(语义 `search_docs` / 异步 `load_doc` / vfs / fetch),只读,独立上下文;**HTML**:代码组件生成 —— **代码作为 data 资产**(代码存 `data.<writablePath>[i].code`,随 data json 持久化;vfs 作编辑工作副本)。框架自动 checkout(data.code→vfs 按 `__pgId`)/ commit(vfs→data.code,直改 bind,不进快照栈),主 agent 透明(主 scope read 见 `<code Nkb>` 摘要)。新建走 `write`;修改走 `vfs_edit` 工作副本。`codeField`(默认 `'code'`,嵌套 jsonPath 如 `'props.html_code'` 适配开放 schema 平台;+ 装配期命中校验填错路径 onWarning);主 agent 编排**装配期自适应注入**(3.9+ 零配置:无显式 html 子 agent + schema 含 code 数组→**自动装配默认 HTML 子 agent**(无开关,info 留痕);有显式子 agent→委派;`orchestratorPrompt:false` opt-out);模型建议:html 代码生成推荐强指令模型(deepseek-v4/claude/gpt-4o),flash 类放大过度思考;**工匠笔记 `craftNotes`**(默认开):子 agent 收口回复 `[note]` 行沉淀为组件 `__pgNotes`(随 data 持久化),下次委派同组件经文件地图注入「前任的交接」(设计决策/用户反馈/踩坑)—— 同组件跨委派设计意图持续,`craftNotes:false` 关闭;**内置设计品味 skill `design`**(4.7+ 默认挂载):vendored ConardLi garden-skills `web-design-engineer`(MIT)—— 设计系统先声明 / 反 AI 俗套 / oklch 配色 / 25 风格配方(linear/apple-hig/muji…),渐进披露(33K 主文 + 29 参考只在 load_skill 时进上下文);与 html-fragment 规范 skill 分工并列(品味 vs 落地);`design:false` 关闭 / 传 SkillSpec 替换;`formatCheck` 默认开 = `validate_code` 自检 + verify beforeReturn 门禁回灌自纠;`validateHtmlFormat` 导出。**Breaking(3.0)**:去 `onComplete`/`codeRef`/`codeSnapshots` —— 迁移 `codeRef`→`code` 字段,去 `onComplete`/镜像。可组合/拆分,opt-in,随 `rag-search`/`html-builder` skill 分发。另 `sdk.vfsWrite(path,content)` 异步注入文档。见 [doc/usage-guide.md](doc/usage-guide.md#能力包) |
 | **子 agent 观察层** (2.38+) | — | `inspect().subagent.{active,history}` / `sdk.{getActiveSubagents,subagentHistory}` | active/history 运行态 + DebugDrawer「🤖 子 agent」tab(随 `subagent` 能力开,会话级不持久化) |
 | **上下文** | `contextPreset` | `'auto' \| 'conservative' \| 'aggressive' \| 'complex'` · 默认 `auto` | 压缩预设档位（`complex` 面向多步 / 大 JSON / 长流程编排任务） |
 | | `contextOptions` | `Partial<ContextManagerOptions> \| false` | 细参覆盖（`false` 关压缩）。含 `promptSoftCapTokens`（3.11+ 压缩触发成本上限,窗口 ≥320K 默认 160K、显式 0 关）与 `preserveLastToolResults`（默认 `['describe_data','describe_data']`——压缩摘要里保留字段说明） |
@@ -503,7 +503,7 @@ function switchTo(i: number) {
 
 ```bash
 npm test            # 2894 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 1020 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm run test:e2e    # 1026 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试
@@ -599,6 +599,27 @@ npm test
 ## 与 Deep Agents 的关系
 
 借鉴 [Deep Agents](https://github.com/langchain-ai/deepagents) 的 harness 思路（ReAct + 中间件 + planning + skills + memory + context 管理），但自研实现：不引 LangGraph/langchain 整包；面向浏览器端（持久化用 IndexedDB 而非服务端 DB）；上下文用输入压缩 + 内存裁剪 + 大结果 offload，而非每步 checkpointer 存档。详见 [上下文与压缩 - 与 Deep Agents 的差异](https://github.com/whyymj/page-agent-sdk/blob/master/doc/context-management.md#七与-deep-agents-的差异)。
+
+## 致谢
+
+内置设计品味 skill(`web-design-engineer`)vendored 自
+[ConardLi/garden-skills](https://github.com/ConardLi/garden-skills/tree/main/skills/web-design-engineer)
+(skill `web-design-engineer` v1.2.2,© ConardLi),按上游 MIT License 使用与再分发:
+
+```
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+```
+
+适配说明:SDK 内置版对主文做了三处适配以贴合委派子 agent 场景(无网事实核实 → 以委派 task 为准 /
+不能中途反问用户 → 保守默认 + 收口报告列假设 / 输出形态 → 自包含组件);29 个参考文件保持上游原文。
 
 ## License
 

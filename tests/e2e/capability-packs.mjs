@@ -130,6 +130,22 @@ export async function run() {
     assert(fcHtml.systemPrompt?.includes('完整、自包含') && fcHtml.skills?.[0]?.name === 'html-fragment', '单模式 → 完整页面级 prompt(默认含 script)+ html-fragment skill')
   }
 
+  console.log('[e2e:capability-packs] design 品味 skill 装配(html-design-skill:默认挂 / false 关 / 自定义替换)')
+  {
+    const d1 = createHtmlSubagent({ writablePaths: ['components'] })
+    assert(d1.skills?.length === 2 && d1.skills[1]?.name === 'web-design-engineer' && d1.skills[1]?.references?.length === 29,
+      '默认装 web-design-engineer(第二位,html-fragment 之后;references 29 项渐进披露)')
+    const mainDoc = d1.skills[1].getContent()
+    assert(mainDoc.includes('Host Environment') && mainDoc.includes('closing report'), '主文含适配嫁接锚(Host Environment / 收口报告)')
+    assert(d1._codeAsset?.orchestratorPrompt?.includes('web-design-engineer'), '默认编排段含设计配方引导')
+    const d2 = createHtmlSubagent({ writablePaths: ['components'], design: false })
+    assert(d2.skills?.length === 1 && d2.skills[0].name === 'html-fragment', 'design:false → 只装 html-fragment(品味零注入)')
+    assert(!d2._codeAsset?.orchestratorPrompt?.includes('web-design-engineer'), 'design:false → 编排段不含设计引导(与 skill 面一致)')
+    const d3 = createHtmlSubagent({ writablePaths: ['components'], design: { name: 'custom-design', description: 'x', getContent: () => 'y' } })
+    assert(d3.skills?.length === 2 && d3.skills[1].name === 'custom-design' && d3.skills[1].references === undefined,
+      'design:SkillSpec → 内置替换为自定义版本(无 references 也合法)')
+  }
+
   console.log('[e2e:capability-packs] verify 门禁运行时(子 agent 写坏代码 → 回灌自纠 → 修正后放行)')
   {
     const { stubModel } = await import('./_stub-model.mjs')

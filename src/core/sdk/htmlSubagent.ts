@@ -28,6 +28,7 @@ import type { VfsFile } from '../harness/state'
 import type { VerifyCheck, VerifyCheckResult } from '../harness/verify'
 import { createTodosMiddleware } from '../harness/todos'
 import { createVerifyMiddleware } from '../harness/verify'
+import { buildDesignSkill } from './designSkill'
 import { createHtmlRenderCheck, composeStructureThenRender } from './htmlRenderCheck'
 import { validateHtmlFormat } from '../tools/htmlValidate'
 import { htmlOrchestratorPrompt } from '../presets'
@@ -69,6 +70,14 @@ export interface CreateHtmlSubagentOptions {
   thinkingMode?: 'simple' | 'deep'
   /** 默认装内置 html 生成规范 skill;集成方可追加或替换 */
   skills?: SkillSpec[]
+  /**
+   * 内置设计品味 skill(web-design-engineer,vendored from ConardLi garden-skills v1.2.2,MIT):
+   * 设计系统先声明 / 反 AI 俗套 / oklch 配色 / 25 风格配方 / 5 维自评 —— 与内置落地规范 skill(html-fragment)
+   * 分工并列:design 管品味,htmlFragment 管落地。缺省 true 挂载(追加在用户 skills 之后);
+   * false 关闭(零注入);传 SkillSpec 替换为自定义版本(集成方自带改版)。
+   * 成本:system 索引仅多一行;主文/参考(渐进披露)只在子 agent 主动 load_skill 时进上下文。
+   */
+  design?: boolean | SkillSpec
   /** 额外工具(直接进子 agent 工具池) */
   extraTools?: StructuredToolInterface[]
   /**
@@ -325,7 +334,7 @@ export function createHtmlSubagent(options: CreateHtmlSubagentOptions = {}): Sub
     writablePaths, codeVfsPrefix = 'html/', id = 'html', description, planning = true,
     summarization = true, maxToolRounds = 12, temperature = 0.4, skills, extraTools,
     formatCheck = true, codeField = 'code', orchestratorPrompt = true, craftNotes = true,
-    llm, thinkingMode, allowedTools,
+    llm, thinkingMode, allowedTools, design,
   } = options
   if (writablePaths !== undefined && !Array.isArray(writablePaths)) {
     throw new Error('[page-agent-sdk][createHtmlSubagent] writablePaths 须为字符串数组(代码组件 data 区,如 ["components"])/ 省略以从 schema 自动推断')
@@ -356,6 +365,13 @@ export function createHtmlSubagent(options: CreateHtmlSubagentOptions = {}): Sub
   // 示例路径参数:root = 首个 writablePath;未传(装配期推断)先用 'components' 占位,回填后经 _rebuildCodeAssetPaths 重建
   const root = writablePaths?.[0] ?? 'components'
   const usedDefaultSkill = skills === undefined
+  // design skill 解析:缺省/true = 内置 web-design-engineer;false = 不挂;SkillSpec = 自定义替换(路径无关,重建时同实例保持)
+  const designSkill: SkillSpec | null = design === false ? null : design === undefined || design === true ? buildDesignSkill() : design
+  // 技能表组装:html 生成规范(默认装或用户全量负责)+ design 品味 skill 追加于后(与规范并列,不互相覆盖)
+  const assembleSkills = (rootPath: string): SkillSpec[] => [
+    ...(usedDefaultSkill ? [buildHtmlFragmentSkill(rootPath, codeField)] : skills),
+    ...(designSkill ? [designSkill] : []),
+  ]
   const cfg: SubagentConfig = {
     id,
     description: description ?? `生成/修改纯代码组件(代码作为 data 资产,代码字段 ${codeField} 随 data 持久化;vfs 作工作副本;能规划(write_todos)+ 执行)。需写代码组件或灵活定制时委派`,
@@ -369,17 +385,18 @@ export function createHtmlSubagent(options: CreateHtmlSubagentOptions = {}): Sub
     summarization: summarization === false ? undefined : summarization,  // 默认开跨轮压缩(架构扩展)
     maxVerifyAttempts: formatCheck ? FORMAT_CHECK_MAX_ATTEMPTS : undefined,  // verify 门禁自纠上限(beforeReturn)
     temperature,
-    skills: usedDefaultSkill ? [buildHtmlFragmentSkill(root, codeField)] : skills,  // 内置完整 HTML 生成规范 skill(示例路径参数化)
+    skills: assembleSkills(root),  // html 生成规范(默认装)+ design 品味 skill(默认挂;design:false 关)
     maxToolRounds,
     tools: tools.length ? tools : undefined,
     // 框架内部标记:createChatSdk 装配期识别 → 注入 checkout/commit 钩子 + pgIdPaths + largeTextPaths + 强制 vfs
-    _codeAsset: { writablePaths: writablePaths ?? [], codeVfsPrefix, ext, codeField, craftNotes, ...(orchestratorPrompt ? { orchestratorPrompt: htmlOrchestratorPrompt(id, codeField) } : {}) },
+    _codeAsset: { writablePaths: writablePaths ?? [], codeVfsPrefix, ext, codeField, craftNotes, ...(orchestratorPrompt ? { orchestratorPrompt: htmlOrchestratorPrompt(id, codeField, design === undefined || design === true) } : {}) },  // 编排配方名引导仅内置 design(自定义版本自配引导,内置配方名会指向不存在的 skill)
   }
   // 装配期重建钩子(createChatSdk writablePaths 推断回填后调):更新 systemPrompt/skill 的示例路径,
   // 防 'components' 占位示例误导非 components 命名(blocks/sections 等)的集成。仅内部使用(同 _codeAsset 标记模式)。
   ;(cfg as any)._rebuildCodeAssetPaths = (r: string) => {
     cfg.systemPrompt = htmlSystemPrompt(codeVfsPrefix, codeField, r)
-    if (usedDefaultSkill) cfg.skills = [buildHtmlFragmentSkill(r, codeField)]
+    // 技能表重建:html 生成规范随新 root 重建(默认装时);用户 skills 原样;design skill 路径无关同实例保持
+    cfg.skills = assembleSkills(r)
     renderCheck?.setWritablePaths([r])  // 渲染检查的「write 新建」差集口径需最新写根
   }
   return cfg

@@ -1,7 +1,7 @@
 # Proposal: html-design-skill(createHtmlSubagent 内置 web-design-engineer 设计技能)
 
-> 状态:**📋 已立项待实施(排期:tool-surface-economy 之后)**。优先级 P2(输出质量增强,零行为破坏面 —— 纯 skill 注入)。
-> 用户提问(2026-08-27):「createHtmlSubagent 能否内置 `~/Downloads/conardli-garden-skills-web-design-engineer`」。三项拍板:①排期 tool-surface-economy 之后;②**全量 268K**(35 文件)vendor;③**默认挂载,`design:false` 可关**。
+> 状态:**✅ 已实施(2026-08-27,随 develop 待发布)**。优先级 P2(输出质量增强,装配面零破坏 —— 纯 skill 注入)。
+> 用户提问(2026-08-27):「createHtmlSubagent 能否内置 `~/Downloads/conardli-garden-skills-web-design-engineer`」。三项拍板:①排期 tool-surface-economy 之后;②**全量 vendoring**(主文 33K + references 29 文件 120K;立项时误记 35 文件,实为 29);③**默认挂载,`design:false` 可关**。
 
 ## 动机
 
@@ -43,7 +43,9 @@ html 子 agent 的编排 prompt(委派 task 规格化)已有先例;补一句:「
 
 ## 包体影响与门禁
 
-- 全量 268K 内联进 TS → dist 增量(gzip 后预计 +60-80K,主包与 headless 双产物都含 —— createHtmlSubagent 在 core)。**size-check 门禁把关**:超限则降级精选(SKILL.md + 3 方法论参考 + INDEX + 6-8 代表配方,~90K),配方砍半属可接受损失(拍板已备案)。
+- **实测(2026-08-27 实施备案)**:全量 vendor 后各 JS 产物 +160~230K(ESM ~1032→1194K / headless ~457→673K / IIFE ~1999→2206K / legacy ~3021→3189K;gzip 影响约 +55-65K)。size-check 与 e2e headless 体积断言按新基线重校(+~10% 余量,留痕 tests/size-check.mjs 头注释)。
+- **降级精选预案未启用**:proposal 原预案「超限降级精选 ~90K」在门禁突破时评估过 —— 用户拍板②「全量 268K vendor」是显式决策、优先于内部体积阈值,且精选(~+95K)仍超当时 headless 600K 阈值,降级收益不成立;维持全量,阈值重校(如需回退:砍 style-recipes 至 6-8 代表配方 + 重跑 scripts/gen-design-skill.mjs 的精选模式需自行改造)。
+- `npm pack` 核对通过(25 files,designSkill 源码在 src/ 不入包,vendored 内容编译进 dist)。
 - `npm pack` 核对不误带源目录。
 
 ## 验收门禁
@@ -52,6 +54,13 @@ html 子 agent 的编排 prompt(委派 task 规格化)已有先例;补一句:「
 - e2e:subagents 模块补 design 反射(inspect 或装配面)。
 - browser:html-page demo 回归零破坏(design 默认挂后子 agent 行为不劣化 —— mock LLM 不真用 skill,跑通装配即可)。
 - 真 LLM:html-page 或 complex-demo 观察项(委派是否主动 load_skill + 产出质量主观对比);不设硬阈值,观察报告留档。
+
+## 真 LLM 观察项备案(tasks #10,2026-08-27,html-page-demo + deepseek 网关,报告 local/design-skill-observation.json)
+
+- **轮一(规格全简报「Linear 风格定价卡片:暖深色/发丝线/单强调色」)**:子 agent 不 load_skill,直接 read→write→validate_code 照规格落地;产出对题(暖深色 #141210 / 1px 发丝线 / 单琥珀强调色 / 三档定价)。符合 skill 自身规则「task 已规格化 → 照做」—— 渐进披露不强制加载,正确。
+- **轮二(模糊简报「风格要有高级感,方向你来定」)**:子 agent **首个动作即 `load_skill('web-design-engineer')`**(33K 主文进上下文)再走生成流 —— 描述引导触发路径真 LLM 验证成立。
+- **轮一暴露的引导缺陷(已修)**:主 agent 曾试图自己 load 子 agent 侧的 skill 被拒(「skill 库中未收录」)—— 编排引导措辞已补「挂在子 agent 侧,你自己 load 不到也不必尝试」。
+- 附带发现(非本 change 面):demo 既有数组含同名组件时新委派产物重名(components.1/2 同名 features),主 agent 能正确发现处理;命名冲突防呆可另行立项。
 
 ## 非目标
 

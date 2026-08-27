@@ -96,7 +96,7 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert((hcfg.systemPrompt as string | undefined)?.includes('html/'), '✓ systemPrompt 含 codeVfsPrefix(html/,工作副本引导)')
   assert(!(hcfg.systemPrompt as string | undefined)?.includes('codeRef') && (hcfg.systemPrompt as string | undefined)?.includes('数据资产'), '✓ systemPrompt 单模式(砍 codeRef;代码作为 data.code 资产 + vfs 工作副本)')
   assert((hcfg as any)._codeAsset?.writablePaths?.length === 1 && (hcfg as any)._codeAsset?.ext === 'html', '✓ _codeAsset 标记设(createChatSdk 装配识别 → checkout/commit + pgIdPaths/largeTextPaths)')
-  assert(hcfg.skills?.length === 1 && hcfg.skills[0].name === 'html-fragment', '✓ 默认装 html-fragment skill(单模式完整页面级)')
+  assert(hcfg.skills?.length === 2 && hcfg.skills[0].name === 'html-fragment', '✓ 默认装 html-fragment skill(首位;design 品味 skill 并列其后,细测见 sec-115)')
 
   // 结论落地声明契约(真 LLM 实测:主 agent 见返回 code 又 append 一遍 → 重复组件;子 agent 首行声明已创建 + 不贴代码全文)
   assert((hcfg.systemPrompt as string | undefined)?.includes('结论首行必须是落地声明') && (hcfg.systemPrompt as string | undefined)?.includes('已创建组件'),
@@ -153,12 +153,12 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert(((dcfg.skills as any[] | undefined)?.[0] as any)?.getContent?.().includes('sections.N') && !((dcfg.skills as any[] | undefined)?.[0] as any)?.getContent?.().includes('components.N'),
     '✓ 默认 skill 同步重建(sections.N)')
 
-  // 传自定义 skills → 重建只动 systemPrompt 不覆盖自定义 skill
+  // 传自定义 skills → 重建只动 systemPrompt 不覆盖自定义 skill(design 品味 skill 默认追加于后,细测 sec-115)
   const mySkill = { name: 'my-skill', description: 'x', getContent: () => 'my skill content' }
   const scfg = createHtmlSubagent({ skills: [mySkill] })
   ;(scfg as any)._rebuildCodeAssetPaths('sections')
-  assert(scfg.skills?.length === 1 && scfg.skills[0].name === 'my-skill',
-    '✓ 传自定义 skills → 重建钩子不覆盖自定义 skill')
+  assert(scfg.skills?.length === 2 && scfg.skills[0].name === 'my-skill',
+    '✓ 传自定义 skills → 重建钩子不覆盖自定义 skill(design 追加在末位)')
 
   // buildHtmlFragmentSkill 构造器导出:root/codeField 参数化(默认快照 htmlFragmentSkill 同 3.10.0 契约)
   const bskill = buildHtmlFragmentSkill('sections', 'innerHtml')

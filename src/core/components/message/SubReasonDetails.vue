@@ -38,6 +38,10 @@ const charCountLabel = computed(() => {
   return `${v >= 100 ? Math.round(v) : +v.toFixed(1)}k`
 })
 const truncated = computed(() => (props.subReasonFull?.length ?? props.subReason.length) > props.subReason.length)
+// 截断提示内置到展开区首行(折叠 summary 行不占位:未展开时计数已可见,展开后才需要知道「前面还有」)
+const truncHead = computed(() =>
+  truncated.value ? `…${props.messages.truncatedNotePrefix}${props.subReason.length}${props.messages.truncatedNoteSuffix}\n` : '',
+)
 
 // 复制**完整**思考内容到剪贴板(便于排查中间过程/问题;渲染截尾防卡死,但复制取 subReasonFull 全量)
 const copied = ref(false)
@@ -57,12 +61,11 @@ async function copyReason() {
       <span class="sub-reason-label" :class="{ pulsing: status === 'running' }">
         {{ status === 'running' ? `${messages.thinkingCountPrefix}${charCountLabel}${messages.charCountSuffix}` : messages.reasoningTitle }}
       </span>
-      <span v-if="truncated" class="sub-reason-trunc">{{ messages.truncatedNotePrefix }}{{ subReason.length }}{{ messages.truncatedNoteSuffix }}</span>
       <!-- 展开/收起文字链右置(与主 agent 思考块口径一致:摘要行尾「展开」二字,非箭头暗示) -->
       <span class="sub-reason-toggle">{{ open ? messages.collapse : messages.expand }}</span>
       <button type="button" class="sub-reason-copy" :class="{ copied }" :title="truncated ? messages.copyThinkingTruncTitle : messages.copyThinking" @click.stop.prevent="copyReason">{{ copied ? messages.copied : messages.copy }}</button>
     </summary>
-    <div ref="bodyRef" class="sub-reason-body">{{ truncated ? '…(前面已截断)\n' : '' }}{{ subReason }}</div>
+    <div ref="bodyRef" class="sub-reason-body">{{ truncHead }}{{ subReason }}</div>
   </details>
 </template>
 
@@ -77,7 +80,6 @@ async function copyReason() {
 .sub-reason-label.pulsing::after { content: ' ●'; animation: cs-think-pulse 1.2s ease-in-out infinite; margin-left: 1px; }
 @keyframes cs-think-pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
 .sub-reason-body { padding: 4px 10px 6px; border-top: 1px solid var(--cs-sub-border); font-size: 10px; line-height: 1.5; color: var(--cs-sub-text); white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow-y: auto; user-select: text; -webkit-user-select: text; }
-.sub-reason-trunc { margin-left: 4px; font-size: 9px; font-weight: 400; opacity: 0.7; }
 /* 展开/收起文字链(右缘推开,与主思考块 reasoning-toggle 同位;色变量同源) */
 .sub-reason-toggle { margin-left: auto; font-size: 10px; color: var(--cs-reason-toggle); }
 /* 复制按钮(跟在展开链后;@click.stop 不触 summary 折叠) */

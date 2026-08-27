@@ -12,6 +12,10 @@ const countLabel = computed(() => {
   const v = n / 1000
   return `${v >= 100 ? Math.round(v) : +v.toFixed(1)}k`
 })
+// 截断提示内置展开区首行(total > 渲染长度 = 前面被滑窗截去;折叠头部不占位 —— 与子思考块同口径)
+const truncHead = computed(() =>
+  props.total != null && props.total > props.text.length ? `…(仅显最近 ${props.text.length} 字)\n` : '',
+)
 </script>
 
 <template>
@@ -23,7 +27,7 @@ const countLabel = computed(() => {
       <span class="reasoning-count">{{ countLabel }} 字</span>
       <span class="reasoning-toggle">{{ expanded ? '收起' : '展开' }}</span>
     </div>
-    <div v-if="expanded" class="reasoning-body">{{ text }}</div>
+    <div v-if="expanded" class="reasoning-body">{{ truncHead }}{{ text }}</div>
   </div>
 </template>
 

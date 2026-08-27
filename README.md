@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-3134%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-3171%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -248,7 +248,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `verify` | `{check?,maxAttempts?,adversarial?}` | Needs `capabilities.verify:true`; `check` omitted → `createWriteBackCheck` (read-back root auto-bound to `data.bind`, adapts to `sdk.setData` runtime swap) |
 | **Subagents** | `subagent` | `{allowedTools?,systemPrompt?,temperature?,llm?,maxDepth?·1,maxParallel?·4}` | Runtime ad-hoc delegation (`spawn_agent`/`spawn_agents`) |
 | | `subagents` | `SubagentConfig[]` | Pre-declared named subagents → each generates `use_<id>` tool |
-| **Capability packs** (2.37+) | `subagents` | `createRagSubagent({retriever?,loader?,useVfs?})` / `createHtmlSubagent({writablePaths?,codeVfsPrefix?,codeField?,orchestratorPrompt?,formatCheck?,craftNotes?})` (3.9+ usually no need to declare one — createChatSdk auto-registers a default HTML subagent at assembly; declare explicitly only to customize codeField/formatCheck etc.; open schemas / nested containers / dotted codeField need an explicit value) | Specialized subagent factories — **RAG**: multi-source retrieval (semantic `search_docs` / async `load_doc` / vfs / fetch), read-only, independent context; **HTML**: code-component generation — **code as a data asset** (code lives in `data.<writablePath>[i].code`, persisted with the data JSON; vfs is an edit working copy). The framework auto-checks-out (data.code→vfs by `__pgId`) before the subagent runs and auto-commits (vfs→data.code, direct bind mutation — no snapshot stack) after; the main agent is transparent (main-scope read sees a `<code Nkb>` summary). New components via `write`; edits via `vfs_edit` on the working copy. `codeField` (default `'code'`, nested jsonPath like `'props.html_code'` for open-schema platforms; + assembly-time hit-check warns on wrong path); main-agent orchestration **auto-injected** at assembly (3.9+ zero-config: a default HTML subagent is **auto-registered** when no explicit one exists and the schema has a code array — no switch needed, info logged; opt out prompt-only via `orchestratorPrompt:false`); model advice: prefer strong instruction-following models (deepseek-v4/claude/gpt-4o) for html codegen — flash-class amplifies over-thinking; **craft notes `craftNotes`** (on by default): the html subagent's final reply `[note]` lines are persisted to the component's `__pgNotes` (travels with the data JSON), and injected via the file map on the next delegation to that component ("handoff from the previous maintainer": design decisions / user feedback / pitfalls) — design intent persists across delegations; opt out via `craftNotes:false`; `formatCheck` on by default = `validate_code` self-check + verify beforeReturn gate with feedback self-correction; `validateHtmlFormat` exported. **Breaking (3.0)**: removed `onComplete`/`codeRef`/`codeSnapshots` — migrate `codeRef`→`code` field, drop `onComplete`/mirror. Composable/splitable, opt-in, ship with `rag-search`/`html-builder` skills. Plus `sdk.vfsWrite(path,content)` for async doc injection. See [doc/usage-guide.md](doc/usage-guide.md#capability-packs) |
+| **Capability packs** (2.37+) | `subagents` | `createRagSubagent({retriever?,loader?,useVfs?})` / `createHtmlSubagent({writablePaths?,codeVfsPrefix?,codeField?,orchestratorPrompt?,formatCheck?,craftNotes?,design?})` (3.9+ usually no need to declare one — createChatSdk auto-registers a default HTML subagent at assembly; declare explicitly only to customize codeField/formatCheck etc.; open schemas / nested containers / dotted codeField need an explicit value) | Specialized subagent factories — **RAG**: multi-source retrieval (semantic `search_docs` / async `load_doc` / vfs / fetch), read-only, independent context; **HTML**: code-component generation — **code as a data asset** (code lives in `data.<writablePath>[i].code`, persisted with the data JSON; vfs is an edit working copy). The framework auto-checks-out (data.code→vfs by `__pgId`) before the subagent runs and auto-commits (vfs→data.code, direct bind mutation — no snapshot stack) after; the main agent is transparent (main-scope read sees a `<code Nkb>` summary). New components via `write`; edits via `vfs_edit` on the working copy. `codeField` (default `'code'`, nested jsonPath like `'props.html_code'` for open-schema platforms; + assembly-time hit-check warns on wrong path); main-agent orchestration **auto-injected** at assembly (3.9+ zero-config: a default HTML subagent is **auto-registered** when no explicit one exists and the schema has a code array — no switch needed, info logged; opt out prompt-only via `orchestratorPrompt:false`); model advice: prefer strong instruction-following models (deepseek-v4/claude/gpt-4o) for html codegen — flash-class amplifies over-thinking; **craft notes `craftNotes`** (on by default): the html subagent's final reply `[note]` lines are persisted to the component's `__pgNotes` (travels with the data JSON), and injected via the file map on the next delegation to that component ("handoff from the previous maintainer": design decisions / user feedback / pitfalls) — design intent persists across delegations; opt out via `craftNotes:false`; **built-in design-taste skill `design`** (4.7+ mounted by default): vendors ConardLi garden-skills `web-design-engineer` (MIT) — declare-the-design-system-first / anti-AI-cliché rules / oklch palettes / 25 named style recipes (linear/apple-hig/muji…), progressive disclosure (33K main doc + 29 references enter context only on load_skill); complements the html-fragment skill (taste vs. mechanics); `design:false` disables / pass a SkillSpec to replace; `formatCheck` on by default = `validate_code` self-check + verify beforeReturn gate with feedback self-correction; `validateHtmlFormat` exported. **Breaking (3.0)**: removed `onComplete`/`codeRef`/`codeSnapshots` — migrate `codeRef`→`code` field, drop `onComplete`/mirror. Composable/splitable, opt-in, ship with `rag-search`/`html-builder` skills. Plus `sdk.vfsWrite(path,content)` for async doc injection. See [doc/usage-guide.md](doc/usage-guide.md#capability-packs) |
 | **Subagent observability** (2.38+) | — | `inspect().subagent.{active,history}` / `sdk.{getActiveSubagents,subagentHistory}` | active/history runtime state + DebugDrawer "🤖 subagent" tab (follows `subagent` capability, session-level, not persisted) |
 | **Context** | `contextPreset` | `'auto' \| 'conservative' \| 'aggressive' \| 'complex'` · default `auto` | Compression preset (`complex` for multi-step / large-JSON / long-workflow tasks) |
 | | `contextOptions` | `Partial<ContextManagerOptions> \| false` | Fine params (`false` disables compression). Includes `promptSoftCapTokens` (3.11+ compression cost cap — 160K default when window ≥320K, explicit `0` disables) and `preserveLastToolResults` (default `['describe_data','describe_data']` — keep field descriptions in compressed summary) |
@@ -500,7 +500,7 @@ function switchTo(i: number) {
 
 ```bash
 npm test            # 2894 assertions (tsx, source-level; no LLM dependency)
-npm run test:e2e    # 1020 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
+npm run test:e2e    # 1026 integration assertions (node, built dist; covers APIs/options/modules/simple&complex scenes: default systemPrompt(capability overview) / dynamic register + inspect sync / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints reflect config) / custom tools/middleware/skills/memory injection / runtime dynamic reconfiguration(setTools/addTool/removeTool/setLlm/setMemory/setSubagents reflect) / switchSession(on/off) / shareContext on/off sharing/independent / storage backends + object config / presets(3) / checkpoint / exports complete(39+ fns/components) / util fns usable(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount boundary / hook multi-listener / llm config / hide/show / error scenes)
 ```
 
 ## Local npm package test
@@ -596,6 +596,29 @@ npm test
 ## Relationship to Deep Agents
 
 Borrows the harness idea from [Deep Agents](https://github.com/langchain-ai/deepagents) (ReAct + middleware + planning + skills + memory + context management), but implemented in-house: no LangGraph/langchain full bundle; browser-oriented (persistence via IndexedDB, not server-side DB); context via input compression + memory trim + large-result offload, rather than per-step checkpointer archival. See [Context & Compression - Differences from Deep Agents](https://github.com/whyymj/page-agent-sdk/blob/master/doc/context-management.md#七与-deep-agents-的差异).
+
+## Acknowledgments
+
+The built-in design-taste skill (`web-design-engineer`) is vendored from
+[ConardLi/garden-skills](https://github.com/ConardLi/garden-skills/tree/main/skills/web-design-engineer)
+(skill `web-design-engineer` v1.2.2, © ConardLi), used and redistributed under the upstream MIT License:
+
+```
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+```
+
+Adaptation note: the SDK's built-in copy adapts the main doc in three places for the delegated
+sub-agent context (fact verification without network → trust the delegation task / no mid-run user
+questions → conservative defaults + stated assumptions / output form → self-contained component);
+the 29 reference files are kept verbatim from upstream.
 
 ## License
 

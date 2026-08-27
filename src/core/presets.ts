@@ -53,7 +53,7 @@ export const presets: Record<string, Partial<ChatSdkOptions>> = {
  * 单一数据源:createHtmlSubagent 默认自动注入此段(orchestratorPrompt:true);systemPromptHelpers.htmlPageOrchestrator 为 id='html' 静态快照。
  * 集成方自定义 id(如 'hero')时,createHtmlSubagent 自动生成含正确 use_hero 的编排 —— 写死 use_html 的静态片段会误导主 agent 调不存在的工具。
  */
-export function htmlOrchestratorPrompt(id: string, codeField = 'code'): string {
+export function htmlOrchestratorPrompt(id: string, codeField = 'code', design = true): string {
   const use = `use_${id}`
   return [
     `【先判意图(防长对话误路由)】先判断用户是「问」还是「要生成/改」:**提问类**(这是什么组件/怎么用/某字段什么意思/为什么这样/解释代码)→ 用 read / list_components / rag_component_docs **直接回答**,绝不委派 ${use};**生成/修改类**(做一个/生成/改成/加一个 XX 组件)才按下面纪律委派 ${use}。长对话里上文全是生成记录时尤须警惕,不要把新问题当成延续旧任务。`,
@@ -64,6 +64,8 @@ export function htmlOrchestratorPrompt(id: string, codeField = 'code'): string {
     `【多组件委派(防上下文污染)】一次要多个组件:① write_todos 列出(每项 name + 要点)② **不同组件可在同一轮并行发多个 ${use} 委派**(每组件一次 ${use},task 只写该组件 name + 要点 + 主题/风格;每次委派是独立子 agent 实例,互不共享上下文);**同一组件同一时间只能有一个委派在途**,勿对同一组件同轮发两个委派 ③ 委派返回后逐个 read 核对(确认已生成 + 名称对)+ update_todo 标完成 ④ 主题/风格在每次 task 里转述(每个子 agent 全新上下文,不知其他组件)。一次 task 塞多个组件仍禁止(同一子 agent 共享上下文生成多个 → class/样式冲突污染);主 agent 自己的 write(普通组件属性)可与委派同轮发出,不必等委派返回。`,
     `【委派 task 规格化(收窄子 agent 决策,防开放任务致装饰穷举)】委派 ${use} 的 task 必须含:① 组件定位(by name)② 视觉风格(配色/质感/字体;**给 1-2 个具体视觉锚** —— 主色 hex **取自平台 UI/设计规范 skill 的定义值**(有规范类 skill 先 load 再引用其 hex,勿凭页面观察自造近似色;无规范才自定,如「金黄 #F7C948」)、主体占比(如「杯高约画布 60%」)或装饰密度(如「仅 2 类背景装饰」)—— 细节空间收窄,子 agent 不在装饰细节上展开推演)③ 内容(文案/数据/图)④ 交互意图(动效/状态/触发)⑤ 历史偏好(可选):聊天上下文中有与该组件相关的用户历史偏好/反馈(如「用户偏好深色系」「上轮嫌动画太快」),提炼一句附 task 末尾(新子 agent 无记忆,全靠 task);**不含技术实现**(SVG vs CSS / keyframes vs transition 归子 agent 选)。❌「生成啤酒杯动画」→ ✅「啤酒杯倒酒(beer):金黄啤酒 #F7C948 从上方倒入透明杯(杯高约画布 60%),深绿背景,液体循环下落 2s,hover 杯子放大」。规格简练(4 要素各半句),远省子 agent 思考 token。`,
     `【委派失败重试】${use} 返回乱码/内部标记(如 <｜DSML｜)/空结论或报错 = 子 agent 异常,**重新委派一次**(task 附「上次失败,这次先把代码写短些/分步」);连续两次失败才降级告知用户。**不要因此自己直接 write/edit ${codeField} 字段**(绕过 vfs/格式校验,且你拿不到规范全文)。`,
+    // design 引导(html-design-skill,design 开启才注入):视觉锚可引用内置配方名,子 agent 按名取风格参数
+    ...(design ? [`【设计品味引导】子 agent 内置 web-design-engineer 设计 skill(设计系统先声明/反 AI 俗套/25 风格配方/5 维自评;**挂在子 agent 侧,你自己 load 不到也不必尝试**)。委派 task 的视觉锚可直接引用配方名 —— linear / apple-hig / muji / pentagram / bloomberg-terminal / aesop 等(如「Linear 风格:暖深色+发丝线」),子 agent 会按名取配方参数照做;用户未指定风格时勿写「随便/好看就行」,给一条具体方向(流派或参考品牌),子 agent 按其 skill 流程选配方并在结论里声明设计系统与假设。`] : []),
     '【预算将尽暂停】组件很多、接近工具轮次上限不要硬扛:完成手头这个后报告「已生成 K/N,还剩 M 个」,等用户确认后从 todos 剩余项继续(勿重复已完成)。',
   ].join('\n')
 }
