@@ -509,7 +509,8 @@ export interface ChatSdk {
   hook(handler: SdkEventHandler): () => void
   /**
    * 运行时替换主数据配置(如页面切换、schema 变更)。立即对数据工具生效(无需重建 agent);
-   * 清空快照栈与乐观锁缓存。需开启 dataOps(默认开)。
+   * 清空快照栈与乐观锁缓存。替换后发 data_change 事件(operation:'set',与 importData 口径一致)。
+   * 需开启 dataOps(默认开)。
    */
   setData(config: DataConfig): void
   /** 读取当前主数据配置(schema + bind + description);dataOps 关闭时返回 undefined */
@@ -3079,7 +3080,7 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
       core.listeners.add(handler)
       return () => core.listeners.delete(handler)
     },
-    /** 运行时替换主数据配置(如页面切换、schema 变更);立即生效,清空快照栈 */
+    /** 运行时替换主数据配置(如页面切换、schema 变更);立即生效,清空快照栈。发 data_change(operation:'set',与 importData 口径对齐) */
     setData: (config: DataConfig) => {
       if (!core.dataOpsController) {
         console.warn('[page-agent-sdk] setData 忽略:dataOps 已关闭(capabilities.dataOps:false)')
@@ -3087,6 +3088,9 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
       }
       core.dataOpsController.set(config)
       core.infoTick.value++  // 触发 DebugDrawer 的 Agent 信息重新拉取(实时反映 data 变更)
+      // 整体替换 bind 的对外通知(非 reactive bind 宿主靠 data_change 驱动重渲染;与 importData/整体 set 同口径,
+      // 修前两 API 不一致 —— team-audit P2「setData 不发 data_change 而 importData 发」)
+      core.emit({ type: 'data_change', operation: 'set', value: config.bind })
     },
     /** 读取当前主数据配置;dataOps 关闭时返回 undefined */
     getData: () => core.liveData(),

@@ -4,6 +4,27 @@
 
 ## [Unreleased]
 
+## [4.8.1] - 2026-08-28
+
+### Added
+
+- **工匠笔记末行守卫(note-gate,`createCraftNoteCheck` 导出)**:html 子 agent 收口回复缺 `[note]` 交接行 → beforeReturn 回灌补写一次(flash 纪律机制化:提示词约定实测漏写率 3/4,4.8 真 LLM 复验连续 2 次漏写 → 下任子 agent 失去交接)。挂 verify 链尾(结构→渲染→笔记,全过才提醒防多段反馈互扰);`craftNotes:false` 或 `formatCheck:false` 不挂;预算与 formatCheck 共享 `maxVerifyAttempts`(2)防死循环;空收口文本/无捕获 holder 不拦。新增 `chainChecks` 组合器(verify.ts 内部)
+
+### Fixed(deferred 收割五项:team-audit / flow-robustness 登记 P2)
+
+- **`QUESTION_TAIL_RE` 补全角问号**(intentGuard):「…吗？」形态此前漏判问句意图(只配半角 `?`)
+- **`detectActionImperative` 首子句切分补全角标点**(actionGate):只配半角时全角逗号/分号下 16 字窗口退化为整句,只读反例误入 → 真写指令漏拦零工具门禁
+- **`maybeEvict` 随 `maxBytes:Infinity` 短路**(storage):修前 Infinity 恒无 victim 但每轮 flush/防抖仍全库 scan(REST 后端 = 服务端全表枚举)
+- **`setData` 对齐发 `data_change`**(operation:'set'):修前与 `importData` 口径不一致,非 reactive bind 宿主靠 data_change 驱动重渲染的通知缺失
+- **`draft_commit` 并入 planning 退出集**(todos):draftWrite 场景合法提交不退出规划 → 修订预算被 `maxPlanRevisions` 上限误耗
+
+### 测试
+
+- selftest 3200 → **3212**(+12:note-gate 四态/全角问号 ×2/全角标点切分 ×3/Infinity 短路 ×2/draft_commit 退出)
+- e2e 1030 → **1034**(+4:setData data_change 对齐 + note-gate 运行时回灌)
+- browser 133 项(8 个委派类 mock 脚本子收口补 `[note]` 行适配 note-gate)
+- 真 LLM uispec 基线重采(2026-08-28):25 断言 22 过,S1「笔记沉淀」连续 2 次漏写 → 驱动本版 note-gate;S3/S6 为既有失败(8-27 基线同败,非回归);零截断/零停滞/零黑洞;describe_data 调用 0 次(W2 引导归一首个数据点)
+
 ## [4.8.0] - 2026-08-28
 
 ### Fixed(real-llm-hardening:诊断驱动三件,complex-demo 2026-08-27 诊断)

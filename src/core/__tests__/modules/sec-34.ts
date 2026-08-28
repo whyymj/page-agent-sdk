@@ -103,6 +103,11 @@ export async function run(ctx: TestCtx): Promise<void> {
     await invoke(tools['write_todos'], { todos: [{ content: 'B', status: 'in_progress' }] })
     await mw.wrapToolCall!({ id: 'c2', name: 'write', args: {}, state: st } as ToolCallContext, nextErr)
     assert(mw.getPlanPhase().inPlanning === true, '✓ 写工具 error → 不退出 planning(仍 inPlanning)')
+
+    // draft_commit 成功 → 同样退出 planning(team-audit P2 修:draftWrite 场景合法提交不退出 → 修订预算被上限误耗)
+    await invoke(tools['write_todos'], { todos: [{ content: 'C', status: 'in_progress' }] })
+    await mw.wrapToolCall!({ id: 'c3', name: 'draft_commit', args: {}, state: st } as ToolCallContext, nextDone)
+    assert(mw.getPlanPhase().inPlanning === false, '✓ draft_commit 成功 → 退出 planning(draftWrite 主数据提交同口径)')
   }
 
   // === 重入:退出后再 write_todos 重新进入(rounds 重置) ===

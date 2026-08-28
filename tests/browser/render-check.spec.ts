@@ -132,7 +132,7 @@ test.describe('render-check: demo 集成闭环(html-page-demo)', () => {
           },
         }],
       },
-      { text: '已修复渲染错误并复检通过' },
+      { text: '已修复渲染错误并复检通过\n[note] 坏 script 被 render_check 拦,重写去 script' },
       { text: '完成' },
     ])
 

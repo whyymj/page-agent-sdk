@@ -16,6 +16,7 @@ import { createCodeAssetMiddleware, pgIdFromVfsPath, extractNoteLinesFromText } 
 import { createHtmlValidateToolsMiddleware } from '../../sdk/htmlSubagent'
 import { applyUpdate } from '../../harness/middleware'
 import { createInitialState } from '../../harness/state'
+import { createCraftNoteCheck } from '../../sdk/htmlSubagent'
 import type { TestCtx } from './_ctx'
 
 function setup(bind: Record<string, unknown>, opts?: { codeField?: string; onWarning?: (msg: string) => void; craftNotes?: boolean }) {
@@ -311,6 +312,21 @@ export async function run(ctx: TestCtx): Promise<void> {
       '✓ extractNoteLinesFromText:容忍 -/*/ 空白前缀变体 + 同轮去重',
     )
     assert(extractNoteLinesFromText('普通收口无笔记').length === 0, '✓ extractNoteLinesFromText:无 [note] 行 → 空(不硬造笔记)')
+  }
+
+  // ①c note-gate 守卫(2026-08-28 真 LLM 复验驱动:flash 连续 2 次漏写末行 [note] → 机制化 beforeReturn 回灌)
+  {
+    const check = createCraftNoteCheck()
+    const stOf = (text: string) => ({ __pgFinalText: { text } }) as any
+    const r1 = check({ messages: [], state: stOf('已生成 coupon 组件\n- 深底 #222222,撕边 OK') })
+    assert(r1.ok === false && /末行交接笔记/.test(r1.feedback!) && r1.feedback!.includes('[note]'),
+      '✓ note-gate:收口文本无 [note] 行 → 回灌补写指引(提示词漏写率 3/4,守卫兜底)')
+    const r2 = check({ messages: [], state: stOf('已生成\n[note] 撕边 repeating-gradient 12px') })
+    assert(r2.ok === true, '✓ note-gate:有 [note] 行 → 放行(正常形态零打扰)')
+    const r3 = check({ messages: [], state: stOf('') })
+    assert(r3.ok === true, '✓ note-gate:空收口文本(异常/中断)→ 不拦(无内容可附)')
+    const r4 = check({ messages: [], state: {} as any })
+    assert(r4.ok === true, '✓ note-gate:无 __pgFinalText holder(craftNotes 未装/formatCheck 关)→ 不拦')
   }
 
   // ①b wrapModelCall 捕获链:无 tool_calls 的模型响应 = 收口文本 → state.__pgFinalText(afterAgent 提取源;有 tool_calls 不覆盖)

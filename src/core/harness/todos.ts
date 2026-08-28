@@ -15,8 +15,9 @@ import { z } from 'zod'
 import type { Middleware } from './middleware'
 import type { Todo, TodoStatus } from './state'
 
-/** 退出规划阶段的主数据写工具(开始执行);eval_script 本期不列入(transform/query 语义混合,见 design §4) */
-const PLAN_EXIT_TOOLS = new Set(['write'])
+/** 退出规划阶段的主数据写工具(开始执行);eval_script 本期不列入(transform/query 语义混合,见 design §4)。
+ *  draft_commit 并入(team-audit P2:draftWrite 场景合法提交不退出 → 修订预算被 5 次上限误耗) */
+const PLAN_EXIT_TOOLS = new Set(['write', 'draft_commit'])
 
 /** todos 入参形状(id 可选,框架补全);兼容 write_todos zod 推导类型 / Todo / hydrate 旧数据 */
 type TodoInput = { id?: string; content: string; status: TodoStatus; parentId?: string; deps?: string[]; criteria?: string; evidence?: string }

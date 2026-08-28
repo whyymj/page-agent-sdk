@@ -2053,6 +2053,8 @@ export interface HtmlFormatCheckOptions {
 }
 /** HTML 格式 verify check(beforeReturn 门禁):扫 state.files 代码文件,不通过回灌 feedback 自纠 */
 export declare function createHtmlFormatCheck(opts?: HtmlFormatCheckOptions): VerifyCheck;
+/** 工匠笔记末行守卫(note-gate):craftNotes 开启时子 agent 收口回复无 [note] 行 → beforeReturn 回灌补写一次(2026-08-28 真 LLM 复验驱动;createHtmlSubagent 默认挂进 verify 链尾,独立导出供自定义校验链复用) */
+export declare function createCraftNoteCheck(): VerifyCheck;
 /** 沙箱采集到的原始渲染信号(console.error / js-error / unhandledrejection / 资源失败 / CSP 违规 / console.warn) */
 export interface RenderSignal {
     type: 'console-error' | 'console-warn' | 'js-error' | 'unhandledrejection' | 'resource-error' | 'csp-violation';

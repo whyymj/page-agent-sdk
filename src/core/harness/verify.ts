@@ -38,6 +38,15 @@ export interface VerifyCheckResult {
 /** 领域校验函数:ok=true 放行 return,ok=false 用 feedback 回灌自纠 */
 export type VerifyCheck = (ctx: VerifyCheckContext) => Promise<VerifyCheckResult> | VerifyCheckResult
 
+/** 顺序组合两个 check(前者不过短路后者;beforeReturn 单中间件内多段校验用,不加第二个 verify 中间件) */
+export function chainChecks(a: VerifyCheck, b: VerifyCheck): VerifyCheck {
+  return async (ctx) => {
+    const r = await a(ctx)
+    if (!r.ok) return r
+    return b(ctx)
+  }
+}
+
 export interface VerifyMiddlewareOptions {
   /** 领域校验函数(必填) */
   check: VerifyCheck

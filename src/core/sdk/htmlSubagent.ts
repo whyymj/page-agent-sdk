@@ -27,13 +27,14 @@ import type { SummarizationOptions } from '../harness/summarization'
 import type { VfsFile } from '../harness/state'
 import type { VerifyCheck, VerifyCheckResult } from '../harness/verify'
 import { createTodosMiddleware } from '../harness/todos'
-import { createVerifyMiddleware } from '../harness/verify'
+import { createVerifyMiddleware, chainChecks } from '../harness/verify'
 import { buildDesignSkill } from './designSkill'
 import { createHtmlRenderCheck, composeStructureThenRender } from './htmlRenderCheck'
 import { validateHtmlFormat } from '../tools/htmlValidate'
 import { htmlOrchestratorPrompt } from '../presets'
 import { getByPath } from '../tools/jsonUtils'
 import type { DataOpsController } from '../tools/dataOps'
+import { extractNoteLinesFromText } from './codeAssetMiddleware'
 
 export interface CreateHtmlSubagentOptions {
   /**
@@ -319,6 +320,24 @@ export function createHtmlValidateToolsMiddleware(vfsPrefix: string): Middleware
   return mw
 }
 
+/**
+ * 工匠笔记末行守卫(note-gate,2026-08-28 真 LLM 复验驱动):craftNotes 开启时,收口回复(wrapModelCall
+ * 捕获的 __pgFinalText)无 [note] 行 → beforeReturn 回灌补写一次。flash 纪律机制化(提示词约定实测漏写率
+ * 3/4,4.8 复验连续 2 次漏写 → 下任子 agent 失去交接);空收口文本不拦(无内容可附)。
+ * 挂 verify 链尾(结构/渲染不过先自纠,全过才提醒补笔记,避免多段反馈互相覆盖)。
+ */
+export function createCraftNoteCheck(): VerifyCheck {
+  return ({ state }): VerifyCheckResult => {
+    const h = (state as unknown as Record<string, unknown>)['__pgFinalText'] as { text: string } | undefined
+    const text = h?.text ?? ''
+    if (!text || extractNoteLinesFromText(text).length) return { ok: true }
+    return {
+      ok: false,
+      feedback: '收口回复缺末行交接笔记:请在回复末行补一条 `[note] <一句话实现要点>`(关键设计决策/用户偏好/踩坑,框架会存进组件转交下次维护该组件的 agent;只追加这一行,不要重写其它内容)。',
+    }
+  }
+}
+
 // ===== 工厂 =====
 
 /** formatCheck 开启时子 agent beforeReturn 自纠上限(与主 verify 默认一致) */
@@ -351,8 +370,11 @@ export function createHtmlSubagent(options: CreateHtmlSubagentOptions = {}): Sub
   if (formatCheck) {
     middleware.push(createHtmlValidateToolsMiddleware(codeVfsPrefix))
     const structureCheck = createHtmlFormatCheck({ vfsPrefix: codeVfsPrefix })
+    // 校验链:结构 → 渲染 → 笔记末行守卫(craftNotes 开才挂;链尾防多段反馈互相覆盖)
+    const baseCheck = renderCheck ? composeStructureThenRender(structureCheck, renderCheck.check) : structureCheck
+    const noteCheck = craftNotes ? createCraftNoteCheck() : undefined
     const verifyMw = createVerifyMiddleware({
-      check: renderCheck ? composeStructureThenRender(structureCheck, renderCheck.check) : structureCheck,
+      check: noteCheck ? chainChecks(baseCheck, noteCheck) : baseCheck,
     })
     // getController 注入通道(同 validate_code 先例:createChatSdk 装配期识别 _setGetController 后注入同源 dataOpsController,
     // 供渲染检查读 write 新建组件的 bind code)

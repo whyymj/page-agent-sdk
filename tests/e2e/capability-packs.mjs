@@ -149,13 +149,13 @@ export async function run() {
   console.log('[e2e:capability-packs] verify 门禁运行时(子 agent 写坏代码 → 回灌自纠 → 修正后放行)')
   {
     const { stubModel } = await import('./_stub-model.mjs')
-    // 队列序:主委派 → 子写坏代码 → 子想收口(门禁拦) → 子 vfs_edit 修正 → 子收口(过) → 主收口
+    // 队列序:主委派 → 子写坏代码 → 子想收口(门禁拦) → 子 vfs_edit 修正 → 子收口(过,含 [note] 防 note-gate 加轮) → 主收口
     const llm = stubModel(
       { toolCalls: [{ name: 'use_html', args: { task: '生成横幅代码' } }] },
       { toolCalls: [{ name: 'vfs_write', args: { path: 'html/banner.html', content: '<div>横幅' } }] },
       { text: '生成完成' },
       { toolCalls: [{ name: 'vfs_edit', args: { path: 'html/banner.html', oldString: '<div>横幅', newString: '<div>横幅</div>' } }] },
-      { text: '已修正完成' },
+      { text: '已修正完成\n[note] 坏结构被门禁拦后 vfs_edit 修正' },
       { text: '已生成横幅组件' },
     )
     const sdk = createChatSdk({
@@ -168,6 +168,29 @@ export async function run() {
     assert(/已生成横幅组件/.test(reply), '✓ 门禁自纠后主流程正常收口')
     assert(llm.calls === 6, `✓ 门禁生效:子 agent 被回灌自纠(6 次 model 调用,实际 ${llm.calls})`)
     sdk.unmount()
+
+    console.log('[e2e:capability-packs] note-gate 运行时(格式全过但收口缺 [note] → 回灌补写一次;2026-08-28 真 LLM 复验驱动)')
+    {
+      const { stubModel } = await import('./_stub-model.mjs')
+      // 队列序:主委派 → 子写好代码 → 子收口缺 [note](note-gate 拦) → 子补写收口(过) → 主收口
+      const llm2 = stubModel(
+        { toolCalls: [{ name: 'use_html', args: { task: '生成横幅代码' } }] },
+        { toolCalls: [{ name: 'vfs_write', args: { path: 'html/banner.html', content: '<div>横幅</div>' } }] },
+        { text: '已生成横幅' },
+        { text: '已生成横幅\n[note] 单 div 结构,无依赖' },
+        { text: '委派完成' },
+      )
+      const sdk2 = createChatSdk({
+        ui: false, id: 'e2e-cap-notegate', storage: false, llm: llm2,
+        capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+        subagents: [createHtmlSubagent({ writablePaths: ['components'] })],
+      })
+      await sdk2.mount()
+      const reply2 = await sdk2.send('生成一个横幅')
+      assert(/委派完成/.test(reply2), '✓ note-gate 补写后主流程正常收口')
+      assert(llm2.calls === 5, `✓ note-gate 生效:格式过但缺 [note] → 回灌 1 次补写(5 次 model 调用,实际 ${llm2.calls};修前 4 次直收口漏笔记)`)
+      sdk2.unmount()
+    }
 
     // 对照:formatCheck:false → 子 agent 写完坏代码直接收口(4 次调用,无自纠)
     const llm2 = stubModel(

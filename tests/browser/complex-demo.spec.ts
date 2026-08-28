@@ -559,8 +559,8 @@ test.describe('complex-demo: 组件操作(调换顺序 / 改层级 / 聚焦纯�
       ] },
       { tool_calls: [{ name: 'vfs_write', arguments: { path: 'html/c_par_beer.html', content: '<section class="beer"><h1>干杯青岛</h1></section>' } }] },
       { tool_calls: [{ name: 'vfs_write', arguments: { path: 'html/c_par_mug.html', content: '<section class="mug" style="color:orange"><h1>橙色酒杯</h1></section>' } }] },
-      { text: 'beer 已改' },
-      { text: 'mug 已改' },
+      { text: 'beer 已改\n[note] beer 标题直改 vfs' },
+      { text: 'mug 已改\n[note] mug 换橙色内联样式' },
       { text: '两个组件都已完成' },
     ])
     await fillInput(page, 'beer 和 mug 都改一下')
@@ -590,8 +590,8 @@ test.describe('complex-demo: 组件操作(调换顺序 / 改层级 / 聚焦纯�
       ] },
       { reasoning: '思考 beer 组件:改标题文字', tool_calls: [{ name: 'vfs_write', arguments: { path: 'html/c_par_beer.html', content: '<section class="beer"><h1>干杯青岛</h1></section>' } }] },
       { reasoning: '思考 mug 组件:改成橙色', tool_calls: [{ name: 'vfs_write', arguments: { path: 'html/c_par_mug.html', content: '<section class="mug" style="color:orange"><h1>橙色酒杯</h1></section>' } }] },
-      { text: 'beer 已改' },
-      { text: 'mug 已改' },
+      { text: 'beer 已改\n[note] beer 标题直改 vfs' },
+      { text: 'mug 已改\n[note] mug 换橙色内联样式' },
       { text: '两个组件都已完成' },
     ])
     await fillInput(page, 'beer 和 mug 都改一下')
@@ -657,10 +657,10 @@ test.describe('complex-demo: 组件操作(调换顺序 / 改层级 / 聚焦纯�
         { name: 'use_html', arguments: { task: '把 beer 副标题改成「畅饮」', components: ['beer'] } },
       ] },
       { tool_calls: [{ name: 'vfs_write', arguments: { path: 'html/c_busy_beer.html', content: '<section class="beer"><h1>干杯青岛</h1></section>' } }] },
-      { text: '第一处已改' },
+      { text: '第一处已改\n[note] beer 标题改干杯青岛' },
       { tool_calls: [{ name: 'use_html', arguments: { task: '重试:把 beer 副标题改成「畅饮」', components: ['beer'] } }] },
       { tool_calls: [{ name: 'vfs_write', arguments: { path: 'html/c_busy_beer.html', content: '<section class="beer"><h1>干杯青岛</h1><p>畅饮</p></section>' } }] },
-      { text: '第二处已改' },
+      { text: '第二处已改\n[note] beer 副标题改畅饮' },
       { text: 'beer 两处修改完成' },
     ])
     await fillInput(page, 'beer 标题和副标题都改')

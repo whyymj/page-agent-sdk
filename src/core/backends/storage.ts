@@ -537,6 +537,9 @@ function createSessionStoreImpl(config: StorageConfig = {}, backendOverride?: St
    *  evictTimer 的 void fire-and-forget 与 flush 内 await,冒泡即 unhandledRejection / 拖死 flush;
    *  失败留痕(degraded 事件)不静默。 */
   async function maybeEvict(): Promise<void> {
+    // maxBytes:Infinity(容量管理交服务端/无配额)→ 恒无 victim,短路防每轮 2-3 次全库 scan
+    // (REST 后端 scan = 服务端全表枚举;team-audit P2「maybeEvict 不随 Infinity 短路」)
+    if (maxBytes === Infinity) return
     try {
       const metas: SessionMeta[] = []
       await backend.scan(globalPrefix(dbName), (key, value) => {

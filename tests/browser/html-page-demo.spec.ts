@@ -40,7 +40,7 @@ test.describe('html-page-demo: HTML 页面生成(单模式 code-as-data-asset)',
           arguments: { patch: { op: 'set', jsonPath: 'components.2', value: { type: 'custom', name: 'welcome', code: '<section class="pg-welcome"><h1>欢迎来到演示</h1><p>这是 v-html 注入的片段</p></section>' } } },
         }],
       },
-      { text: '已生成 welcome 区块代码' },
+      { text: '已生成 welcome 区块代码\n[note] welcome 单区块无依赖' },
       { text: '已完成,预览区已实时更新' },
     ])
 
@@ -119,7 +119,7 @@ test.describe('html-page-demo: HTML 页面生成(单模式 code-as-data-asset)',
       { tool_calls: [{ name: 'vfs_write', arguments: { path: 'html/c_hero.html', content: broken } }] },
       { text: '已修改 hero 区块' },   // 子首次收口 → 门禁扫 vfs(工作副本被覆盖为 broken)→ UNCLOSED 回灌
       { tool_calls: [{ name: 'vfs_write', arguments: { path: 'html/c_hero.html', content: fixed } }] },
-      { text: '已修正并完成 hero' },  // 门禁通过 → 子返回 → afterAgent commit(vfs fixed → data hero.code)
+      { text: '已修正并完成 hero\n[note] 标签未闭合被门禁拦,vfs_write 重写修复' },  // 门禁通过(含 [note] 防 note-gate 加轮)→ 子返回 → afterAgent commit(vfs fixed → data hero.code)
       { text: 'hero 已改好,预览区已更新' },
     ])
 
@@ -141,7 +141,7 @@ test.describe('html-page-demo: HTML 页面生成(单模式 code-as-data-asset)',
     await mockLlm(page, [
       { tool_calls: [{ name: 'use_html', arguments: { task: '生成宽内容' } }] },
       { tool_calls: [{ name: 'write', arguments: { patch: { op: 'set', jsonPath: 'components.2', value: { type: 'custom', name: 'wide', code: wideContent } } } }] },
-      { text: '已生成宽内容' },
+      { text: '已生成宽内容\n[note] wide 宽表格溢出测试组件' },
       { text: '完成' },
     ])
     await fillInput(page, '生成宽内容')
@@ -178,7 +178,7 @@ test.describe('html-page-demo: HTML 页面生成(单模式 code-as-data-asset)',
     const tracker = await mockLlm(page, [
       { tool_calls: [{ name: 'use_html', arguments: { task: '把 features 组件标题改成"核心优势"' } }] },
       { tool_calls: [{ name: 'vfs_write', arguments: { path: 'html/c_features.html', content: '<section class="pg-features" style="padding:16px;font-family:sans-serif"><h2 style="margin:0 0 12px">核心优势</h2><p>已聚焦精修</p></section>' } }] },
-      { text: '已改 features 标题' },
+      { text: '已改 features 标题\n[note] features 标题改核心优势,vfs_write 直改' },
       { text: 'features 已改好,预览已更新' },
     ])
     // 第 1 步:点预览块 features → 选中(PickOverlay 浮层 + 「加入聊天」按钮出现)。
@@ -213,10 +213,10 @@ test.describe('html-page-demo: HTML 页面生成(单模式 code-as-data-asset)',
     const tracker = await mockLlm(page, [
       { tool_calls: [{ name: 'use_html', arguments: { task: '生成轮播组件' } }] },
       { tool_calls: [{ name: 'write', arguments: { patch: { op: 'set', jsonPath: 'components.2', value: { type: 'custom', name: 'carousel', code: '<section class="wc-carousel"><h3>世界杯轮播</h3></section>' } } } }] },
-      { text: '已生成轮播' },
+      { text: '已生成轮播\n[note] carousel 静态轮播无 JS' },
       { tool_calls: [{ name: 'use_html', arguments: { task: '生成活动特效组件' } }] },
       { tool_calls: [{ name: 'write', arguments: { patch: { op: 'set', jsonPath: 'components.3', value: { type: 'custom', name: 'effect', code: '<section class="wc-effect"><h3>进球特效</h3></section>' } } } }] },
-      { text: '已生成特效' },
+      { text: '已生成特效\n[note] effect 纯 CSS 特效' },
       { text: '完成,生成了轮播 + 特效' },
     ])
     // 初始预置 hero + features(2 个)

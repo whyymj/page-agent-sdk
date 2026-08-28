@@ -37,6 +37,13 @@ export async function run(ctx: TestCtx): Promise<void> {
     }
     // 边界:空文本
     assert(detectActionImperative('') === false, '✓ 祈使边界 → 空文本不命中')
+    // 全角标点切分(team-audit P2 修:首子句 split 只配半角时,全角逗号下 16 字窗口退化整句 → 只读反例误入/真写漏拦)
+    assert(detectActionImperative('检查一下，然后把标题改成橙色') === false,
+      '✓ 全角逗号 → 首子句「检查一下」只读优先(窗口不再吞整句)')
+    assert(detectActionImperative('把标题改成橙色，顺便检查下样式') === true,
+      '✓ 全角逗号 → 首子句「把标题改成橙色」命中操作(修前窗口含「检查」只读反例优先 → 真写漏拦)')
+    assert(detectActionImperative('总结一下刚才改了什么；然后重新生成一遍') === false,
+      '✓ 全角分号 → 首子句「总结一下…」只读优先(切分含全角分号)')
   }
 
   // ===== B. isZeroEffectiveWrite =====

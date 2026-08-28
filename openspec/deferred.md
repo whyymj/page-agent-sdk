@@ -563,7 +563,7 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 | UI 删会话按钮无错误收口 | mountChatDialog.ts:115 onRemoveSession 裸 await 无 .catch(同文件 onNewSession/onOpenSession 均有);clearPrefix 500 → unhandled rejection + 列表不刷新。修:补 .catch + SESSION_DELETE_FAILED observable | 自定义后端删会话失败实测 |
 | 自定义后端方法契约零装配期校验 | storage.ts:367-368 实例直接透传;缺 scan → mount 即 TypeError(经恢复路径放大)、缺 clearPrefix → deleteSession reject。修:装配期查 5 方法,缺失 warn + degraded 降级(scan 缺 → listSessions 返 [];clearPrefix 缺 → no-op)。与 #315(字符串面 warn)不同面 | 集成方残缺后端实测报错案例 |
 | commit 通用错误路径零留痕 | storage.ts:496-497「其它写失败静默不抛」无 emit 无 debugLogs;4.4.0 CHANGELOG/usage-guide 写「吞错留痕」仅 quota 分支成立(文档-实现偏差)。修:补 StorageEvent | REST 500 实测案例 |
-| maybeEvict 不随 maxBytes:Infinity 短路 | storage.ts:525-551;Infinity 下 selectForEviction 恒空但每 send 轮 2-3 次全库 `backend.scan`(跨 agent 全量 key 枚举 = REST 服务端全表扫)+ 偶发 degraded 刷屏。修:一行短路 return | REST 后端性能实测 |
+| ✅ maybeEvict 不随 maxBytes:Infinity 短路 | **已修销账 2026-08-28(4.8.1)**:maybeEvict 入口 Infinity 短路,零 scan(sec-08 计数断言) | — |
 | encodeKey 不转义 `::` | storage.ts:147-149;自定义 sessionId 含 `::` 时 clearPrefix('a') 可误删 id 'a::b' 的会话 key | 集成方用 `::` 做 sessionId |
 | vfs hydrate 不清 clear 的 pending timer | 2026-08-26 原疑似 P1 已证伪(clear→同步 hydrate 间零 await,竞态不可达);残余 = 切回后 800ms 一笔冗余自写(hydrated 内容写回本会话,无害)。修:hydrate 里 clearTimeout 一行洁癖 | 下次动 vfs.ts hydrate 顺手 |
 
@@ -584,9 +584,9 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 | 零工具门禁无「用户已拒绝/诚实做不到」出口 | gateChain.ts:182-213;用户拒绝后模型陈述句收口「已停止,未做任何修改」→ lastHumanContent 仍原祈使句 → 回灌×2 烧满 + 误报 ZERO_TOOL_GATE_EXHAUSTED;出口③诚实回答零机械化识别。修:否定完成态词豁免或 turnUsage 含 RHC 且收口无位置说明时降级 | RHC 拒绝场景实测误报 |
 | COMPONENT_BUSY 计入等效写 | actionGate.ts:67-74 只看工具名不看结果;撞锁零执行的委派被计等效写 → 零工具门禁被抑制谎报放行。修:委派结果 content 命中 COMPONENT_BUSY/PATH_OUT_OF_SCOPE 前缀不计 | 同组件撞锁后谎报实测 |
 | caps.vfs:false + codeAsset 并存无守卫 | createChatSdk.ts:1019-1024 自动装配不查 caps.vfs → 子 agent 引导走 vfs_edit「工具不存在」白烧轮次,修改路径静默失效。修:装配期 warn 或强制开 | 集成方显式关 vfs + schema 含 code 数组 |
-| detectActionImperative 缺全角标点 | actionGate.ts:50 首子句切分字符类除「。」外全半角 → 全角逗号常态下 16 字窗口退化为整句,readonly 反例误入 → 真写指令漏拦。修:补 `！？；，` | 全角标点输入实测漏拦 |
-| QUESTION_TAIL_RE 缺全角问号 | intentGuard.ts:24 `[??]` 两个 ASCII 问号;当前零行为影响(tier-1 已覆盖),复制到别处即踩的地雷。修:补 `？` | 下次动 intentGuard 顺手 |
-| draft_commit 不退出 planning | todos.ts:19 PLAN_EXIT_TOOLS 只含 write;draftWrite 场景合法修订被 5 次上限误耗。修:draft_commit 并入退出集 | draftWrite + planning 实测 |
+| ✅ detectActionImperative 缺全角标点 | **已修销账 2026-08-28(4.8.1)**:切分字符类补 `！？；，`,首子句不再被全角逗号退化为整句(sec-95 断言:真写指令不再被后置只读动词漏拦) | — |
+| ✅ QUESTION_TAIL_RE 缺全角问号 | **已修销账 2026-08-28(4.8.1)**:补全角 `？`,「…吗？」形态不再漏判(sec-89 断言锁定) | — |
+| ✅ draft_commit 不退出 planning | **已修销账 2026-08-28(4.8.1)**:PLAN_EXIT_TOOLS 并入 draft_commit(sec-34 断言) | — |
 | 超限拒 update_todo 混合调用不说明「本次未生效」 | todos.ts:179-183 整笔拒但文案含糊 + planRevisions 虚高。修:拒绝文案补「重发仅含 status/evidence」 | 弱模型混传实测状态机断拍 |
 
 ### 数据写链面(P2×3 + P3×4)
@@ -599,7 +599,7 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 | restore_data 绕受保护资源强制层 | dataOps.ts:1169-1188 无 protectedCtx/enforce;多轮快照回放可把 freeze 字段回写旧值(借 restore 绕 freeze 只读)。修:restore 前对受保护路径差异比对拒或 warn | freeze 字段 + 历史快照 restore 实测 |
 | commitSetToBind codeAsset 模式双深拷贝 | dataOps.ts:508/:532 两次全量 deepClone(applyPatchesToBind:640 已做单拷贝复用);1MB bind ≈ +10ms/写。修:同款 beforeBind 复用 | 下次动写路径成本面顺手 |
 | write(del) 目标不存在仍 pushSnapshot+audit+data_change | dataOps.ts:1548-1554「无需删除」文案但快照栈位/审计条目已产生。修:dryRun 同款 clone 预检存在性 | 下次动 del 路径顺手 |
-| setData 不发 data_change 而 importData 发 | createChatSdk.ts:3035-3041 vs :3099-3111 两条整体替换 API 事件口径不一致。修:文档明示或对齐 | 集成方依赖事件口径实测疑惑 |
+| ✅ setData 不发 data_change 而 importData 发 | **已修销账 2026-08-28(4.8.1)**:setData 替换后发 data_change(operation:'set')与 importData 对齐(e2e events 断言) | — |
 
 ### 主循环面(P2低×2)
 
@@ -620,3 +620,7 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 
 **来源**:tool-surface-economy W2 评估。describe_data 与 read 不传 jsonPath 功能完全重复(read description 已自称合并 describe 语义);删工具改变工具面属有风险项,故 W2 先做等价标注引导归一(description 补「等价于 read 不传 jsonPath;优先用 read 单一入口」)。**重启触发**:真 LLM 基线中 describe_data 调用量连续两版 ≈0(8-16 基线实测 13 次/报告;W2 落地后观察 4.6 基线,连续两版归零即删)。
 | switchSession 中止在途流后 UI 留空 content 的 partial assistant 占位 | team-audit P2#9 实施发现:streaming:false 改走 core.stream 后,switchSession 的 abort 正确掐断旧流(内容/写入零孤儿,已修),但 useChat 的 abort-保留-partial 语义会把空串 assistant push 进新会话消息列表(空气泡;streaming:true 同款既有形态,非本项引入)。修:useChat 非流式分支 abort 收口不 addMessage 空串(流式分支已有空 splice 守卫) | 用户反馈空气泡困扰,或下次动 useChat 收口路径时顺手 |
+
+### [2026-08-28] craftNotes [note] 漏写机制化(note-gate)— ✅ 已实施(4.8.1)
+
+**来源**:4.8 真 LLM uispec 复验 S1「笔记沉淀」连续 2 次失败(子 agent 收口无 [note] 行);htmlSubagent 提示词自记「漏写率 3/4」,纯提示词约定不可靠。**实施**:`createCraftNoteCheck` 挂 formatCheck verify 链尾(结构→渲染→笔记),缺 [note] 行回灌补写一次,预算与 maxVerifyAttempts 共享;`craftNotes:false`/`formatCheck:false` 不挂。**说明**:html-agent-craft-notes 登记的「wrapModelCall 捕获」不变,note-gate 复用同一 `__pgFinalText` holder;formatCheck:false 场景(craftNotes 开)无 beforeReturn 门禁可挂,维持提示词兜底(登记明示)。

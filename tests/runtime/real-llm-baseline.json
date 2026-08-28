@@ -1,66 +1,66 @@
 {
-  "recordedAt": "2026-08-27T08:22:06.635Z",
+  "recordedAt": "2026-08-28T04:00:54.903Z",
   "suites": {
     "uispec": {
       "S1": {
-        "prompt": 29852,
-        "completion": 1384,
-        "toolCount": 4,
-        "elapsedSec": 171
+        "prompt": 26679,
+        "completion": 1423,
+        "toolCount": 3,
+        "elapsedSec": 213
       },
       "S2": {
-        "prompt": 56388,
-        "completion": 1235,
-        "toolCount": 4,
-        "elapsedSec": 148
+        "prompt": 12859,
+        "completion": 583,
+        "toolCount": 1,
+        "elapsedSec": 125
       },
       "S3": {
-        "prompt": 52299,
-        "completion": 9408,
-        "toolCount": 3,
-        "elapsedSec": 205
+        "prompt": 77608,
+        "completion": 8811,
+        "toolCount": 7,
+        "elapsedSec": 223
       },
       "S4": {
-        "prompt": 29846,
-        "completion": 3875,
+        "prompt": 40594,
+        "completion": 269,
         "toolCount": 2,
-        "elapsedSec": 148
+        "elapsedSec": 103
       },
       "S5": {
-        "prompt": 133010,
-        "completion": 4789,
-        "toolCount": 11,
-        "elapsedSec": 165
+        "prompt": 105181,
+        "completion": 3947,
+        "toolCount": 7,
+        "elapsedSec": 150
       },
       "S6": {
-        "prompt": 28642,
-        "completion": 501,
-        "toolCount": 4,
+        "prompt": 22196,
+        "completion": 479,
+        "toolCount": 3,
         "elapsedSec": 110
       },
       "S7": {
-        "prompt": 88962,
-        "completion": 3474,
-        "toolCount": 10,
-        "elapsedSec": 261
+        "prompt": 53180,
+        "completion": 2210,
+        "toolCount": 6,
+        "elapsedSec": 188
       },
       "S8": {
-        "prompt": 175407,
-        "completion": 7974,
-        "toolCount": 16,
-        "elapsedSec": 220
+        "prompt": 65378,
+        "completion": 2882,
+        "toolCount": 4,
+        "elapsedSec": 135
       },
       "S9": {
-        "prompt": 38264,
-        "completion": 743,
-        "toolCount": 2,
-        "elapsedSec": 110
+        "prompt": 48880,
+        "completion": 1705,
+        "toolCount": 3,
+        "elapsedSec": 120
       },
       "S10": {
-        "prompt": 19525,
-        "completion": 1809,
+        "prompt": 18735,
+        "completion": 2237,
         "toolCount": 1,
-        "elapsedSec": 118
+        "elapsedSec": 120
       }
     },
     "rag": {

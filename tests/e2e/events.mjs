@@ -201,6 +201,27 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:events] ✓ setData 整体替换 → data_change(team-audit P2 修:与 importData 口径对齐,修前不发)')
+  {
+    const events = []
+    const bind = { title: '旧' }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-setdata-event', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
+      data: { schema: z.object({ title: z.string() }), bind },
+      onEvent: (e) => { if (e.type === 'data_change') events.push(e) },
+    })
+    await sdk.mount()
+    const newBind = { title: '新' }
+    sdk.setData({ schema: z.object({ title: z.string() }), bind: newBind })
+    assert(events.length === 1 && events[0].operation === 'set' && events[0].value === newBind,
+      '✓ setData → 恰发 1 次 data_change(operation=set,value=新 bind;非 reactive 宿主重渲染依赖)')
+    // importData 同口径对照(既有行为零回归)
+    const r = sdk.importData({ title: '导入' })
+    assert(r.ok === true && events.length === 2 && events[1].operation === 'set',
+      '✓ importData 仍发 data_change(两 API 口径一致)')
+    sdk.unmount()
+  }
+
   console.log('[e2e:events] ✓ write patches 批量意图 → operation=edit;dryRun 探演不落地 → 不发(code-review 收口:修前 patches 误标 set / dryRun 空刷新)')
   {
     const events = []

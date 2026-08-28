@@ -143,6 +143,25 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert((await s2.load('x', b)) === undefined, 'LRU 淘汰次旧会话 b')
     assert((await s2.load('x', c)) !== undefined, '最新会话 c 保留')
 
+    // maxBytes:Infinity → maybeEvict 短路不 scan(team-audit P2 修:REST 后端 scan = 服务端全表枚举,修前每轮 flush 白扫)
+    {
+      let scanCalls = 0
+      const base = createMemoryBackend()
+      const counted = { ...base }
+      counted.scan = async (prefix: string, cb: (key: string, value: unknown) => boolean | void) => {
+        scanCalls++
+        return base.scan(prefix, cb)
+      }
+      const s7 = createSessionStore({ backend: counted, maxBytes: Infinity, debounceMs: 10 } as any)
+      await s7.ready
+      const sid7 = await s7.createSession('inf')
+      await s7.save('inf', sid7, { memory: 'M'.repeat(100) })
+      await s7.flush()
+      await new Promise((r) => setTimeout(r, 400))  // 等 EVICT_DELAY_MS(300ms)防抖淘汰窗过完
+      assert(scanCalls === 0, `✓ maxBytes:Infinity → flush/防抖淘汰零 scan(实际 ${scanCalls} 次,修前 ≥1 次全库枚举)`)
+      assert((await s7.load('inf', sid7))?.memory === 'M'.repeat(100), '✓ maxBytes:Infinity 读写不受短路影响')
+    }
+
     // 降级:无 indexedDB 环境 ready=false + degraded 事件
     const s5 = createSessionStore()
     let degraded = false

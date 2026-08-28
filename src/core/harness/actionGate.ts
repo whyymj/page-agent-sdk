@@ -46,8 +46,9 @@ export function detectActionImperative(text: string): boolean {
   if (NO_ACTION_RE.test(t)) return false
   // 问句豁免:「做好了吗/改好了吗」类收尾问句是对状态的确认询问,非操作指令(首子句含「做/改」但语义是问)
   if (/(吗|呢)[?？]?\s*$/.test(t) || /[?？]\s*$/.test(t)) return false
-  // 首子句(操作意图几乎总在开头;后文问句/闲聊不改变定性)
-  const firstClause = t.split(/[。!?;?!,\n,]/)[0] ?? t
+  // 首子句(操作意图几乎总在开头;后文问句/闲聊不改变定性)。切分含全角标点(！？；，team-audit P2:
+  // 只配半角时全角逗号常态输入下 16 字窗口退化为整句,只读反例误入 → 真写指令漏拦)
+  const firstClause = t.split(/[。！？；，!?;,\n]/)[0] ?? t
   const window = firstClause.slice(0, 16)
   if (READONLY_VERB_RE.test(window)) return false  // 反例优先(同位置只读动词压过操作动词)
   return ACTION_VERB_RE.test(window)
