@@ -1,4 +1,5 @@
-import { constructLlmFromConfig, constructOpenLlmSync, normalizeBaseUrl } from '../../llm/constructLlm'
+import { constructLlmFromConfig, constructOpenLlmSync, normalizeBaseUrl, shapeAnthropicMessages } from '../../llm/constructLlm'
+import { SystemMessage, HumanMessage } from '@langchain/core/messages'
 import { tableMaxOutputTokens } from '../../utils/modelCaps'
 import { extractTextDelta, extractReasoningDelta, extractUsage, normalizeUsage } from '../../utils/contentParts'
 import { createAgent } from '../../harness/createAgent'
@@ -250,5 +251,20 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(!seenUrls.some((u) => u.includes('chat/completions')), '✓ 子 agent provider anthropic:无 OpenAI 协议请求(不混协议)')
     assert(spawnResult.includes('子结论ok'), '✓ 子 agent provider anthropic:SSE 流被解析,spawn 结论回主(子 agent 跑通)')
     assert(seenBodies.every((b) => b.model === 'claude-opus-4-override'), '✓ task.model 覆盖透传到子 LLM(请求 body.model = 委派覆盖值,非主 model)')
+  }
+
+  // ===== anthropic-mid-system 整形(2026-08-28 perf-stress 基准挖出:压缩摘要中部 system × Anthropic 转换器拒收)=====
+  {
+    const sys = new SystemMessage('主 prompt')
+    const mid1 = new SystemMessage('压缩摘要:早期对话……')
+    const mid2 = new SystemMessage('wrap-up 收口注记')
+    const shaped = shapeAnthropicMessages([sys, new HumanMessage('问题'), mid1, new AIMessage('回答'), mid2])
+    assert(shaped[0].getType() === 'system', '✓ 整形:首位 system 保留(主 prompt 语义不动)')
+    assert(shaped[2].getType() === 'human' && String(shaped[2].content).includes('〔系统注记〕') && String(shaped[2].content).includes('压缩摘要'),
+      '✓ 整形:中部 system(压缩摘要)→ 转写带标记 user(修前 Anthropic 转换器抛「System messages are only permitted as the first passed message」→ 长会话压缩后全调用失败)')
+    assert(shaped[4].getType() === 'human', '✓ 整形:多处中部 system 全转写(wrap-up 注记同面)')
+    assert(shaped[1].getType() === 'human' && shaped[3].getType() === 'ai', '✓ 整形:非 system 消息原样(零干扰)')
+    const untouched = shapeAnthropicMessages([sys, new HumanMessage('x')])
+    assert(untouched.length === 2 && untouched[0] === sys, '✓ 整形:无中部 system → 原数组原样返回(零开销短路)')
   }
 }

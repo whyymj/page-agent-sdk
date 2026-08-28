@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+- **UI 性能基准结论(perf-stress 诊断 spec,PERF_STRESS=1 启用)**:61 消息长会话(混合 markdown/代码块)+ 压缩触发 + 25K 思考流实测 —— DOM 1486 节点/堆 51MB/全列表滚动零丢帧/展开思考块仅 +1 节点(尾部滑窗设计兑现)→ **当前规模无虚拟化需求**,MessageList 窗口化维持 deferred 等更大规模痛点
+
+## [4.8.3] - 2026-08-28
+
+### Fixed
+
+- **Anthropic 协议长会话压缩后全调用失败(anthropic-mid-system,perf-stress 基准挖出)**:上下文压缩摘要(useContextManager 注入 `role:'system'`)与 wrap-up 收口注记(createAgent 中部 SystemMessage)在 OpenAI 协议下合法,**Anthropic 客户端转换器拒收非首位 system**(`System messages are only permitted as the first passed message`,客户端抛错 → 重试×2 全败 → 触发压缩后每次模型调用失败)。修:Anthropic 路径消息整形(`shapeAnthropicMessages`,首位保留/中部转写带「〔系统注记〕」标记的 user;配置路径 constructLlmFromConfig + 直传实例路径 llmResolver 双覆盖,幂等)。此前未暴露:rag-demo 真 LLM 会话短未过压缩阈值
+
+### 测试
+
+- selftest 3223 → **3228**(+5:整形五断言 —— 首位保留/中部转写/多处转写/非 system 零干扰/无中部短路)
+- browser +1 诊断 spec(perf-stress,默认 skip;134 过 + 1 跳过)
+
 ## [4.8.2] - 2026-08-28
 
 ### Fixed

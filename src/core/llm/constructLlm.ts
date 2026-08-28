@@ -14,6 +14,7 @@
  */
 import { ChatOpenAI } from '@langchain/openai'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
+import { HumanMessage, type BaseMessage } from '@langchain/core/messages'
 import type { LLMConfig } from '../sdk/createChatSdk'
 import { resolveModelCaps, tableMaxOutputTokens } from '../utils/modelCaps'
 
@@ -141,6 +142,39 @@ export function constructOpenLlmSync(cfg: LLMConfig, opts: ConstructOpts = {}): 
 }
 
 /**
+ * Anthropic 协议消息整形(anthropic-mid-system,2026-08-28 perf-stress 基准挖出):
+ * 压缩摘要(useContextManager 注入 role:'system')与 wrap-up 收口注记(createAgent 中部
+ * SystemMessage)在 OpenAI 协议下合法,**Anthropic 客户端转换器拒收非首位 system**(
+ * `System messages are only permitted as the first passed message`,客户端抛错 → 触发后
+ * 每次模型调用重试×2 全败)。整形:首位 system 保留,中部 system → 转写带标记的 user 消息
+ * (语义保留在近窗口位置,仅角色适配协议)。纯函数可单测。
+ */
+export function shapeAnthropicMessages(messages: BaseMessage[]): BaseMessage[] {
+  if (!messages.some((m, i) => i > 0 && m.getType() === 'system')) return messages
+  return messages.map((m, i) => {
+    if (i === 0 || m.getType() !== 'system') return m
+    // 转写 user:内容加标记头,LLM 知是系统注记(压缩摘要/收口注记)而非用户发言
+    const content = typeof m.content === 'string' ? `〔系统注记〕\n${m.content}` : m.content
+    return new HumanMessage({ content })
+  })
+}
+
+/** 包装 ChatAnthropic 实例:invoke/stream 入口统一整形中部 system(实例方法补丁;bindTools 的 Runnable 透传到底层实例)。导出:直传实例路径(llmResolver 识别 anthropic 实例)复用 */
+export function patchAnthropicMessageShaping(model: BaseChatModel): BaseChatModel {
+  const anyModel = model as unknown as {
+    invoke: (input: any, opts?: any) => Promise<any>
+    stream: (input: any, opts?: any) => Promise<any>
+  }
+  const shape = (input: unknown): unknown =>
+    Array.isArray(input) ? shapeAnthropicMessages(input as never) : input
+  const origInvoke = anyModel.invoke.bind(model)
+  const origStream = anyModel.stream.bind(model)
+  anyModel.invoke = async (input: unknown, opts?: any) => origInvoke(shape(input), opts)
+  anyModel.stream = async (input: unknown, opts?: any) => origStream(shape(input), opts)
+  return model
+}
+
+/**
  * 按 provider 分支构造 LLM(openai 同步 / anthropic 动态 import)。
  * 缺省 provider → openai(向后兼容)。
  *
@@ -156,7 +190,7 @@ export async function constructLlmFromConfig(cfg: LLMConfig, opts: ConstructOpts
 
   // anthropic:动态 import(optional peerDep;不用时不加载)
   const { ChatAnthropic } = await import('@langchain/anthropic')
-  return new ChatAnthropic({
+  return patchAnthropicMessageShaping(new ChatAnthropic({
     apiKey: cfg.apiKey,
     model: cfg.model,
     // extended thinking 开启 → API 要求 temperature=1(显式低温会 400);未开思考维持原覆盖链
@@ -181,5 +215,5 @@ export async function constructLlmFromConfig(cfg: LLMConfig, opts: ConstructOpts
           },
         }
       : {}),
-  })
+  }))
 }

@@ -7,6 +7,7 @@
  */
 import { HumanMessage, SystemMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
+import { patchAnthropicMessageShaping } from '../llm/constructLlm'
 import { resolveModelCaps, type ModelCaps } from '../utils/modelCaps'
 import type { ChatSdkOptions, LLMConfig } from './createChatSdk'
 import { constructLlmFromConfig } from '../llm/constructLlm'
@@ -26,6 +27,19 @@ export function deriveTitle(msgs: AgentMessage[]): string | undefined {
   const t = text.trim().replace(/[\n\r]+/g, ' ')
   if (!t) return undefined
   return t.length > 30 ? t.slice(0, 30) + '…' : t
+}
+
+/**
+ * 直传实例路径的 Anthropic 消息整形补丁(anthropic-mid-system):实例 _llmType 为 chat-anthropic
+ * 时打 invoke/stream 整形(中部 system → user;配置路径已在 constructLlmFromConfig 内打)。
+ * 幂等(补丁标记防 setLlm/多 resolver 重复包装)。
+ */
+function ensureAnthropicShaping(llm: BaseChatModel | null): BaseChatModel | null {
+  if (!llm) return llm
+  const anyLlm = llm as unknown as { _llmType?: () => string; __pgAnthropicShaped?: boolean }
+  if (anyLlm.__pgAnthropicShaped || anyLlm._llmType?.() !== 'chat-anthropic') return llm
+  anyLlm.__pgAnthropicShaped = true
+  return patchAnthropicMessageShaping(llm)
 }
 
 /** 判定 llm 选项是模型实例(BaseChatModel)还是配置对象(LLMConfig) */
@@ -58,7 +72,7 @@ export function buildSummaryLlmInvoke(options: ChatSdkOptions): ((prompt: string
   const maxTokens = options.summaryMaxTokens ?? 2048  // 压缩摘要输出上限(1024 长对话易静默截断丢要点,2026-08-27 抬升)
   const timeoutMs = options.summaryTimeoutMs ?? 15000
   // 实例直用(presetLlm);LLMConfig cfg lazy 构造(首次 invoke,async 上下文承载 Anthropic 动态 import,不阻塞 resolveLlm 同步签名)
-  const presetLlm: BaseChatModel | null = isChatModel(llmOpt) ? llmOpt : null
+  const presetLlm: BaseChatModel | null = isChatModel(llmOpt) ? ensureAnthropicShaping(llmOpt) : null
   const cfg: LLMConfig | null = isChatModel(llmOpt) ? null : (llmOpt as LLMConfig)
   if (cfg && !cfg.apiKey) {
     // 显式配了 summaryLlm 却无效(apiKey 缺失):非 debug 也 warn,避免"以为用了专用模型实际回退了主模型/索引摘要"
@@ -98,7 +112,7 @@ export function buildTitleLlmInvoke(options: ChatSdkOptions): ((messages: AgentM
   const llmOpt = options.titleLlm ?? options.summaryLlm ?? options.llm
   if (!llmOpt) return undefined
   // 实例直用(presetLlm);LLMConfig cfg lazy 构造(首次 invoke,async 承载 Anthropic 动态 import)
-  const presetLlm: BaseChatModel | null = isChatModel(llmOpt) ? llmOpt : null
+  const presetLlm: BaseChatModel | null = isChatModel(llmOpt) ? ensureAnthropicShaping(llmOpt) : null
   const cfg: LLMConfig | null = isChatModel(llmOpt) ? null : (llmOpt as LLMConfig)
   if (cfg && !cfg.apiKey) return undefined
   let cachedLlm: BaseChatModel | null = presetLlm
@@ -207,7 +221,7 @@ export function buildCompressDecisionInvoke(
 ): ((input: CompressDecisionInput) => Promise<CompressDecision | null>) | undefined {
   const llmOpt = options.summaryLlm ?? options.llm
   if (!llmOpt) return undefined
-  const presetLlm: BaseChatModel | null = isChatModel(llmOpt) ? llmOpt : null
+  const presetLlm: BaseChatModel | null = isChatModel(llmOpt) ? ensureAnthropicShaping(llmOpt) : null
   const cfg: LLMConfig | null = isChatModel(llmOpt) ? null : (llmOpt as LLMConfig)
   if (cfg && !cfg.apiKey) return undefined
   const timeoutMs = options.decisionTimeoutMs ?? 6000
