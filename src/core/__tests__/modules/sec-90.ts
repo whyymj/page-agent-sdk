@@ -6,7 +6,7 @@
  * 预构造 BaseChatModel 实例路径物理不可改(warn+no-op,在 e2e 验证)。
  *
  * A. OpenAI 兼容路径:extraBody.thinking 增删(保留其它键/子键;不 mutate 原 config)
- * B. Anthropic 路径:顶层 thinking 字段(budget_tokens 缺省 min(maxTokens ?? 4096, 8000);显式已配不覆盖)
+ * B. Anthropic 路径:顶层 thinking 字段(budget_tokens 缺省 min(maxTokens ?? 8000, 8000);显式已配不覆盖)
  * C. 边界:未设 mode 原引用返回;无可剥时原引用返回
  */
 import type { TestCtx } from './_ctx'
@@ -44,9 +44,9 @@ export async function run(ctx: TestCtx): Promise<void> {
     // budget 上限 8000
     const r2 = applyThinkingMode(({ apiKey: 'k', provider: 'anthropic' as const, maxTokens: 20000 }) as any, 'deep') as any
     assert(r2.thinking?.budget_tokens === 8000, '✓ anthropic deep → budget_tokens 上限 8000')
-    // 无 maxTokens → 缺省 4096
+    // 无 maxTokens → 缺省 8000(= 上限;复杂思考给足预算,request-maxtokens-default 同批抬升)
     const r3 = applyThinkingMode(({ apiKey: 'k', provider: 'anthropic' as const }) as any, 'deep') as any
-    assert(r3.thinking?.budget_tokens === 4096, '✓ anthropic deep → 无 maxTokens 缺省 budget 4096')
+    assert(r3.thinking?.budget_tokens === 8000, '✓ anthropic deep → 无 maxTokens 缺省 budget 8000(缺省即上限)')
     // 显式已配不覆盖(同引用返回)
     const preset = { apiKey: 'k', provider: 'anthropic' as const, thinking: { type: 'enabled' as const, budget_tokens: 5000 } }
     const r4 = applyThinkingMode(preset, 'deep')

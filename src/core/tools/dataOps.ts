@@ -287,6 +287,8 @@ export function validateWriteLocally(args: {
    * 旧路径 undefined)—— 位移后旧路径取空不代表写入内容坏,按快照值校验。快照由 apply 循环逐 patch 捕获。
    */
   valueAt?: (jp: string) => unknown
+  /** 受保护字段名集(frozen-required-hint,2026-08-28):缺必填命保护字段时给死锁提示防编造值硬闯;缺省不提示 */
+  protectedFieldNames?: Set<string>
 }): LocalValidationPlan {
   const { schema, bindRef, clone, patches, schemaErrorMode = 'zod', appendCaptures, moveCaptures } = args
   const notices: string[] = []
@@ -294,10 +296,38 @@ export function validateWriteLocally(args: {
     const v = getByPath(clone, jp)
     return v === undefined ? args.valueAt?.(jp) : v
   }
-  const mkError = (jp: string, issues: unknown[]): string =>
-    schemaErrorMode === 'schema_invalid'
-      ? toolError({ code: 'SCHEMA_INVALID', message: `patches 应用后局部校验失败 @ "${jp}",未写入`, hint: '确认该路径的值符合 schema;兄弟节点的既有数据不影响本次写入', details: formatZodIssues(issues) })
-      : zodError(jp, issues)
+  // frozen-required-hint:缺必填(invalid_type/undefined)命保护字段名 → 该字段 agent 读不到真值,新建元素缺它属预期;
+  // 提示逃生门防「编造值硬闯 → 撞 FROZEN_FIELD → 换路再撞」死锁循环(名字级交叉,宁可漏提勿误伤)
+  const protectedMissing = (issues: unknown[]): string[] => {
+    if (!args.protectedFieldNames?.size) return []
+    const hits = new Set<string>()
+    for (const raw of issues) {
+      const i = raw as { code?: string; path?: (string | number)[]; received?: unknown; message?: string }
+      const leaf = i.path?.length ? String(i.path[i.path.length - 1]) : ''
+      // zod4 缺必填:received 为 undefined 值(非字符串);兼容 'undefined' 字符串与 Required 消息两种形态
+      const missing = i.code === 'invalid_type' && (i.received === undefined || i.received === 'undefined' || /required/i.test(i.message ?? ''))
+      if (missing && leaf && args.protectedFieldNames!.has(leaf)) hits.add(leaf)
+    }
+    return [...hits]
+  }
+  const mkError = (jp: string, issues: unknown[]): string => {
+    const ph = protectedMissing(issues)
+    const protHint = ph.length
+      ? `;⚠ 字段 ${ph.join('/')} 受保护(freeze/verbatim),agent 读不到其真值 —— 新建元素缺它属预期,勿编造值硬闯:改用不含该字段的增量形态,或由集成方将其设为可选`
+      : ''
+    if (schemaErrorMode === 'schema_invalid') {
+      return toolError({ code: 'SCHEMA_INVALID', message: `patches 应用后局部校验失败 @ "${jp}",未写入`, hint: '确认该路径的值符合 schema;兄弟节点的既有数据不影响本次写入' + protHint, details: formatZodIssues(issues) })
+    }
+    if (!protHint) return zodError(jp, issues)
+    // zod 分支带保护提示:重新组 hint(原 zodError 固定文案 + 死锁逃生门)
+    return toolError({
+      code: 'SCHEMA_INVALID',
+      path: jp,
+      message: `值不符合 "${jp}" 的 schema(${issues.length} 处问题)`,
+      hint: `用 read({jsonPath:"${jp}"}) 查看当前值,按 describe_data() 查看主数据 schema,修正后重试;改大对象优先用 write 的 patch 增量(只发改动部分)${protHint}`,
+      details: formatZodIssues(issues),
+    })
+  }
   const stripError = (stripped: string[]): string =>
     toolError({ code: 'SCHEMA_STRIP', message: `字段 ${stripped.join(', ')} 不在 schema 声明内,写入被拒绝(防静默丢失)`, hint: '该数据结构不支持这些字段;请只用 schema 声明的字段,或在 data.schema 中声明后重试', path: stripped[0], details: { stripped } })
   const writeBacks: LocalWriteBack[] = []
@@ -636,7 +666,11 @@ export function applyPatchesToBind(args: {
   // 只校验 agent 写入的内容(set 目标值/merge 键终值/append 新元素/move 元素),兄弟脏数据不再株连(script:"" 事故根因);
   // strip/原型污染防线平移到 per-path(写回值 = 局部 parse 结果,未声明嵌套键不落 bind,fix-write-safety-bypass P0-1);
   // 任一目标失败 → 整批不写(原子语义不变)。稀疏空洞防御(sec-23)由 set 目标的父数组完整性检查承接。
-  const plan = validateWriteLocally({ schema, bindRef, clone, patches, schemaErrorMode, appendCaptures, moveCaptures, valueAt: (jp) => patchSnapshots.find((s) => s.jp === jp)?.val })
+  // 受保护字段名集(frozen-required-hint):resourcesByPath 叶段名,供缺必填交叉提示
+  const protectedFieldNames = protectedCtx
+    ? new Set([...protectedCtx.resourcesByPath.keys()].map((k) => k.split('.').pop()!).filter(Boolean))
+    : undefined
+  const plan = validateWriteLocally({ schema, bindRef, clone, patches, schemaErrorMode, appendCaptures, moveCaptures, valueAt: (jp) => patchSnapshots.find((s) => s.jp === jp)?.val, ...(protectedFieldNames ? { protectedFieldNames } : {}) })
   if (!plan.ok) return { ok: false, error: plan.error! }
   if (dryRun) return { ok: true, applied, clone, notices: plan.notices }
   // pushSnapshot(内联,与 commitSetToBind 一致:记录改前 bindRef)+ 写回 bind + markDataDirty
@@ -932,7 +966,17 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   // protectedCtx:resourcesByPath 非空即构造(resourceStore 可选 → freeze 无 vfs 也工作,verbatim 降级);
   //   resourcesByPath 内容随 controller.set 经 loadResources 变化自动 reflect
   const protectedCtx: ProtectedCtx | undefined = resourcesByPath.size
-    ? { resourcesByPath, resourceStore, getBind: () => bindRef }
+    ? {
+        resourcesByPath, resourceStore, getBind: () => bindRef,
+        // frozen-required-hint:保护字段是否 schema 必填(best-effort:父级 schema 是对象形态才判,union/开放不猜 → false 不提示)
+        isFieldRequired: (path: string): boolean => {
+          const segs = path.split('.')
+          const leaf = segs[segs.length - 1]
+          const sub = segs.length > 1 ? getSchemaAtPath(schema, segs.slice(0, -1).join('.')) : schema
+          const f = (sub as { shape?: Record<string, { isOptional?: () => boolean }> } | undefined)?.shape?.[leaf]
+          return !!f && typeof f.isOptional === 'function' && !f.isOptional()
+        },
+      }
     : undefined
 
   const snapshots: DataSnapshotEntry[] = []
@@ -1333,6 +1377,13 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       }
       if (mode === 'transform') {
         const result = res.result
+        // undefined 守卫(eval-trailing-return,2026-08-27 诊断驱动):沙箱函数体语义下无 return 的脚本返 undefined,
+        // 原先落到 set 的 value=undefined 报「MISSING_VALUE: set 操作需要 value」严重误导(模型以为要传 value 参数,
+        // 实际 eval_script 无此参数)。改报「脚本未 return 新值」+ 指路(沙箱侧已对无 return 脚本做表达式包裹,
+        // 此处兜显式 return undefined / 多语句无 return 包裹后语法报错的对照文案)
+        if (result === undefined) {
+          return toolError({ code: 'SCRIPT_NO_RETURN', message: 'transform 脚本未返回新值(执行结果为 undefined)', hint: '脚本必须产出新值:以表达式结尾(如 data.slice(0,1))或显式 return(如 const out=...; return out);多语句脚本须含 return 语句', details: { scriptLen: script.length } })
+        }
         // 子树 transform:返回值作为 jsonPath 子树的新值(set 到子路径 + 整体 schema 校验)
         if (jp) {
           const evalLock = await acquireWriteMutex()

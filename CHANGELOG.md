@@ -4,6 +4,32 @@
 
 ## [Unreleased]
 
+## [4.8.0] - 2026-08-28
+
+### Fixed(real-llm-hardening:诊断驱动三件,complex-demo 2026-08-27 诊断)
+
+- **eval_script 末尾表达式不返回(eval-trailing-return)**:schema 描述承诺「末尾表达式或 return 即返回值」,但 Worker `new Function` 函数体语义下无 `return` 的脚本返回 `undefined` —— 真 LLM 照示例写 `data.slice(0,1)` 撞误导性 `MISSING_VALUE: set 操作需要 value`(模型以为要传 value 参数,eval_script 无此参数)。修:①沙箱对无 `return` 字样脚本主线程包裹成 `return (expr)` 再投递(query/transform 同受益;含 return 的多语句脚本不动)②transform 结果 `undefined` 兜底报 `SCRIPT_NO_RETURN` + return 指路
+- **max_tokens 缺省按能力表下发(request-maxtokens-default,主/子统一)**:主模型配置构造路径(constructLlm)此前不查表 —— `LLMConfig.maxTokens` 未设时请求不带 `max_tokens`,落 provider/网关缺省(常 4K),大输出任务(代码生成/长思考)易截断;现缺省链尾接 `tableMaxOutputTokens(model)`(deepseek-v4 → 393216 / deepseek 系 → 8192 / claude-4 → 64000,**仅表命中模型**,未知模型不兜防超发 400),与 createAgent 直构造路径(子 agent)同口径。注:若网关侧另有输出硬上限(实测某网关把 393K 静默压到 4K 且不透传 stop_reason),需网关侧放开;截断留痕 `completion_truncated_retry` 现附 `maxTokens` 字段便于区分「请求了多少 vs 实际被压到多少」
+- **completion 截断回灌给可照抄的分块动作**:原「先骨架后增量补充」泛指对 flash 无效(实测原样重塞全文再截断);现指到具体步骤 —— 先 write 组件(code 仅开头 ≤800 字符)→ `write({patch:{op:"append", jsonPath:"<code 路径>", value:"≤1500 字符/块"}})` 逐块尾接 → 勿重传已写部分
+
+### Changed(生产基线对齐:时长/软上限抬升 + 低能力显式提示)
+
+- **流总时长 `streamMaxDurationMs` 600s → 1800s**:100K+ token 输出生成需 20min+,600s 会把合法长生成掐死(掐后重委派从头再生成更烧);空转仍由 stall 看门狗 90s 主防
+- **子 agent 委派总时长 `subagent.timeoutMs` 默认 600s → 1800s**(对齐流总时长;html 大组件 + 自纠链实测可超 10min)
+- **`promptSoftCap` 窗口自适应**:≥1M 窗口 160K → **320K**(生产大窗口 fleet 长会话过早触发压缩;320K~1M 维持 160K;可经 `contextOptions.promptSoftCapTokens` 覆盖)
+- **低能力模型显式提示(low-caps-hint)**:上下文 <200K 或请求输出上限 <32K → 主 agent 装配期 `console.warn` 一次 + 子 agent 每委派 debugLogs 留痕(`subagent_model_low_caps`);典型覆盖形态:网关模型名不匹配能力表 + 未配 maxTokens → max_tokens 落 4K 缺省静默低输出。新增 `lowCapsHint()` / `tableMaxOutputTokens()` 导出(纯函数)
+- **辅助通道输出上限抬升**:压缩摘要 `summaryMaxTokens` 缺省 1024 → 2048(长对话摘要静默截断丢要点);Anthropic thinking `budget_tokens` 缺省 4096 → 8000(= 上限,复杂思考给足预算)
+
+### Fixed(残余风险收口:approval 残条 + 冻结×必填死锁提示)
+
+- **ApprovalBar 残留清除(frozen-approval-bar)**:abort/超时自动拒后确认条不再残留到用户手点 —— 流收口(finally)时仍挂起的 approval 定义上已死(主级 approval 阻塞流本身,能收口的必是已自动收口的),统一清除
+- **「保护字段 × schema 必填」死锁提示(frozen-required-hint)**:FROZEN_FIELD 容器拒时检测字段同时为 schema 必填 → 附死锁警示 + 逃生门(增量 patch 只写非保护字段 / 集成方设可选);SCHEMA_INVALID 缺必填命保护字段名 → 附「勿编造值硬闯」提示。防「补必填↔缺必填」互锁死循环(纯提示,不动校验语义)
+- 锁 wind-down 兜底 180s 复核后**维持**(尺寸依据 wind-down 自身界:工具看门狗 120s + 本地 commit,与委派总时长无关;抬大反而延长 COMPONENT_BUSY 窗口)
+
+### 测试
+
+- selftest 3200(+29:sec-116 表达式包裹/undefined 守卫 + sec-53 maxTokens 表兜底 + sec-90 budget 抬升 + sec-55 lowCapsHint + sec-62 软上限自适应)/ e2e 1030(+4:截断回灌 append 动作 + low-caps 装配提示三态)/ browser 133(+1:停止生成清 approval 残条)
+
 ## [4.7.0] - 2026-08-27
 
 ### Added(html-design-skill)

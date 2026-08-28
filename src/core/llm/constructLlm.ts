@@ -15,7 +15,7 @@
 import { ChatOpenAI } from '@langchain/openai'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { LLMConfig } from '../sdk/createChatSdk'
-import { resolveModelCaps } from '../utils/modelCaps'
+import { resolveModelCaps, tableMaxOutputTokens } from '../utils/modelCaps'
 
 /** 构造选项:覆盖 LLMConfig 的 temperature/maxTokens(summary/title 用不同值);thinkingMode 显式锁定思考深度 */
 export interface ConstructOpts {
@@ -35,7 +35,7 @@ export type ThinkingMode = 'simple' | 'deep'
  * 按 provider 把 thinkingMode 落到 LLM 配置上,**不 mutate 原 config**(深拷贝 extraBody)。
  *  - OpenAI 兼容(deepseek 等):`extraBody.thinking` 键 —— simple 剥除 / deep 注入 `{type:'enabled'}`(保留已有子键如 budget)
  *  - Anthropic:顶层 `thinking` 字段(ChatAnthropic 构造参数)—— simple 剥除 / deep 注入
- *    `{type:'enabled', budget_tokens}`(显式已配不覆盖;缺省 budget = min(maxTokens ?? 4096, 8000))
+ *    `{type:'enabled', budget_tokens}`(显式已配不覆盖;缺省 budget = min(maxTokens ?? 8000, 8000))
  *  - mode 未设 → 原样返回(同引用,零开销)
  * 与 createChatSdk 的 LLMConfig / harness 的 SubagentLlmConfig 结构兼容(鸭子类型,不 import 防环)。
  */
@@ -58,7 +58,7 @@ export function applyThinkingMode<C extends { provider?: string; maxTokens?: num
   // deep
   if (cfg.provider === 'anthropic') {
     if (cfg.thinking?.type === 'enabled' && cfg.thinking.budget_tokens) return cfg // 已显式配,不覆盖
-    const budget = cfg.thinking?.budget_tokens ?? Math.min(cfg.maxTokens ?? 4096, 8000)
+    const budget = cfg.thinking?.budget_tokens ?? Math.min(cfg.maxTokens ?? 8000, 8000)  // 缺省即上限(复杂思考场景);maxTokens 已设则以它为预算
     return { ...cfg, thinking: { type: 'enabled', budget_tokens: budget } }
   }
   const cur = (cfg.extraBody?.thinking ?? {}) as Record<string, unknown>
@@ -128,7 +128,9 @@ export function constructOpenLlmSync(cfg: LLMConfig, opts: ConstructOpts = {}): 
     apiKey: cfg.apiKey,
     model: cfg.model,
     temperature: opts.temperature ?? cfg.temperature,
-    maxTokens: opts.maxTokens ?? cfg.maxTokens,
+    // maxTokens 缺省链尾接能力表(request-maxtokens-default):cfg 未设时按表内模型实际上限发 max_tokens,
+    // 不发会落 provider/网关缺省(常 4K)—— 大输出任务(代码生成)易截断;未知模型不兜(防超发 400)
+    maxTokens: opts.maxTokens ?? cfg.maxTokens ?? tableMaxOutputTokens(cfg.model),
     configuration: {
       ...(cfg.baseUrl ? { baseURL: normalizeBaseUrl(cfg.baseUrl) } : {}),
       fetch: stripStainlessFetch,
@@ -159,7 +161,7 @@ export async function constructLlmFromConfig(cfg: LLMConfig, opts: ConstructOpts
     model: cfg.model,
     // extended thinking 开启 → API 要求 temperature=1(显式低温会 400);未开思考维持原覆盖链
     temperature: cfg.thinking ? 1 : (opts.temperature ?? cfg.temperature),
-    maxTokens: opts.maxTokens ?? cfg.maxTokens,
+    maxTokens: opts.maxTokens ?? cfg.maxTokens ?? tableMaxOutputTokens(cfg.model),  // 表兜底同 openai 路径
     // anthropicApiUrl = baseUrl(Anthropic SDK 的 baseURL 别名);clientOptions 透传 extraConfig(fetch/headers 等)
     ...(cfg.baseUrl ? { anthropicApiUrl: normalizeBaseUrl(cfg.baseUrl) } : {}),
     ...(cfg.extraConfig ? { clientOptions: cfg.extraConfig } : {}),

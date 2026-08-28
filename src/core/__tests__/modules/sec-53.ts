@@ -1,4 +1,5 @@
 import { constructLlmFromConfig, constructOpenLlmSync, normalizeBaseUrl } from '../../llm/constructLlm'
+import { tableMaxOutputTokens } from '../../utils/modelCaps'
 import { extractTextDelta, extractReasoningDelta, extractUsage, normalizeUsage } from '../../utils/contentParts'
 import { createAgent } from '../../harness/createAgent'
 import { createSubagentMiddleware } from '../../harness/subagent'
@@ -16,6 +17,23 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(!!llm && typeof (llm as any).invoke === 'function', 'constructOpenLlmSync → OpenAI 实例(invoke 可用)')
     const name = (llm as any).constructor?.name || ''
     assert(name.includes('OpenAI'), 'constructOpenLlmSync → ChatOpenAI 实例(constructor 含 OpenAI)')
+  }
+  {
+    // request-maxtokens-default(2026-08-27 诊断驱动):LLMConfig.maxTokens 未设时按能力表发 max_tokens,
+    // 不发会落 provider/网关缺省(常 4K)—— 大输出任务(代码生成/长思考)易截断;未知模型不兜(防超发 400)
+    const mt = (llm: any) => llm.maxTokens ?? llm.lc_kwargs?.maxTokens
+    assert(tableMaxOutputTokens('deepseek-v4-flash') === 393216, 'tableMaxOutputTokens(deepseek-v4) → 393216(表命中)')
+    assert(tableMaxOutputTokens('gpt-4') === undefined, 'tableMaxOutputTokens(未知模型 gpt-4 无条目) → undefined(不兜)')
+    const v4 = constructOpenLlmSync({ apiKey: 'sk-test', model: 'deepseek-v4-flash' })
+    assert(mt(v4) === 393216, '未设 maxTokens + deepseek-v4 → 请求 max_tokens=393216(表上限;修前不发落网关 4K)')
+    const ds = constructOpenLlmSync({ apiKey: 'sk-test', model: 'deepseek-chat' })
+    assert(mt(ds) === 8192, '未设 maxTokens + deepseek 泛匹配 → 8192(不超该系已知上限,防 400)')
+    const unk = constructOpenLlmSync({ apiKey: 'sk-test', model: 'gpt-4' })
+    assert(mt(unk) === undefined, '未知模型 → 不兜底维持不发(严格 provider 超发会 400)')
+    const ex = constructOpenLlmSync({ apiKey: 'sk-test', model: 'deepseek-v4-flash', maxTokens: 555 })
+    assert(mt(ex) === 555, '显式 cfg.maxTokens=555 优先(表兜底不覆盖集成方)')
+    const ov = constructOpenLlmSync({ apiKey: 'sk-test', model: 'deepseek-v4-flash', maxTokens: 999 }, { maxTokens: 777 })
+    assert(mt(ov) === 777, '构造选项 opts.maxTokens(如 summary 1024)最优先(辅助通道不被表兜底放大)')
   }
   {
     // constructLlmFromConfig 显式 provider:'openai' → async 返回 ChatOpenAI 实例

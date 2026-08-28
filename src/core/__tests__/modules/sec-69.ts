@@ -121,7 +121,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     const e = new StreamMaxDurationError(600_000)
     assert(e instanceof StreamStalledError, '✓ StreamMaxDurationError extends StreamStalledError(408 不重试语义继承)')
     assert((e as { status?: number }).status === 408 && isRetryable(e) === false, '✓ 总时长超限同样不进重试(上层重委派/重发自愈)')
-    assert(DEFAULT_STREAM_MAX_DURATION_MS === 600_000, '✓ 默认总时长上限 600s(flash 大组件实测 3-7min 留裕量)')
+    assert(DEFAULT_STREAM_MAX_DURATION_MS === 1_800_000, '✓ 默认总时长上限 1800s(2026-08-28 抬升:100K+ 输出生成需 20min+,600s 掐死合法长生成;空转仍由 stall 90s 主防)')
   }
 
   // 正常放行:总时长低于上限的连续流完整透传(maxMs 设置不误报)

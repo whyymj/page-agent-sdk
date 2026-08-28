@@ -228,6 +228,10 @@ export function useChat(
         }
       } finally {
         await finishRound()
+        // 流结束清残留确认条(frozen-approval-bar,2026-08-28):流到达 finally 时仍挂起的 approval 定义上已死 ——
+        // 主级 approval 会阻塞流本身(工具 await),能走到收口的必是已被 abort 自动拒/子委派超时收口的;
+        // 不清则 ApprovalBar 残留到用户手点(点了也 resolve 到已 settle 的 promise,无害但困惑)
+        pendingApproval.value = null
       }
       return
     }

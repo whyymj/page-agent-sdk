@@ -57,7 +57,7 @@ export class EmptyLLMResponseError extends Error {
 }
 
 /** 默认流总时长上限 10min:flash 生成大组件实测 3-7min 单流,留裕量;黑洞实测冻结 7min+ 永不恢复 */
-export const DEFAULT_STREAM_MAX_DURATION_MS = 600_000
+export const DEFAULT_STREAM_MAX_DURATION_MS = 1_800_000  // 30min(2026-08-28 抬升:100K+ token 输出生成需 20min+,600s 会掐死合法长生成;空转仍由 stall 看门狗 90s 主防)
 
 /**
  * 包一层 chunk 间隔超时 + 可选总时长上限。ms<=0 且 maxMs<=0 → 原样透传(全关闭)。

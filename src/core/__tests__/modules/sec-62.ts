@@ -4,7 +4,7 @@
  */
 import type { TestCtx } from './_ctx'
 import { groupRounds } from '../../utils/rounds'
-import { shouldTriggerCompression, resolvePromptSoftCap, DEFAULT_PROMPT_SOFT_CAP } from '../../composables/contextIndex'
+import { shouldTriggerCompression, resolvePromptSoftCap, DEFAULT_PROMPT_SOFT_CAP, LARGE_WINDOW_PROMPT_SOFT_CAP } from '../../composables/contextIndex'
 import { CompressDecisionSchema } from '../../sdk/compressDecision'
 import type { AgentMessage } from '../../types'
 
@@ -43,7 +43,8 @@ export async function run(ctx: TestCtx) {
 
   // ===== promptSoftCapTokens 成本维度(context-economy-phase2 阶段 A)=====
   // 解析层:大窗口默认 160K 参与 / 小窗口不参与 / 显式覆盖 / 显式 0 关
-  assert(resolvePromptSoftCap(1_000_000) === DEFAULT_PROMPT_SOFT_CAP, '✓ resolvePromptSoftCap → 窗口 ≥320K 默认 softCap 160K 参与')
+  assert(resolvePromptSoftCap(1_000_000) === LARGE_WINDOW_PROMPT_SOFT_CAP, '✓ resolvePromptSoftCap → 窗口 ≥1M 默认 softCap 320K(2026-08-28 窗口自适应抬升)')
+  assert(resolvePromptSoftCap(400_000) === DEFAULT_PROMPT_SOFT_CAP, '✓ resolvePromptSoftCap → 窗口 320K~1M 默认 softCap 160K(维持)')
   assert(resolvePromptSoftCap(200_000) === Number.POSITIVE_INFINITY, '✓ resolvePromptSoftCap → 窗口 <320K 未传不参与(小窗口 ratio 仍先生效)')
   assert(resolvePromptSoftCap(1_000_000, 50_000) === 50_000, '✓ resolvePromptSoftCap → 显式值覆盖默认')
   assert(resolvePromptSoftCap(1_000_000, 0) === Number.POSITIVE_INFINITY, '✓ resolvePromptSoftCap → 显式 0 关闭(一键回退)')

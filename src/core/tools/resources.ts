@@ -203,6 +203,12 @@ export interface ProtectedCtx {
   resourceStore: ResourceStore | undefined
   /** 读当前 bind 原始值(D1 自愈比对基准 + freeze 当前值比对) */
   getBind: () => unknown
+  /**
+   * 判定受保护路径的字段是否为 schema 必填(frozen-required-hint,2026-08-28;createDataOps 闭包注入,
+   * 闭包引用 live schema)。用于「保护字段 × schema 必填」碰撞提示:该形态下「保留含冻结字段的元素」
+   * 与「新建元素缺必填被拒」互为死锁,提示模型勿反复整体替换重试、给逃生门
+   */
+  isFieldRequired?: (path: string) => boolean
 }
 
 /**
@@ -310,6 +316,8 @@ function normalizeAndCheck(normalized: unknown, ctx: ProtectedCtx, mergeMode?: b
         continue
       }
       // 根键在场但受保护链被显式删除(set components=[] / 换掉含冻结字段的元素)→ 与 remove patch 同语义显式拒绝
+      // frozen-required-hint:字段同时是 schema 必填 → 「保留元素补必填」与「新建元素缺必填被拒」互为死锁,附逃生门
+      const deadlock = spec.mode === 'freeze' && !!ctx.isFieldRequired?.(path)
       return {
         ok: false,
         code: spec.mode === 'freeze' ? 'FROZEN_FIELD' : 'VERBATIM_PROTECTED',
@@ -317,6 +325,7 @@ function normalizeAndCheck(normalized: unknown, ctx: ProtectedCtx, mergeMode?: b
         message: `整体替换会移除受保护字段 "${path}"(${spec.mode}),已拒绝`,
         hint: spec.mode === 'freeze'
           ? '含冻结字段的容器不可整体清空/替换:保留包含该字段的元素(补齐其必填字段,如 type),或逐个 remove 其余元素;彻底移除该字段需集成方调整 data.resources'
+            + (deadlock ? `;⚠ 该字段("${path.split('.').pop()}")同时是 schema 必填 —— 新建同类元素会因缺它被 schema 拒,此路死锁:勿反复整体替换重试,改用增量 patch 只写非保护字段,或由集成方将保护字段设为可选/给默认值` : '')
           : '含 verbatim 字段的容器不可整体清空/替换:保留包含该字段的元素,或先 resource_delete({path}) 释放保护后再整体替换',
       }
     }

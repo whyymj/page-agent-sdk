@@ -110,6 +110,8 @@ export interface CompressionTriggerConfig {
 export const SOFT_CAP_MIN_WINDOW = 320_000
 /** 默认 softCap:超大窗口(flash/v4 档 1M)下 ratio×window=500K 才首压、prompt 成本线性膨胀;160K 留 16× 常规会话余量(真 LLM 复测校准,非契约值) */
 export const DEFAULT_PROMPT_SOFT_CAP = 160_000
+/** ≥1M 窗口模型的软上限(2026-08-28 抬升:生产 1M 模型长会话 160K 过早触发压缩;成本换复杂任务跑道) */
+export const LARGE_WINDOW_PROMPT_SOFT_CAP = 320_000
 
 /**
  * 解析有效 softCap(纯函数,单一真源;供触发判断 + 消耗提示 C1 共用):
@@ -120,7 +122,10 @@ export const DEFAULT_PROMPT_SOFT_CAP = 160_000
  */
 export function resolvePromptSoftCap(contextWindow?: number, promptSoftCapTokens?: number): number {
   if (promptSoftCapTokens != null) return promptSoftCapTokens > 0 ? promptSoftCapTokens : Infinity
-  if (contextWindow && contextWindow >= SOFT_CAP_MIN_WINDOW) return DEFAULT_PROMPT_SOFT_CAP
+  if (contextWindow && contextWindow >= SOFT_CAP_MIN_WINDOW) {
+    // 窗口自适应:≥1M(生产大窗口 fleet)→ 320K;320K~1M → 160K
+    return contextWindow >= 1_000_000 ? LARGE_WINDOW_PROMPT_SOFT_CAP : DEFAULT_PROMPT_SOFT_CAP
+  }
   return Infinity
 }
 

@@ -5,6 +5,7 @@
  *  - resolveModelCaps 查表(≥200K 满足 / <200K 被校验拦)
  *  - 中间件 controller:setContextWindow(summarization/contextInspector)
  */
+import { tableMaxOutputTokens, lowCapsHint } from '../../utils/modelCaps'
 import type { TestCtx } from './_ctx'
 import { isContextLengthError, isModelUnavailableError, decorateModelUnavailable, MODEL_UNAVAILABLE_GUIDANCE } from '../../harness/errors'
 import { MIN_CONTEXT_WINDOW, resolveModelCaps } from '../../utils/modelCaps'
@@ -140,4 +141,20 @@ export async function run(ctx: TestCtx) {
     assert(vfs3.files['large_results/a.txt'] === undefined, 'P4:未设 protectedRefs → 正常 LRU 删最旧(默认淘汰不被保护破坏)')
     assert(vfs3.files['large_results/b.txt'] !== undefined, 'P4:未设 protectedRefs → 新条目保留')
   }
+  // ===== request-maxtokens-default + low-caps-hint(2026-08-28 生产基线)=====
+  {
+    assert(tableMaxOutputTokens('deepseek-v4-flash') === 393216, '✓ tableMaxOutputTokens(deepseek-v4) → 393216(表命中)')
+    assert(tableMaxOutputTokens('gateway-custom-x') === undefined, '✓ tableMaxOutputTokens(未知模型) → undefined(不兜,防超发 400)')
+    const big = lowCapsHint('deepseek-v4-flash', { contextWindow: 1048576, maxOutputTokens: 393216 }, 393216)
+    assert(big === null, '✓ lowCapsHint(1M/384K) → null(达基线不提示)')
+    const lowOut = lowCapsHint('gateway-custom-x', { contextWindow: 1048576, maxOutputTokens: 4096 }, 4096)
+    assert(lowOut !== null && lowOut.includes('输出上限 4K') && !lowOut.includes('上下文'), '✓ lowCapsHint(1M 窗口/4K 输出) → 只提示输出维度(网关模型名不匹配表的典型形态)')
+    const lowCtx = lowCapsHint('old-model', { contextWindow: 100000, maxOutputTokens: 65536 }, 65536)
+    assert(lowCtx !== null && lowCtx.includes('上下文 100K') && !lowCtx.includes('输出上限'), '✓ lowCapsHint(100K 窗口/64K 输出) → 只提示上下文维度')
+    const both = lowCapsHint('tiny', { contextWindow: 32768, maxOutputTokens: 2048 })
+    assert(both !== null && both.includes('上下文 33K') && both.includes('输出上限 2K'), '✓ lowCapsHint(双低) → 两维都提示')
+    const unReq = lowCapsHint('m', { contextWindow: 1048576, maxOutputTokens: 4096 })
+    assert(unReq !== null && unReq.includes('输出上限 4K'), '✓ lowCapsHint 未传 requestMaxTokens → 用 caps.maxOutputTokens 判定')
+  }
+
 }

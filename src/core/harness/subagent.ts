@@ -23,7 +23,7 @@ import type { Middleware } from './middleware'
 import { runPool } from '../utils/pool'
 import type { StreamEvent, TokenUsage } from '../types'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
-import { resolveModelCaps, MIN_CONTEXT_WINDOW } from '../utils/modelCaps'
+import { resolveModelCaps, MIN_CONTEXT_WINDOW, lowCapsHint } from '../utils/modelCaps'
 import { createFocusMiddleware } from './focus'
 import { createSummarizationMiddleware, type SummarizationOptions } from './summarization'
 import type { Focus, VfsFile } from './state'
@@ -211,7 +211,7 @@ const DEFAULT_READONLY_TOOLS = [
 const DEFAULT_MAX_DEPTH = 1
 const DEFAULT_MAX_PARALLEL = 4
 /** 子 agent 单次执行默认总时长(flow-robustness P1#4 挂起兜底;opts.timeoutMs 显式覆盖,0/负 = 关) */
-const DEFAULT_SUBAGENT_TIMEOUT_MS = 600_000
+const DEFAULT_SUBAGENT_TIMEOUT_MS = 1_800_000  // 30min(2026-08-28 抬升对齐流总时长;html 大组件+自纠链实测可超 10min)
 /**
  * 组件锁释放兜底上限(team-audit P1#6):release 挂子流彻底 settle,若 wind-down 因未预期路径永挂,
  * 兜底超时后仍放锁防「该组件委派永久 COMPONENT_BUSY」。裕量 = 工具看门狗 120s 上限 + verify wind-down 余量。
@@ -451,6 +451,16 @@ async function runSubagent(
     onLog?.({ timestamp: Date.now(), type: 'middleware', data: { stage: 'subagent_thinking_mode_noop', mode: opts.thinkingMode } })
   }
   const effLlm = !isChatModel(opts.llm) ? applyThinkingMode(opts.llm, resolveEffectiveThinkingMode(opts.llm, opts.thinkingMode)) : opts.llm
+  // low-caps-hint(2026-08-28):子 agent 输出上限低于基线(<32K)每委派留痕(不刷 console;主 agent 装配期已 warn 一次)。
+  // 上下文 <200K 已在上方 throw;此提示覆盖输出维度(委派生成大 code 是常态场景)
+  {
+    const subModel = isChatModel(effLlm) ? ((effLlm as any).model ?? (effLlm as any).modelName) : effLlm.model
+    const subReqMax = isChatModel(effLlm)
+      ? ((effLlm as any).maxTokens ?? subCaps.maxOutputTokens)
+      : (opts.maxTokens ?? effLlm.maxTokens ?? subCaps.maxOutputTokens)
+    const lowHint = lowCapsHint(subModel || undefined, subCaps, subReqMax)
+    if (lowHint) onLog?.({ timestamp: Date.now(), type: 'middleware', data: { stage: 'subagent_model_low_caps', hint: lowHint } })
+  }
   // provider 透传(fix:主 llm 传 LLMConfig + provider:'anthropic' 时,散字段重建曾丢 provider →
   // 子 agent 被按 OpenAI 协议构造,请求打到 {baseUrl}/chat/completions 404 秒败)。
   // anthropic 走 constructLlmFromConfig 动态构造(runSubagent 是 async,可承载动态 import);
@@ -529,8 +539,8 @@ async function runSubagent(
   streamP.catch(() => {}).then(() => opts.exitDataScope?.(scopeId))
   // team-audit P1#6 ②:子流 settle 通知(含 wind-down)—— use_<id> 组件锁 release 挂此点(修超时即放锁竞态)
   opts.onStreamSettled?.(streamP)
-  // flow-robustness P1#4:默认总时长 10min(原 opt-in → 默认开;0/负 = 关,opts.timeoutMs 显式覆盖)。
-  // 单模型调用 600s 闸只兜单次调用,多轮工具循环无外层闸时理论最坏 ~70min 且主循环同轮 await。
+  // flow-robustness P1#4:默认总时长 30min(2026-08-28 抬升对齐流总时长;原 opt-in → 默认开;0/负 = 关,opts.timeoutMs 显式覆盖)。
+  // 单模型调用 streamMaxMs 闸只兜单次调用流,多轮工具循环无外层闸时需此总闸兜且主循环同轮 await。
   const subTimeoutMs = opts.timeoutMs !== undefined ? opts.timeoutMs : DEFAULT_SUBAGENT_TIMEOUT_MS
   if (!subTimeoutMs || subTimeoutMs <= 0) {
     // afterAgent 在 finally 段跑(commit/keep_external 检出),await streamP resolve 时标记已就绪,可安全装饰

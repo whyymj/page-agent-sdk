@@ -176,6 +176,16 @@ export async function run(ctx: TestCtx) {
   const h1b3 = enforceSet({ value: { components: [{ type: 'navbar', props: { title: 't2' } }] }, ctx: h1bctx })
   assert(h1b3.ok && (h1b3 as { value: { components: { props: { trackId?: string } }[] } }).value.components[0].props.trackId === 'trk_1', '✓ H1b 容器仍在 + 漏传受保护字段 → 照常回填(H1 不回归)')
   const h1b4 = enforcePatches({ patches: [{ op: 'set', jsonPath: 'components', value: [] }], clone: { components: [] }, ctx: h1bctx })
+  // frozen-required-hint(2026-08-28):保护字段同时 schema 必填 → 容器拒附死锁提示 + 逃生门(防「补必填↔缺必填」死循环)
+  {
+    const dlctx: ProtectedCtx = { ...h1bctx, isFieldRequired: (path) => path.endsWith('trackId') }
+    const dl1 = enforceSet({ value: { components: [] }, ctx: dlctx })
+    assert(!dl1.ok && /FROZEN_FIELD/.test(dl1.error) && /死锁/.test(dl1.error) && /增量 patch 只写非保护字段/.test(dl1.error),
+      '✓ freeze×schema必填碰撞 → FROZEN_FIELD 附死锁提示 + 逃生门(增量 patch / 集成方设可选)')
+    const dl2 = enforceSet({ value: { components: [] }, ctx: { ...h1bctx, isFieldRequired: () => false } })
+    assert(!dl2.ok && /FROZEN_FIELD/.test(dl2.error) && !/死锁/.test(dl2.error),
+      '✓ 保护字段非必填 → 不附死锁提示(宁可漏提勿误伤)')
+  }
   assert(!h1b4.ok && /FROZEN_FIELD/.test(h1b4.error) && /patches\[0\]/.test(h1b4.error), '✓ H1b patches 通道 set components=[] → FROZEN_FIELD + patches[0] 定位')
   const h1bstore = new ResourceStore(createVfs())
   h1bstore.ensure('components.0.props.trackId', 'trk_1', 'verbatim')

@@ -79,24 +79,61 @@ export interface ResolveCapsOptions {
   thinking?: boolean
 }
 
+/** 模型表最长匹配(内部共用):返回命中条目的能力;未命中 undefined */
+function matchTableCaps(model?: string): ModelCaps | undefined {
+  if (!model) return undefined
+  // longest-match:按"实际匹配到的子串长度"降序取最具体的 —— 用匹配长度而非 pattern.source.length(后者会被 | 分支数虚高,如 `glm-4|glm4` source 长 9 但只匹配 `glm-4` 5 字符,反而压过更具体的 `glm-4.5`)。消除 first-match 顺序依赖(harden-model-caps-matching)
+  const hits = MODEL_TABLE
+    .map((e) => {
+      const m = e.pattern.exec(model)
+      return m ? { caps: e.caps, matchedLen: m[0].length } : null
+    })
+    .filter((x): x is { caps: ModelCaps; matchedLen: number } => x !== null)
+  if (!hits.length) return undefined
+  hits.sort((a, b) => b.matchedLen - a.matchedLen)
+  return hits[0].caps
+}
+
+/**
+ * 表内该模型的输出上限(request-maxtokens-default,2026-08-27 诊断驱动):LLMConfig.maxTokens 未设时
+ * 作请求 max_tokens 缺省(与 createAgent 直构造路径同口径)—— 不发 max_tokens 会落 provider/网关缺省
+ * (常为 4K),大输出任务(代码生成/长思考)易截断。**仅表命中模型返回值**(= 模型已知实际上限,不会超发 400);
+ * 未知模型返回 undefined(维持不发,防对严格 provider 超发报错)。
+ */
+export function tableMaxOutputTokens(model?: string): number | undefined {
+  return matchTableCaps(model)?.maxOutputTokens
+}
+
+/** 低能力提示基线(low-caps-hint,2026-08-28 用户拍板:生产 fleet ≥1M 上下文/100K+ 输出,低于基线给显式提示) */
+export const LOW_CAPS_HINT_BASELINE = { contextWindow: 200_000, requestMaxTokens: 32_768 } as const
+
+/**
+ * 低能力提示文案:上下文 <200K 或请求输出上限 <32K → 返回提示;两维均达基线返回 null(不提示)。
+ * 调用面分流:主 agent 装配期 console.warn 一次(集成方必见);子 agent 每委派 onLog 留痕(不刷 console)。
+ * 注:主链/子链装配期已有 <200K 上下文硬闸(throw),此提示主要覆盖**输出维度**(如网关模型名不匹配能力表
+ * → max_tokens 落 4K 缺省,静默低输出是复杂任务(大页面/长思考)最隐蔽的瓶颈)。
+ */
+export function lowCapsHint(
+  model: string | undefined,
+  caps: { contextWindow: number; maxOutputTokens: number },
+  requestMaxTokens?: number,
+): string | null {
+  const req = requestMaxTokens ?? caps.maxOutputTokens
+  const lowCtx = caps.contextWindow < LOW_CAPS_HINT_BASELINE.contextWindow
+  const lowOut = req < LOW_CAPS_HINT_BASELINE.requestMaxTokens
+  if (!lowCtx && !lowOut) return null
+  const parts: string[] = []
+  if (lowCtx) parts.push(`上下文 ${Math.round(caps.contextWindow / 1000)}K(基线 ≥200K)`)
+  if (lowOut) parts.push(`输出上限 ${Math.round(req / 1000)}K(基线 ≥32K)`)
+  return `[page-agent-sdk] 模型 ${model || '(未命名)'} 能力低于推荐基线:${parts.join(' / ')}。复杂任务(大页面生成/长对话/深度思考)可能受约束 —— 若实际模型能力更强,显式配置 llm.contextWindow / llm.maxTokens;若模型确实较小,建议换大窗口模型(DeepSeek-v4/GLM-5.2/Claude-4/GPT-5)`
+}
+
 /**
  * 解析模型能力:声明优先 > 模型表 > 缺省。
  * 声明值与表值取较大者(集成方可能更了解自家模型上限)。
  */
 export function resolveModelCaps(opts: ResolveCapsOptions = {}): ModelCaps {
-  const fromTable = (() => {
-    if (!opts.model) return undefined
-    // longest-match:按"实际匹配到的子串长度"降序取最具体的 —— 用匹配长度而非 pattern.source.length(后者会被 | 分支数虚高,如 `glm-4|glm4` source 长 9 但只匹配 `glm-4` 5 字符,反而压过更具体的 `glm-4.5`)。消除 first-match 顺序依赖(harden-model-caps-matching)
-    const hits = MODEL_TABLE
-      .map((e) => {
-        const m = e.pattern.exec(opts.model!)
-        return m ? { caps: e.caps, matchedLen: m[0].length } : null
-      })
-      .filter((x): x is { caps: ModelCaps; matchedLen: number } => x !== null)
-    if (!hits.length) return undefined
-    hits.sort((a, b) => b.matchedLen - a.matchedLen)
-    return hits[0].caps
-  })()
+  const fromTable = matchTableCaps(opts.model)
   const contextWindow = opts.contextWindow ?? fromTable?.contextWindow ?? DEFAULT_CAPS.contextWindow
   const maxOutputTokens = opts.maxOutputTokens ?? fromTable?.maxOutputTokens ?? DEFAULT_CAPS.maxOutputTokens
   // vision:显式声明(含显式 false)> 表 > 缺省 false(保守:误发 parts 吃 400 比走旁路/报错更糟)

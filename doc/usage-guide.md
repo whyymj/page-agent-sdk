@@ -1120,7 +1120,7 @@ createChatSdk({
     allowedTools: ['myResearchTool'],  // 子 agent 可用的额外工具(默认仅只读主数据 + fetch)
     maxDepth: 1,    // 递归深度(默认 1:主可 spawn,子不可再 spawn)
     maxParallel: 4, // spawn_agents 并发上限(默认 4)
-    // timeoutMs: 300000, // 单次委派总时长(4.1+ 默认 600000=10min 挂起兜底;0=不限制;超时 abort 子流,错误回灌主 LLM 可重试/拆分)
+    // timeoutMs: 300000, // 单次委派总时长(默认 1800000=30min 挂起兜底,2026-08-28 抬升对齐流总时长;0=不限制;超时 abort 子流,错误回灌主 LLM 可重试/拆分)
     // enabled: false  // 关闭子 agent
   },
   maxParallelTools: 1,  // 同轮工具并发(默认 1 串行;与 subagent.maxParallel 不同)

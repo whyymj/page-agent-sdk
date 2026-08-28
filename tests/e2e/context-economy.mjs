@@ -54,7 +54,7 @@ export async function run() {
 
   console.log('[e2e:context-economy] promptSoftCapTokens 配置反射(inspect().getInfo().compression)')
   {
-    // 显式 50000 → 原样反射;1M 窗口未传 → 默认 160_000;显式 0 → Infinity(关闭)
+    // 显式 50000 → 原样反射;1M 窗口未传 → 默认 320_000(窗口自适应);显式 0 → Infinity(关闭)
     const mk = (id, llm, contextOptions) => createChatSdk({
       ui: false, id, storage: 'memory', llm, capabilities: MIN_CAPS, contextOptions,
     })
@@ -68,7 +68,7 @@ export async function run() {
     const s2 = mk('e2e-softcap-default', { ...FAKE_LLM, contextWindow: 1000000 })
     await s2.mount()
     const c2 = s2.inspect().compression
-    assert(c2?.promptSoftCap === 160000, `窗口 ≥320K(1M)未传 softCap → 默认 160000,实际 ${c2?.promptSoftCap}`)
+    assert(c2?.promptSoftCap === 320000, `窗口 ≥1M 未传 softCap → 默认 320000(2026-08-28 窗口自适应抬升),实际 ${c2?.promptSoftCap}`)
     s2.unmount()
 
     const s3 = mk('e2e-softcap-disabled', FAKE_LLM, { promptSoftCapTokens: 0 })

@@ -66,5 +66,28 @@ export async function run() {
     sdk.unmount()
   }
 
+
+  console.log('[e2e:llm-provider] low-caps-hint 装配提示(输出上限 <32K 基线 → console.warn)')
+  {
+    const { createChatSdk } = await import('../../dist/page-agent-sdk.js')
+    const warnsOf = async (llm) => {
+      const warns = []
+      const orig = console.warn
+      console.warn = (...a) => warns.push(a.join(' '))
+      try {
+        const sdk = createChatSdk({ ui: false, id: 'e2e-lowcaps', storage: false, llm, capabilities: { ...MIN_CAPS, subagent: false } })
+        sdk.unmount()
+      } finally { console.warn = orig }
+      return warns.join('\n')
+    }
+    const w1 = await warnsOf({ apiKey: 'sk-fake', model: 'gateway-custom-x', contextWindow: 1048576 })
+    assert(w1.includes('低于推荐基线') && w1.includes('输出上限 4K') && w1.includes('gateway-custom-x'),
+      '✓ 未知网关模型 + 未配 maxTokens(表未兜 → 4K)→ 装配 warn 含模型名与输出维度')
+    const w2 = await warnsOf({ apiKey: 'sk-fake', model: 'gateway-custom-x', contextWindow: 1048576, maxTokens: 65536 })
+    assert(!w2.includes('低于推荐基线'), '✓ 显式 maxTokens 65536 达基线 → 不提示')
+    const w3 = await warnsOf({ apiKey: 'sk-fake', model: 'deepseek-v4-flash' })
+    assert(!w3.includes('低于推荐基线'), '✓ 表内大模型(deepseek-v4:1M/384K)→ 不提示')
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

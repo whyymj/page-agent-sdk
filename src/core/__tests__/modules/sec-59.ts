@@ -98,4 +98,26 @@ export async function run(ctx: TestCtx) {
   assert(/FROZEN_FIELD/.test(rd) && /静态保护/.test(rd) && /集成方/.test(rd), '✓ resource_delete freeze 静态路径 → 定向文案(无句柄不可释放,指集成方)而非「不存在」')
   const rl = await invoke(t.resource_list, {})
   assert(/freeze 只读字段/.test(rl) && /id/.test(rl) && /resource_delete 仅对 verbatim/.test(rl), '✓ resource_list 空池 + 静态 freeze → 列出 freeze 路径面(不再「无已注册」误导)')
+  // ===== frozen-required-hint:缺必填命保护字段名 → SCHEMA_INVALID 附「勿编造值硬闯」提示 =====
+  {
+    const z2 = z.object({
+      title: z.string(),
+      components: z.array(z.object({ type: z.string(), props: z.object({ trackId: z.string(), title: z.string() }) })),
+    })
+    const bind2: any = { title: 't', components: [{ type: 'nav', props: { trackId: 'trk_1', title: 'a' } }] }
+    const tools2 = createDataOps(
+      { schema: z2, bind: bind2, resources: [{ path: 'components.0.props.trackId', mode: 'freeze' }] },
+      { vfsStore: createVfs() },
+    )
+    const t2 = byName(tools2)
+    // 新建元素缺受保护必填字段(trackId)→ SCHEMA_INVALID + 死锁提示(防编造值硬闯)
+    const nr = await invoke(t2.write, { patch: { op: 'set', jsonPath: 'components.1', value: { type: 'banner', props: { title: 'b' } } } })
+    assert(/SCHEMA_INVALID/.test(nr) && /受保护/.test(nr) && /勿编造值硬闯/.test(nr),
+      '✓ 新建元素缺受保护必填字段 → SCHEMA_INVALID 附死锁提示(增量形态/集成方设可选)')
+    // 对照:非保护字段缺必填 → 原提示零变化
+    const nr2 = await invoke(t2.write, { patch: { op: 'set', jsonPath: 'components.1', value: { type: 'banner', props: { trackId: 'x', title: 'b', extra: 1 } } } })
+    assert(/SCHEMA_STRIP|SCHEMA_INVALID/.test(nr2) && !/勿编造值硬闯/.test(nr2),
+      '✓ 非保护字段问题 → 不附保护死锁提示(零误伤)')
+  }
+
 }

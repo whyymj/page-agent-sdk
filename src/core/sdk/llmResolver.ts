@@ -55,7 +55,7 @@ export function buildSummaryLlmInvoke(options: ChatSdkOptions): ((prompt: string
   const llmOpt = options.summaryLlm ?? options.llm
   if (!llmOpt) return undefined
   const temperature = options.summaryTemperature ?? 0.3
-  const maxTokens = options.summaryMaxTokens ?? 1024
+  const maxTokens = options.summaryMaxTokens ?? 2048  // 压缩摘要输出上限(1024 长对话易静默截断丢要点,2026-08-27 抬升)
   const timeoutMs = options.summaryTimeoutMs ?? 15000
   // 实例直用(presetLlm);LLMConfig cfg lazy 构造(首次 invoke,async 上下文承载 Anthropic 动态 import,不阻塞 resolveLlm 同步签名)
   const presetLlm: BaseChatModel | null = isChatModel(llmOpt) ? llmOpt : null

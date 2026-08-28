@@ -84,7 +84,7 @@ import { createResourcesPinMiddleware } from '../harness/resourcesPin'
 import { type SessionStore, type StorageConfig, type StorageBackendType, type SessionSnapshot, type SessionMeta } from '../backends/storage'
 import { createSkillStore, type SkillStore, type SkillStoreConfig, type PersistedSkill } from '../backends/skillStore'
 import { makeId } from '../utils/id'
-import { resolveModelCaps, MIN_CONTEXT_WINDOW } from '../utils/modelCaps'
+import { resolveModelCaps, MIN_CONTEXT_WINDOW, tableMaxOutputTokens, lowCapsHint } from '../utils/modelCaps'
 import { trimMemoryMessagesImpl, composeTrimSummary } from '../utils/rounds'
 import { indexSummarize, resolvePromptSoftCap } from '../composables/contextIndex'
 import { extractVfsRefs, gcVfsLargeResults } from '../utils/vfsGc'
@@ -102,6 +102,7 @@ export interface LLMConfig {
   baseUrl?: string
   model?: string
   temperature?: number
+  /** 单次生成输出上限(max_tokens);缺省按能力表模型输出上限发(deepseek-v4 384K/deepseek 系 8K/claude-4 64K…),不发会落 provider/网关缺省(常 4K)易截断;未知模型不兜(防超发 400)。主/子 agent 同口径 */
   maxTokens?: number
   /** 模型上下文窗口(token);缺省按 model 名查表。影响 offload 阈值与压缩触发(大模型自适应) */
   contextWindow?: number
@@ -944,6 +945,18 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     throw new Error(
       `[page-agent-sdk] 模型上下文窗口 ${modelCaps.contextWindow} 小于最小支持 ${MIN_CONTEXT_WINDOW}(需 ≥200K 窗口模型,如 GLM-5.2/Claude/Kimi/Qwen-1M/DeepSeek-v4)`,
     )
+  }
+  // low-caps-hint(2026-08-28):上下文已有 200K 硬闸,此处主要提示**输出维度**低于基线(<32K)——
+  // 典型形态:网关模型名不匹配能力表 + 未显式配 maxTokens → 请求不带 max_tokens 落 provider/网关缺省(常 4K),
+  // 静默低输出是复杂任务最隐蔽的瓶颈。装配期 warn 一次,集成方必见(实测 flash 整页生成撞 4K 截断即此形态)
+  {
+    const llmOpt = options.llm as unknown
+    const modelName = isChatModel(llmOpt) ? ((llmOpt as any).model ?? (llmOpt as any).modelName ?? '') : ((llmOpt as LLMConfig).model ?? '')
+    const reqMax = isChatModel(llmOpt)
+      ? ((llmOpt as any).maxTokens ?? modelCaps.maxOutputTokens)
+      : ((llmOpt as LLMConfig).maxTokens ?? tableMaxOutputTokens((llmOpt as LLMConfig).model) ?? modelCaps.maxOutputTokens)
+    const hint = lowCapsHint(modelName || undefined, modelCaps, reqMax)
+    if (hint) console.warn(hint)
   }
   // recall-and-trim-llm 方向2:trim 异步 LLM 增强的配置门 + preserveSet(复用于 summarization 装配,消除重复 resolveContextOptions 调用)
   const resolvedCtxOpts = resolveContextOptions(options, modelCaps.contextWindow)
@@ -2318,8 +2331,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           enabled: !!subagentMw,
           maxDepth: options.subagent?.maxDepth ?? 1,
           maxParallel: options.subagent?.maxParallel ?? 4,
-          // 单次委派总时长(flow-robustness P1#4:undefined → 默认 600000;0 = 关;反射实际生效值)
-          timeoutMs: options.subagent?.timeoutMs !== undefined ? (options.subagent.timeoutMs > 0 ? options.subagent.timeoutMs : 0) : 600_000,
+          // 单次委派总时长(flow-robustness P1#4:undefined → 默认 1800000(2026-08-28 抬升对齐流总时长);0 = 关;反射实际生效值)
+          timeoutMs: options.subagent?.timeoutMs !== undefined ? (options.subagent.timeoutMs > 0 ? options.subagent.timeoutMs : 0) : 1_800_000,
           allowedTools: options.subagent?.allowedTools ?? [],
           // 预声明子 agent 列表(动态:反映 setSubagents/addSubagent/removeSubagent 后的最新;含 thinkingMode/thinkingApplied 反射)
           subagents: (subagentsController?.get() ?? []).map(reflectSubagentThinking),

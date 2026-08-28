@@ -135,7 +135,7 @@ export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler,
 export type { Focus } from './harness/state'
 export type { AgentInfo, ToolInfo, SkillInfo, DataInfo, SubagentInfo } from './types'
 export type { ContextManagerOptions, CompressionStats } from './composables/useContextManager'
-export { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars, MIN_CONTEXT_WINDOW } from './utils/modelCaps'
+export { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars, MIN_CONTEXT_WINDOW, tableMaxOutputTokens, lowCapsHint, LOW_CAPS_HINT_BASELINE } from './utils/modelCaps'
 export type { ModelCaps } from './utils/modelCaps'
 export { copyText } from './utils/clipboard'
 export { createSerialRunner } from './utils/serialRunner'

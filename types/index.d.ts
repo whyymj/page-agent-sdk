@@ -613,7 +613,7 @@ export interface SubagentInfo {
   enabled: boolean;
   maxDepth: number;
   maxParallel: number;
-  /** 单次委派总时长毫秒(flow-robustness P1#4 反射:undefined → 默认 600000;0 = 关) */
+  /** 单次委派总时长毫秒(flow-robustness P1#4 反射:undefined → 默认 1800000(30min,2026-08-28 抬升对齐流总时长);0 = 关) */
   timeoutMs: number;
   allowedTools: string[];
   /** 预声明子 agent 列表(动态:反映 setSubagents/addSubagent/removeSubagent 后的最新) */
@@ -1240,7 +1240,7 @@ export interface ChatSdkOptions {
   images?: ImagesConfig;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
   capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; automation?: boolean; workingMemory?: boolean; focus?: boolean; contextInspector?: boolean; agentCompression?: boolean };/** tracing/skillHostScript/preferences/bulkGuard 已于 4.1.0 移除;残键静默忽略 */
-  subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number; /** 单次委派总时长毫秒(默认 600000=10min;超时 abort 子流 + recoverable 回灌;0 = 不限制) */ timeoutMs?: number; thinkingMode?: 'simple' | 'deep' };
+  subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number; /** 单次委派总时长毫秒(默认 1800000=30min,2026-08-28 抬升;超时 abort 子流 + recoverable 回灌;0 = 不限制) */ timeoutMs?: number; thinkingMode?: 'simple' | 'deep' };
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[];
   /** 自检:agent 返回前跑 check,不通过则 feedback 回灌自纠(默认关闭)。传 check/maxAttempts/adversarial 任一即自动开启(无需再配 capabilities.verify:true;显式 false 或 enabled:false 可关)。check 省略时默认 createWriteBackCheck 写后读回验证 */
@@ -2168,6 +2168,12 @@ export declare function decorateModelUnavailable(err: unknown): boolean;
 /** 模型不可用引导文案(换模型名 setLlm / 查网关模型面;不引导声明任何新配置) */
 export declare const MODEL_UNAVAILABLE_GUIDANCE: string;
 export declare function resolveModelCaps(model: string): any;
+/** 表内该模型的输出上限(LLMConfig.maxTokens 未设时作请求 max_tokens 缺省;仅表命中模型返回值,未知模型 undefined 不兜防超发 400) */
+export declare function tableMaxOutputTokens(model?: string): number | undefined;
+/** 低能力提示基线:上下文 200K / 请求输出上限 32K */
+export declare const LOW_CAPS_HINT_BASELINE: { readonly contextWindow: 200000; readonly requestMaxTokens: 32768 };
+/** 低能力提示文案:上下文 <200K 或请求输出上限 <32K → 提示串;均达基线返回 null(主 agent 装配 warn / 子 agent debugLogs 留痕由调用面分流) */
+export declare function lowCapsHint(model: string | undefined, caps: { contextWindow: number; maxOutputTokens: number }, requestMaxTokens?: number): string | null;
 export declare function estimateTokens(text: string): number;
 export declare function offloadThresholdChars(contextWindow: number): number;
 export declare function offloadPassThroughChars(contextWindow: number): number;

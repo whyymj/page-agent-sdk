@@ -261,7 +261,7 @@ export async function run() {
       sdk.unmount()
       return info.subagent.timeoutMs
     }
-    assert(await mk(undefined) === 600_000, '✓ P1#4 未配 subagent.timeoutMs → 默认总时长 600000(10min,挂起兜底默认开)')
+    assert(await mk(undefined) === 1_800_000, '✓ P1#4 未配 subagent.timeoutMs → 默认总时长 1800000(2026-08-28 抬升对齐流总时长,30min)')
     assert(await mk({ timeoutMs: 30_000 }) === 30_000, '✓ P1#4 显式 timeoutMs 覆盖默认')
     assert(await mk({ timeoutMs: 0 }) === 0, '✓ P1#4 timeoutMs=0 → 关(不限制)')
   }

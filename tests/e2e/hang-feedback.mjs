@@ -380,6 +380,9 @@ export async function run() {
     assert(llm.calls === 2, `✓ 截断回灌恰一次(模型被调 2 次;实际 ${llm.calls})`)
     const stages = sdk.debugLogs.value.map((l) => l.data?.stage).filter(Boolean)
     assert(stages.includes('completion_truncated_retry'), '✓ debugLogs 留痕 completion_truncated_retry(契约 B 可见性)')
+    // 2026-08-27 诊断驱动:回灌须含可照抄的具体分块动作(flash 对泛指「分步」不动,原样重塞全文再截断)
+    const feedback = (llm.lastMessages ?? []).map((m) => String(m.content)).join('\n')
+    assert(feedback.includes('op:"append"') && feedback.includes('≤1500'), '✓ 截断回灌含具体 append 分块动作(write patch append 尾接 + 块大小上限)')
     sdk.unmount()
   }
   {

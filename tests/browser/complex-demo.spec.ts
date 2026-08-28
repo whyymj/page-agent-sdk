@@ -800,6 +800,23 @@ test.describe('complex-demo: 组件操作(调换顺序 / 改层级 / 聚焦纯�
       '批准后组件删除生效').toBe(0)
     expect(calls(), 'LLM 调用链(load + 拒后收口 + 重删 + 删后收口)').toBeGreaterThanOrEqual(4)
   })
+
+  test('approval 挂起时停止生成 → 确认条随流收口清除(frozen-approval-bar:abort 自动拒后条不再残留)', async ({ page }) => {
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'load_skill', arguments: { name: 'page-tools' } }] },
+      { tool_calls: [{ name: 'delete_component', arguments: { path: 'components.0' } }] },
+      { text: '已按拒绝结果收口。' },
+    ])
+    await fillInput(page, '删掉第一个组件')
+    await clickSend(page)
+    await page.waitForSelector('button:has-text("拒绝")', { timeout: 15_000 })
+    // 挂起等确认时点「停止」:abort → approval 自动拒 → 流收口 → 确认条清除(修前:条残留到用户手点)
+    await page.click('.chat-dialog .stop-btn')
+    await waitForAgentIdle(page)
+    await expect(page.locator('button:has-text("拒绝"), button:has-text("允许")')).toHaveCount(0)
+    // 组件保留(拒绝语义)
+    expect(await page.evaluate(() => window.page.components.length)).toBeGreaterThan(0)
+  })
 })
 
 test.describe('complex-demo deep(深嵌套页 · ?deep=1)', () => {

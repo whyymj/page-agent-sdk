@@ -70,6 +70,15 @@ const SANDBOX_FORBIDDEN_PATTERNS: { re: RegExp; msg: string }[] = [
 ]
 
 /**
+ * 末尾表达式包裹(eval-trailing-return):无 `return` 字样的脚本包成 `return (脚本)` 表达式体,
+ * 让 schema 描述承诺的「末尾表达式即返回值」成真(`data.slice(0,1)` / `data.filter(c=>c.ok)` 直用);
+ * 含 `return` 的脚本原样返回(多语句 + 显式 return 形态)。纯函数,自测直测。
+ */
+export function wrapExpressionScript(script: string): string {
+  return /\breturn\b/.test(script) ? script : `return (${script})`
+}
+
+/**
  * 创建沙箱执行器(柯里化:先绑脚本 + 超时,再传可选入参)。
  *
  * - 无 `input`(skill exec 场景):workerCode 仍 `new Function("data", script)`,传 `undefined`,
@@ -86,6 +95,12 @@ export function createSandboxRunner(script: string, timeoutMs = 3000): (input?: 
         return { ok: false, error: `沙箱拒绝执行:脚本含禁用模式(${msg})`, elapsedMs: 0 }
       }
     }
+    // 末尾表达式支持(eval-trailing-return,2026-08-27 诊断驱动):schema 描述承诺「末尾表达式或 return 即返回值」,
+    // 但 Worker 内 new Function("data", script) 是函数体语义 —— 无 return 的脚本返回 undefined(实测 flash 照示例
+    // 写 data.slice(0,1) 撞 MISSING_VALUE 误导报错)。主线程包裹成 return (expr) 再投递(Worker 保持 dumb);
+    // 含 return 字样的脚本不动(多语句 + 显式 return 形态);包裹后语法不合法(多语句无 return)→ Worker 编译报错,
+    // 由 dataOps transform 的 undefined 守卫兜底指路
+    const scriptSrc = wrapExpressionScript(script)
     return new Promise((resolve) => {
       const start = Date.now()
       let done = false
@@ -128,7 +143,7 @@ export function createSandboxRunner(script: string, timeoutMs = 3000): (input?: 
       worker.onmessage = (e: MessageEvent) => finish(e.data)
       worker.onerror = (e: ErrorEvent) => finish({ ok: false, error: e.message || 'Worker 运行错误' })
       try {
-        worker.postMessage({ data: input, script })
+        worker.postMessage({ data: input, script: scriptSrc })
       } catch (e) {
         finish({ ok: false, error: `数据无法传递给 Worker(可能含不可克隆值): ${(e as Error).message}` })
       }

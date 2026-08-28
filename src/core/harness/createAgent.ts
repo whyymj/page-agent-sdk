@@ -908,8 +908,8 @@ export function createAgent(options: CreateAgentOptions) {
             if (truncated && !truncRetried) {
               truncRetried = true // 单次防死循环(同 formatRetries 模式)
               pendingFormatRetry = true // 绕过 rounds 预算给 LLM 重发机会(同 garbled 重试;maxIterations 兜底)
-              log('error', { stage: 'completion_truncated_retry', completionTokens: nuTrunc?.completion_tokens, stopReason: stopReason ?? null, hint: '空输出且 completion 达上限,疑似 max_tokens 截断;回灌分步写入指引' })
-              currentMessages.push(new HumanMessage('⚠️ 你上一轮输出为空(疑似被 max_tokens 截断:单次输出过长,常见于把完整大段代码塞进一次工具调用参数)。请改用分步方式:① 先用工具写入小体积骨架/占位结构,② 再逐步用增量工具调用补充内容;或大幅精简单次输出。不要一次性输出完整大段内容。'))
+              log('error', { stage: 'completion_truncated_retry', completionTokens: nuTrunc?.completion_tokens, stopReason: stopReason ?? null, maxTokens: (llm as any)?.maxTokens ?? null, hint: '空输出且 completion 达上限,疑似 max_tokens 截断;回灌分步写入指引' })
+              currentMessages.push(new HumanMessage('⚠️ 你上一轮输出为空(疑似被 max_tokens 截断:单次输出过长,常见于把完整大段代码塞进一次工具调用参数)。必须改用分块输出,不要一次性输出完整大段内容:① 先写小体积骨架 —— 大 code 场景先 write 组件、code 字段只含开头一小段(≤800 字符);② 用增量追加逐块补全 —— write({ patch:{ op:"append", jsonPath:"<该组件 code 的路径>", value:"<后续代码块,每段 ≤1500 字符>" } })(append 对字符串是尾接,可连续多次直至完整);③ 已写入部分勿在后续调用重传全文。其他大内容同理:先骨架后增量。'))
               continue
             }
           }
