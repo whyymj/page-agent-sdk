@@ -120,4 +120,104 @@ export async function run(ctx: TestCtx) {
       '✓ 非保护字段问题 → 不附保护死锁提示(零误伤)')
   }
 
+  // ===== freeze-move 豁免(2026-08-28 uispec S3 驱动:保护锚定「值」不锚定「数组位置」)=====
+  {
+    const z3 = z.object({
+      title: z.string(),
+      components: z.array(z.object({ type: z.string(), props: z.object({ trackId: z.string().optional(), name: z.string().optional() }) })),
+    })
+    const bind3: any = {
+      title: 't',
+      components: [
+        { type: 'nav', props: { trackId: 'trk_1', name: 'nav' } },
+        { type: 'custom', props: { name: 'coupon' } },
+      ],
+    }
+    const tools3 = createDataOps(
+      { schema: z3, bind: bind3, resources: [{ path: 'components.0.props.trackId', mode: 'freeze' }] },
+      { vfsStore: createVfs() },
+    )
+    const t3 = byName(tools3)
+    // ① move 非冻结元素到 index 0(冻结元素顺移到 1)→ 放行,冻结值随元素整体位移(修前误报 FROZEN_FIELD)
+    const mv = await invoke(t3.write, { patch: { op: 'move', jsonPath: 'components.1', value: 'components.0' } })
+    assert(!/^ERROR:/.test(mv), `✓ move 调序命中冻结元素位置 → 放行(修前 FROZEN_FIELD 误拦;${mv.slice(0, 80)}`)
+    assert(bind3.components[0].props.name === 'coupon' && bind3.components[1].props.trackId === 'trk_1',
+      '✓ 调序后冻结值随元素位移(nav 到 index 1,trackId 原值保全)')
+    // ② 整数组 set 重排(同值保全)→ 同豁免 + 注册表已随 ① 迁移(修前:① 后路径过期,cur 取到
+    //    coupon 的 undefined → 把合法 set 误判「改了冻结值」)
+    const reordered = [bind3.components[1], bind3.components[0]]
+    const st = await invoke(t3.write, { patch: { op: 'set', jsonPath: 'components', value: reordered } })
+    assert(!/^ERROR:/.test(st) && bind3.components[0].props.name === 'nav' && bind3.components[0].props.trackId === 'trk_1',
+      '✓ 整数组 set 调序(冻结值保全)→ 放行(修前:① 调序后注册表路径过期 → 后续合法写误报 FROZEN_FIELD)')
+    // ③ 反例:改冻结值仍拦(豁免不放宽篡改)
+    const tamper = await invoke(t3.write, { patch: { op: 'set', jsonPath: 'components.0.props.trackId', value: 'hacked' } })
+    assert(/FROZEN_FIELD/.test(tamper), '✓ 调序豁免不改值:直改冻结字段照拦')
+    // ④ 反例:删冻结元素仍拦(remove patch C3)
+    const del = await invoke(t3.write, { patch: { op: 'remove', jsonPath: 'components.0' } })
+    assert(/FROZEN_FIELD/.test(del), '✓ 调序豁免不纵删除:remove 冻结元素照拦')
+  }
+
+  // ===== freeze-move 边界四件(置换安全/嵌套数组锚定/跨数组不豁免/位移同时改值)=====
+  {
+    const z3 = z.object({
+      title: z.string(),
+      components: z.array(z.object({ type: z.string(), props: z.object({ trackId: z.string().optional(), name: z.string().optional(), children: z.array(z.any()).optional() }) })),
+    })
+    // ① 置换安全:两冻结元素互换位置(commitReanchors 置换 apply,delete 先行会互吃 → 都保留保护)
+    const zb = { title: 't', components: [
+      { type: 'nav', props: { trackId: 'trk_a', name: 'A' } },
+      { type: 'footer', props: { trackId: 'trk_b', name: 'B' } },
+    ] }
+    const tz = createDataOps(
+      { schema: z3, bind: zb, resources: [{ path: 'components.0.props.trackId', mode: 'freeze' }, { path: 'components.1.props.trackId', mode: 'freeze' }] },
+      { vfsStore: createVfs() },
+    )
+    const tw = byName(tz)
+    const swap = await invoke(tw.write, { patch: { op: 'set', jsonPath: 'components', value: [zb.components[1], zb.components[0]] } })
+    assert(!/^ERROR:/.test(swap) && zb.components[0].props.name === 'B' && zb.components[1].props.name === 'A',
+      '✓ 两冻结元素互换位置 → 放行且置换后注册表双保护存活(改回方向不再误拦)')
+    const swapBack = await invoke(tw.write, { patch: { op: 'set', jsonPath: 'components', value: [zb.components[1], zb.components[0]] } })
+    assert(!/^ERROR:/.test(swapBack), '✓ 置换后再换回 → 仍放行(置换安全:两路径保护互不吞吃)')
+    const tamperSwap = await invoke(tw.write, { patch: { op: 'set', jsonPath: 'components.0.props.trackId', value: 'hacked' } })
+    assert(/FROZEN_FIELD/.test(tamperSwap), '✓ 置换后改冻结值照拦(保护跟元素不丢)')
+
+    // ② 嵌套数组锚定:children 内冻结字段随容器元素在顶层调序 → 同豁免
+    const nb: any = { title: 't', components: [
+      { type: 'nav', props: { name: 'nav' }, children: [{ type: 'tab', props: { trackId: 'trk_c', name: 'tab' } }] },
+      { type: 'custom', props: { name: 'coupon' } },
+    ] }
+    const tn = createDataOps(
+      { schema: z3, bind: nb, resources: [{ path: 'components.0.children.0.props.trackId', mode: 'freeze' }] },
+      { vfsStore: createVfs() },
+    )
+    const tw2 = byName(tn)
+    const nestedMove = await invoke(tw2.write, { patch: { op: 'move', jsonPath: 'components.1', value: 'components.0' } })
+    assert(!/^ERROR:/.test(nestedMove) && nb.components[1].children[0].props.trackId === 'trk_c',
+      '✓ 嵌套数组冻结字段(children.0)随顶层调序 → 豁免 + 值随元素位移到最后一个数组锚')
+
+    // ③ 跨数组移动冻结元素 → 不豁免(与 codeAsset 嵌套容器盲区同口径,宁拒勿失)
+    const xb: any = { title: 't', components: [
+      { type: 'nav', props: { trackId: 'trk_d', name: 'nav' } },
+    ], blocks: [] }
+    const z4 = z.object({
+      title: z.string(),
+      components: z.array(z.object({ type: z.string(), props: z.object({ trackId: z.string().optional(), name: z.string().optional(), children: z.array(z.any()).optional() }).optional() })),
+      blocks: z.array(z.any()),
+    })
+    const tx = createDataOps({ schema: z4, bind: xb, resources: [{ path: 'components.0.props.trackId', mode: 'freeze' }] }, { vfsStore: createVfs() })
+    const tw3 = byName(tx)
+    const cross = await invoke(tw3.write, { patch: { op: 'move', jsonPath: 'components.0', value: 'blocks.0' } })
+    assert(/FROZEN_FIELD|ERROR/.test(String(cross)), '✓ 冻结元素跨数组移动 → 不豁免照拦(仅同数组位移豁免)')
+
+    // ④ 位移同时改值(新位置值 ≠ 原值)→ 不豁免(豁免锚的是原值完整保留)
+    const vb: any = { title: 't', components: [
+      { type: 'nav', props: { trackId: 'trk_e', name: 'nav' } },
+      { type: 'custom', props: { name: 'coupon' } },
+    ] }
+    const tv = createDataOps({ schema: z3, bind: vb, resources: [{ path: 'components.0.props.trackId', mode: 'freeze' }] }, { vfsStore: createVfs() })
+    const tw4 = byName(tv)
+    const moved = JSON.parse(JSON.stringify(vb.components[0])); moved.props.trackId = 'tampered'
+    const tamperMove = await invoke(tw4.write, { patch: { op: 'set', jsonPath: 'components', value: [vb.components[1], moved] } })
+    assert(/FROZEN_FIELD/.test(tamperMove), '✓ 位移同时改冻结值 → 照拦(原值未完整保留,豁免不成立)')
+  }
 }

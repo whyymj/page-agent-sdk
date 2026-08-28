@@ -46,7 +46,7 @@ import {
 } from './schemaUtils'
 import type { VfsStore } from '../backends/vfs'
 import type { ResourceProtectSpec, ProtectedCtx } from './resources'
-import { ResourceStore, renderReadPlaceholders, enforceSet, enforcePatches, matchProtectedEither, normalizePath, deepEqual } from './resources'
+import { ResourceStore, renderReadPlaceholders, enforceSet, enforcePatches, matchProtectedEither, normalizePath, deepEqual, commitReanchors } from './resources'
 
 /** 单主对象配置 */
 export interface DataConfig {
@@ -580,6 +580,7 @@ export function commitSetToBind(args: {
   audit({ op, value: writeData, timestamp: Date.now() })
   args.onWrite?.()  // 真正写入后通知(checkpoint 脏标记;dryRun 在上方早 return 不会触发)
   args.internalAfterWrite?.(bindRef, beforeBind)  // B __pgId 补齐(成功路径,before 用于按位置回填原 id)
+  commitReanchors(protectedCtx)  // freeze-move:调序重锚定落地(注册表跟随元素迁移,防后续写误报)
   return { ok: true, hash: args.hashFn ? args.hashFn() : hashValue(bindRef), data: writeData, notices: vr.notices }
 }
 
@@ -704,6 +705,7 @@ export function applyPatchesToBind(args: {
     }
   }
   args.internalAfterWrite?.(bindRef, beforeBind)  // B __pgId 补齐(成功路径,before 用于按位置回填原 id)
+  commitReanchors(protectedCtx)  // freeze-move:调序重锚定落地(注册表跟随元素迁移,防后续写误报)
   markDataDirty?.()
   return { ok: true, applied, clone, notices: plan.notices }
 }
@@ -968,6 +970,8 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   const protectedCtx: ProtectedCtx | undefined = resourcesByPath.size
     ? {
         resourcesByPath, resourceStore, getBind: () => bindRef,
+        // freeze-move 调序重锚定暂存(normalizeAndCheck 写入,commitReanchors 于写成功后消费)
+        pendingReanchors: [],
         // frozen-required-hint:保护字段是否 schema 必填(best-effort:父级 schema 是对象形态才判,union/开放不猜 → false 不提示)
         isFieldRequired: (path: string): boolean => {
           const segs = path.split('.')

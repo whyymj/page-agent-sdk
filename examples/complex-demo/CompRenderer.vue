@@ -1,3 +1,23 @@
+<script lang="ts">
+/**
+ * 模块级共享:custom 组件高度表 + 单次 window 监听。
+ * ⚠️ 必须在模块作用域(独立 <script> 块)—— 修前声明在 <script setup> 内 = 每实例一份,
+ * 而监听器经 __customCompListener 只注册一次、闭包绑死首个 CompRenderer 实例(页面第一个普通组件),
+ * custom 组件发来的高度全部落进无关实例的表 → 渲染实例恒读空表 → iframe 卡 360px 兜底不自适应。
+ */
+import { reactive } from 'vue'
+const customHeights = reactive<Record<string, number>>({})
+function _onCustomMsg(e: MessageEvent) {
+  const d = e.data as { __customComp?: boolean; key?: string; h?: number } | null
+  if (!d || d.__customComp !== true) return
+  if (typeof d.key === 'string' && typeof d.h === 'number' && d.h > 0 && d.h < 20000) customHeights[d.key] = d.h
+}
+if (typeof window !== 'undefined' && !(window as any).__customCompListener) {
+  window.addEventListener('message', _onCustomMsg)
+  ;(window as any).__customCompListener = true
+}
+</script>
+
 <script setup lang="ts">
 /**
  * 单组件递归渲染器 —— 按 comp.type 分发到业务组件
@@ -111,26 +131,18 @@ const compClass = computed<string[]>(() => {
 
 // custom 纯代码组件:iframe srcdoc 渲染(完整自包含 HTML 页面,script/style 可执行;sandbox 隔离)
 // 高度自适应:无 allow-same-origin(父读不到 contentDocument)→ srcdoc 注入量高脚本 postMessage 报回 →
-// 模块级共享高度表(递归渲染多实例,window 监听单次注册);key 用 path(唯一,容器 children 内亦有)
-const customHeights = reactive<Record<string, number>>({})
+// 模块级共享高度表(见上方模块 <script> 块;递归渲染多实例,window 监听单次注册);key 用 path(唯一,容器 children 内亦有)
 const SCRIPT_OPEN = '<' + 'script>'   // SFC 转义:源码不连续出现 script 标签(编译器按字符序列匹配闭合)
 const SCRIPT_CLOSE = '<' + '/script>'
-function _onCustomMsg(e: MessageEvent) {
-  const d = e.data as { __customComp?: boolean; key?: string; h?: number } | null
-  if (!d || d.__customComp !== true) return
-  if (typeof d.key === 'string' && typeof d.h === 'number' && d.h > 0 && d.h < 20000) customHeights[d.key] = d.h
-}
-if (typeof window !== 'undefined' && !(window as any).__customCompListener) {
-  window.addEventListener('message', _onCustomMsg)
-  ;(window as any).__customCompListener = true
-}
 const customKey = computed(() => props.path || props.comp?.__pgId || props.comp?.name || 'unknown')
 const customHeight = computed(() => (customHeights[customKey.value] || 360) + 'px')
 function wrapCustomCode(code: string): string {
   const key = JSON.stringify(customKey.value)
+  // 量高探针:内容 > 视口时 documentElement.scrollHeight = 内容高(涨跟随);内容 < 视口时被视口
+  // (= iframe 当前高度)垫底 → 回退 body 自然高(缩跟随);修前只涨不缩(改矮后恒卡旧高度)
   const probe =
     '\n' + SCRIPT_OPEN +
-    '(function(){var k=' + key + ';var s=function(){var h=Math.max(document.body?document.body.scrollHeight:0,document.documentElement?document.documentElement.scrollHeight:0);if(h>0){try{parent.postMessage({__customComp:true,key:k,h:h},"*")}catch(e){}}};window.addEventListener("load",s);if(document.readyState==="complete"){s()}setTimeout(s,200);setTimeout(s,600)})();' +
+    '(function(){var k=' + key + ';var s=function(){var b=document.body,d=document.documentElement;var vh=window.innerHeight||0;var h=Math.max(b?b.scrollHeight:0,d?d.scrollHeight:0);if(h>0&&h<=vh){h=Math.max(b?b.scrollHeight:0,b?b.offsetHeight:0)}if(h>0){try{parent.postMessage({__customComp:true,key:k,h:h},"*")}catch(e){}}};window.addEventListener("load",s);if(document.readyState==="complete"){s()}setTimeout(s,200);setTimeout(s,600)})();' +
     SCRIPT_CLOSE
   return code + probe
 }

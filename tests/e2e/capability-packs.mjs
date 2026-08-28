@@ -169,27 +169,59 @@ export async function run() {
     assert(llm.calls === 6, `✓ 门禁生效:子 agent 被回灌自纠(6 次 model 调用,实际 ${llm.calls})`)
     sdk.unmount()
 
-    console.log('[e2e:capability-packs] note-gate 运行时(格式全过但收口缺 [note] → 回灌补写一次;2026-08-28 真 LLM 复验驱动)')
+    console.log('[e2e:capability-packs] note-gate 运行时(格式全过但收口缺 [note] → 回灌补写一次 + __pgNotes 沉淀;2026-08-28 真 LLM 复验驱动)')
     {
       const { stubModel } = await import('./_stub-model.mjs')
-      // 队列序:主委派 → 子写好代码 → 子收口缺 [note](note-gate 拦) → 子补写收口(过) → 主收口
+      // 队列序:主委派 → 子 vfs_write 好代码 → 子收口缺 [note](note-gate 拦) → 子补写收口(过) → 主收口
       const llm2 = stubModel(
-        { toolCalls: [{ name: 'use_html', args: { task: '生成横幅代码' } }] },
-        { toolCalls: [{ name: 'vfs_write', args: { path: 'html/banner.html', content: '<div>横幅</div>' } }] },
-        { text: '已生成横幅' },
-        { text: '已生成横幅\n[note] 单 div 结构,无依赖' },
-        { text: '委派完成' },
+        { toolCalls: [{ name: 'use_html', args: { task: '改横幅' } }] },
+        { toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_banner.html', content: '<div>横幅</div>' } }] },
+        { text: '已改横幅' },
+        { text: '已改横幅\n[note] 单 div 结构,无依赖' },
+        { text: '完成' },
       )
+      const bind2 = { title: 't', components: [{ type: 'custom', name: 'banner', code: '<section>旧</section>', __pgId: 'c_banner' }] }
       const sdk2 = createChatSdk({
         ui: false, id: 'e2e-cap-notegate', storage: false, llm: llm2,
         capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+        data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind: bind2, description: '测试' },
         subagents: [createHtmlSubagent({ writablePaths: ['components'] })],
       })
       await sdk2.mount()
-      const reply2 = await sdk2.send('生成一个横幅')
-      assert(/委派完成/.test(reply2), '✓ note-gate 补写后主流程正常收口')
+      const reply2 = await sdk2.send('改一下横幅')
+      assert(/完成/.test(reply2), '✓ note-gate 补写后主流程正常收口')
       assert(llm2.calls === 5, `✓ note-gate 生效:格式过但缺 [note] → 回灌 1 次补写(5 次 model 调用,实际 ${llm2.calls};修前 4 次直收口漏笔记)`)
+      // gate 回灌路径的持久化:补写的 [note] 行应沉淀为组件 __pgNotes(craftNotes 闭环,真 LLM S1 实测驱动)
+      assert(Array.isArray(bind2.components[0].__pgNotes) && String(bind2.components[0].__pgNotes[0]).includes('单 div 结构'),
+        '✓ note-gate 回灌补写的 [note] → __pgNotes 沉淀(craftNotes 闭环)')
       sdk2.unmount()
+    }
+
+    console.log('[e2e:capability-packs] note 新建组件路径持久化(子 agent write 新建 + note 行不含组件名;真 LLM S1 三连败根因)')
+    {
+      const { stubModel } = await import('./_stub-model.mjs')
+      // 新建场景:touched 空 → 归属候选按 codeField 过滤;修前 supplementPgId 给全部元素补 __pgId →
+      // 普通组件稀释 candidates 成多候选 → note 无名可配被跳过(__pgNotes 恒空)
+      const llm3 = stubModel(
+        { toolCalls: [{ name: 'use_html', args: { task: '新建一个横幅组件' } }] },
+        { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.1', value: { type: 'custom', name: 'banner', code: '<div>横幅</div>' } } } }] },
+        { text: '已创建组件 banner(索引 1)' },
+        { text: '已创建组件 banner(索引 1)\n[note] 单 div 结构,无依赖' },
+        { text: '完成' },
+      )
+      const bind3 = { title: 't', components: [{ type: 'heading', props: { text: 'hi' } }] }
+      const sdk3 = createChatSdk({
+        ui: false, id: 'e2e-cap-notegate-newcomp', storage: false, llm: llm3,
+        capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+        data: { schema: z.object({ title: z.string(), components: z.array(z.union([z.object({ type: z.string(), props: z.object({ text: z.string() }) }), z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })])) }), bind: bind3, description: '测试' },
+        subagents: [createHtmlSubagent({ writablePaths: ['components'] })],
+      })
+      await sdk3.mount()
+      await sdk3.send('新建一个横幅组件')
+      const comp3 = bind3.components.find((c) => c.type === 'custom')
+      assert(comp3 && Array.isArray(comp3.__pgNotes) && String(comp3.__pgNotes[0]).includes('单 div 结构'),
+        '✓ 新建组件路径:note 行不含组件名也正确归属(codeField 过滤候选,修前被普通组件稀释跳过)')
+      sdk3.unmount()
     }
 
     // 对照:formatCheck:false → 子 agent 写完坏代码直接收口(4 次调用,无自纠)

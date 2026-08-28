@@ -50,7 +50,8 @@ export async function runSuite({ only = process.argv.slice(2).map(Number).filter
     components: data.components.map((c) => ({ ...c, code: undefined, codeHead: c.code.slice(0, 160) })),
     raw: data,
   })
-  const sc = (no, name, prompt, checks) => runScenario({ page, no, name, prompt, checks, report, OUT, only, collect, decorate, quietTimeoutMs: 1800_000, errorRe: /PATH_DENIED|PATH_OUT_OF_SCOPE|不存在|失败/ })
+  // opts.gates:'approve' → 场景内挂起门禁自动应答(S6 删除挂人工确认,无人点 = 工具永挂假性失败)
+  const sc = (no, name, prompt, checks, opts = {}) => runScenario({ page, no, name, prompt, checks, report, OUT, only, collect, decorate, quietTimeoutMs: 1800_000, errorRe: /PATH_DENIED|PATH_OUT_OF_SCOPE|不存在|失败/, ...opts })
 
   await sc(1, '复杂代码组件生成(UI 规范 skill)',
     '新增一个优惠券卡片代码组件:顶部撕边的优惠券(满 300 减 60),带一个旋转的折扣戳和一个立即领取按钮。严格按平台 UI 规范做,先看规范再写。',
@@ -97,7 +98,10 @@ export async function runSuite({ only = process.argv.slice(2).map(Number).filter
     '把刚才加的「限时特惠」banner 删掉。',
     {
       'banner 已删': (d) => !d.components.some((c) => c.type === 'banner' && JSON.stringify(c).includes('限时特惠')),
-    })
+    },
+    // delete_component 挂人工确认(App.vue approval 配置)—— 场景内自动点同意(用户指令即意图);
+    // 修前 runner 只在场景间清挂起 → 工具永挂、删除不执行、场景以挂起收口(2026-08-28 定性:测试侧缺口)
+    { gates: 'approve' })
 
   await sc(7, '多组件整页(逐个委派)',
     '再帮我加两个代码组件:① 倒计时组件(距活动开始 3 天,深色底等宽数字)② 活动规则说明卡片(3 条规则列表)。都按 UI 规范。',

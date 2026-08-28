@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+## [4.8.2] - 2026-08-28
+
+### Fixed
+
+- **freeze-move 调序豁免(冻结保护锚定「值」不锚定「数组位置」)**:修前冻结字段按路径键定保护,组件调序(move op / 整数组 set)后保护路径取到别的元素/undefined → 误报 `FROZEN_FIELD` 拦截合法调序(真 LLM uispec S3 驱动:优惠券移到首位被 components.0 冻结 trackId 误拦,模型被迫绕道 eval_script 仍未成)。修:①检出自保护字段原值仍完整存在于同数组其他位置(元素整体位移)→ 按新位置重锚定校验放行;②写成功后注册表持久重锚定(`commitReanchors`,置换安全)——防调序后路径过期、后续合法写误报。值被改/元素被删照拦(保护语义不放宽);跨数组移动不豁免
+- **真 LLM runner 场景内挂起门禁自动应答(`gates:'approve'`)**:delete_component 类挂人工确认的工具,无人值守 runner 无人点 → 工具永挂、场景以挂起收口假性失败(uispec S6 定性:产品行为正确〔挂起等人工〕,缺口在测试侧)。修前只有场景间清理(`resolvePendingGates`),现支持场景内每采样拍检测自动点同意
+- **craftNotes 笔记归属候选被非代码组件稀释(真 LLM S1「笔记沉淀」三连败根因,4.8.1 note-gate 之上的第二层)**:`supplementPgId` 给 writablePaths 全部元素补 `__pgId` → forEachCodeItem 扫进普通组件;craftNotes 归属候选缺 codeField 过滤 → 新建场景(touched 空)候选被稀释成多候选 → 走 name 匹配 → note 行不含组件名即被跳过(`__pgNotes` 恒空)。修:归属候选按「codeField 有 string」过滤(与 checkout/commit 位同口径);修后 note 行无需含组件名即可正确归属(单代码组件场景)。真 LLM S1 复跑 8/8 全过
+
+
+### 测试
+
+- selftest 3212 → **3223**(+11:freeze-move 豁免/整数组 set 重排/置换安全/嵌套数组锚定/跨数组不豁免/位移+改值照拦/H1 调序检测收紧零回归 + 4.8.1 余项)
+- e2e 1034 → **1036**(+2:note-gate vfs 路径 __pgNotes 沉淀 + 新建组件路径归属)
+- 真 LLM uispec 复验:S3/S6 转 Green(25 断言 24 过)→ S1 根因修复后单场景复跑 **8/8**(三连败收口);S3 耗时 -48%/completion -92%(不再绕路)
+
 ## [4.8.1] - 2026-08-28
 
 ### Added

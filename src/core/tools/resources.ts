@@ -209,6 +209,27 @@ export interface ProtectedCtx {
    * 与「新建元素缺必填被拒」互为死锁,提示模型勿反复整体替换重试、给逃生门
    */
   isFieldRequired?: (path: string) => boolean
+  /**
+   * 调序重锚定暂存(freeze-move,2026-08-28):normalizeAndCheck 检出「保护元素位移」时记录
+   * [旧路径, 新路径] 对;**写成功 commit 后**由 dataOps 调 commitReanchors 落到 resourcesByPath
+   * (注册表跟随元素迁移,防调序后路径过期 → 后续合法写误报 FROZEN_FIELD)。normalizeAndCheck
+   * 入口清空(单次写只消费自己的重锚定;写失败/ dryRun 不落地)。
+   */
+  pendingReanchors?: Array<[string, string]>
+}
+
+/**
+ * 落地调序重锚定到注册表(写成功 commit 后调;置换安全:两冻结元素互换位置时 delete 先行会互吃)。
+ */
+export function commitReanchors(ctx: ProtectedCtx | undefined): void {
+  const moves = ctx?.pendingReanchors
+  if (!ctx || !moves || !moves.length) return
+  const specs = moves
+    .map(([o, n]) => ({ o, n, spec: ctx.resourcesByPath.get(o) }))
+    .filter((m): m is { o: string; n: string; spec: ResourceProtectSpec } => !!m.spec && m.o !== m.n)
+  for (const m of specs) ctx.resourcesByPath.delete(m.o)
+  for (const m of specs) if (!ctx.resourcesByPath.has(m.n)) ctx.resourcesByPath.set(m.n, m.spec)
+  moves.length = 0
 }
 
 /**
@@ -291,18 +312,80 @@ type CheckResult =
 /** 共享:遍历受保护路径,在 normalized 上做 C1 回显识别 + verbatim 定点展开(A2/D1)+ freeze/verbatim 比对。
  *  就地改 normalized。valAt undefined 且容器仍在 → 回填(H1 防静默丢失);容器链断按 mergeMode/根键在场分路(见函数体)。
  *  mergeMode:写入是否 merge 语义(allowKeys 整体 set;缺省 falsy = whole-replace/enforcePatches 全量语境)。 */
+/**
+ * 数组调序重锚定(freeze-move 豁免,2026-08-28 uispec S3 驱动):冻结/verbatim 保护锚定「值」
+ * 不锚定「数组位置」—— 保护字段原值若仍完整存在于**同数组其他位置**(元素整体位移,move op/
+ * 调序常态),返回新位置完整路径供重锚定校验;未找到返回 undefined(原路径校验照走,值被改/
+ * 元素被删照拦,保护语义不放宽)。
+ * 解析:取路径中最后一个「后随还有段的数组下标段」为元素锚(components.2.children.3.props.trackId
+ * → 数组 components.2.children + 元素内尾路径 props.trackId),在 normalized 的该数组内逐元素比对。
+ * 仅同数组位移豁免(跨数组移动冻结元素不豁免,与 codeAsset 嵌套容器盲区同口径,宁拒勿失)。
+ */
+function findReorderedAnchor(normalized: unknown, protectedPath: string, cur: unknown): string | undefined {
+  if (cur === undefined) return undefined
+  const segs = protectedPath.split('.')
+  // 逐数组锚层级尝试(外层调序/内层重排均覆盖;深层锚路径在外层调序后自身失效 → 只认一层不够):
+  // 任一层级上「原值出现在非原位」即按该层重锚定;原位命中 = 该层未位移,继续试其他层
+  for (let k = 0; k < segs.length - 1; k++) {
+    if (!/^\d+$/.test(segs[k])) continue
+    const arrPath = segs.slice(0, k).join('.')
+    const tail = segs.slice(k + 1).join('.')
+    const arr = getByPath(normalized, arrPath)
+    if (!Array.isArray(arr)) continue
+    for (let j = 0; j < arr.length; j++) {
+      const v = getByPath(arr[j], tail)
+      if (v !== undefined && deepEqual(v, cur)) {
+        const newPath = [...segs.slice(0, k), String(j), ...segs.slice(k + 1)].join('.')
+        if (newPath !== protectedPath) return newPath
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * 调序检测(H1 回填前置,freeze-move 收紧 2026-08-28):保护路径首个数组层上,normalized
+ * 原位元素与 bind **其他下标**元素内容相等(= 调序后原位已换人)→ 不回填 —— 修前此形态回填
+ * = 把冻结值复制进无关元素 + 位移元素的篡改副本静默落地(位移+改值实测漏网)。
+ * 同位编辑(nav→nav2)/全新内容不触发(合法 H1 形态照回填,LLM 因读投影隐藏漏带冻结字段)。
+ */
+function replacedByOtherElement(normalized: unknown, bind: unknown, protectedPath: string): boolean {
+  const segs = protectedPath.split('.')
+  const k = segs.findIndex((sg) => /^\d+$/.test(sg))
+  if (k < 0) return false
+  const arrPath = segs.slice(0, k).join('.')
+  const idx = Number(segs[k])
+  const nArr = getByPath(normalized, arrPath)
+  const bArr = getByPath(bind, arrPath)
+  if (!Array.isArray(nArr) || !Array.isArray(bArr)) return false
+  const ne = nArr[idx]
+  if (ne === undefined) return false
+  for (let i = 0; i < bArr.length; i++) {
+    if (i === idx) continue
+    if (deepEqual(ne, bArr[i])) return true
+  }
+  return false
+}
+
 function normalizeAndCheck(normalized: unknown, ctx: ProtectedCtx, mergeMode?: boolean): CheckResult {
   const bind = ctx.getBind()
+  if (ctx.pendingReanchors) ctx.pendingReanchors.length = 0  // 单次写只消费自己的重锚定(上次失败/dryRun 残留清空)
   for (const [path, spec] of ctx.resourcesByPath) {
     const cur = getByPath(bind, path)  // bind 当前原始值
-    const valAt = getByPath(normalized, path)
+    // move/调序豁免:原值仍在同数组其他位置 → 按新位置重锚定(修前路径键定,调序后 valAt 取到
+    // 别的元素/undefined → 误报 FROZEN_FIELD 或 H1 回填把冻结值写进别的元素)
+    const reanchor = findReorderedAnchor(normalized, path, cur)
+    if (reanchor) ctx.pendingReanchors?.push([path, reanchor])
+    const checkPath = reanchor ?? path
+    const valAt = getByPath(normalized, checkPath)
     if (valAt === undefined) {
       // bind 无值(cur undefined)才 skip(§7c B4)
       if (cur === undefined) continue
       const segs = path.split('.')
       const parentPath = segs.length > 1 ? segs.slice(0, -1).join('.') : ''
-      if (getByPath(normalized, parentPath) !== undefined) {
-        // H1:容器仍在(LLM 部分提交漏写该字段)→ 回填当前值保留(防静默丢失)
+      if (getByPath(normalized, parentPath) !== undefined && !replacedByOtherElement(normalized, bind, path)) {
+        // H1:容器仍在(LLM 部分提交漏写该字段,读投影隐藏所致)→ 回填当前值保留(防静默丢失);
+        // 原位已换人(调序形态)不回填 → 落三路判定显式拒(防冻结值复制进无关元素 + 篡改副本落地)
         setByPath(normalized, path, cur)
         continue
       }

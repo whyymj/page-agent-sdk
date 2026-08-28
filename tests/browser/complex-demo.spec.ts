@@ -672,6 +672,29 @@ test.describe('complex-demo: 组件操作(调换顺序 / 改层级 / 聚焦纯�
     expect(calls(), 'busy 委派零 LLM 调用(总 7 次)').toBe(7)
   })
 
+  test('custom 组件高度自适应:量高消息落进渲染实例 + 涨缩双向跟随(修前恒 360 兜底)', async ({ page }) => {
+    // 修前两层缺陷:①customHeights 声明在 <script setup> = 每实例一份,window 监听闭包绑死首个普通组件实例
+    // → 高度消息落进无关实例的表,渲染实例恒读空表卡 360px;②documentElement.scrollHeight 被视口
+    // (= iframe 旧高度)垫底 → 只涨不缩。注入式直测(不经 LLM):涨 2500 → 缩 600 → 再涨 1200
+    const mkCode = (h: number) => `<!DOCTYPE html><html><head><style>body{margin:0}.t{height:${h}px;background:#7063E7}</style></head><body><div class="t">x</div></body></html>`
+    const pushCustom = (h: number) => page.evaluate((code) => {
+      window.page.components.push({ type: 'custom', name: 'height-probe', code })
+    }, mkCode(h))
+    const iframeHeight = () => page.evaluate(() => document.querySelector('.custom-comp-iframe')?.style.height ?? '')
+
+    await pushCustom(2500)
+    await page.waitForTimeout(1500)  // 量高探针:load + 200ms + 600ms
+    expect(await iframeHeight(), '内容 2500 → iframe 高度跟随(修前恒 360px)').toBe('2500px')
+
+    await page.evaluate((code) => { window.page.components.find((c: any) => c.name === 'height-probe').code = code }, mkCode(600))
+    await page.waitForTimeout(1500)
+    expect(await iframeHeight(), '内容改矮 600 → 高度收缩(修前被视口垫底只涨不缩)').toBe('600px')
+
+    await page.evaluate((code) => { window.page.components.find((c: any) => c.name === 'height-probe').code = code }, mkCode(1200))
+    await page.waitForTimeout(1500)
+    expect(await iframeHeight(), '内容再涨 1200 → 高度跟随').toBe('1200px')
+  })
+
   // ===== 调整/修改操作全覆盖补齐(move op / 检索驱动闭环 / 深嵌套页 / 批量 / 回退 / 结构工具 / approval)=====
 
   test('同容器调序:write patch move op(components.2 → components.0,数组重排一步原子)', async ({ page }) => {

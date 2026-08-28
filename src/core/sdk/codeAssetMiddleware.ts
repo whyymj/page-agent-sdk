@@ -428,6 +428,10 @@ export function createCodeAssetMiddleware(opts: CodeAssetMiddlewareOptions): Mid
       // 归属候选:touched 组件优先(与 commit 同映射);无 touched(新建场景)按 note 行内 name 精确匹配 data 组件(委派 task 常含 name);都不中则跳过不猜
       const candidates: Array<Record<string, unknown>> = []
       forEachCodeItem(bind, writablePaths, (o) => {
+        // 归属候选须是代码组件(codeField 有 string):supplementPgId 给全部元素补 __pgId → forEachCodeItem
+        // 扫进非代码组件;修前新建场景(touched 空)candidates 被普通组件稀释成多候选 → 走 name 匹配 →
+        // note 行不含组件名即跳过(真 LLM S1「笔记沉淀」三连败根因:22 候选 vs note「撕边=垂直齿…」)
+        if (typeof getByPath(o, codeField) !== 'string') return
         if (touched.size === 0 || touched.has(`${codeVfsPrefix}${o.__pgId}.${ext}`)) candidates.push(o)
       })
       if (!candidates.length) return
