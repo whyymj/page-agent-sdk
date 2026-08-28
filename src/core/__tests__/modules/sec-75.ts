@@ -435,4 +435,25 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 优先级总纲(三档判档配套):task 可在限定决策点放宽方案上限,底线不放宽 —— 防 deep 注入与硬约束正面对撞
     assert(!!cfg.systemPrompt?.includes('优先级总纲') && !!cfg.systemPrompt?.includes('底线不放宽'), '✓ htmlSystemPrompt 优先级总纲(task 深入设计要求为上位指令,装饰不穷举/不手算/终稿一次写成底线恒守)')
   }
+
+  // ===== A1 focus-anchor 集成:focus 调序跟随 × codeAsset vfs 守卫锚对组件 =====
+  console.log('\n[focus-anchor · 调序后 vfs 守卫锚对组件]')
+  {
+    const { createFocusMiddleware } = await import('../../harness/focus')
+    const bind: any = { title: 't', components: [{ __pgId: 'c_a', name: 'a', code: '<p/>' }, { __pgId: 'c_b', name: 'b', code: '<b/>' }] }
+    const { mw } = setup(bind)
+    const schema = z.object({ title: z.string(), components: z.array(z.object({ name: z.string(), code: z.string() })) })
+    // 主 agent focus 中间件:聚焦 components.0(c_a)带锚 → 宿主调序 [b,a] → focus beforeAgent 解析 → state.focuses 带解析后路径
+    const focusMw = createFocusMiddleware({ getSchema: () => schema, getBind: () => bind })
+    focusMw.setFocus({ path: 'components.0', label: 'a', pgId: 'c_a' })
+    bind.components = [bind.components[1], bind.components[0]]  // 调序:c_a 现在在 index 1
+    const stResolved = applyUpdate(createInitialState(), focusMw.beforeAgent!(createInitialState()) as any)
+    const paths = ((stResolved as any).focuses as Array<{ path: string }>).map((f) => f.path)
+    assert(JSON.stringify(paths) === JSON.stringify(['components.1']), `✓ state.focuses 调序解析(focus beforeAgent → ${paths[0]})`)
+    // codeAsset vfs 守卫消费 state.focuses:改 c_a(现 index 1)文件放行;c_b(index 0)越界拒
+    const ok = await mw.wrapToolCall!({ name: 'vfs_edit', args: { path: 'html/c_a.html', oldString: 'x', newString: 'y' }, state: stResolved } as any, mockNext)
+    assert(ok.status === 'done', '✓ 调序后 vfs 守卫锚对组件:焦点组件 c_a 的代码文件放行(修前 state 带旧路径 → 锚到 c_b 保护错组件)')
+    const bad = await mw.wrapToolCall!({ name: 'vfs_edit', args: { path: 'html/c_b.html', oldString: 'x', newString: 'y' }, state: stResolved } as any, mockNext)
+    assert(bad.status === 'error' && /PATH_DENIED/.test(bad.content), '✓ 调序后 vfs 守卫锚对组件:非焦点组件 c_b 越界拒(修前会误放行)')
+  }
 }

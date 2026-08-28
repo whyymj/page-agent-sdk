@@ -27,7 +27,12 @@ export const STALE_PLACEHOLDER_MARK = '⏱[过期快照]'
 /** 读工具集(需要失效判定的;describe/schema 是静态说明、history 读快照非现值,不在内) */
 const READ_TOOLS = new Set(['read', 'query_data', 'search_data'])
 /** 不触发失效的写工具:资源池 path 非主数据 jsonPath(resource_update 换资源不改 read 输出,rdelete 不动 bind) */
-const EXCLUDED_WRITE_TOOLS = new Set(['resource_update', 'resource_delete'])
+/**
+ * 写面但显式排除在「写度量」外的工具:resource_update/delete 的 args({path,value})会被
+ * whole-set 分支误判为整体 set 单次刷新(delegateNudge P0,团队评估 2026-08-29)—— 本处(stale-read)
+ * 与 delegateNudge 共用单源。
+ */
+export const EXCLUDED_WRITE_TOOLS = new Set(['resource_update', 'resource_delete'])
 /** 会引起数组位移的 op(remove 删元素/move 搬元素):兄弟索引位移必须失效 */
 const SHIFT_OPS = new Set(['remove', 'move'])
 

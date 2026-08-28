@@ -161,4 +161,79 @@ export async function run(ctx: TestCtx): Promise<void> {
     live = mk(DELEGATE_NUDGE_THRESHOLD + 1)
     assert(/分段编排/.test(String(mwL.augmentPrompt(state) ?? '')), '✓ setData 跟随(后):数据变大 → 注入开启(getBind 读 live)')
   }
+
+  console.log('\n[delegate-nudge A2 度量口径(writeCapable 门 + eval transform 子树 + resource 排除)]')
+  {
+    // sandboxRunner 注入缝(node 无 Worker)+ writeCapable 标注的 eval_script 工具面
+    const runner = (data: unknown, script: string) =>
+      Promise.resolve({ ok: true, result: new Function('data', script)(data), elapsedMs: 1 })
+    const setupA2 = () => {
+      const bind: any = mk(20)
+      const arr = createDataOps({ schema, bind, description: 'd' }, { sandboxRunner: runner } as any)
+      const t = byName(arr)
+      const mw: any = createDelegateNudgeMiddleware({ getBind: () => bind, getTools: () => arr as unknown as Array<{ name: string } & Record<string, unknown>> })
+      const next = async (c: { name: string; args: any }): Promise<{ content: string; status?: string }> => ({ content: await invoke(t[c.name], c.args) })
+      const call = (name: string, args: unknown) => mw.wrapToolCall({ id: 'x', name, args, state, callConfig: undefined }, next)
+      return { bind, call, mw }
+    }
+
+    // ① eval transform 子树 grind(逐组件 transform)累计超阈 → 触发(修前只认 write 名,恒 0)
+    const s1 = setupA2()
+    s1.mw.beforeAgent(state)
+    let hit = -1
+    for (let i = 0; i < DELEGATE_NUDGE_THRESHOLD; i++) {
+      const r = await s1.call('eval_script', { mode: 'transform', jsonPath: `components.${i}`, script: 'return data' })
+      if (/委派提示/.test(r.content)) { hit = i; break }
+    }
+    assert(hit === DELEGATE_NUDGE_THRESHOLD - 1, `✓ eval transform 子树 grind 累计超阈触发(第 ${hit + 1} 次;修前恒不触发)`)
+
+    // ② eval query 模式不计写(标注 args-aware:仅 mode:'transform' 判写)
+    const s2 = setupA2()
+    s2.mw.beforeAgent(state)
+    for (let i = 0; i < DELEGATE_NUDGE_THRESHOLD + 3; i++) {
+      await s2.call('eval_script', { mode: 'query', jsonPath: `components.${i}`, script: 'data.name' })
+    }
+    const rq = await s2.call('write', { patch: { op: 'set', jsonPath: 'components.0.note', value: 'q' } })
+    assert(!/委派提示/.test(rq.content), '✓ query 模式不进度量(零误伤只读探查)')
+
+    // ③ resource_update 排除({path,value} args 会 whole-set 分支单次误爆 —— P0 坑)
+    const s3 = setupA2()
+    s3.mw.beforeAgent(state)
+    const rr = await s3.call('write', { patch: { op: 'set', jsonPath: 'components.0.note', value: 'x' } })
+    assert(!/委派提示/.test(rr.content), '前置:普通写未超阈')
+    // resource 工具在本 fixture 未装配(无 resources 配置),以 mock 工具形态直证排除门
+    const mockTools = [
+      { name: 'resource_update', writeCapable: true },
+      { name: 'write', writeCapable: true },
+    ] as Array<{ name: string } & Record<string, unknown>>
+    const bind4: any = mk(20)
+    const mw4: any = createDelegateNudgeMiddleware({ getBind: () => bind4, getTools: () => mockTools })
+    const next4 = async (c: { name: string; args: any }) => ({ content: '已更新资源' })
+    const call4 = (name: string, args: unknown) => mw4.wrapToolCall({ id: 'x', name, args, state, callConfig: undefined }, next4)
+    mw4.beforeAgent(state)
+    const ru = await call4('resource_update', { path: 'components.0.trackId', value: 'v' })
+    assert(!/委派提示/.test(ru), '✓ resource_update 排除:单次调用不再 whole-set 误爆(修前 naive 换门必触发)')
+
+    // ④ write + eval transform 混合并集(两工具 scope 合计超阈 → 凑满并集的那次调用尾附)
+    const s5 = setupA2()
+    s5.mw.beforeAgent(state)
+    for (let i = 0; i < 6; i++) await s5.call('write', { patch: { op: 'set', jsonPath: `components.${i}.note`, value: `w${i}` } })
+    let mixHit = false
+    for (let i = 6; i < 6 + (DELEGATE_NUDGE_THRESHOLD - 6); i++) {
+      const r = await s5.call('eval_script', { mode: 'transform', jsonPath: `components.${i}`, script: 'return data' })
+      if (/委派提示/.test(r.content)) { mixHit = true; assert(i === DELEGATE_NUDGE_THRESHOLD - 1, `✓ 混合并集恰在凑满阈值的第 ${i + 1} 次调用触发`) }
+    }
+    assert(mixHit, '✓ write + eval 混合 grind scope 并集计量(修前 eval 部分逃逸)')
+
+    // ⑤ 无 getTools(存量构造)→ 退化回仅 write 现行为(eval 恒不计量,兼容承诺)
+    const bind6: any = mk(20)
+    const t6 = byName(createDataOps({ schema, bind: bind6, description: 'd' }, { sandboxRunner: runner } as any))
+    const mw6: any = createDelegateNudgeMiddleware({ getBind: () => bind6 })
+    const next6 = async (c: { name: string; args: any }) => ({ content: await invoke(t6[c.name], c.args) })
+    const call6 = (name: string, args: unknown) => mw6.wrapToolCall({ id: 'x', name, args, state, callConfig: undefined }, next6)
+    mw6.beforeAgent(state)
+    for (let i = 0; i < DELEGATE_NUDGE_THRESHOLD + 3; i++) await call6('eval_script', { mode: 'transform', jsonPath: `components.${i}`, script: 'return data' })
+    const r6 = await call6('write', { patch: { op: 'set', jsonPath: 'components.0.note', value: 'n' } })
+    assert(!/委派提示/.test(r6.content), '✓ 无 getTools(存量构造)退化现行为:eval 不计量(①-⑥ 老用例兼容承诺)')
+  }
 }

@@ -1229,8 +1229,12 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (!snapshots.length) return toolError({ code: 'NO_SNAPSHOT', message: '无快照可回退', hint: 'write 各写意图会自动存快照;或 history_data({list:true}) 查看可用快照' })
       const entry = id !== undefined ? snapshots.find((s) => s.id === id) : snapshots[snapshots.length - 1]
       if (!entry) return toolError({ code: 'SNAPSHOT_NOT_FOUND', message: `未找到快照 #${id}`, hint: '用 history_data({list:true}) 查看可用快照序号' })
+      // A3(4.9.2):快照是历史既有活态(拍栈时 bind 真值,可能含宿主直改/快路径 commit 的兄弟脏数据,
+      // 从未经整体校验);schema 变更场景不可达(controller.set/update 换绑时 snapshots.length=0 清栈)。
+      // 整体 safeParse 株连合法回退(与写路径 path-scoped 哲学相悖;handleConflict restore 裁决路径
+      // 本就不校验)→ 降级 audit 留痕放行,诊断信号保留不拦截
       const chk = schema.safeParse(entry.value)
-      if (!chk.success) return toolError({ code: 'SNAPSHOT_SCHEMA_INVALID', message: `快照 #${entry.id} 的值不符合当前 schema,无法回退`, hint: 'schema 可能已变更;该快照已过期,选其他快照或重新设置', details: formatZodIssues(chk.error.issues) })
+      if (!chk.success) audit({ op: 'restore', detail: `#${entry.id} 快照含当前 schema 违例 ${chk.error.issues.length} 处(历史既有数据非本次写入,放行回退)`, timestamp: Date.now() })
       // restore-guard(4.9.1 ②):受保护字段(freeze/verbatim)选择性保留现值 —— 快照存 bind 真值(占位只在读边界),
       // 整体回退会把宿主自管的字段洗回旧值(借 restore 绕 freeze 只读)。差异比对(per 注册表路径):
       //  - 无差异(或未配资源)→ 原行为整体回退,零变化

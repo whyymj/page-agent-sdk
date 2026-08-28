@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+## [4.9.1] - 2026-08-29
+
+### Fixed
+
+- **焦点值锚定(focus-anchor,调序后不再保护错元素;团队评估缩小范围 4 项之 A1)**:focus 路径按下标存储,数组调序后换人 → strict 拦截/全文豁免/子树 schema/codeAsset vfs 守卫全部作用到**错误元素**(全程无信号;删除后死索引还会被尾部追加豁免放行)。修:焦点入栈统一捕获最近数组元素祖先 `__pgId`(`Focus.pgId` 可选字段,五个入栈点 API `setFocus`/`addFocus` + 工具 `set_focus`/`add_focus` + applySnapshot 恢复),消费读点(守卫/augmentPrompt/read 注入/委派继承/state)解析 —— 调序跟随元素(锚「值」不锚「位置」,与 freeze-move/restore-guard 同族)、删除失联门控警告(strict 维持原始 path 口径不自动放宽)。**硬约束兑现**:存储恒保原始 path(getFocuses/事件/persist/chip 匹配不受调序影响),无 `__pgId` 数据(非 codeAsset)解析恒等返回原对象 —— 引用级零变化
+- **欠委派 nudge 度量口径统一(A2,eval transform 子树 grind 进度量)**:原「只认 `ctx.name==='write'`」手写名单漏 eval_script(transform) 逐子树 grind。修:writeCapable 标注门(args-aware fn/bool,与 writeGate/createAgent/componentLock 同口径单一真相源)+ `EXCLUDED_WRITE_TOOLS` 单源排除 resource_update/delete(其 `{path,value}` args 会 whole-set 分支单次误爆 —— 团队评估挖出的 P0 坑)+ 无标注工具名 `write` 兜底 + 顶层 string jsonPath 泛化子树计量;draft_commit/restore_data 显式豁免(单次原子大操作非 grind 签名,args 无触达面)。`getTools` 选项缺省退化现行为(存量构造零变化);行为变化量化封死:「零委派 × write+eval scope 并集 ≥12」的一次性尾附 advisory
+- **restore_data 快照整对象校验株连(A3,safeParse 降级留痕放行)**:快照是拍栈时 bind 真值(可能含宿主直改/快路径 commit 的兄弟脏数据,从未经整体校验),整体 safeParse 株连合法回退(SNAPSHOT_SCHEMA_INVALID 拦死)。修:失败降级 audit 留痕继续回退 —— 该防线想拦的「schema 变更后旧快照」经 `controller.set` 清栈证死不可达,`SNAPSHOT_SCHEMA_INVALID` 全仓库零测试/契约依赖,handleConflict restore 裁决路径本就不校验(生产先例);strict schema 集成的 restore 从必挂变可用
+- **组件锁同批时序窗口:不修时序,补竞态结局锚(A4,团队评估裁决)**:窗口(守卫同步段先于 use_html acquire)的实害已被三层结构性兜住(CUSTOM_CODE_DELEGATION 恒守卫 / commit hash 检测 keep_external / commit 只写 codeField 字段不相交);修时序(a 提前 acquire / b commit 复查)各自引入锁泄漏与 write 热路径新竞态 —— 在「不能增加风险」约束下不可论证零影响,故仅补 e2e 锚冻结「字段不相交共存」现行为契约
+
+### 测试
+
+- selftest 3251 → **3276**(+25:restore 降级三态/脏兄弟×冻结共存 + nudge 窄切片五组(eval 子树 grind/query 不计/resource 排除/混合并集/无 getTools 退化)+ focus 锚定(捕获三态/恒等门/调序跟随/删除失联/无锚逐字节一致)+ codeAsset vfs 守卫调序锚对)
+- e2e 1040 → **1048**(+8:focus 捕获锚集成(setFocus/addFocus/原始 path 保持/非 codeAsset 无锚)+ 组件锁竞态结局锚(同批 write 非code字段落地/委派 commit 照常/无 COMPONENT_LOCKED))
+- browser 134/134 · exports 14 · types + src 真错 0 · alignment ✓ · size 6
+
 ## [4.9.0] - 2026-08-28
 
 ### Removed

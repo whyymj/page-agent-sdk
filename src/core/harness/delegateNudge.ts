@@ -14,6 +14,7 @@
  */
 import type { Middleware, ToolCallContext, ToolExecResult } from './middleware'
 import { getByPath } from '../tools/jsonUtils'
+import { EXCLUDED_WRITE_TOOLS } from './readInvalidation'
 
 /** 规模度量结果(原 bulk-change-guard 量纲;bulkGuard 已于 4.1.0 移除,本函数为 delegateNudge 依赖 + 公共导出保留) */
 export interface WriteScaleResult {
@@ -97,6 +98,10 @@ export interface DelegateNudgeOptions {
   getBind: () => unknown
   /** invoke 内累计触达现有组件数阈值(默认 DELEGATE_NUDGE_THRESHOLD = 12) */
   threshold?: number
+  /** 工具面访问器(A2 度量口径统一,4.9.2):按 writeCapable 标注(args-aware fn/bool)判定写工具,
+   *  覆盖 eval_script(transform)子树 grind;缺省退化回「仅 write」现行为(存量构造零变化)。
+   *  类型收窄到最小需求面(name + writeCapable 任意属性),StructuredToolInterface 等异构工具数组可直接喂入 */
+  getTools?: () => Array<Record<string, unknown> & { name: string }> | undefined
 }
 
 /** 欠委派阈值常量(经验初值 12;initialPage 双臂试点标定后调整,只升不降) */
@@ -156,7 +161,21 @@ export function createDelegateNudgeMiddleware(opts: DelegateNudgeOptions): Middl
       next: (ctx: ToolCallContext) => Promise<ToolExecResult>,
     ): Promise<ToolExecResult> => {
       if (isDelegationTool(ctx.name)) delegated = true
-      if (ctx.name !== 'write') return next(ctx)
+      // A2 度量口径统一(4.9.2,团队评估缩小范围):原「只认 ctx.name==='write'」漏 eval_script(transform)
+      // 子树 grind。改 writeCapable 标注门(单一真相源,与 writeGate/createAgent/componentLock 同口径)+
+      // resource_update/delete 显式排除({path,value} args 会 whole-set 分支单次误爆,EXCLUDED 单源共用)+
+      // 无标注工具名 'write' 兜底(镜像 createAgent WRITE_TOOL_NAMES 兜底,奇异自定义名不漏计)。
+      // draft_commit/restore_data 显式豁免:单次原子大操作非 grind 签名,且 args({draftId}/{id})无触达面可度量。
+      if (EXCLUDED_WRITE_TOOLS.has(ctx.name)) return next(ctx)
+      let isWriteTool = ctx.name === 'write'
+      if (opts.getTools) {
+        const tool = opts.getTools()?.find((t) => t.name === ctx.name)
+        if (tool && 'writeCapable' in tool) {
+          const wc = (tool as { writeCapable?: unknown }).writeCapable
+          isWriteTool = typeof wc === 'function' ? !!wc((ctx.args ?? {}) as Record<string, unknown>) : wc === true
+        }
+      }
+      if (!isWriteTool) return next(ctx)
       const res = await next(ctx)
       const a = (ctx.args ?? {}) as Record<string, unknown>
       if (a.dryRun === true) return res  // 预检不度量
@@ -167,7 +186,13 @@ export function createDelegateNudgeMiddleware(opts: DelegateNudgeOptions): Middl
         && !content.includes('未写入') && !content.includes('无需删除')
       if (!ok) return res
       if (delegated || nudged) return res  // 已委派抑制 / 一次性
-      const m = measureWriteScale(ctx.args, opts.getBind)
+      // eval transform 子树计量(泛化规则,不点名工具):标注判写 && args 顶层 string jsonPath 且无 write 形态字段
+      // → 按子树 set 形态喂度量(seg 组件粒度切分复用;无 jsonPath 的根 transform 计 0 —— 脚本返回值在闭包内不可量)
+      const measureArgs = typeof a.jsonPath === 'string' && a.jsonPath && a.patch === undefined && a.patches === undefined
+        && a.value === undefined && a.del === undefined
+        ? { patch: { op: 'set', jsonPath: a.jsonPath } }
+        : ctx.args
+      const m = measureWriteScale(measureArgs, opts.getBind)
       for (const s of m.scopes) scopes.add(s)
       if (m.kind === 'whole-set') wholeSetCount += m.count  // 整体 set:scopes 粒度是顶层数组名,按 count 并入
       const total = scopes.size + wholeSetCount

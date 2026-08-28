@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { createFocusMiddleware } from '../../harness/focus'
+import { createFocusMiddleware, captureFocusAnchor, resolveFocus } from '../../harness/focus'
 import type { TestCtx } from './_ctx'
 
 // 上下文聚焦 focus 中间件(focus-context:目标/视野/范围三层收敛;wrapToolCall 写越界 PATH_DENIED)
@@ -358,5 +358,60 @@ export async function run(ctx: TestCtx): Promise<void> {
     mw.setFocus({ path: 'components.5' }, 'agent')
     assert(mw.getActiveFocuses()[0]?.path === 'components.5' && mw.getFocuses()[0]?.path === 'components.5',
       '✓ P1#5 agent 来源 mid-run 变更:快照与实时态同步(委派继承与主写面一致)')
+  }
+
+  // ===== A1 focus-anchor(4.9.2):__pgId 值锚定 —— 调序跟随 / 删除失联 / 无锚恒等 =====
+  console.log('\n[focus-anchor · __pgId 值锚定(锚「值」不锚「位置」)]')
+  {
+    const schema = z.object({
+      components: z.array(z.object({ type: z.string(), __pgId: z.string().optional(), props: z.object({ x: z.string().optional() }).optional() })),
+    })
+    const bind: any = {
+      components: [
+        { type: 'a', __pgId: 'c_1' },
+        { type: 'b', __pgId: 'c_2' },
+      ],
+    }
+    const mw = createFocusMiddleware({ getSchema: () => schema, getBind: () => bind })
+
+    // 捕获:元素路径直捕 / 深路径取最近数组元素祖先 / 无索引路径与无 __pgId 返 undefined
+    assert(captureFocusAnchor(bind, 'components.0') === 'c_1', '✓ 捕获:元素路径直捕 __pgId')
+    assert(captureFocusAnchor(bind, 'components.1.props.x') === 'c_2', '✓ 捕获:深路径取最近数组元素祖先')
+    assert(captureFocusAnchor(bind, 'title.x' as string) === undefined && captureFocusAnchor({ components: [{ type: 'x' }] }, 'components.0') === undefined,
+      '✓ 捕获:无索引路径 / 元素无 __pgId → undefined(非 codeAsset 恒此态)')
+
+    // 恒等门:无锚焦点解析返回原对象(引用恒等,非 codeAsset 逐字节零变化)
+    const noAnchor = { path: 'components.0', label: '无锚' }
+    assert(resolveFocus(noAnchor, bind).focus === noAnchor && resolveFocus(noAnchor, bind).lost === false,
+      '✓ 恒等门:无 pgId → 原对象引用返回(零行为面)')
+    // 原位:有锚且元素仍在原位 → 原对象
+    const anchored = { path: 'components.0', label: 'a', pgId: 'c_1' }
+    assert(resolveFocus(anchored, bind).focus === anchored, '✓ 恒等门:元素仍在原位 → 原对象(常规轮零开销)')
+
+    // 调序跟随:宿主重排 [a,b]→[b,a] → 守卫/提示按新位置(components.1)解析,原位换人不误拦
+    mw.setFocus({ path: 'components.0', label: 'a', pgId: 'c_1' })
+    assert(mw.getFocuses()[0]?.path === 'components.0', '✓ 存储恒保原始 path(getFocuses/persist/chip 匹配不受调序影响)')
+    bind.components = [bind.components[1], bind.components[0]]
+    assert(mw.getActiveFocuses()[0]?.path === 'components.1', '✓ 调序跟随:生效焦点解析到新位置(components.0→1;修前保护错元素)')
+    const seg = mw.augmentPrompt!({} as any)!
+    assert(/components\.1/.test(seg) && !/· components\.0/.test(seg), '✓ 调序跟随:augmentPrompt 目标段显示解析后路径')
+    // 守卫跟随意味着:写旧位置 components.0(现在是 b)会被拒,写 components.1(a)放行 —— 语义正确
+    const g1 = await (mw as any).wrapToolCall({ id: 't', name: 'write', args: { patch: { op: 'set', jsonPath: 'components.1.props.x', value: 'ok' } }, state: {}, callConfig: undefined }, async () => ({ content: 'written' }))
+    assert(!/PATH_DENIED/.test(g1.content), '✓ 调序跟随:写解析后位置放行(修前该写被拒、旧位置误放行)')
+
+    // 删除失联:元素被删 → 解析保持原 path + augmentPrompt 门控警告(strict 维持原始 path 前缀口径,不自动收紧/放宽)
+    bind.components = [{ type: 'b', __pgId: 'c_2' }]  // a(c_1)已删
+    const lostSeg = mw.augmentPrompt!({} as any)!
+    assert(/焦点失联/.test(lostSeg) && /clear_focus/.test(lostSeg), '✓ 删除失联:augmentPrompt 门控警告(锚存在才注入,非 codeAsset 恒不出现)')
+    const g2 = await (mw as any).wrapToolCall({ id: 't', name: 'write', args: { patch: { op: 'set', jsonPath: 'components.0.props.x', value: 'no' } }, state: {}, callConfig: undefined }, async () => ({ content: 'written' }))
+    assert(!/PATH_DENIED/.test(g2.content), '✓ 删除失联:strict 维持原始 path 前缀口径(修前同款;由警告引导 read 复核/解焦,不自动收紧')
+
+    // 无 __pgId 数据(非 codeAsset)全链恒等:setFocus 后调序 → 行为与修前一致(原始 path 直用)
+    const bind2: any = { components: [{ type: 'a' }, { type: 'b' }] }
+    const mw2 = createFocusMiddleware({ getSchema: () => schema, getBind: () => bind2 })
+    mw2.setFocus({ path: 'components.0' })
+    bind2.components = [bind2.components[1], bind2.components[0]]
+    assert(mw2.getActiveFocuses()[0]?.path === 'components.0' && !/焦点失联/.test(mw2.augmentPrompt!({} as any) ?? ''),
+      '✓ 无锚数据:调序后行为与修前逐字节一致(仍按原始 path,零行为面)')
   }
 }

@@ -32,7 +32,7 @@ import { createTodosMiddleware } from '../harness/todos'
 import { createMissionMiddleware } from '../harness/mission'
 import { createIntentGuardMiddleware } from '../harness/intentGuard'
 import { createResumeNoticeMiddleware } from '../harness/resumeNotice'
-import { createFocusMiddleware } from '../harness/focus'
+import { createFocusMiddleware, captureFocusAnchor } from '../harness/focus'
 import { createWorkingMemoryMiddleware } from '../harness/workingMemory'
 import { createSkillsMiddleware, type SkillSpec } from '../harness/skills'
 import { createMemoryMiddleware } from '../harness/memory'
@@ -1024,6 +1024,12 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 上下文聚焦(focus-context):指定组件精修,目标/视野/范围三层收敛。getSchema 延迟引用 liveData(适配 setData 运行时替换,同 checkpointMgr.getData 模式)
   // 焦点变更统一 emit focus_change(所有入口:API/agent 工具/dialog chip/reset;闭包引用 emit,运行时已初始化)
   const focusMw = createFocusMiddleware({ getSchema: () => liveData()?.schema, getBind: () => liveData()?.bind, onChange: (focuses) => emit({ type: 'focus_change', focuses }) })
+  // A1 focus-anchor(4.9.2):焦点入栈统一捕获元素稳定锚(最近数组元素祖先 __pgId,codeAsset 模式 SDK 注入);
+  // 非 codeAsset 数据恒 undefined → 原对象透传,零行为面。五个入栈点共用(API setFocus/addFocus、工具 set_focus/add_focus、applySnapshot 恢复)
+  const anchoredFocus = (f: Focus): Focus => {
+    const pgId = captureFocusAnchor(liveData()?.bind, f.path)
+    return pgId ? { ...f, pgId } : f
+  }
   const workingMemoryMw = createWorkingMemoryMiddleware()
   const memoryMw = createMemoryMiddleware(options.memory || '')
   // memory 为函数(同步/异步)时,后台预求值,首次 beforeAgent 前尽量就绪(不阻塞 mount)
@@ -1237,7 +1243,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       const schema = liveData()?.schema
       if (!schema) return '聚焦失败:当前无主数据 schema,无法聚焦。'
       if (!getSchemaAtPath(schema, path)) return `PATH_DENIED · 聚焦失败:path "${path}" 不在 schema 内。请先用 read 查看可操作路径再聚焦。`
-      focusMw.setFocus({ path, ...(label ? { label } : {}) }, 'agent')
+      focusMw.setFocus(anchoredFocus({ path, ...(label ? { label } : {}) }), 'agent')
       return `已聚焦到 ${path}${label ? `(${label})` : ''}。后续仅可写该子树(越界被拒),每轮只看到该组件结构。完成精修后调 clear_focus 退出。`
     },
     {
@@ -1259,7 +1265,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       const schema = liveData()?.schema
       if (!schema) return '聚焦失败:当前无主数据 schema,无法聚焦。'
       if (!getSchemaAtPath(schema, path)) return `PATH_DENIED · 聚焦失败:path "${path}" 不在 schema 内。请先用 read 查看可操作路径再聚焦。`
-      focusMw.addFocus({ path, ...(label ? { label } : {}) }, 'agent')
+      focusMw.addFocus(anchoredFocus({ path, ...(label ? { label } : {}) }), 'agent')
       const foci = focusMw.getFocuses()
       return `已聚焦 ${path}${label ? `(${label})` : ''}(当前共 ${foci.length} 个焦点:${foci.map((f) => f.path).join(', ')})。后续仅可写这些子树之一(越界被拒)。`
     },
@@ -1658,7 +1664,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     // section-orchestrator 0b:欠委派 nudge(invoke 内累计写触达超阈 × 零委派 → 写结果尾附一次性 advisory;
     // dataOps + subagent 都开才装 —— 无委派能力的集成提示无意义)
     ...(dataOpsController && useSubagent
-      ? [createDelegateNudgeMiddleware({ getBind: () => liveData()?.bind })]
+      ? [createDelegateNudgeMiddleware({ getBind: () => liveData()?.bind, getTools: () => (core.agent?.allTools ?? allTools) as unknown as Array<Record<string, unknown> & { name: string }> })]
       : []),
     ...(augmentSystemMw ? [augmentSystemMw] : []),
     ...(contextInspectorMw ? [contextInspectorMw] : []),  // context-inspector:wrapModelCall 快照实际消息构成(大小/分类/占比)
@@ -1818,7 +1824,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
           const valid = focusSchema ? foci.filter((f) => getSchemaAtPath(focusSchema, f.path)) : []
           if (valid.length) {
             focusMw.setFocus(null) // 清默认态,逐个 addFocus 重建多焦点
-            valid.forEach((f) => focusMw.addFocus(f))
+            valid.forEach((f) => focusMw.addFocus(anchoredFocus(f)))
           }
           if (options.debug && valid.length < foci.length) {
             const dropped = foci.filter((f) => !valid.includes(f)).map((f) => f.path)
@@ -2426,7 +2432,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     setFocus(focus: Focus): { ok: boolean; error?: string } {
       const r = validateFocusInput(focus, 'setFocus', useFocus, () => liveData()?.schema, options.debug)
       if (!r.ok) return r
-      focusMw.setFocus(focus)
+      focusMw.setFocus(anchoredFocus(focus))
       if (options.debug && focusMw.isInvokeActive()) console.info('[page-agent-sdk][focus] 在途流程进行中,聚焦将在下一次输入生效(当前流程不受影响)')
       core.infoTick.value++ // 触发 DebugDrawer 刷新
       return { ok: true }
@@ -2440,7 +2446,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         if (options.debug) console.warn('[page-agent-sdk][focus] addFocus 拒绝:焦点数已达上限 8(augmentPrompt 注入每焦点子树 schema,过多致 system prompt 超预算)')
         return { ok: false, error: '焦点数上限 8(避免 system prompt 撑爆)' }
       }
-      focusMw.addFocus(focus)
+      focusMw.addFocus(anchoredFocus(focus))
       if (options.debug && focusMw.isInvokeActive()) console.info('[page-agent-sdk][focus] 在途流程进行中,聚焦将在下一次输入生效(当前流程不受影响)')
       core.infoTick.value++
       return { ok: true }

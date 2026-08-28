@@ -1354,6 +1354,8 @@ export interface Focus {
   path: string;
   /** 人类可读标签,如「导航栏」(注入目标提示 + ChatDialog chip 显示;可选) */
   label?: string;
+  /** 元素稳定锚(4.9.2):聚焦时从最近数组元素祖先捕获的 __pgId;调序后消费面按它跟随元素(锚「值」不锚「位置」)。非 codeAsset 数据恒 undefined */
+  pgId?: string;
 }
 
 export interface ChatSdk {

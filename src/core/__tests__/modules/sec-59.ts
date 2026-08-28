@@ -268,4 +268,35 @@ export async function run(ctx: TestCtx) {
     const r4 = await invoke(t4.restore_data, {})
     assert(typeof b4.components[1]?.verification === 'string' && /未能回填/.test(r4), '✓ 元素已删:保留快照值(不复活宿主已删状态) + 警示宿主侧核对')
   }
+
+  // ===== A3(4.9.2):restore 快照整对象校验株连 → 留痕放行 =====
+  console.log('\n[restore 校验降级 · 脏兄弟不株连合法回退]')
+  {
+    // ⑤(主形态):宿主直改的脏兄弟值(number 进 string 字段)随快照入栈 → 回退不再被整体校验拦死
+    const b5: any = { id: 'x', title: '合法', components: [] }
+    const t5 = byName(createDataOps({ schema, bind: b5 }, {}))
+    await invoke(t5.write, { patch: { op: 'append', jsonPath: 'components', value: { type: 'nav' } } })  // 快照(title 仍合法)
+    b5.title = 999 as unknown as string  // 宿主直改脏值(不经 SDK 写路径,整体校验从未覆盖)
+    await invoke(t5.write, { patch: { op: 'append', jsonPath: 'components', value: { type: 'hero' } } })  // 快照(含脏 title)
+    const r5 = await invoke(t5.restore_data, { id: 2 })  // 回到「含脏 title + 1 组件」的快照
+    assert(/已回退/.test(r5) && b5.components.length === 1 && b5.title === 999, '✓ 脏兄弟快照回退放行(修前 SNAPSHOT_SCHEMA_INVALID 拦死;回滚到拍栈时活态)')
+
+    // ⑥(不可达不变式钉进测试):setData 换 schema → 快照栈清空 → restore 恒 NO_SNAPSHOT(旧快照×新 schema 状态不可达)
+    const b6: any = { id: 'x', title: 't', components: [] }
+    const tools6 = createDataOps({ schema, bind: b6 }, {})
+    await invoke(byName(tools6).write, { patch: { op: 'set', jsonPath: 'title', value: 't2' } })  // 产生快照
+    ;(tools6 as unknown as { controller: { set: (c: unknown) => void } }).controller.set({ schema, bind: b6, description: 'd' })  // setData 换绑
+    const r6 = await invoke(byName(tools6).restore_data, {})
+    assert(/NO_SNAPSHOT/.test(r6), '✓ setData 换绑清快照栈:schema 变更后旧快照不可达(NOT SNAPSHOT_SCHEMA_INVALID,防线想拦的状态不存在)')
+
+    // ⑦(guard × 脏兄弟共存):4.9 冻结保护差异比对与 A3 降级同场景共存 —— 回退放行且保护字段照常保留
+    const b7: any = { id: 'frozen-7', title: '合法', components: [] }
+    const t7 = byName(createDataOps({ schema, bind: b7, resources: [{ path: 'id', mode: 'freeze' }] }, {}))
+    await invoke(t7.write, { patch: { op: 'set', jsonPath: 'title', value: '新' } })  // 快照 A
+    b7.title = 999 as unknown as string   // 脏兄弟(随快照 B 入栈)
+    await invoke(t7.write, { patch: { op: 'set', jsonPath: 'title', value: '更新' } })  // 快照 B(含脏 999)
+    b7.id = 'host-7'                      // 宿主更新冻结字段(快照 B 之后)
+    const r7 = await invoke(t7.restore_data, { id: 2 })
+    assert(/已回退/.test(r7) && b7.id === 'host-7' && b7.title === 999 && /保留当前值未回退/.test(r7), '✓ 脏兄弟 × 冻结差异共存:回退放行 + 保护字段保留宿主现值(两层防线互不干扰)')
+  }
 }

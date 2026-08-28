@@ -1028,6 +1028,42 @@ export async function run() {
     assert(results.some((l) => String(l.data?.result).startsWith('COMPONENT_LOCKED')), '✓ 写检查:锁内写回灌 COMPONENT_LOCKED')
     assert(llm.calls === 5, `✓ 写检查:5 次 model 调用(主1+子2+主重试写1+主收口1,实际 ${llm.calls})`)
     sdk.unmount()
+
+  console.log('[e2e:capability-packs] 组件锁 · A4 同批时序窗口竞态结局锚(无 slow_probe:字段不相交共存,现行为冻结为契约)')
+  {
+    // deferred P2#2 团队评估(2026-08-29)裁决 = 不修时序、补结局锚:同批 [use_html(hero), write(name)] 无时序锚,
+    // write 守卫检查(同步派发段)先于 use_html acquire(数个 await 后)→ 双方都过。结局契约(codeAsset commit 只写
+    // codeField,与 name 字段不相交):write 落地 + 委派 commit 照常落地 + 无 COMPONENT_LOCKED。修时序(a/b)会引入
+    // 锁泄漏/write 热路径新竞态,三层兜底(恒守卫/commit hash 检测/字段不相交)已接住 —— 本用例冻结该行为防未来回归
+    const { stubModel } = await import('./_stub-model.mjs')
+    const llm = stubModel(
+      { toolCalls: [
+        { name: 'use_html', args: { task: '改 hero 代码', components: ['hero'] } },
+        { name: 'write', args: { patch: { op: 'set', jsonPath: 'components.0.name', value: 'hero-改名' } } },
+      ] },
+      { delayMs: 200, toolCalls: [{ name: 'vfs_write', args: { path: 'html/c_hero.html', content: '<section>窗口竞态 hero</section>' } }] },
+      { text: '已改' },
+      { text: '完成' },
+    )
+    const bind = { title: 't', components: [
+      { type: 'custom', name: 'hero', code: '<section>旧 hero</section>', __pgId: 'c_hero' },
+      { type: 'custom', name: 'banner', code: '<section>旧 banner</section>', __pgId: 'c_banner' },
+    ] }
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-cap-lock-race', storage: false, llm, maxParallelTools: 2,
+      capabilities: { fetch: false, planning: false, skills: false, summarization: false, memory: false },
+      data: { schema: z.object({ title: z.string(), components: z.array(z.object({ type: z.string(), name: z.string().optional(), code: z.string().optional() })) }), bind, description: '测试' },
+      subagents: [createHtmlSubagent({ writablePaths: ['components'], formatCheck: false })],
+    })
+    await sdk.mount()
+    await sdk.send('改 hero 代码并顺手改名')
+    assert(bind.components[0].name === 'hero-改名', '✓ 竞态结局:同批 write 非code字段落地(窗口内守卫未见锁,字段不相交无冲突)')
+    assert(bind.components[0].code === '<section>窗口竞态 hero</section>', '✓ 竞态结局:委派 commit 照常落地(不受同批 write 影响)')
+    const results = sdk.debugLogs.value.filter((l) => l.type === 'tool_result' && l.data?.name === 'write')
+    assert(!results.some((l) => String(l.data?.result).startsWith('COMPONENT_LOCKED')), '✓ 竞态结局:无 COMPONENT_LOCKED(窗口行为:守卫先于 acquire)')
+    assert(llm.calls === 4, `✓ 竞态结局:4 次 model 调用(主1+子2+主收口1,实际 ${llm.calls})`)
+    sdk.unmount()
+  }
   }
 
   console.log('[e2e:capability-packs] 组件锁 · 默认串行(maxParallelTools 缺省)同轮双委派同组件 → 零变化(不 busy)')

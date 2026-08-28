@@ -45,6 +45,12 @@ export interface Focus {
   path: string
   /** 人类可读标签,如「导航栏」(注入目标提示 + ChatDialog chip 显示;可选) */
   label?: string
+  /**
+   * 元素稳定锚(A1 focus-anchor,4.9.2):聚焦时从最近数组元素祖先捕获的 `__pgId`(codeAsset 模式 SDK 注入;
+   * 集成自管 __pgId 同样适用)。调序后消费读点按它重新定位元素改写 path(锚「值」不锚「位置」,与 freeze-move/
+   * restore-guard 同族);无锚(非 codeAsset 数据)→ 解析恒等零行为变化。存储恒保原始 path,解析只在消费读点
+   */
+  pgId?: string
 }
 
 /** 跨压缩工作记忆(workingMemory 中间件;pin 最近定位 path + read hash,≤10 LRU,防压缩后丢定位/误冲突) */

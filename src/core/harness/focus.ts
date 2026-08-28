@@ -80,6 +80,54 @@ function isTailAppend(scope: string, bind: unknown): boolean {
   return Array.isArray(arr) && Number(idxStr) >= arr.length
 }
 
+// ===== A1 focus-anchor(4.9.2,团队评估缩小范围):焦点值锚定 =====
+// focus 路径按下标存储(components.0),调序后换人 → strict 拦截/全文豁免/子树 schema 作用到错误元素,
+// 删除后死索引静默(修复前全程无信号)。锚定 __pgId「值」:调序跟随、删除失联显式警告。
+// 恒等门(硬约束:非 codeAsset 场景逐字节零变化):无 pgId / 元素仍在原位 / path 无索引段 → 返回原对象/原数组。
+
+/** 最近数组元素祖先路径('components.0.props' → 'components.0';无数字索引段返 null) */
+function elemPathOf(path: string): string | null {
+  const parts = path.split('.')
+  for (let i = parts.length - 1; i >= 0; i--) {
+    if (/^\d+$/.test(parts[i])) return parts.slice(0, i + 1).join('.')
+  }
+  return null
+}
+
+/**
+ * 捕获焦点锚:最近数组元素祖先的 `__pgId`。无数组元素祖先 / 元素无 __pgId → undefined
+ * (非 codeAsset 数据恒 undefined → 解析恒等,零行为面)。纯函数可单测。
+ */
+export function captureFocusAnchor(bind: unknown, path: string): string | undefined {
+  const ep = elemPathOf(path)
+  if (!ep) return undefined
+  const pg = (getByPath(bind, ep) as { __pgId?: unknown } | null | undefined)?.__pgId
+  return typeof pg === 'string' ? pg : undefined
+}
+
+/**
+ * 解析焦点(消费读点用):元素仍在原位 → 原对象(恒等);调序漂移 → 在元素所在数组容器按 __pgId 找同元素
+ * 并改写 path(锚「值」不锚「位置」);元素已删 → 原对象 + lost 标记(strict 维持现状不自动放宽,augmentPrompt
+ * 门控警告)。纯函数可单测。
+ */
+export function resolveFocus(f: Focus, bind: unknown): { focus: Focus; lost: boolean } {
+  if (!f.pgId) return { focus: f, lost: false }
+  const ep = elemPathOf(f.path)
+  if (!ep) return { focus: f, lost: false }
+  if ((getByPath(bind, ep) as { __pgId?: unknown } | null | undefined)?.__pgId === f.pgId) return { focus: f, lost: false }
+  const dot = ep.lastIndexOf('.')
+  const container = dot > 0 ? ep.slice(0, dot) : ''
+  const arr = dot > 0 ? getByPath(bind, container) : bind
+  if (Array.isArray(arr)) {
+    const idx = arr.findIndex((x) => (x as { __pgId?: unknown } | null)?.__pgId === f.pgId)
+    if (idx >= 0) {
+      const newElem = dot > 0 ? `${container}.${idx}` : String(idx)
+      return { focus: { ...f, path: newElem + f.path.slice(ep.length) }, lost: false }
+    }
+  }
+  return { focus: f, lost: true }
+}
+
 /** Focus 中间件控制器(闭包操作 + 供 createChatSdk 暴露 + agent 工具调用) */
 export interface FocusController {
   /**
@@ -151,8 +199,28 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
    * null = 无在途 invoke(读写实时 focuses)。
    */
   let invokeFocuses: Focus[] | null = null
-  /** 当前生效焦点:在途 invoke 用快照;invoke 间用实时态 */
+  /** 当前生效焦点(原始存储,恒保原始 path —— UI chip/removeFocus 匹配/persist 恒用原始态):在途 invoke 用快照;invoke 间用实时态 */
   const activeFocuses = (): Focus[] => invokeFocuses ?? focuses
+  /**
+   * 消费读点解析(A1 focus-anchor):guard/augmentPrompt/read 注入/委派继承/state 快照经此取「生效路径」 ——
+   * 有锚且调序漂移 → 改写 path;失联 → 原对象 + lost(augmentPrompt 门控警告)。**存储恒保原始 path**
+   * (getFocuses/事件/persist/removeFocus 匹配不受影响)。无锚/原位 → 原对象,全恒等时返回原数组(引用级零变化)。
+   */
+  const effectiveFocuses = (): { foci: Focus[]; lost: Focus[] } => {
+    const list = activeFocuses()
+    if (!opts.getBind) return { foci: list, lost: [] }
+    const bind = opts.getBind()
+    const out: Focus[] = []
+    const lost: Focus[] = []
+    let changed = false
+    for (const f of list) {
+      const r = resolveFocus(f, bind)
+      out.push(r.focus)
+      if (r.focus !== f) changed = true
+      if (r.lost) lost.push(f)
+    }
+    return { foci: changed || lost.length ? out : list, lost }
+  }
   /** mutation 后统一通知(副本防外部 mutate) */
   const notify = () => opts.onChange?.([...focuses])
   /**
@@ -191,20 +259,26 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
       // invoke-freeze:invoke 开始取生效快照(宿主 mid-run 改焦点不动快照;afterAgent 释放)
       invokeFocuses = [...focuses]
       // 焦点进 state(供其他中间件/工具观测;同 mission 模式)。augmentPrompt 读闭包 focuses。
-      // focuses(数组,多焦点)+ focus(首个别名,兼容旧读 state.focus 的代码)
-      return invokeFocuses.length ? { focuses: [...invokeFocuses], focus: invokeFocuses[0] } : {}
+      // focuses(数组,多焦点)+ focus(首个别名,兼容旧读 state.focus 的代码)。
+      // A1:state 面(codeAsset vfs 守卫等消费)给解析后路径(调序跟随);无锚恒等 → 同引用同字节
+      const eff = effectiveFocuses()
+      return eff.foci.length ? { focuses: [...eff.foci], focus: eff.foci[0] } : {}
     },
     afterAgent: () => {
       // invoke 结束释放快照:焦点读写回到实时态(宿主在上一 invoke 期间设置的焦点自此可见)
       invokeFocuses = null
     },
     augmentPrompt: () => {
-      const foci = activeFocuses()
+      const { foci, lost } = effectiveFocuses()
       if (!foci.length) return undefined
       const lines = [
         '## 当前精修目标',
         foci.map((f) => `· ${f.path}${f.label ? `(${f.label})` : ''}`).join('\n'),
         `仅操作上述 ${foci.length} 个聚焦子树${foci.length > 1 ? '之一' : ''},${defaultTarget}不要改动其他组件;${unfocusHint}`,
+        // A1 失联警告(门控:仅锚存在且元素已删才注入 —— 非 codeAsset 场景恒不出现,逐字节零变化)
+        ...(lost.length
+          ? [`⚠️ 焦点失联:${lost.map((f) => f.path).join('、')} 对应元素(按稳定 id 锚定)已不存在(可能已被删除)。请先 read 确认当前结构;若元素确已删除,用 clear_focus 解焦或换焦点,勿按旧路径写入。`]
+          : []),
         // 指代锚定(2026-08-26 实测事故:用户点选深层组件后问「这是啥」,flash 答了整页概况 —— 旧段
         // 全是写向话术,指代类问句零引导)。问答与操作同权重:指示代词默认指聚焦目标
         '用户用指示代词提问(「这是啥/这个/它是干什么的」等)时,所指默认是聚焦目标 —— 先 read 聚焦子树,再围绕聚焦组件回答,勿泛答整页',
@@ -231,8 +305,9 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
     ) => {
       // 范围收紧(strict):聚焦时写工具的 jsonPath 必须在【任一】焦点子树内,全不在才 PATH_DENIED 回灌 LLM 自纠
       // 生效焦点 = 在途 invoke 快照(invoke-freeze:宿主 mid-run 改焦点不追溯作用于本 invoke)
+      // A1:消费读点取解析态(调序后跟随元素,不再保护错子树);无锚恒等 → 行为与修前逐字节一致
       // 例外:尾部追加(<arrayPath>.<N>,N>=数组长度)放行 —— 追加新元素不破坏焦点子树(聚焦模式可新建组件)
-      const foci = activeFocuses()
+      const foci = effectiveFocuses().foci
       if (foci.length) {
         const labels = foci.map((f) => (f.label ? `${f.path}(${f.label})` : f.path)).join(', ')
         // 子路径示例用实际焦点路径(deny 引导随数据走,不硬编码)
@@ -285,8 +360,8 @@ export function createFocusMiddleware(opts: FocusMiddlewareOptions): Middleware 
     },
     getFocus: () => focuses[0],
     getFocuses: () => [...focuses],
-    // P1#5:生效快照暴露(委派继承接线专用;与 guard/augmentPrompt 同读 activeFocuses 闭包)
-    getActiveFocuses: () => [...activeFocuses()],
+    // P1#5:生效快照暴露(委派继承接线专用;与 guard/augmentPrompt 同读解析态闭包 —— A1 调序后子 agent 继承正确路径)
+    getActiveFocuses: () => [...effectiveFocuses().foci],
     addFocus: (f, source) => {
       // 去重 by path:已存在则更新 label(覆盖),否则追加
       mutate(source, (list) => {

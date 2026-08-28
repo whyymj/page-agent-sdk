@@ -233,5 +233,29 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:focus] A1 焦点入栈捕获元素稳定锚(__pgId;非 codeAsset 恒无锚零行为面)')
+  {
+    const schemaA = z.object({
+      components: z.array(z.object({ type: z.string(), __pgId: z.string().optional(), props: z.object({ title: z.string() }) })),
+    })
+    const bindA = { components: [{ type: 'a', __pgId: 'c_a', props: { title: 'A' } }, { type: 'b', __pgId: 'c_b', props: { title: 'B' } }] }
+    const sdkA = createChatSdk({ ui: false, id: 'e2e-focus-anchor', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS, data: { schema: schemaA, bind: bindA, description: '页面' } })
+    await sdkA.mount()
+    sdkA.setFocus({ path: 'components.0', label: 'a' })
+    assert(sdkA.getFocuses()[0]?.pgId === 'c_a', '✓ A1 setFocus 捕获最近数组元素祖先 __pgId(集成层入栈点统一)')
+    sdkA.addFocus({ path: 'components.1' })
+    assert(sdkA.getFocuses()[1]?.pgId === 'c_b', '✓ A1 addFocus 同样捕获锚')
+    // 调序后存储恒保原始 path(getFocuses 面),解析只发生在消费读点 —— chip/事件/persist 不受影响
+    bindA.components = [bindA.components[1], bindA.components[0]]
+    assert(sdkA.getFocuses()[0]?.path === 'components.0', '✓ A1 存储恒保原始 path(消费读点解析不回写存储)')
+    sdkA.unmount()
+    // 无 __pgId 数据(非 codeAsset)→ 无锚,零行为面
+    const sdkB = createChatSdk({ ui: false, id: 'e2e-focus-noanchor', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS, data: { schema, bind, description: '页面' } })
+    await sdkB.mount()
+    sdkB.setFocus({ path: 'components.0' })
+    assert(sdkB.getFocuses()[0]?.pgId === undefined, '✓ A1 非 codeAsset 数据(无 __pgId)→ 不捕获锚(解析恒等零行为面)')
+    sdkB.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

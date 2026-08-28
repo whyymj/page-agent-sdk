@@ -424,7 +424,7 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 
 **来源**:用户问询「代码组件移动到另一层级数组(如 `container.children`)能否无损」核实结论。`write` op `move` 结构搬运本身无损(节点含 `__pgId`/`__pgNotes` 整体随行,findStrippedKeys 对 move 位移有深度相等匹配防误判),但 `codeAssetMiddleware.forEachCodeItem`(src/core/sdk/codeAssetMiddleware.ts:112-128)**只扫 writablePaths 数组的直接元素,不递归嵌套数组** —— 代码组件一旦移进嵌套容器(如 `components.N.props.children`):checkout/afterAgent commit/组件代码文件地图/焦点守卫(`focusPathsToPgIds` 同遍历口径)全部「看不见」该组件 → 后续 `use_html` 委派无法同步其 vfs 工作副本(data.code 停在移动前内容,vfs 编辑回流不到新位置)。组件锁 `collectComponentNames` 同源,锁目标集也漏。**重启触发**:集成方(editor_fangzhou 类)实际出现「把 custom 组件拖进容器 children」需求或事故。修法候选:`forEachCodeItem` 改按 schema 深遍历(z.lazy 递归路径展开)或 writablePaths 支持多路径声明(`['components', 'components.*.props.children']` 通配);同步修 `focusPathsToPgIds`/`collectComponentNames`/文件地图同口径。
 
-### [2026-08-20] restore_data 快照整对象校验株连(与 path-scoped-validation 同根因)— ⏸ 暂缓
+### [2026-08-20] restore_data 快照整对象校验株连 — ✅ 已实施(2026-08-29,4.9.2 A3:safeParse 降级 audit 留痕放行;schema 变更场景经 controller.set 清栈证死不可达)
 
 **来源**:path-scoped-validation(path-scoped-validation change 实施期登记)。`restore_data` 的 `SNAPSHOT_SCHEMA_INVALID`(dataOps.ts restoreData 工具)对快照值做**当前 schema 的整对象校验** —— editor 若回退含 `script:""` 脏数据的历史快照会与 write 路径同样株连挂死。本 change 只动了写路径(set/patches/merge/append/move/eval/draft),快照回退路径未动(非目标明示)。**重启触发**:editor 实测回退失败案例出现。修法:快照是「历史既有数据」(非 agent 本次写入),回退校验可直接放开或降级 warning 留痕 —— 与写路径「只校验写入内容」哲学一致。
 
@@ -505,10 +505,10 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 **来源**:subtree-summary + PLACEHOLDER_LEAK 落地后的团队审查;P0=0,P1×2 + P1 级口径缺口已当场修(leak 检查移 enforceSet 前 / 守卫文案补分页 / verify 拒绝码四码 / nudge keep_external 口径 / write(set) hash 复用)。遗留 P2 如下,**重启触发** = 各项所述实例出现或相关模块下次改动时顺手:
 
 1. **并发写互锁 TOCTOU(CA-P1 既有)** — ✅ **已实施**(2026-08-25,[2026-08-25-write-conflict-final-hash](changes/2026-08-25-write-conflict-final-hash/) C 形态:dataOps 闭包级 async mutex + ask 拆段 + 裁决恢复点校验,`maxParallelTools>1 && conflictWatchFields 武装` 相与装配;selftest sec-109 + e2e conflict.mjs 双场景锁定;本条随之移除)
-2. **componentLock 时序残余窗口**:主写守卫在同步派发段、use_html acquire 在 await 后,同批 `[use_html, write(同组件)]` 并发可穿;code 字段仍被 CUSTOM_CODE_DELEGATION 恒守卫兜底。CLAUDE.md 已登记,e2e 用 slow_probe 锚。
+2. ✅ **componentLock 时序残余窗口**(团队评估 2026-08-29 裁决:**不修时序补结局锚**;4.9.2 A4):窗口实害已被恒守卫/commit hash 检测 keep_external/commit 只写 codeField 字段不相交三层结构性兜住,修时序(a 提前 acquire)会引入锁泄漏新路径。e2e 竞态结局锚已冻结现行为;重启触发 = 非 code 字段也需互斥的诉求出现。
 3. **并行模式写结果交叉不失效**:同批两个写都成功时,先写结果的「当前值+新 hash」在后写落地后陈旧,stale 失效不覆盖(串行无此问题)。
-4. **focus 路径漂移零检测**:focus 按数组下标锚定(components.0),调序/删除后换人 → 全文豁免+strict 拦截作用到错误子树;FocusController 无失效/重算入口。候选修法:augmentPrompt 期存在性校验失联警告 / codeAsset 场景 __pgId 锚定。
-5. **nudge 度量面盲区**:只认 `ctx.name==='write'` —— eval_script(transform)/draft_commit/restore_data 的 bulk grind 不进欠委派检测(writeGate 用 writeCapable 标注,nudge 手写名单偏离)。
+4. ✅ **focus 路径漂移零检测**(已修销账 2026-08-29,4.9.2 A1):__pgId 值锚定(五入栈点捕获 + 消费读点解析,调序跟随/删除失联门控警告;存储恒保原始 path,无锚数据恒等零行为面);裸存在性警告腿被团队评估否决(非 codeAsset 场景违反零字节门)。
+5. ✅ **nudge 度量面盲区**(已修销账 2026-08-29,4.9.2 A2 窄切片):writeCapable 标注门 + EXCLUDED_WRITE_TOOLS 单源排除(resource_update 的 {path,value} args 会 whole-set 分支单次误爆 —— 团队评估挖出的 P0 坑)+ eval transform 子树计量;draft_commit/restore_data 显式豁免(单次原子大操作非 grind 签名,args 无触达面)。
 6. **resource_update 绕过占位防线**:value 只过 subSchema 类型校验直接落资源池+bind,占位串可经此通道进 bind(现实性低:需 LLM 把占位喂给低频精确值工具)。
 7. **MARKER_RE 非 ASCII 字段名漏检**:codeField 为中文等字段时生成 `<代码 2.3KB>`,写回不检(漏检非误伤;`<subtree` 子串规则不受影响)。
 8. **主 scope read 恒 deepClone**:summarizeLargeText 在 isMain 无条件克隆(零摘要也克隆);可改先 walk 估算命中阈值才克隆。
