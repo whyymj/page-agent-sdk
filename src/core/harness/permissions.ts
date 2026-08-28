@@ -19,7 +19,6 @@ export interface PermissionRule {
 
 const WRITE_TOOLS = new Set(['write', 'vfs_write', 'vfs_edit', 'draft_commit', 'eval_script'])
 const READ_TOOLS = new Set([
-  'describe_data',
   'read',
   'query_data',
   'search_data',

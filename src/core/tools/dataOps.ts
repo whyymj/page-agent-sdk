@@ -324,7 +324,7 @@ export function validateWriteLocally(args: {
       code: 'SCHEMA_INVALID',
       path: jp,
       message: `值不符合 "${jp}" 的 schema(${issues.length} 处问题)`,
-      hint: `用 read({jsonPath:"${jp}"}) 查看当前值,按 describe_data() 查看主数据 schema,修正后重试;改大对象优先用 write 的 patch 增量(只发改动部分)${protHint}`,
+      hint: `用 read({jsonPath:"${jp}"}) 查看当前值,按 schema_data() 查看主数据 schema,修正后重试;改大对象优先用 write 的 patch 增量(只发改动部分)${protHint}`,
       details: formatZodIssues(issues),
     })
   }
@@ -390,13 +390,15 @@ export function validateWriteLocally(args: {
       const cap = appendCaptures[appendIdx++]
       const elems = cap?.elems ?? []
       // 字符串目标(chunked-code-write:大 code 分块拼接)→ 片段 = 局部 parse 结果(cap.elems[0]),
-      // 校验「拼接后终值」(终值才是落盘形态;裸片段可能过不了 enum 等约束)+ appendStr 写回计划
-      const liveCur = getByPath(bindRef, jp)
-      if (typeof liveCur === 'string' && typeof elems[0] === 'string') {
+      // 校验「拼接后终值」(终值才是落盘形态;裸片段可能过不了 enum 等约束)+ appendStr 写回计划。
+      // 终值取 clone(apply 循环已按 patch 序应用,含同批此前 set/append 的中间态;deferred 修):
+      // 取 bindRef 写前值会用旧值拼 chunk —— 同批 set 首块+append 次块时校验的是裸次块,合法终值整批误拒
+      const curStr = getByPath(clone, jp)
+      if (typeof curStr === 'string' && typeof elems[0] === 'string') {
         const chunk = elems[0] as string
         const tresS = resolveSchemaPath(schema, jp)
         if (tresS.kind === 'missing') return { ok: false, error: stripError([jp]), writeBacks: [], notices }
-        const finalStr = liveCur + chunk
+        const finalStr = curStr
         if (tresS.kind !== 'open') {
           const bad = tresS.schemas.map((sc) => sc.safeParse(finalStr)).find((r) => !r.success)
           if (bad) return { ok: false, error: mkError(jp, bad.error?.issues ?? []), writeBacks: [], notices }
@@ -683,7 +685,12 @@ export function applyPatchesToBind(args: {
   // 外科手术式写回(path-scoped-validation):按 patch 原序把「局部 parse 后的值」重放到 live bind ——
   // 只动写目标路径,未触达子树原样保留(旧实现整对象 res.data 整体 merge 会把全树 strip 一遍,未触达组件的
   // 未声明字段如 __pgNotes 会被剥;per-path 写回天然保住)。remove 显式 deleteByPath(merge 不删 key 语义)。
+  // 同批 set+append 同路径(deferred 修):set 写回值取 valueAt = apply 后 clone 的**全批终值**(已含该 append
+  // 的效果),append 再重放会双重追写(实测 [set A,append B] → AABB / 数组 [a,b,c,c])→ 被 set 覆盖的同路径
+  // append 跳过;顺序无关(set 先后都带终值)。
+  const setCoveredJps = new Set(plan.writeBacks.filter((w) => w.op === 'set').map((w) => w.jp))
   for (const wb of plan.writeBacks) {
+    if ((wb.op === 'appendElems' || wb.op === 'appendStr') && setCoveredJps.has(wb.jp)) continue  // set 终值已含
     if (wb.op === 'remove') {
       deleteByPath(bindRef, wb.jp)
     } else if (wb.op === 'set') {
@@ -1207,16 +1214,10 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     ;(t as { writeCapable?: unknown }).writeCapable = cap
   }
 
-  const describeData = tool(
-    async () => [
-      `说明: ${description}`,
-      `格式: 写入值需为 JSON,且通过声明的 schema 校验(校验失败时 write 会返回结构化错误,含具体字段与期望类型)。`,
-    ].join('\n'),
-    { name: 'describe_data', description: '获取主数据的说明与格式要求(等价于 read 不传 jsonPath;优先用 read 单一入口)。', schema: z.object({}) },
-  )
-
+  // describe_data 已移除(4.9,与 read 不传 jsonPath 完全等价;真 LLM 基线连续三版 0 调用):
+  // 整体说明+格式看 read({})(不传 jsonPath),字段约束看 schema_data。
   // get_data/set_data/edit_data/delete_data 已移除(legacy-crud-dedup,4.0):read/write 全覆盖且为唯一入口
-  // (uispec 实测主 agent 调用 get/set/edit_data 均 0 次;删除后数据工具面 14→10)。
+  // (uispec 实测主 agent 调用 get/set/edit_data 均 0 次;删除后数据工具面 14→10,再随 describe 移除 → 9)。
   // 等价迁移:get_data({p}) → read({jsonPath:p});set_data({value}) → write({value});
   // edit_data({op,p,value}) → write({patch:{op,jsonPath:p,value}});delete_data({p}) → write({patch:{jsonPath:p},del:true})。
   // snapshot_data / list_data_snapshots 亦早前移除(simplify-toolset):被 history_data({ list: true }) 吸收;
@@ -1230,11 +1231,61 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (!entry) return toolError({ code: 'SNAPSHOT_NOT_FOUND', message: `未找到快照 #${id}`, hint: '用 history_data({list:true}) 查看可用快照序号' })
       const chk = schema.safeParse(entry.value)
       if (!chk.success) return toolError({ code: 'SNAPSHOT_SCHEMA_INVALID', message: `快照 #${entry.id} 的值不符合当前 schema,无法回退`, hint: 'schema 可能已变更;该快照已过期,选其他快照或重新设置', details: formatZodIssues(chk.error.issues) })
+      // restore-guard(4.9.1 ②):受保护字段(freeze/verbatim)选择性保留现值 —— 快照存 bind 真值(占位只在读边界),
+      // 整体回退会把宿主自管的字段洗回旧值(借 restore 绕 freeze 只读)。差异比对(per 注册表路径):
+      //  - 无差异(或未配资源)→ 原行为整体回退,零变化
+      //  - 有差异 → 回退快照后回填当前保护值;元素对应优先 __pgId(codeAsset 稳定 id,跨调序正确),
+      //    无 id 按字面路径(无调序主形态);快照窗口内元素已删/容器不在 → 保留快照值 + 警示(宁旧勿错,防错位写坏)
+      const differing: { p: string; cur: unknown }[] = []
+      if (protectedCtx && protectedCtx.resourcesByPath.size) {
+        for (const [p] of protectedCtx.resourcesByPath) {
+          const cur = getByPath(bindRef, p)
+          const snap = getByPath(entry.value, p)
+          if (deepEqual(cur, snap)) continue
+          differing.push({ p, cur })
+        }
+      }
+      if (!differing.length) {
+        restoreLive(bindRef, deepClone(entry.value))
+        markDataDirty()
+        audit({ op: 'restore', detail: `#${entry.id}`, timestamp: Date.now() })
+        setBaseline(hashBind(), scope)
+        return `已回退主数据到快照 #${entry.id}[${entry.op}]${entry.label ? `(${entry.label})` : ''}。`
+      }
+      // 元素对应锚:保护路径父元素的 __pgId(当前 bind);有 id → 回退后在快照排列里按 id 找同元素(调序安全)
+      const anchors = differing.map(({ p }) => {
+        const parent = parentPathOf(p)
+        const pgId = parent ? getByPath(bindRef, `${parent}.__pgId`) : undefined
+        return { p, parent, pgId: typeof pgId === 'string' ? pgId : undefined }
+      })
+      // 回填用的当前保护值须在 restoreLive 之前取好(回退后 bind 即快照排列)
+      const saved = anchors.map((a) => ({ ...a, val: a.p ? getByPath(bindRef, a.p) : undefined }))
       restoreLive(bindRef, deepClone(entry.value))
+      const kept: string[] = []
+      const staleKept: string[] = []
+      for (const s of saved) {
+        const leaf = s.p.slice(s.p.lastIndexOf('.') + 1)
+        let target = s.p
+        if (s.pgId) {
+          // 按稳定 id 在快照排列里定位同元素(父元素的数组容器内扫 __pgId)
+          const container = parentPathOf(s.parent)
+          const arr = container ? getByPath(bindRef, container) : bindRef
+          const idx = Array.isArray(arr) ? arr.findIndex((el) => (el as { __pgId?: unknown })?.__pgId === s.pgId) : -1
+          if (idx < 0) { staleKept.push(s.p); continue }  // 元素在快照窗口内已不存在:保留快照值,不复活当前值
+          target = `${container ? `${container}.${idx}` : String(idx)}.${leaf}`
+        } else if (s.parent && getByPath(bindRef, s.parent) === undefined) {
+          staleKept.push(s.p)  // 容器不在快照里(路径对不上):同上,宁旧勿错
+          continue
+        }
+        if (s.val !== undefined) setByPath(bindRef as object, target, s.val)
+        else staleKept.push(s.p)  // 当前无值(宿主已清)但快照有:保留快照值保 schema 合法,警示复核
+        kept.push(s.p)
+      }
       markDataDirty()
-      audit({ op: 'restore', detail: `#${entry.id}`, timestamp: Date.now() })
+      audit({ op: 'restore', detail: `#${entry.id}(保护字段保留 ${kept.length}${staleKept.length ? `,未能回填 ${staleKept.length}` : ''})`, timestamp: Date.now() })
       setBaseline(hashBind(), scope)
-      return `已回退主数据到快照 #${entry.id}[${entry.op}]${entry.label ? `(${entry.label})` : ''}。`
+      const staleNote = staleKept.length ? `;⚠ 以下保护字段未能回填当前值(快照窗口内元素已变/已删,保留快照旧值,请由宿主侧核对):${staleKept.join('、')}` : ''
+      return `已回退主数据到快照 #${entry.id}[${entry.op}]${entry.label ? `(${entry.label})` : ''}。⚠ 受保护字段保留当前值未回退:${kept.join('、')}(freeze/verbatim 由宿主管辖,快照旧值不覆盖;history_data 看到的是快照原值,实际结果以 read 为准)${staleNote}`
     },
     {
       name: 'restore_data',
@@ -1392,6 +1443,11 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         if (jp) {
           const evalLock = await acquireWriteMutex()
           try {
+            // 乐观锁(eval-transform-lock,4.9.1):互锁七 commit 位补齐 —— 修前有 mutex+commit+setBaseline
+            // 但无 effHash/handleConflict,armed 场景脚本执行窗口的外部修改被静默覆盖(CLAUDE.md 契约-实现分叉收敛)
+            const effHash = lockOn ? getBaseline(scope) : undefined
+            const conflict = await handleConflict('edit', effHash, undefined, evalLock)
+            if (conflict !== null) return conflict
             const r = applyPatchesToBind({ bindRef, patches: [{ op: 'set', jsonPath: jp, value: result }], schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'schema_invalid', snapshotLabel: 'eval_transform_subtree', internalAfterWrite, protectedCtx })
             if (!r.ok) return r.error
             audit({ op: 'edit', detail: `eval_transform_subtree @ ${jp}`, timestamp: Date.now() })
@@ -1410,6 +1466,10 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           }
           const evalLock = await acquireWriteMutex()
           try {
+            // 乐观锁(eval-transform-lock):patches 增量模式同款补齐(七 commit 位之二)
+            const effHash = lockOn ? getBaseline(scope) : undefined
+            const conflict = await handleConflict('edit', effHash, undefined, evalLock)
+            if (conflict !== null) return conflict
             const r = applyPatchesToBind({ bindRef, patches: (result as any).patches, schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'schema_invalid', snapshotLabel: 'eval_transform', internalAfterWrite, protectedCtx })
             if (!r.ok) return r.error
             audit({ op: 'edit', detail: `eval_transform(${r.applied.length} patches)`, timestamp: Date.now() })
@@ -1441,9 +1501,13 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         const beforeBind = internalAfterWrite ? deepClone(bindRef) : null
         const evalLock = await acquireWriteMutex()
         try {
+          // 乐观锁(eval-transform-lock):整体替换模式同款补齐(七 commit 位之三;整体替换 = set 语义)
+          const effHash = lockOn ? getBaseline(scope) : undefined
+          const conflict = await handleConflict('set', effHash, evalResult, evalLock)
+          if (conflict !== null) return conflict
           const vr = validateRootValueLocally({ schema, allowKeys, value: evalResult, bindRef })
           if (!vr.ok) {
-            return toolError({ code: 'SCHEMA_INVALID', message: `脚本返回值校验失败,未写入(transform 模式要求返回主数据的完整新值或顶层 key 子集)`, hint: `确认脚本 return 了完整新值(非部分);或返回 {patches:[...]} 走增量模式;按 describe_data() 查看格式`, details: (vr.error.match(/"details":\s*(\[[^\]]*\])/)?.[1] ?? '') || vr.error })
+            return toolError({ code: 'SCHEMA_INVALID', message: `脚本返回值校验失败,未写入(transform 模式要求返回主数据的完整新值或顶层 key 子集)`, hint: `确认脚本 return 了完整新值(非部分);或返回 {patches:[...]} 走增量模式;按 schema_data() 查看格式`, details: (vr.error.match(/"details":\s*(\[[^\]]*\])/)?.[1] ?? '') || vr.error })
           }
           pushSnapshot('edit', 'eval_transform')
           if (vr.wholeParsed) {
@@ -1916,7 +1980,6 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   }
 
   const tools: StructuredToolInterface[] = [
-    describeData,
     restoreData, historyData,
     queryData, searchData, evalScript,
     readSlot, writeSlot, schemaData, diffData,

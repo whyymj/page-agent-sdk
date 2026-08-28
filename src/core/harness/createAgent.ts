@@ -32,7 +32,7 @@ import { createInitialState, type HarnessState, type LoopProgress } from './stat
 import { withRetry, isAbort, type RetryOptions } from './retry'
 import { withStallTimeout, StreamStalledError, StreamMaxDurationError, EmptyLLMResponseError, DEFAULT_STREAM_STALL_MS, DEFAULT_STREAM_MAX_DURATION_MS } from '../utils/stallTimeout'
 import { isContextLengthError, decorateModelUnavailable } from './errors'
-import { type TurnToolUsage } from './actionGate'
+import { type TurnToolUsage, DELEGATION_TOOL_RE } from './actionGate'
 import { isSuccessfulWriteResult } from './writeGate'
 import { invalidateStaleReads, effectiveWritePaths, type StaleWriteRecord } from './readInvalidation'
 import { runFinishGates, createGateChainState, auditEvidenceOffenders } from './gateChain'
@@ -1085,6 +1085,12 @@ export function createAgent(options: CreateAgentOptions) {
           const name = ctxs[i].call.name
           turnUsage.counts[name] = (turnUsage.counts[name] ?? 0) + 1
           if (r.status === 'error') turnUsage.failures += 1
+          // 被拒委派计数(4.9.1 ③):委派工具返回 ERROR: 回灌(COMPONENT_BUSY/COMPONENT_LOCKED 组件锁等)
+          // —— 不 throw、status 非 error,但实际零写入;记数供零工具门禁等效写判定与事实清单如实呈现
+          if (DELEGATION_TOOL_RE.test(name) && String(r.content || '').startsWith('ERROR:')) {
+            turnUsage.rejectedDelegations = turnUsage.rejectedDelegations ?? {}
+            turnUsage.rejectedDelegations[name] = (turnUsage.rejectedDelegations[name] ?? 0) + 1
+          }
           // stale-read-invalidation Phase 0:写成功判定改 isSuccessfulWriteResult 四重门槛
           // (writeCapable args-aware + 非 dryRun + 非 throw + 非 ERROR: 字符串)—— dataOps 业务失败
           // 是 return toolError 字符串不 throw,旧口径只看 status 会把 SCHEMA_INVALID 的写计入

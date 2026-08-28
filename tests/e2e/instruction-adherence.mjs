@@ -1,7 +1,7 @@
 // instruction-adherence e2e:完结门禁 + 问句意图守卫(stub model 驱动真 ReAct)
 //  - 完结门禁:todos 有未完成项却纯文本收尾 → 回灌「双出口」反馈续跑(≤2 次);问句收尾豁免;无 todos 不触发
 //  - 问句意图守卫:问句消息 → system 注入「先答勿做」pin 段 + debugLogs 留痕;祈使句不注入
-import { setupEnv, createAssert, createChatSdk, z } from './_helpers.mjs'
+import { setupEnv, createAssert, createChatSdk, z, defineTool } from './_helpers.mjs'
 import { stubModel } from './_stub-model.mjs'
 
 // planning 保留(write_todos/update_todo 需要);其余能力关闭隔离变量
@@ -143,6 +143,27 @@ export async function run() {
     assert(gateLogs.length === 1, `✓ zero-tool-gate → debugLogs 留痕恰 1 次(实际 ${gateLogs.length})`)
     assert(String(gateLogs[0]?.data?.factSheet).includes('write×0'), '✓ zero-tool-gate → 事实清单含 write×0 对账事实')
     assert(String(gateLogs[0]?.data?.factSheet).includes('成功写入路径:无'), '✓ zero-tool-gate → 事实清单含「成功写入路径:无」')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:instruction-adherence] zero-tool-gate 被拒委派 → 全拒不算等效写照常回灌 + 事实清单如实标注(4.9.1 ③)')
+  {
+    // 委派 use_worker 返回 ERROR: 回灌(组件锁 COMPONENT_BUSY 形态)→ 零等效写,「已完成」收口仍被拦;
+    // 事实清单如实呈现「被拒未生效」(不说「零工具」假话),回灌文案含组件锁出口
+    const busyWorker = defineTool({ name: 'use_worker', description: '委派 worker 子 agent(测试桩:恒被组件锁拒)', schema: z.object({ task: z.string().optional() }), handler: async () => 'ERROR: {"error":"COMPONENT_BUSY","message":"组件 hero 正被在途委派占用,等其结束后重试"}' })
+    const llm = stubModel(
+      { toolCalls: [{ name: 'use_worker', args: { task: '改 hero 组件' } }] },
+      { text: '已完成!' },   // 委派被拒后谎报 → 应被拦(修前 use_worker×1 计等效写直接放行)
+      { text: 'hero 组件改动在途委派占用中被拒,尚未完成,等在途结束后重试 components.0。' },
+    )
+    const sdk = createChatSdk({ ui: false, id: 'e2e-ztg-rej', storage: false, llm, capabilities: CAPS, tools: [busyWorker] })
+    await sdk.mount()
+    const reply = await sdk.send('修改 hero 组件的标题')
+    assert(llm.calls === 3, `✓ 被拒委派 → 谎报被回灌续跑(模型被调 3 次;实际 ${llm.calls})`)
+    const gateLogs = sdk.debugLogs.value.filter((l) => l.data?.stage === 'zero_tool_gate')
+    assert(gateLogs.length === 1, `✓ 被拒委派 → 门禁照常触发留痕 1 次(实际 ${gateLogs.length})`)
+    assert(String(gateLogs[0]?.data?.factSheet).includes('use_worker×1(其中 1 次被拒未生效'), '✓ 被拒委派 → 事实清单如实标注被拒(防「零工具」假话)')
+    assert(reply.includes('components.0'), '✓ 被拒委派 → 最终如实收口(含位置说明)')
     sdk.unmount()
   }
 

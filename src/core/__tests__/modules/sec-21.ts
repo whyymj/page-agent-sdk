@@ -43,10 +43,10 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(cmp.windowRatio === 0.6, 'preset complex: window=0.6(最大保留窗口)')
     assert(cmp.recallTopK === 5, 'preset complex: recallTopK=5(最多召回)')
     assert(cmp.enableLLMSummary === true, 'preset complex: enableLLMSummary=true')
-    // PRESET_PRESERVE:complex 扩 query/search(跨轮保留更多工具结果);其余预设保持少
-    assert(PRESET_PRESERVE.complex.length === 4 && PRESET_PRESERVE.complex.includes('query_data') && PRESET_PRESERVE.complex.includes('search_data'), 'PRESET_PRESERVE: complex 含 describe_data/read/query_data/search_data')
-    assert(PRESET_PRESERVE.auto.includes('read') && !PRESET_PRESERVE.auto.includes('query_data'), 'PRESET_PRESERVE: auto 仅 describe_data/read(不含 query/search)')
-    assert(PRESET_PRESERVE.conservative.length === 1, 'PRESET_PRESERVE: conservative 仅 describe_data(最省)')
+    // PRESET_PRESERVE:complex 扩 query/search(跨轮保留更多工具结果);其余预设保持少(4.9 起 describe_data → schema_data)
+    assert(PRESET_PRESERVE.complex.length === 4 && PRESET_PRESERVE.complex.includes('query_data') && PRESET_PRESERVE.complex.includes('search_data'), 'PRESET_PRESERVE: complex 含 schema_data/read/query_data/search_data')
+    assert(PRESET_PRESERVE.auto.includes('read') && !PRESET_PRESERVE.auto.includes('query_data'), 'PRESET_PRESERVE: auto 仅 schema_data/read(不含 query/search)')
+    assert(PRESET_PRESERVE.conservative.length === 1, 'PRESET_PRESERVE: conservative 仅 schema_data(最省)')
 
     // 细参覆盖 preset:aggressive 但单独把召回调到 8
     const override = resolveContextOptions({ contextPreset: 'aggressive', contextOptions: { recallTopK: 8 } }, 32768)
@@ -173,7 +173,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(parsed.matched === 1 && /北京/.test(parsed.results[0].value), 'search_data: 命中 owner.city')
 
     // 工具数量:10(describe/read/write/query/search/eval/restore/history/schema_data/diff_data;get/set/edit/delete 已移除——legacy-crud-dedup)
-    assert(tools.length === 10, 'createDataOps: 含 10 个工具(describe/read/write/query/search/eval/restore/history/schema_data/diff_data;legacy-crud-dedup 移除 get/set/edit/delete)')
+    assert(tools.length === 9, 'createDataOps: 含 9 个工具(read/write/query/search/eval/restore/history/schema_data/diff_data;legacy-crud-dedup 移除 get/set/edit/delete,4.9 移除 describe)')
 
     // eval_script 工具存在(装配检查;node 无 Worker,不实际跑)
     assert(!!t['eval_script'], 'eval_script 工具已装配')

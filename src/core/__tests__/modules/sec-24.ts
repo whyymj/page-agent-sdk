@@ -61,7 +61,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     // controller 挂在工具数组上(不可枚举)
     const controller = (tools as any).controller
     assert(!!controller, 'createDataOps 返回的工具数组上挂有 controller')
-    assert(Array.isArray(tools) && tools.length === 10, 'controller 不可枚举不影响数组长度/遍历(仍 10 工具;legacy-crud-dedup 移除 get/set/edit/delete)')
+    assert(Array.isArray(tools) && tools.length === 9, 'controller 不可枚举不影响数组长度/遍历(仍 9 工具;legacy-crud-dedup 移除 get/set/edit/delete,4.9 移除 describe)')
 
     // get() 返回当前 config
     const cfg = controller.get()

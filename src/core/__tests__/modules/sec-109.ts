@@ -153,4 +153,51 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(/已 write/.test(r1) && /已 draft_commit/.test(r2), '✓ 并行 write ∥ draft_commit 双双成功(段锁串行化 commit)')
     assert(bind.title === 'D' && bind.note === 'N', `✓ 两提交外科叠加互不覆盖(title=${bind.title}, note=${bind.note})`)
   }
+
+  console.log('\n[eval transform 乐观锁 · 三模式 commit 位补齐(4.9.1 ①)]')
+  {
+    // sandboxRunner 注入缝(node 无 Worker;sec-116 同款)
+    const runner = (data: unknown, script: string) =>
+      new Promise((resolve) => resolve({ ok: true, result: new Function('data', script)(data), elapsedMs: 1 }))
+    const mk = (bind: any, opts: any = {}) => byName(createDataOps({
+      schema: z.object({ title: z.string(), note: z.string() }), bind, description: 'd',
+    }, { sandboxRunner: runner, ...opts } as any))
+
+    // 整体替换模式:armed + 外部修改 → VERSION_CONFLICT(修前有 mutex+commit 但无 effHash 检查,静默覆盖)
+    const bind: any = { title: 'orig', note: 'n' }
+    const t = mk(bind, { conflictWatchFields: ['*'] })
+    await invoke(t.read, {}, CFG_MAIN)          // 基线
+    bind.title = 'ext'                           // 外部改(agent read 之后)
+    const r1 = await invoke(t.eval_script, { mode: 'transform', script: 'return ({ ...data, note: "N2" })' }, CFG_MAIN)
+    assert(/VERSION_CONFLICT/.test(r1) && bind.note === 'n' && bind.title === 'ext', '✓ eval transform 整体替换:armed 外部修改被拦不落盘(修前静默覆盖)')
+
+    // 无外部改 → 照常落地(零回归)
+    await invoke(t.read, {}, CFG_MAIN)
+    const r2 = await invoke(t.eval_script, { mode: 'transform', script: 'return ({ ...data, note: "N3" })' }, CFG_MAIN)
+    assert(/已通过脚本 transform/.test(r2) && bind.note === 'N3', '✓ eval transform:基线新鲜照常落地(零回归)')
+
+    // 子树模式 + patches 增量模式同款拦截
+    bind.title = 'ext2'
+    await invoke(t.read, {}, CFG_MAIN)
+    bind.title = 'ext3'
+    const r3 = await invoke(t.eval_script, { jsonPath: 'note', mode: 'transform', script: 'return "z"' }, CFG_MAIN)
+    assert(/VERSION_CONFLICT/.test(r3) && bind.note === 'N3', '✓ eval transform 子树:armed 拦截')
+    const r4 = await invoke(t.eval_script, { mode: 'transform', script: 'return { patches: [{ op: "set", jsonPath: "note", value: "z" }] }' }, CFG_MAIN)
+    assert(/VERSION_CONFLICT/.test(r4) && bind.note === 'N3', '✓ eval transform patches 增量:armed 拦截')
+
+    // 未武装(conflictWatchFields 未声明)→ 直通零变化(conflictWatchFields 是唯一旋钮)
+    const bind4: any = { title: 'o', note: 'n' }
+    const t4 = mk(bind4)
+    bind4.title = 'host-changed'
+    const r5 = await invoke(t4.eval_script, { mode: 'transform', script: 'return ({ ...data, note: "ok" })' }, CFG_MAIN)
+    assert(/已通过脚本 transform/.test(r5) && bind4.note === 'ok' && bind4.title === 'host-changed', '✓ 未武装 eval transform 直通零变化(既有明文语义不越权)')
+
+    // armed + onConflict keep_external:transform 撤回不写(与 write 路径同款裁决语义)
+    const bind6: any = { title: 'orig', note: 'n' }
+    const t6 = mk(bind6, { conflictWatchFields: ['*'], onConflict: async () => ({ action: 'keep_external' as const }) })
+    await invoke(t6.read, {}, CFG_MAIN)
+    bind6.title = 'ext'
+    const r6 = await invoke(t6.eval_script, { mode: 'transform', script: 'return ({ ...data, note: "K" })' }, CFG_MAIN)
+    assert(/已保留外部修改/.test(r6) && bind6.note === 'n' && bind6.title === 'ext', '✓ eval transform + keep_external 裁决:不写入保留外部值')
+  }
 }

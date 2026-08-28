@@ -24,9 +24,7 @@
 
 ## 进行中的 change
 
-- **2026-08-25 [`flow-robustness`](./changes/2026-08-25-flow-robustness/)**(SDK,**P0×2 + P1**):全流程阻塞/挂起/崩溃收口 —— 工具执行看门狗(stop 按钮唯一击穿缺口)+ headless send abort 联动 + P1×10;五路审计结论:无死循环、无 P0 崩溃、已知两雷已修。
-- **2026-08-25 [`config-surface-pruning-round2`](./changes/2026-08-25-config-surface-pruning-round2/)**(SDK,P2,目标 4.1.0):deprecation 满期移除轮(tracing/skillHostScript/preferences/bulkGuard 四能力 + warn 机制);editor_fangzhou bulkGuard 已摘除;移除面已实盘补全(P0:measureWriteScale 迁出)。
-- **2026-08-25 [`write-conflict-final-hash`](./changes/2026-08-25-write-conflict-final-hash/)**(SDK,P1):并发写互锁 TOCTOU 根因修复;**方案已评审改判 C 收窄形态**(mutex + ask 恢复点补校验,design.md 定稿);团队审查 P1 定级,deferred #1 已立项。
+_(当前 0 个;2026-08-25 三件套 `flow-robustness` / `config-surface-pruning-round2` / `write-conflict-final-hash` 已随 4.1.0 发布归档,`2026-08-27-html-design-skill` 已随 4.7.0 发布归档,见 [`changes/README.md`](./changes/README.md) 索引。2026-08-28 后的 describe_data 移除 + 同批 set+append 修复走 deferred 直接销账,未立独立 change。)_
 
 _(此前:`legacy-bundle-channel` 已实施完成随 3.26.0 发布归档,见「最近完成」段)_
 

@@ -169,7 +169,7 @@ It also performs **keyword recall**: from old rounds, retrieve the Top-K most re
    <prevSummaryBody>
    【Early conversation possibly relevant to the current question】  ← recall hits
    - Round m: ...
-   【Currently operable data (latest state after dynamic add/remove; refer to describe_data / read before operating)】  ← getRegisteredData injection
+   【Currently operable data (latest state after dynamic add/remove; refer to read before operating)】  ← getRegisteredData injection
    - main data object description
    ```
 8. Return `[summaryMsg, ...recentMessages]` as the compressed input; **`state.messages` raw unchanged**
@@ -188,7 +188,7 @@ It also performs **keyword recall**: from old rounds, retrieve the Top-K most re
 | `summaryTemperature` | 0.3 | Summary LLM temperature |
 | `summaryMaxTokens` | 1024 | Summary LLM max output |
 | `summaryTimeoutMs` | 15000 | Falls back to index summary on timeout (non-blocking) |
-| `preserveLastToolResults` | `['describe_data','read']` | Keep result summaries of these tools across-round (prevents field descriptions from being summarized away); `[]` disables |
+| `preserveLastToolResults` | `['schema_data','read']` | Keep result summaries of these tools across-round (prevents field descriptions from being summarized away); `[]` disables (since 4.9 describe_data → schema_data) |
 | `getRegisteredData` | auto-injected | Returns current main-data description, injected into summary (prevents LLM from operating on stale memory after `setData` swapped schema) |
 | `contextOptions` | — | Fine params override preset; `false` disables summarization middleware |
 

@@ -63,16 +63,17 @@ export async function run(ctx: TestCtx): Promise<void> {
     r = await invoke(t['write'], { patch: { jsonPath: 'nope' }, del: true })
     assert(/PATH_DENIED/.test(r), 'write(del) 删非 schema 声明字段 → PATH_DENIED')
 
-    // describe_data 返回说明
-    r = await invoke(t['describe_data'], {})
-    assert(/应用配置/.test(r), 'describe_data 返回主数据说明')
+    // describe_data 已移除(4.9,与 read 不传 jsonPath 等价;真 LLM 基线连续三版 0 调用)
+    assert(!t['describe_data'], 'describe_data 不在工具面(read 不传 jsonPath 返回整体说明+格式,等价承接)')
+    r = await invoke(t['read'], {})
+    assert(/应用配置/.test(r), 'read 不传 jsonPath 返回主数据说明(describe_data 等价承接)')
 
     // 工具描述总长回归(context-economy-phase2 二批瘦身 + tool-surface-economy W3 三批;防「反向锚定把新文案盖错对象」事故重演:
     // 每条描述须与其工具语义一致(抽查锚点词)+ 单条 ≤200(W3 后实测最大 write=192)
     const descAnchors: [string, RegExp][] = [
       ['eval_script', /沙箱/], ['draft_commit', /草稿/], ['draft_write', /drafts/],
       ['query_data', /JSONPath/], ['search_data', /搜索/], ['history_data', /快照/],
-      ['write', /四意图|写入主数据/], ['read', /hash/], ['describe_data', /read/],
+      ['write', /四意图|写入主数据/], ['read', /hash/], ['schema_data', /schema|约束|字段/],
     ]
     for (const [n, anchor] of descAnchors) {
       const d = t[n]?.description ?? ''
@@ -81,7 +82,7 @@ export async function run(ctx: TestCtx): Promise<void> {
       assert(d.length <= 200, `✓ 描述长度 → ${n} ≤200(实际 ${d.length},W3 三批瘦身回归线)`)
     }
     // 总长上限:advanced 可见数据工具描述合计 ≤1600(W3 后实测 1471;含 W1 queries 增量)
-    const ADV_VISIBLE = ['describe_data','restore_data','history_data','query_data','search_data','eval_script','read','write','schema_data','diff_data','draft_write','draft_commit']
+    const ADV_VISIBLE = ['restore_data','history_data','query_data','search_data','eval_script','read','write','schema_data','diff_data','draft_write','draft_commit']
     const total = ADV_VISIBLE.reduce((s2, n) => s2 + (t[n]?.description?.length ?? 0), 0)
     assert(total <= 1600, `✓ 描述总长 → advanced 数据工具描述合计 ≤1600(实际 ${total},W3 回归线)`)
     // 字段级 .describe() 总长上限(W3 新增锁;实测 1102):字段文本与工具级同源瘦身,防只盯 description 单点回弹

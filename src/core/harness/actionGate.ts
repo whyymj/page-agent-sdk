@@ -29,7 +29,7 @@ const READONLY_VERB_RE = /(看看|看一下|查|查一下|查询|了解|了解�
 const NO_ACTION_RE = /(不用改|不用动|只是问|只是想问|先别动|先不要|不用写入|不要保存|只是确认|告诉我即可|不用执行)/
 
 /** 委派工具名模式(use_html / use_worker 等预声明子 agent) */
-const DELEGATION_TOOL_RE = /^(use_|spawn_agent|spawn_agents)/
+export const DELEGATION_TOOL_RE = /^(use_|spawn_agent|spawn_agents)/
 
 /**
  * 判定用户消息是否为「操作祈使句」(纯函数,宁漏勿误):
@@ -62,14 +62,24 @@ export interface TurnToolUsage {
   writePaths: string[]
   /** 失败(含回灌 error)的工具调用次数 */
   failures: number
+  /** 被拒委派计数(4.9.1 ③:委派工具返回 ERROR: 回灌的次数 —— COMPONENT_BUSY/COMPONENT_LOCKED 等,
+   *  实际零写入不算等效写,但事实清单须如实呈现防「零工具」假话) */
+  rejectedDelegations?: Record<string, number>
 }
 
-/** 判定本轮是否零「等效写」(写工具 writeCapable 口径 + 委派工具计等效写) */
+/**
+ * 判定本轮是否零「等效写」(写工具 writeCapable 口径 + 委派工具计等效写)。
+ * 委派被拒(全量返回 ERROR: 回灌,如组件锁 COMPONENT_BUSY)不算等效写 —— 修前 use_html×1 被锁拒后
+ * 模型「已完成」收口溜过门禁;修后照常回灌对账。部分成功(批内至少一次非拒)仍算「做过」。
+ */
 export function isZeroEffectiveWrite(usage: TurnToolUsage, isWriteTool: (name: string) => boolean): boolean {
   for (const [name, n] of Object.entries(usage.counts)) {
     if (n <= 0) continue
     if (isWriteTool(name)) return false
-    if (DELEGATION_TOOL_RE.test(name)) return false  // 委派 = 子 agent 替主写,算「做过」
+    if (DELEGATION_TOOL_RE.test(name)) {
+      const rejected = usage.rejectedDelegations?.[name] ?? 0
+      if (n - rejected > 0) return false  // 委派 = 子 agent 替主写,算「做过」;全被拒不算
+    }
   }
   return true
 }
@@ -83,7 +93,11 @@ export function buildTurnFactSheet(usage: TurnToolUsage, todos: { status: string
   // counts 只记被调过的工具,零写轮无 write 键 → 对「是写工具却零调用」的名(主写 write)强制补 ×0
   const parts = Object.entries(usage.counts)
     .filter(([name, n]) => n > 0 || isWriteToolName(name))
-    .map(([name, n]) => `${name}×${n}`)
+    .map(([name, n]) => {
+      const rej = usage.rejectedDelegations?.[name] ?? 0
+      // 被拒委派如实标注(4.9.1 ③:门禁触发时清单不说「零工具」假话,给模型对账真事实)
+      return rej > 0 && DELEGATION_TOOL_RE.test(name) ? `${name}×${n}(其中 ${rej} 次被拒未生效,如组件锁 COMPONENT_BUSY)` : `${name}×${n}`
+    })
   if (usage.counts['write'] === undefined && isWriteToolName('write')) parts.push('write×0')
   const toolPart = parts.length ? parts.join(', ') : '无'
   const writePart = usage.writePaths.length ? usage.writePaths.slice(0, 5).join(', ') + (usage.writePaths.length > 5 ? ` 等 ${usage.writePaths.length} 处` : '') : '无'
@@ -106,6 +120,7 @@ export function buildZeroToolFeedback(factSheet: string): string {
     `${factSheet}`,
     '如果确实已完成:请在回复中逐项说明改动位置(jsonPath / 组件 id),与上述事实对账;',
     '如果尚未完成:请继续执行(用 write 增量改 / 委派对应子 agent);',
+    '如果委派被组件锁拒绝(COMPONENT_BUSY/COMPONENT_LOCKED):说明在途委派占用,等其结束后重试,勿谎称已完成;',
     '如果做不到或需要用户决定:请如实说明原因,不要回复「已完成」。',
   ].join('\n')
 }

@@ -247,8 +247,8 @@ createChatSdk({
 Declare `data`; the Agent reads/writes via tools, validated by schema (path-scoped: only the written subtree is validated — a single write is never blocked by legacy dirty data on sibling nodes; whole-object `set` only validates top-level keys present in `value` (merge semantics, absent keys preserved); cross-node refinements are not enforced at write time — use `capabilities.verify` for global checks):
 
 - **`read`** / **`write`** (2.2+, recommended): high-level entry points merging list/describe/get and set/edit/delete + auto optimistic lock + auto snapshot — lowest LLM cognitive load (low-level CRUD `get_data`/`set_data`/`edit_data`/`delete_data` was removed in 4.0 — `read`/`write` cover everything)
-- `describe_data` (main-data description + format hints)
-- `restore_data` / `history_data` (snapshot rollback / snapshot list & values)
+- `schema_data` (field constraints: type/min/max/enum/required); overall description via `read` without jsonPath (`describe_data` removed in 4.9 — fully equivalent)
+- `restore_data` / `history_data` (snapshot rollback / snapshot list & values; restore is selective since 4.9 — freeze/verbatim protected fields keep current host values instead of rolling back)
 - `query_data` (JSONPath; 4.6+ multi-filter batch via `queries` array of 2-10 expressions in one call, single failure does not fail the batch) / `search_data` (fuzzy) / `eval_script` (sandboxed)
 
 Key points:
@@ -256,7 +256,7 @@ Key points:
 - **Section orchestration & under-delegation nudge (4.0+, auto-assembled, zero config)**: ① **under-delegation nudge** — cumulative writes touching ≥12 components within one task with zero delegation → a one-time hint is appended to the next successful write result (teaches "multiple spawn_agent each with writablePaths in parallel" + the fallback clause "if the same delegation fails twice, do it yourself — solo is an equally first-class path"; advisory, non-blocking, LLM decides); ② **orchestration-segment dynamic injection** — when the total element count of top-level object arrays ≥12, a three-step responsibility (plan → delegate in sections → verify & wrap up) plus the four-element section spec (jsonPath range / change goal / shared tokens / acceptance criteria) is injected into the system prompt each round; small data gets zero injection (zero tax), and it follows `setData` automatically; ③ the 70% round-budget reminder teaches the "parallel sectioned delegation" pattern when delegation tools exist. **Declared weakness (pure-JSON delegation)**: `spawn_*` does not go through the component lock (the lock only covers the codeAsset use_<id> path); disjoint sections are guaranteed by your orchestration plan, and cross-section write conflicts are backstopped by the optimistic lock (per-scope baselines); `spawn_agents` tasks carry no write authorization — parallel **write** delegation must go through individual spawn_agent calls each with writablePaths.
 - `write` (all four intents: value/patch/patches/del) is restricted to schema-declared fields (whitelist for ZodObject); every write validates against schema — invalid → structured error (no write)
 - `write({patch})` patches by `jsonPath` (set/remove/merge/append/move (move: value = target path string; same array = reorder, cross-array = relocate)) — avoids re-sending the whole large JSON; writes in-place without replacing the root ref → Vue-reactive compatible
-- Snapshots auto-stored before every `write`; `restore_data` rolls back
+- Snapshots auto-stored before every `write`; `restore_data` rolls back (selectively since 4.9: freeze/verbatim protected fields keep current host values, snapshot-stale values do not overwrite)
 - **No `window` dependency**: `data.bind` is any reactive/plain object tools read/write directly; only `eval_script` needs Web Worker (browser)
 
 #### High-level `read`/`write` (2.2+, recommended)
@@ -278,9 +278,9 @@ write({ path: 'page.oldField', del: true })
 
 `write` auto: ① schema validation (no write on failure) ② snapshot (rollback via `restore_data`) ③ optimistic lock (opt-in since 3.32: `conflictWatchFields` whitelist or `['*']` whole-field; conflict → `VERSION_CONFLICT` or human escalation).
 
-#### Tool surface: always fully exposed (14 tools; `toolMode` removed in 3.31)
+#### Tool surface: always fully exposed (`toolMode` removed in 3.31)
 
-Data tools are always fully exposed: high-level `read`/`write` (recommended entry, auto optimistic lock + auto snapshot), query/search/sandbox (`query_data`/`search_data`/`eval_script`), snapshot rollback (`restore_data`/`history_data`), low-level CRUD (`get/set/edit/delete/describe_data`, manual hash lock), `schema_data`/`diff_data`, focus tools (`set/add/remove/clear_focus`), plus `draft_*`/`resource_*` when their opt-in capabilities are on. usageHints runtime prompts adapt by **capability flags** (no tier concept).
+Data tools are always fully exposed: high-level `read`/`write` (recommended entry, auto optimistic lock + auto snapshot; `read` without jsonPath returns overall description + format), query/search/sandbox (`query_data`/`search_data`/`eval_script`), snapshot rollback (`restore_data`/`history_data`), `schema_data`/`diff_data`, focus tools (`set/add/remove/clear_focus`), plus `draft_*`/`resource_*` when their opt-in capabilities are on. (Low-level CRUD `get_data`/`set_data`/`edit_data`/`delete_data` removed in 4.0; `describe_data` removed in 4.9 — fully equivalent to `read` without jsonPath, 0 calls across three consecutive real-LLM baselines) usageHints runtime prompts adapt by **capability flags** (no tier concept).
 
 To constrain LLM behavior, steer via `systemPrompt` (e.g. "prefer read/write"), or use `capabilities` toggles to control what loads at all.
 
@@ -819,7 +819,7 @@ For **multi-step complex tasks / large JSON edits / long-running workflows**, 2.
 | `summaryThresholdRatio` | 0.7 | 0.5 | Compress only at 70% usage (compress later, lose less detail) |
 | `recallTopK` | 5 | 3 | Recall more old rounds (complex tasks have strong cross-round context linkage) |
 | `enableLLMSummary` | true | true | Use LLM summary (quality) |
-| `preserveLastToolResults` | `['describe_data','read','query_data','search_data']` | `['describe_data','read']` | Also preserve query/search result snippets (large-JSON query scenarios) |
+| `preserveLastToolResults` | `['schema_data','read','query_data','search_data']` | `['schema_data','read']` | Also preserve query/search result snippets (large-JSON query scenarios; since 4.9 describe_data → schema_data) |
 
 ```ts
 createChatSdk({

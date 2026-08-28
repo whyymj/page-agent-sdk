@@ -582,7 +582,7 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 | 项 | 说明 | 触发条件 |
 |---|---|---|
 | 零工具门禁无「用户已拒绝/诚实做不到」出口 | gateChain.ts:182-213;用户拒绝后模型陈述句收口「已停止,未做任何修改」→ lastHumanContent 仍原祈使句 → 回灌×2 烧满 + 误报 ZERO_TOOL_GATE_EXHAUSTED;出口③诚实回答零机械化识别。修:否定完成态词豁免或 turnUsage 含 RHC 且收口无位置说明时降级 | RHC 拒绝场景实测误报 |
-| COMPONENT_BUSY 计入等效写 | actionGate.ts:67-74 只看工具名不看结果;撞锁零执行的委派被计等效写 → 零工具门禁被抑制谎报放行。修:委派结果 content 命中 COMPONENT_BUSY/PATH_OUT_OF_SCOPE 前缀不计 | 同组件撞锁后谎报实测 |
+| ✅ COMPONENT_BUSY 计入等效写 | **已修销账 2026-08-28(4.9.1)**:TurnToolUsage 增 rejectedDelegations 计数(createAgent 捕获循环按「委派名 × content ERROR: 前缀」),全被拒不算等效写 + 事实清单如实标注「其中 N 次被拒未生效」+ 回灌文案补组件锁出口;e2e runtime 全链覆盖 | — |
 | caps.vfs:false + codeAsset 并存无守卫 | createChatSdk.ts:1019-1024 自动装配不查 caps.vfs → 子 agent 引导走 vfs_edit「工具不存在」白烧轮次,修改路径静默失效。修:装配期 warn 或强制开 | 集成方显式关 vfs + schema 含 code 数组 |
 | ✅ detectActionImperative 缺全角标点 | **已修销账 2026-08-28(4.8.1)**:切分字符类补 `！？；，`,首子句不再被全角逗号退化为整句(sec-95 断言:真写指令不再被后置只读动词漏拦) | — |
 | ✅ QUESTION_TAIL_RE 缺全角问号 | **已修销账 2026-08-28(4.8.1)**:补全角 `？`,「…吗？」形态不再漏判(sec-89 断言锁定) | — |
@@ -593,10 +593,10 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 
 | 项 | 说明 | 触发条件 |
 |---|---|---|
-| eval transform 三模式无乐观锁检查 | dataOps.ts:1309-1377 有 mutex+commit+setBaseline 但无 effHash/handleConflict(CLAUDE.md 把三模式列进互锁七 commit 位,文档-实现分叉);armed 场景外部修改被静默覆盖。修:三处 commit 段补 handleConflict(锁内取 hash) | conflictWatchFields + eval transform 实测静默覆盖 |
+| ✅ eval transform 三模式无乐观锁检查 | **已修销账 2026-08-28(4.9.1)**:三处 commit 段照 write 路径补 handleConflict(acquire 后取 armed effHash + ask 拆段/恢复点校验复用);文档-实现分叉收敛,selftest 六断言(整体/子树/patches/零回归/未武装直通/keep_external) | — |
 | restore_last_checkpoint 不发 data_change | checkpoint.ts:197 经 writeData 整体还原 bind,matchDataOp/isDelegationTool 均不覆盖;非 reactive 宿主(page-demo :key=tick)回退不重渲染「回退没生效」。修:matchDataOp 补 'restore' + sdk.restoreLastCheckpoint() 手动 emit | checkpoint 开 + 非 reactive bind 宿主实测 |
-| 同批 set+append 同字符串路径误拒 | dataOps.ts:358 append 校验取写前 live 值而非批内中间值 → 合法终值整批 SCHEMA_INVALID,错误信息指向不存在的状态。修:liveCur 改取 clone(getByPath(clone, jp) 在 append apply 后已含此前 set) | chunked-code-write 模型把首块+次块并进一个 patches 批实测 |
-| restore_data 绕受保护资源强制层 | dataOps.ts:1169-1188 无 protectedCtx/enforce;多轮快照回放可把 freeze 字段回写旧值(借 restore 绕 freeze 只读)。修:restore 前对受保护路径差异比对拒或 warn | freeze 字段 + 历史快照 restore 实测 |
+| ✅ 同批 set+append 同字符串路径误拒 | **已修销账 2026-08-28**:校验改取 clone 批内累积终值;实测挖出比登记更深 —— 另有两形态(live 非字符串时次块**静默丢失** / set 写回带全批终值 + append 重放**双写** `AAABBBBBB`、`[a,b,c,c]`)一并修(被 set 覆盖的同路径 append 写回跳过,顺序无关);selftest +5 | — |
+| ✅ restore_data 绕受保护资源强制层 | **已修销账 2026-08-28(4.9.1,选择性回退形态而非拒)**:回退前保护路径差异比对 —— 有差异回填宿主现值(元素对应 __pgId 优先跨调序锚定),元素已删/无值保留快照值 + 警示宁旧勿错;消息明示保留字段 + read 复核引导 | — |
 | commitSetToBind codeAsset 模式双深拷贝 | dataOps.ts:508/:532 两次全量 deepClone(applyPatchesToBind:640 已做单拷贝复用);1MB bind ≈ +10ms/写。修:同款 beforeBind 复用 | 下次动写路径成本面顺手 |
 | write(del) 目标不存在仍 pushSnapshot+audit+data_change | dataOps.ts:1548-1554「无需删除」文案但快照栈位/审计条目已产生。修:dryRun 同款 clone 预检存在性 | 下次动 del 路径顺手 |
 | ✅ setData 不发 data_change 而 importData 发 | **已修销账 2026-08-28(4.8.1)**:setData 替换后发 data_change(operation:'set')与 importData 对齐(e2e events 断言) | — |
@@ -616,9 +616,9 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 
 **来源**:tool-surface-economy 立项评估(2026-08-27 用户拍板「先规划无风险的」)。与 3.31「工具面恒全暴露」契约(移除 toolMode 的刻意反转)冲突 —— 该契约的价值是工具面稳定可预期(集成方文档/调试/教学不随上下文变化),按需注入会让「什么工具存在」变成运行时动态面,属产品决策非无风险项。**收益侧**(若做):每轮 schema 固定成本再降(低频五工具工具级+字段级合计 ~700 字符);**代价侧**:低频工具的「可发现性」依赖 skill/提示引导,弱模型可能不知道能 restore 而直接重写。**重启触发**:出现明确的小上下文模型(<32K 窗口)集成诉求,或恒全暴露契约被产品层重新裁决。
 
-### [2026-08-27] describe_data 删除(与 read 冗余)— ⏸ 暂缓(W2 引导归一后看数据)
+### [2026-08-27] describe_data 删除(与 read 冗余)— ✅ 已实施(2026-08-28,随 4.9)
 
-**来源**:tool-surface-economy W2 评估。describe_data 与 read 不传 jsonPath 功能完全重复(read description 已自称合并 describe 语义);删工具改变工具面属有风险项,故 W2 先做等价标注引导归一(description 补「等价于 read 不传 jsonPath;优先用 read 单一入口」)。**重启触发**:真 LLM 基线中 describe_data 调用量连续两版 ≈0(8-16 基线实测 13 次/报告;W2 落地后观察 4.6 基线,连续两版归零即删)。
+**来源**:tool-surface-economy W2 评估。describe_data 与 read 不传 jsonPath 功能完全重复(read description 已自称合并 describe 语义);删工具改变工具面属有风险项,故 W2 先做等价标注引导归一(description 补「等价于 read 不传 jsonPath;优先用 read 单一入口」)。**重启触发**:真 LLM 基线中 describe_data 调用量连续两版 ≈0(8-16 基线实测 13 次/报告;W2 落地后观察 4.6 基线,连续两版归零即删)。**已销账**:触发条件达成(4.8 基线 / S3-S6 修复跑 / 4.8.2 全绿跑连续三版 0 调用)→ 工具移除 + usageHints W2 标注撤除 + PRESET_PRESERVE 承接改 schema_data;数据工具面 10→9。
 | switchSession 中止在途流后 UI 留空 content 的 partial assistant 占位 | team-audit P2#9 实施发现:streaming:false 改走 core.stream 后,switchSession 的 abort 正确掐断旧流(内容/写入零孤儿,已修),但 useChat 的 abort-保留-partial 语义会把空串 assistant push 进新会话消息列表(空气泡;streaming:true 同款既有形态,非本项引入)。修:useChat 非流式分支 abort 收口不 addMessage 空串(流式分支已有空 splice 守卫) | 用户反馈空气泡困扰,或下次动 useChat 收口路径时顺手 |
 
 ### [2026-08-28] craftNotes [note] 漏写机制化(note-gate)— ✅ 已实施(4.8.1)

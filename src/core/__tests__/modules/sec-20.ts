@@ -114,9 +114,9 @@ export async function run(ctx: TestCtx): Promise<void> {
       const out: any[] = []
       for (let i = 0; i < n; i++) {
         out.push({ role: 'user', content: 'q' + i, timestamp: i * 2 })
-        // 前 4 轮(将进 older)带 describe_data 步骤;后 2 轮(将进 recent)无步骤
+        // 前 4 轮(将进 older)带 schema_data 步骤;后 2 轮(将进 recent)无步骤
         const steps = i < 4
-          ? [{ name: 'describe_data', args: { path: 'app.x' }, result: '路径: app.x 说明: X属性 {a,b}', status: 'done' }]
+          ? [{ name: 'schema_data', args: { path: 'app.x' }, result: '路径: app.x 说明: X属性 {a,b}', status: 'done' }]
           : []
         out.push({ role: 'assistant', content: 'a' + i + 'y'.repeat(300), steps, timestamp: i * 2 + 1 })
       }
@@ -126,7 +126,7 @@ export async function run(ctx: TestCtx): Promise<void> {
       summaryThresholdRounds: 4,
       windowRounds: 2,
       getRegisteredSlots: () => [{ path: 'app.x', description: 'X属性' }],
-      preserveLastToolResults: ['describe_data'],
+      preserveLastToolResults: ['schema_data'],
     })
     const rAC = await cmAC.compress(mkMsgsWithSteps(6))
     assert(rAC.stats.triggered, 'A/C:6 轮触发压缩')
@@ -134,7 +134,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(sumAC.includes('当前可操作数据'), 'A:摘要含注册表快照段')
     assert(sumAC.includes('app.x') && sumAC.includes('X属性'), 'A:摘要含注册 path 与 description')
     assert(sumAC.includes('字段提示'), 'C:摘要含 preserve 工具结果片段')
-    assert(sumAC.includes('describe_data'), 'C:摘要含 preserve 工具名')
+    assert(sumAC.includes('schema_data'), 'C:摘要含 preserve 工具名')
     // 未提供 getRegisteredSlots 时不注入该段(不污染摘要)
     const cmNoProps = useContextManager({ summaryThresholdRounds: 4, windowRounds: 2 })
     const rNoProps = await cmNoProps.compress(mkMsgsWithSteps(6))

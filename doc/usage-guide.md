@@ -272,9 +272,9 @@ Agent 自主调用这些内置工具(无需你写):
 | 工具 | 作用 |
 |---|---|
 | **`read`** / **`write`**(推荐) | 高层读写入口,合并 describe/get 与 set/edit/delete + 自动乐观锁 + 自动快照,LLM 认知负担最低 |
-| `describe_data` | 查看主数据说明 + schema 字段描述(底层,推荐 `read`) |
+| `schema_data` | 查看字段约束(类型/min/max/enum/必填);整体说明用 `read` 不传 jsonPath(`describe_data` 已于 4.9 移除,与其完全等价) |
 | `query_data` / `search_data` / `eval_script` | 大 JSON 查询(JSONPath;4.6+ 多条件筛选传 `queries` 数组 2-10 条一次取回,单条失败不整批)/ 模糊搜索 / 沙箱脚本 |
-| `restore_data` / `history_data` | 快照回退 / 查历史快照列表与值 |
+| `restore_data` / `history_data` | 快照回退 / 查历史快照列表与值(restore 为选择性回退:受保护字段 freeze/verbatim 与快照不同时保留宿主现值,4.9+) |
 
 **要点**:
 - **大子树摘要与击穿通道(4.0+)**:主 agent 侧 read/query 对「有效序列化体积 ≥ ~3KB」的子树自动降为 `<subtree NKB keys:[k1,…] #指纹>` 占位(数组记 `children:N`;标记字段形态 `<code Nkb>` 兼容)—— 键名/体积可见,**内容未见**。三条击穿通道(全部不依赖子 agent):①**窄读** `read({jsonPath:"该子树路径"})`(结果根豁免返回全文);②**聚焦全文** `set_focus` 后焦点子树内(含嵌套大子树)读全文;③**子 agent scope**(委派场景子 agent 读全文)。query 命中大值返回占位+path(钉路径窄读);search 不摘要。**read-before-write 守卫(自动装配)**:写路径落入占位子树且本轮未窄读 → 回灌 `NEED_NARROW_READ` 窄读指令(ask-first,一轮后可写;dryRun/已读/已写过/未落入摘要面恒放行;同子树只拦一次防死循环;整体 set 不拦)。**占位符夹带值防线**:write 写入值含占位字符串(`<subtree …>` 子串 / `<字段名 Nkb>` 整串)→ `PLACEHOLDER_LEAK` 拒收并引导窄读(防凭占位印象拼 value 把脏文本写进 bind;dryRun 预检同样暴露;verbatim 句柄 `⟦res:…⟧` 前缀不同不受影响;检查只针对 LLM 提交的原始值 —— enforceSet 回填的受保护字段既有值不检,集成方 bind 里合法存的占位样文本不会阻塞 whole-set 写;确需把占位样文本写进数据走集成侧 `importData`(agent 写通道无 override,防 LLM 把占位当真值的收益大于极端误伤);注意整串规则的字段名是任意 `[A-Za-z_]` 开头词(如 `<div 3KB>` 整串也会拦,HTML 混合内容子串不拦)。另注意 read 的占位/守卫面不覆盖 query/search/eval —— 这三个通道对受 freeze/verbatim 保护的字段返回真实值(写侧强制兜底,精确值不入 LLM 消息流的承诺在这三个通道上是弱化的,设计内边界)。轻量数据(处处低于阈值)零变化;**声明行为**:主 scope 数据 ≥ 阈值的存量集成 read/query 输出变占位(阈值常量 `SUBTREE_SUMMARY_THRESHOLD`,随版本按真 LLM 数据校准,只升不降)。
@@ -283,7 +283,7 @@ Agent 自主调用这些内置工具(无需你写):
 - **快照回退**:每次 `write` 前自动存快照,`restore_data` 一键回退。
   - 自动快照:写操作前自动入栈(默认 20,FIFO 丢最旧)
   - 查看时间线:`history_data({list:true})` —— 序号 / op / 标签;`history_data({id,jsonPath?})` 读指定快照值
-  - 回退:`restore_data(id?)` —— 不传 id 回退最近一次,传 id 回退指定;就地还原保留响应式、不入栈
+  - 回退:`restore_data(id?)` —— 不传 id 回退最近一次,传 id 回退指定;就地还原保留响应式、不入栈;受保护字段(freeze/verbatim)与快照值不同时保留宿主现值不回退(快照存 bind 真值,整体回退会洗回旧值;4.9+),结果消息明示保留字段
   - 例:Agent 误改 `theme`,对话「回退最近一次修改」→ Agent 调 `restore_data()`
 - **Vue 响应式友好**:`write` 增量就地改子属性、不替换根引用 → 你的 `reactive()` 页面能正常响应更新。
 - **解耦 window**:`bind` 直连对象,工具直接读写 bind,SDK 不再自动挂 window(集成方按需自己挂 `window.app = app` 供页面读取)。
@@ -310,9 +310,9 @@ write({ patch: { jsonPath: 'oldField' }, del: true })
 
 `write` 自动:① schema 校验(失败不写)② 存快照(可 `restore_data` 回退)③ 乐观锁(3.32 起 opt-in:`conflictWatchFields` 白名单或 `['*']` 全字段;冲突触发 `VERSION_CONFLICT` 或人工介入)。
 
-### 工具面恒全暴露（14 工具，3.31 起移除 `toolMode`）
+### 工具面恒全暴露（3.31 起移除 `toolMode`）
 
-数据工具恒全暴露：高层 `read`/`write`（推荐入口，自动乐观锁 + 自动快照）、查询/搜索/沙箱（`query_data`/`search_data`/`eval_script`）、快照回退（`restore_data`/`history_data`）、底层 CRUD（`get/set/edit/delete/describe_data`，手动传 hash）、`schema_data`/`diff_data`、聚焦工具族（`set/add/remove/clear_focus`），以及 opt-in 能力开启时的 `draft_*`/`resource_*`。usageHints 运行时提示词按**能力开关**自适应（无档位概念）。
+数据工具恒全暴露：高层 `read`/`write`（推荐入口，自动乐观锁 + 自动快照；`read` 不传 jsonPath 返回整体说明+格式）、查询/搜索/沙箱（`query_data`/`search_data`/`eval_script`）、快照回退（`restore_data`/`history_data`）、`schema_data`/`diff_data`、聚焦工具族（`set/add/remove/clear_focus`），以及 opt-in 能力开启时的 `draft_*`/`resource_*`。（底层 CRUD `get/set/edit/delete_data` 已于 4.0 移除;`describe_data` 已于 4.9 移除,与 read 不传 jsonPath 完全等价、真 LLM 基线连续三版 0 调用）usageHints 运行时提示词按**能力开关**自适应（无档位概念）。
 
 想约束 LLM 行为时用 `systemPrompt` 引导（如「优先用 read/write」），或用 `capabilities` 开关控制能力装载。
 
@@ -970,7 +970,7 @@ createChatSdk({ maxRetries: 0 })   // 关闭自动重试
   - `auto`:自适应,LLM 摘要 + 召回 Top-3,触发阈值 0.5、窗口 0.4
   - `conservative`:大模型/省成本,阈值 0.7、窗口 0.5,召回 Top-2,关 LLM 摘要用索引摘要
   - `aggressive`:小模型/省上下文,阈值 0.3、窗口 0.3,召回 Top-5
-  - `complex`(2.16.0+):多步复杂任务/大 JSON/长流程,比例制:窗口 0.6、触发阈值 0.7、召回 Top-5、开 LLM 摘要;`preserveLastToolResults` 默认含 `describe_data`/`read`/`query_data`/`search_data`(大 JSON 场景防字段描述被摘要丢)。详见下文「complex 预设 + vfs JSON 感知工具」
+  - `complex`(2.16.0+):多步复杂任务/大 JSON/长流程,比例制:窗口 0.6、触发阈值 0.7、召回 Top-5、开 LLM 摘要;`preserveLastToolResults` 默认含 `schema_data`/`read`/`query_data`/`search_data`(大 JSON 场景防字段描述被摘要丢)。详见下文「complex 预设 + vfs JSON 感知工具」
 - **摘要专用模型**:`summaryLlm` 可指定更便宜的小模型做摘要(不配用主 `llm`);`summaryTemperature`/`summaryMaxTokens`/`summaryTimeoutMs` 微调摘要 LLM。
 - **压缩触发成本上限**(`contextOptions.promptSoftCapTokens`,3.11+):token 触发阈值取 `min(窗口 × ratio, softCap)`。大窗口模型(如 flash 类 1M 窗口)按 ratio 要烧到几十万 token 才压缩,成本不可接受;softCap 把「何时压缩」改成成本维度 —— **未传且窗口 ≥320K 时默认 160K**,显式传值用该值,显式 `0` 关闭(小窗口模型不受影响,只会更早触发不会更晚)。生效值经 `inspect().compression.promptSoftCap` 反射核对。详见 `doc/context-management.md` §五。
 - **对话历史上限**:`maxMemoryRounds`(默认 30)超限把最旧轮次压缩为一条摘要 system 消息。
@@ -1031,7 +1031,7 @@ createChatSdk({ roundTokenBudget: 50000 })  // 单次对话任务最多约 5 万
 | `summaryThresholdRatio` | 0.7 | 0.5 | 上下文用量达 70% 才触发压缩(晚压缩,减少丢细节) |
 | `recallTopK` | 5 | 3 | 召回更多旧轮次(复杂任务上下文关联性强) |
 | `enableLLMSummary` | true | true | 用 LLM 摘要(保证摘要质量) |
-| `preserveLastToolResults` | `['describe_data','read','query_data','search_data']` | `['describe_data','read']` | 额外保留 query/search 结果摘要(大 JSON 查询场景防丢) |
+| `preserveLastToolResults` | `['schema_data','read','query_data','search_data']` | `['schema_data','read']` | 额外保留 query/search 结果摘要(大 JSON 查询场景防丢;4.9 起 describe_data → schema_data) |
 
 ```ts
 createChatSdk({

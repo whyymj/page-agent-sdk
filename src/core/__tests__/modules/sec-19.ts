@@ -36,7 +36,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     // defineDataToolset 工厂(依赖 data 单主对象,故为工厂)
     const config = { schema: z.enum(['light', 'dark']), bind: { $dummy: true } as any, description: '主题' }
     const wt = defineDataToolset(config)
-    assert(wt.length === 10 && wt[0].name === 'describe_data', 'defineDataToolset 工厂产出 10 个数据工具(legacy-crud-dedup 移除 get/set/edit/delete_data 四件;read/write/schema_data/history_data/diff_data 等恒全暴露)')
+    assert(wt.length === 9 && wt[0].name === 'restore_data', 'defineDataToolset 工厂产出 9 个数据工具(legacy-crud-dedup 移除 get/set/edit/delete_data 四件 + 4.9 移除 describe_data;read/write/schema_data/history_data/diff_data 等恒全暴露)')
 
     // selectBuiltinTools:默认全装(dataOps + fetch)
     const dataOps = createDataOps(config)
@@ -78,7 +78,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(/\bread\b/.test(segFull) && /\bwrite\b/.test(segFull), 'dataOps 开 → 注入 read/write 高层用法')
     assert(/offset|分页/.test(segFull), 'dataOps 开 → 注入分页(offset)用法(refine-dataops 可达性)')
     assert(/history_data/.test(segFull), 'dataOps 开 → 注入 history_data 提示(followup 可达性)')
-    assert(/describe_data/.test(segFull), 'dataOps 开 → 注入 describe 用法')
+    assert(!/describe_data/.test(segFull), 'dataOps 开 → 提示词零 describe_data 残留(4.9 工具已删,防幽灵引导)')
     assert(/先 read\(\{jsonPath\}\)/.test(segFull), 'dataOps 开 → 注入 read 读真实值再改用法(legacy-crud-dedup 后唯一读入口)')
     assert(/diff_data/.test(segFull), 'dataOps 开 → 注入 diff_data 提示(followup 可达性)')
 
@@ -109,7 +109,7 @@ export async function run(ctx: TestCtx): Promise<void> {
   {
     const config = { schema: z.any(), bind: { x: 1 } as any, description: 'd' }
     const all = createDataOps(config)
-    assert(all.length === 10, 'createDataOps → 直出 10 工具(恒全暴露,无呈现模式筛选;legacy-crud-dedup 移除旧 CRUD 四件)')
+    assert(all.length === 9, 'createDataOps → 直出 9 工具(恒全暴露,无呈现模式筛选;legacy-crud-dedup 移除旧 CRUD 四件,4.9 移除 describe_data)')
   }
 
   // ============ history_data(只读查看快照,evolve-default-toolset 期一)============

@@ -442,7 +442,7 @@ flowchart LR
   OR -. "分块消费指引" .-> JTOOLS
 ```
 
-**① `complex` 上下文预设**(与 `auto`/`conservative`/`aggressive` 并列):比例制 `windowRatio=0.6` / `summaryThresholdRatio=0.7` / `recallTopK=5` / `enableLLMSummary=true`,`preserveLastToolResults` 默认含 `describe_data`/`read`/`query_data`/`search_data`。动机:复杂任务工具结果体积大、跨轮关联强、字段描述需保留,`auto` 的窗口比偏小易把关键字段摘要掉。`inspect().contextPreset`(新增字段)反映生效档;`contextOptions` 仍可逐字段覆盖。
+**① `complex` 上下文预设**(与 `auto`/`conservative`/`aggressive` 并列):比例制 `windowRatio=0.6` / `summaryThresholdRatio=0.7` / `recallTopK=5` / `enableLLMSummary=true`,`preserveLastToolResults` 默认含 `schema_data`/`read`/`query_data`/`search_data`(4.9 起 describe_data → schema_data)。动机:复杂任务工具结果体积大、跨轮关联强、字段描述需保留,`auto` 的窗口比偏小易把关键字段摘要掉。`inspect().contextPreset`(新增字段)反映生效档;`contextOptions` 仍可逐字段覆盖。
 
 **② vfs JSON 感知工具**:`vfs_json_read({path, jsonPath?})` 按 jsonPath 读 vfs 文件内 JSON 子树(省略读整体);`vfs_json_patch({path, patches})` 在 clone 上原子应用多 patch(`op:set/remove/merge/append`),任一失败整体不写回(`PATCH_FAILED`,原文件不变);`vfs_write({path, content, jsonString?})` 的 `jsonString:true` 写前校验合法 JSON(`VFS_JSON_INVALID` 不写入)。动机:大 JSON 整体 `vfs_read` + `vfs_write` 重写易被 `max_tokens` 截断致文件不完整;局部 jsonPath patch 与主数据侧 `write({patch})` 同构,只发改动规避截断。
 
@@ -493,7 +493,7 @@ flowchart LR
 ### 记忆与上下文管理
 - **上下文压缩**(纯内存、会话级):`summarization` 中间件复用 `useContextManager`(滑动窗口 + 摘要 + 关键词召回);`contextPreset`:`auto`/`conservative`/`aggressive`/`complex`(比例制,映射在 `sdk/contextPreset.ts`);详见 [`context-management.md`](./context-management.md)
 - **压缩 LLM 摘要异步化**:模板先行 + 后台前缀缓存 —— 触发时立即用索引摘要返回(零阻塞),fire-and-forget 后台 LLM 入前缀缓存(`{coveredCount, text}`);后续命中:全覆盖直接用 / 部分覆盖 = LLM 前缀 + 尾部索引增量;失败不污染缓存。agentCompression 的 decide(≤6s)维持同步(opt-in 默认关)
-- **压缩不丢关键信息**:① 压缩时注入当前主数据 description 快照;② `preserveLastToolResults`(默认 `['describe_data','read']`)跨轮保留工具 result 摘要;③ 写成功返回附可操作 path 列表;④ `systemPromptHelpers.reliableWriteRules` 建议拼进 systemPrompt
+- **压缩不丢关键信息**:① 压缩时注入当前主数据 description 快照;② `preserveLastToolResults`(默认 `['schema_data','read']`)跨轮保留工具 result 摘要;③ 写成功返回附可操作 path 列表;④ `systemPromptHelpers.reliableWriteRules` 建议拼进 systemPrompt
 - **双摘要协同**:`summarization`(compressInput,不改 messages 原数组)与 `trimMemoryMessages`(afterRound,内存 OOM 裁剪)独立。配置建议:`maxMemoryRounds >= summaryThresholdRounds`
 - **跨轮召回 + trim 异步增强**:关键词召回纳入 `steps.result`;trim 触发后同步模板占位 + 异步 LLM 增强(fire-and-forget,竞态守卫,失败保留模板)
 - **持久化韧性**:mission/workingMemory/focus 跨刷新持久化(switchSession 切走前补 persist);trim 删前 emit `context_trimmed`(dropped 原文 + 引用的 vfs 大结果)+ 可达性 GC;vfs 在 storage 开时随 persist 持久化

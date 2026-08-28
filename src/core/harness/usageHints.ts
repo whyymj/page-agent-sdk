@@ -61,7 +61,7 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
       }
       if (hasDataOps) {
         hints.push('改主数据前先 read({jsonPath}) 读其当前真实值(返回末尾 hash=xxx 为乐观锁标识),基于真实值改,不要凭记忆。写入是否被自动校验由集成方 conflictWatchFields 声明决定:若已声明且主数据在你 read 之后被外部改过,会触发冲突——集成方若开启人工介入,工具会挂起等用户决定(保留外部/强制覆盖/回退),你应等待工具返回后按结果继续(保留外部→重新 read 再改;强制覆盖→已写入,继续;回退→已回退到历史快照,基于回退值重写);未开启人工介入时返回 VERSION_CONFLICT 不写入,重新 read 拿最新值再改。')
-        hints.push('读类分流:取值/结构 → read(多路径用 jsonPaths);字段约束 → schema_data;条件筛选定位 → query_data(多条一次用 queries);名字模糊找 → search_data;整体说明 → read 不传路径(= describe_data)。')
+        hints.push('读类分流:取值/结构 → read(多路径用 jsonPaths);字段约束 → schema_data;条件筛选定位 → query_data(多条一次用 queries);名字模糊找 → search_data;整体说明 → read 不传路径。')
         hints.push('修改大对象/数组优先用 write 增量改({patch:{op,jsonPath,value}} 只发改动部分),避免 write({value}) 整体重传被 max_tokens 截断导致 JSON 不完整、校验失败。')
         hints.push('修改主数据出错时可用 restore_data 回退最近一次。')
         hints.push('在大数组里按条件筛选元素用 query_data(JSONPath,如 $.components[?(@.type=="card" && @.price<100)]),返回匹配元素的 path/index;定位后再 write({patch}) 改。')
@@ -86,7 +86,7 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
         hints.push('  · 多个相关组件(如「同时改导航栏和页脚」)→ set_focus 聚焦首个后用 add_focus({path}) 追加其余;聚焦后可写任一焦点子树,越界仍被拒;移除单个用 remove_focus({path})。')
         hints.push('  · 全局任务(多处/整体结构,如「重排所有组件」「换主题」)→ 不要聚焦,保持全量视野直接写。')
         hints.push('  · 完成局部精修、要转向其他区域或做整体改动 → 调 clear_focus 退出聚焦(清空全部焦点),恢复全部读写权限。')
-        hints.push('  · set_focus/add_focus 的 path 必须在 schema 内(类型校验);不确定路径先 read/describe_data 查。')
+        hints.push('  · set_focus/add_focus 的 path 必须在 schema 内(类型校验);不确定路径先 read 查。')
       }
       // 受保护资源:resourcesPin 中间件每轮已注入功能段(占位符语义/资源工具用法),此处不重复(实测曾双份注入浪费)
       if (caps?.subagents?.length) {

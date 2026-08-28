@@ -57,19 +57,19 @@ export async function run() {
 
   console.log('[e2e:inspect] inspect().tools 反映 dataOps 开关 + 工具集完整性')
   {
-    // 恒全暴露(10 个数据工具;legacy-crud-dedup 移除 get/set/edit/delete_data 四件;simplify-toolset 早已移除 snapshot_data/list_data_snapshots;toolMode 已移除)
+    // 恒全暴露(9 个数据工具;legacy-crud-dedup 移除 get/set/edit/delete_data 四件 + 4.9 移除 describe_data;simplify-toolset 早已移除 snapshot_data/list_data_snapshots;toolMode 已移除)
     const sdkOn = createChatSdk({
       ui: false, id: 'e2e-tools-on', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS,
       data: { schema: z.object({ x: z.string() }), bind: { x: '1' }, description: 'x' },
     })
     await sdkOn.mount()
     const toolsOn = sdkOn.inspect().tools.map((t) => t.name)
-    const expectedDataTools = ['describe_data', 'restore_data', 'history_data', 'query_data', 'search_data', 'eval_script', 'read', 'write', 'schema_data', 'diff_data']
+    const expectedDataTools = ['restore_data', 'history_data', 'query_data', 'search_data', 'eval_script', 'read', 'write', 'schema_data', 'diff_data']
     for (const name of expectedDataTools) {
       assert(toolsOn.includes(name), `dataOps 开启 → 含 ${name}(恒全暴露)`)
     }
-    assert(toolsOn.includes('describe_data'), '✓ describe_data 保留(与 schema_data 不同义:业务说明 vs 约束树)')
-    assert(['get_data', 'set_data', 'edit_data', 'delete_data'].every((n) => !toolsOn.includes(n)), '✓ 旧 CRUD 四件已移除(legacy-crud-dedup,14→10)')
+    assert(!toolsOn.includes('describe_data'), '✓ describe_data 已移除(4.9:与 read 不传 jsonPath 等价,真 LLM 基线连续三版 0 调用)')
+    assert(['get_data', 'set_data', 'edit_data', 'delete_data'].every((n) => !toolsOn.includes(n)), '✓ 旧 CRUD 四件已移除(legacy-crud-dedup,14→10;describe 再移除 → 9)')
     assert(toolsOn.includes('fetch_document') === false, 'MIN_CAPS(fetch:false) → 不含 fetch_document')
     sdkOn.unmount()
 
@@ -101,7 +101,7 @@ export async function run() {
     })
     await sdkDefault.mount()
     const toolsDefault = sdkDefault.inspect().tools.map((t) => t.name)
-    assert(['schema_data', 'diff_data', 'describe_data', 'restore_data', 'history_data'].every((n) => toolsDefault.includes(n)), '默认 → 含 schema_data/diff_data 等数据工具(恒全暴露)')
+    assert(['schema_data', 'diff_data', 'restore_data', 'history_data'].every((n) => toolsDefault.includes(n)), '默认 → 含 schema_data/diff_data 等数据工具(恒全暴露)')
     assert(toolsDefault.includes('clear_focus'), '默认 → focus 工具族装载(clear_focus)')
     sdkDefault.unmount()
 

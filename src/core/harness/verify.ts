@@ -275,7 +275,7 @@ async function runAdversarial(
     `用户需求:${lastUser || '(未明确)'}`,
     `助手回复:${lastReply}`,
     hasTools
-      ? '重点检查主数据修改:① jsonPath 是否正确(是否误写不存在的子路径);② 值类型是否符合主数据 schema;③ 语义是否符合字段 description。可用只读工具(read / describe_data 等)读回实际值实证。'
+      ? '重点检查主数据修改:① jsonPath 是否正确(是否误写不存在的子路径);② 值类型是否符合主数据 schema;③ 语义是否符合字段 description。可用只读工具(read / schema_data 等)读回实际值实证。'
       : '只报告具体、可验证的问题。',
     '若确实无问题,只回复"无问题"。',
   ].join('\n')

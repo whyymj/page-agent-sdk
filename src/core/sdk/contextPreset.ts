@@ -22,12 +22,13 @@ export const CONTEXT_PRESETS: Record<ContextPreset, Partial<ContextManagerOption
   complex: { summaryThresholdRatio: 0.7, windowRatio: 0.6, recallTopK: 5, enableRecall: true, enableLLMSummary: true },
 }
 
-/** 各预设的 preserveLastToolResults 默认值(complex 扩 query/search,跨轮保留更多工具结果);contextOptions.preserveLastToolResults 可覆盖 */
+/** 各预设的 preserveLastToolResults 默认值(complex 扩 query/search,跨轮保留更多工具结果);contextOptions.preserveLastToolResults 可覆盖。
+ * 4.9 起 describe_data 已删(schema 约束改由 schema_data 承接保留);read 不传路径仍返整体说明 */
 export const PRESET_PRESERVE: Record<ContextPreset, string[]> = {
-  auto: ['describe_data', 'read'],
-  conservative: ['describe_data'],
-  aggressive: ['describe_data', 'read'],
-  complex: ['describe_data', 'read', 'query_data', 'search_data'],
+  auto: ['schema_data', 'read'],
+  conservative: ['schema_data'],
+  aggressive: ['schema_data', 'read'],
+  complex: ['schema_data', 'read', 'query_data', 'search_data'],
 }
 
 export interface ContextOptionsInput {

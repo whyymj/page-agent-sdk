@@ -52,7 +52,7 @@ export async function run(ctx: TestCtx) {
   assert(rr1.stats.roundsRecalled === 0, '✓ decision recallTopK=0 → 不召回(覆盖 enableRecall)')
 
   // ===== decision preserveTools 并集(摘要含工具 result)=====
-  const ctxP = useContextManager({ summaryThresholdRounds: 3, windowRounds: 3, preserveLastToolResults: ['describe_data'] })
+  const ctxP = useContextManager({ summaryThresholdRounds: 3, windowRounds: 3, preserveLastToolResults: ['schema_data'] })
   const rp = await ctxP.compress(makeRounds(10, true), { keepRounds: 3, summarize: { mode: 'index' }, preserveTools: ['read'] })
   assert(/数据片段/.test(contentOf(rp.messages[0])), '✓ decision preserveTools=[read] → 摘要含 read 工具 result(并集扩展)')
 

@@ -4,6 +4,26 @@
 
 ## [Unreleased]
 
+## [4.9.0] - 2026-08-28
+
+### Removed
+
+- **`describe_data` 工具移除(与 `read` 不传 jsonPath 完全等价)**:真 LLM 基线连续三版 0 调用(4.8 基线 / S3-S6 修复跑 / 4.8.2 全绿跑),tool-surface-economy W2 引导归一(「优先用 read 单一入口」)生效后证据闭环。整体说明+格式看 `read({})`(不传 jsonPath 已含),字段约束看 `schema_data`;usageHints 读类分流/permissions 只读集/子 agent 默认只读面/verify 自检提示/PRESET_PRESERVE(describe_data → schema_data 承接)同步撤并;数据工具面 10 → 9
+
+### Fixed
+
+- **eval transform 三模式补乐观锁(互锁七 commit 位补齐,文档-实现分叉收敛)**:eval_script `mode:'transform'` 三种落地形态(整体替换/子树替换/patches 增量)修前有 mutex+commit+setBaseline 但无 effHash/handleConflict —— armed 场景脚本执行窗口的外部修改被静默覆盖(CLAUDE.md 已声称互锁覆盖,实为分叉;真 LLM S3 实证模型在 freeze 拦截压力下会主动绕道 eval_script,替代写入口恰好没锁)。修:三处 commit 段照 write 路径补 handleConflict(armed effHash 白名单口径,conflictWatchFields 仍是唯一旋钮;ask 拆段放锁/裁决恢复点校验随 handleConflict 复用);未武装/基线新鲜零变化
+- **restore_data 绕 freeze 强制层 → 选择性回退**:快照存 bind 真值(占位符只在读边界),整体回退会把宿主自管的 freeze/verbatim 字段洗回旧值(借 restore 绕 freeze 只读)。修:回退前对注册表保护路径做差异比对 —— 无差异零变化;有差异回退后回填宿主现值,元素对应优先 `__pgId` 锚定(跨数组调序回填到正确元素),元素已删/当前无值保留快照值 + 警示(宁旧勿错,防错位写坏);结果消息明示保留字段并引导 read 复核(所见非所得防线)
+- **被拒委派不再溜过零工具门禁(COMPONENT_BUSY 计等效写修)**:委派工具返回 `ERROR:` 回灌(组件锁 COMPONENT_BUSY/COMPONENT_LOCKED)时实际零写入,修前 use_html×1 被锁拒后模型「已完成」收口直接放行。修:TurnToolUsage 增被拒委派计数,全被拒不算等效写(门禁照常回灌对账);事实清单如实标注「其中 N 次被拒未生效」(不说「零工具」假话),回灌文案补组件锁出口指引(等在途委派结束重试,勿谎称完成);部分成功仍算等效写
+
+### Fixed
+
+- **同批 set+append 同路径三形态修(deferred 收口,chunked-code-write 实测驱动)**:一个 `patches` 批内对同一字符串/数组路径先 set 后 append,修前三形态 —— ① live 非字符串时走数组分支放行 + 写回 no-op → **次块被静默丢弃**;② 校验读 bindRef 写前值拼裸 chunk → **中间态撞 min 约束整批误拒**(SCHEMA_INVALID 指向不存在的状态);③ set 写回带全批终值(valueAt 读 apply 后 clone)+ append 再重放 → **双重追写**(字符串 `AAA`+`BBB` → `AAABBBBBB`;数组 `[a,b,c]` → `[a,b,c,c]`)。修:字符串 append 校验取 clone 批内累积终值 + 被 set 覆盖的同路径 append 写回跳过(顺序无关);纯 append 批(无 set)行为不变
+
+### 测试
+
+- selftest 3228 → **3251**(+23:同批 set+append 五断言 + eval transform 乐观锁六断言〔整体/子树/patches/零回归/未武装直通/keep_external〕+ restore 选择性回退四断言〔主形态/无差异零变化/__pgId 跨调序锚定/元素已删〕+ 被拒委派等效写三断言 + 事实清单标注/出口文案 + 工具面 9 计数)
+- e2e 1036 → **1040**(+4:被拒委派 runtime 全链 —— 门禁照常触发/事实清单如实标注/模型 3 次调用/如实收口);describe 断言原位替换为移除断言
 - **UI 性能基准结论(perf-stress 诊断 spec,PERF_STRESS=1 启用)**:61 消息长会话(混合 markdown/代码块)+ 压缩触发 + 25K 思考流实测 —— DOM 1486 节点/堆 51MB/全列表滚动零丢帧/展开思考块仅 +1 节点(尾部滑窗设计兑现)→ **当前规模无虚拟化需求**,MessageList 窗口化维持 deferred 等更大规模痛点
 
 ## [4.8.3] - 2026-08-28

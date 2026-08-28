@@ -55,7 +55,7 @@ export interface ContextManagerOptions {
   getRegisteredSlots?: () => { path: string; description: string }[]
   /**
    * 跨轮摘要时,对这些工具的步骤 result 额外保留摘要片段进 summaryMsg(防字段描述被摘要掉)。
-   * 如 ['describe_data','read'] → 即便 older 轮被摘要,关键字段说明仍在摘要里。
+   * 如 ['schema_data','read'] → 即便 older 轮被摘要,关键字段说明仍在摘要里。
    */
   preserveLastToolResults?: string[]
 }
@@ -277,7 +277,7 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
         const props = regGetter()
         if (props.length) {
           const propLines = props.map((p) => `- ${(p as any).path ? (p as any).path + ': ' : ''}${p.description}`).join('\n')
-          parts.push(`\n【当前可操作数据(动态增删后的最新状态,操作前以 describe_data / read 为准)】`, propLines)
+          parts.push(`\n【当前可操作数据(动态增删后的最新状态,操作前以 read 为准)】`, propLines)
         }
       } catch {
         /* getter 抛错不影响压缩 */

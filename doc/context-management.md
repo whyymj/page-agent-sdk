@@ -176,7 +176,7 @@ base systemPrompt(集成方注入的身份/规则 + 自动追加的 reliableWrit
    <prevSummaryBody>
    【与当前问题可能相关的早期对话】  ← recall 命中片段
    - 第m轮:...
-   【当前可操作数据(动态增删后的最新状态,操作前以 describe_data / read 为准)】  ← getRegisteredData 注入
+   【当前可操作数据(动态增删后的最新状态,操作前以 read 为准)】  ← getRegisteredData 注入
    - 主数据对象描述
    ```
 8. 返回 `[summaryMsg, ...recentMessages]` 作为压缩后输入;**`state.messages` 原文不变**
@@ -196,7 +196,7 @@ base systemPrompt(集成方注入的身份/规则 + 自动追加的 reliableWrit
 | `summaryTemperature` | 0.3 | 摘要 LLM 温度 |
 | `summaryMaxTokens` | 1024 | 摘要 LLM 最大输出 |
 | `summaryTimeoutMs` | 15000 | 董时回退索引摘要不阻塞 |
-| `preserveLastToolResults` | `['describe_data','read']` | 跨轮摘要时保留这些工具的 result 摘要(防字段描述被摘要掉);设 `[]` 关 |
+| `preserveLastToolResults` | `['schema_data','read']` | 跨轮摘要时保留这些工具的 result 摘要(防字段描述被摘要掉);设 `[]` 关(4.9 起 describe_data → schema_data) |
 | `getRegisteredData` | 自动注入 | 返回当前主数据 description,压缩时注入摘要(防 LLM 基于过时记忆操作已 `setData` 替换的 schema) |
 | `contextOptions` | — | 细参覆盖预设;`false` 关闭 summarization 中间件 |
 

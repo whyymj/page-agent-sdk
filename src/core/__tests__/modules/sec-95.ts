@@ -57,6 +57,12 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(isZeroEffectiveWrite(mk({ use_html: 1 }), isWrite) === false, '✓ 零写判定 → 委派工具(use_html)计等效写(editor 主场景)')
     assert(isZeroEffectiveWrite(mk({ spawn_agents: 1 }), isWrite) === false, '✓ 零写判定 → spawn_agents 计等效写')
     assert(isZeroEffectiveWrite(mk({ eval_script: 1 }), isWrite) === true, '✓ 零写判定 → eval_script 默认 query(条件写在标注,此桩不含)')
+    // 被拒委派(4.9.1 ③):委派返回 ERROR: 回灌(组件锁 COMPONENT_BUSY 等)实际零写入
+    const mkR = (counts: Record<string, number>, rejectedDelegations?: Record<string, number>): TurnToolUsage =>
+      ({ counts, writePaths: [], failures: 1, rejectedDelegations })
+    assert(isZeroEffectiveWrite(mkR({ use_html: 2 }, { use_html: 2 }), isWrite) === true, '✓ 零写判定 → 委派全被拒(COMPONENT_BUSY)不算等效写(修前 use_html×1 被锁拒后「已完成」收口溜过门禁)')
+    assert(isZeroEffectiveWrite(mkR({ use_html: 2 }, { use_html: 1 }), isWrite) === false, '✓ 零写判定 → 委派部分成功(至少一次未拒)仍算等效写')
+    assert(isZeroEffectiveWrite(mkR({ read: 1, use_html: 1 }, { use_html: 1 }), isWrite) === true, '✓ 零写判定 → 唯一委派被拒 + 只读 = 零等效写(门禁应回灌对账)')
   }
 
   // ===== C. buildTurnFactSheet =====
@@ -78,6 +84,11 @@ export async function run(ctx: TestCtx): Promise<void> {
     const fb = buildZeroToolFeedback(fs1)
     assert(fb.includes('没有任何写入或委派操作') && fb.includes(fs1), '✓ 回灌文案 → 含事实清单段')
     assert(fb.includes('逐项说明改动位置') && fb.includes('继续执行') && fb.includes('如实说明'), '✓ 回灌文案 → 三出口齐全(说明位置/继续/如实)')
+    // 被拒委派如实标注(4.9.1 ③:清单不说「零工具」假话,给模型对账真事实)
+    const fs3 = buildTurnFactSheet({ counts: { use_html: 1 }, writePaths: [], failures: 1, rejectedDelegations: { use_html: 1 } }, [])
+    assert(/use_html×1\(其中 1 次被拒未生效/.test(fs3), '✓ 事实清单 → 被拒委派如实标注(防「零工具」假话)')
+    const fb2 = buildZeroToolFeedback(fs3)
+    assert(/COMPONENT_BUSY/.test(fb2), '✓ 回灌文案 → 含组件锁出口指引(等在途委派结束重试,勿谎称完成)')
   }
 
   // ===== D. mentionsLocation(出口①机械化)=====

@@ -18,7 +18,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     }
     const tools = createDataOps({
       schema: z.object({
-        cfg: z.object({ a: z.number(), name: z.string(), extra: z.string().optional() }),
+        cfg: z.object({ a: z.number(), name: z.string(), extra: z.string().optional(), doc: z.string().min(10).optional() }),
         list: z.array(z.object({ id: z.number(), text: z.string() })),
         theme: z.enum(['light', 'dark']),
       }),
@@ -51,6 +51,20 @@ export async function run(ctx: TestCtx): Promise<void> {
     const nameBefore = appObj.cfg.name
     r = await invoke(t['write'], { patch: { op: 'append', jsonPath: 'cfg.name', value: '123' } })
     assert(/PATCH_FAILED/.test(r) && /字符串/.test(r) && appObj.cfg.name === nameBefore, 'append 字符串目标 + 非字符串 value → PATCH_FAILED 提示拼接语义(live 不变)')
+
+    // 同批 set+append 字符串路径(deferred 修:校验取 clone 批内中间态,不取 bindRef 写前值;chunked-code-write 首块+次块并进一个 patches 批实测)
+    // 修前形态①:live 非字符串(undefined)→ 走数组分支「放行」+ appendElems 写回 no-op → 次块被静默丢弃
+    r = await invoke(t['write'], { patches: [{ op: 'set', jsonPath: 'cfg.doc', value: '"<html><head>"' }, { op: 'append', jsonPath: 'cfg.doc', value: '"</head>"' }] })
+    assert(appObj.cfg.doc === '<html><head></head>', '同批 set+append 字符串拼接生效(修前次块被静默丢弃)')
+    // 修前形态②:live 是字符串但校验「写前值+chunk」→ 中间态裸 chunk 撞 min 误拒;修后校验累积终值
+    appObj.cfg.doc = ''  // 直改 bind 模拟既有空串(不经写路径,绕开 min 校验)
+    r = await invoke(t['write'], { patches: [{ op: 'append', jsonPath: 'cfg.doc', value: '"aaaaa"' }, { op: 'append', jsonPath: 'cfg.doc', value: '"bbbbb"' }] })
+    assert(/已 write\(edit\)/.test(r) && appObj.cfg.doc === 'aaaaabbbbb', '同批多 append 按累积终值校验(修前按写前值拼裸 chunk,5+5 分块撞 min(10) 整批误拒)')
+    // 修前形态③:双写 —— set 写回带全批终值 + append 再重放 → 内容重复(修前 [set+append] 实测 AAABBBBBB / [a,b,c,c])
+    r = await invoke(t['write'], { patches: [{ op: 'set', jsonPath: 'cfg.name', value: '"AAA"' }, { op: 'append', jsonPath: 'cfg.name', value: '"BBB"' }] })
+    assert(appObj.cfg.name === 'AAABBB', '同批 set+append 字符串不双写(修前 set 终值 + append 重放 = AAABBBBBB)')
+    r = await invoke(t['write'], { patches: [{ op: 'set', jsonPath: 'list', value: '[{"id":1,"text":"a"},{"id":2,"text":"b"}]' }, { op: 'append', jsonPath: 'list', value: '{"id":3,"text":"c"}' }] })
+    assert(appObj.list.length === 3 && appObj.list[2].id === 3, '同批 set+append 数组不双写(修前 append 元素重放两次 = [a,b,c,c])')
 
     // write(edit) remove 删字段
     r = await invoke(t['write'], { patch: { op: 'remove', jsonPath: 'cfg.extra' } })

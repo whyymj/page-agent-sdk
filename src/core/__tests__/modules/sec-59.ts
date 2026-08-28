@@ -220,4 +220,52 @@ export async function run(ctx: TestCtx) {
     const tamperMove = await invoke(tw4.write, { patch: { op: 'set', jsonPath: 'components', value: [vb.components[1], moved] } })
     assert(/FROZEN_FIELD/.test(tamperMove), '✓ 位移同时改冻结值 → 照拦(原值未完整保留,豁免不成立)')
   }
+
+  // ===== restore-guard:restore_data 选择性回退(4.9.1 ②,借 restore 绕 freeze 只读的防线)=====
+  console.log('\n[restore_data 选择性回退 · freeze 字段保留宿主现值]')
+  {
+    // 场景①(主形态):快照后宿主更新 freeze 字段 → 回退非保护部分,freeze 保留宿主新值 + 消息明示
+    const b1: any = { id: 'frozen-1', title: '旧标题', components: [] }
+    const t1 = byName(createDataOps({ schema, bind: b1, resources: [{ path: 'id', mode: 'freeze' }] }, { vfsStore: createVfs() }))
+    await invoke(t1.write, { patch: { op: 'set', jsonPath: 'title', value: '新标题' } })   // 快照 #1(id=frozen-1)
+    b1.id = 'host-updated'                                                                 // 宿主直改(不经 SDK 写路径)
+    const r1 = await invoke(t1.restore_data, {})
+    assert(b1.id === 'host-updated', '✓ restore 选择性回退:freeze 字段保留宿主现值(修前被快照旧值洗回 frozen-1)')
+    assert(b1.title === '旧标题', '✓ restore 选择性回退:非保护字段照常回退')
+    assert(/保留当前值未回退/.test(r1) && /id/.test(r1), '✓ restore 结果消息明示保留字段(所见非所得防线:引导 read 复核)')
+
+    // 场景②(无差异零变化):freeze 值与快照一致 → 原行为整体回退,无保留警示
+    const b2: any = { id: 'frozen-2', title: '旧', components: [] }
+    const t2 = byName(createDataOps({ schema, bind: b2, resources: [{ path: 'id', mode: 'freeze' }] }, { vfsStore: createVfs() }))
+    await invoke(t2.write, { patch: { op: 'set', jsonPath: 'title', value: '新' } })
+    const r2 = await invoke(t2.restore_data, {})
+    assert(b2.id === 'frozen-2' && b2.title === '旧' && !/保留当前值/.test(r2), '✓ 无差异(未配/值一致)→ 原行为整体回退零变化')
+
+    // 场景③(__pgId 锚定):快照窗口内宿主重排数组 + 更新 freeze 值 → 按元素 id 回填到重排后正确元素
+    const b3: any = {
+      id: 'p', title: 't',
+      components: [
+        { type: 'a', verification: 'v1', __pgId: 'c_1' },
+        { type: 'b', verification: 'v2', __pgId: 'c_2' },
+      ],
+    }
+    const t3 = byName(createDataOps({ schema, bind: b3, resources: [{ path: 'components.0.verification', mode: 'freeze' }, { path: 'components.1.verification', mode: 'freeze' }] }, { vfsStore: createVfs() }))
+    await invoke(t3.write, { patch: { op: 'set', jsonPath: 'title', value: 't2' } })       // 快照(排列 [a,b])
+    b3.components = [b3.components[1], b3.components[0]]                                    // 宿主直改重排(注册表不迁移)
+    b3.components[0].verification = 'v2-new'                                                // 宿主更新 b 的冻结值
+    const r3 = await invoke(t3.restore_data, {})
+    assert(b3.components[1].type === 'b' && b3.components[1].verification === 'v2-new', '✓ __pgId 锚定:宿主新值回填到重排后正确元素(字面路径回填会错写到 a)')
+    assert(b3.components[0].type === 'a' && b3.components[0].verification === 'v1', '✓ __pgId 锚定:快照排列恢复,a 元素冻结值原样')
+
+    // 场景④(元素已删):当前无值 + 快照有 → 保留快照值保 schema 合法 + 警示复核(宁旧勿错)
+    const b4: any = {
+      id: 'p', title: 't',
+      components: [{ type: 'a', verification: 'v1' }, { type: 'b', verification: 'v2' }],
+    }
+    const t4 = byName(createDataOps({ schema, bind: b4, resources: [{ path: 'components.1.verification', mode: 'freeze' }] }, { vfsStore: createVfs() }))
+    await invoke(t4.write, { patch: { op: 'set', jsonPath: 'title', value: 't2' } })
+    b4.components.pop()                                                                     // 宿主删了带 freeze 的元素
+    const r4 = await invoke(t4.restore_data, {})
+    assert(typeof b4.components[1]?.verification === 'string' && /未能回填/.test(r4), '✓ 元素已删:保留快照值(不复活宿主已删状态) + 警示宿主侧核对')
+  }
 }

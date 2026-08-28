@@ -1466,7 +1466,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   }
 
   // 对抗子 agent 的只读工具(白名单筛选,让其能实证读回数据检查而非臆测;dataOps 关闭则不含数据工具)
-  const READONLY_FOR_ADVERSARIAL = ['describe_data', 'read', 'fetch_document']
+  const READONLY_FOR_ADVERSARIAL = ['read', 'fetch_document']
   const readonlyTools = allTools.filter((t) => READONLY_FOR_ADVERSARIAL.includes(t.name))
   // verify 中间件(check 省略时默认 createWriteBackCheck 写后读回验证)。maxAttempts 经 maxVerifyAttempts 透传 createAgent,非中间件字段
   const verifyMw = useVerify
