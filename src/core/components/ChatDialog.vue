@@ -159,6 +159,11 @@ const { isExpanded, debugVisible, skillVisible, closeSkill } = ctx
 // approval-bar 不再被 overflow:hidden 裁剪 —— 与消息一起滚动,超高内容可达。
 const { scrollContainer, onScroll, onWheel } = ctx.chat
 
+// 挂起门禁期禁发(gate-pending 死局修,方案①):RHC/approval(pendingApproval)或乐观锁冲突(pendingConflict)
+// 挂起时禁发送面 —— hold() 被响应方接管后不限时,挂起期排队的消息永不消费(死局);先处理确认条或点停止。
+// 只影响内置 ChatInput;停止按钮不受影响(逃生口),正常在途流(无门禁)的排队语义零变化。
+const gatePending = computed(() => !!(ctx.chat.pendingApproval.value || props.pendingConflict))
+
 // 滚动条替换(OverlayScrollbars v2):隐藏原生滚动条 + overlay 自定义滚动条(主题经 --cs-scrollbar-* 映射),
 // 保留原生滚动行为/键盘/触摸;ResizeObserver 自动跟随聊天内容动态增高。
 // 模板预置 data-overlayscrollbars-initialize 结构(host/viewport/contents)→ 插件认领不搬 DOM(与 Vue patch 和解);
@@ -270,7 +275,7 @@ const drawerWidthStyle = computed(() => {
     <template v-if="renderSection('footer')">
       <Transition name="cs-slide">
         <slot name="footer" :chat="ctx">
-          <ChatInput :placeholder="placeholder || ctx.messages.inputPlaceholder" :input-rows="inputRows" />
+          <ChatInput :placeholder="placeholder || ctx.messages.inputPlaceholder" :input-rows="inputRows" :gate-pending="gatePending" />
         </slot>
       </Transition>
     </template>

@@ -22,7 +22,7 @@ export function tokenize(text: string): string[] {
     .filter((t) => t.length >= 2 && !STOP_WORDS.has(t))
 }
 
-/** 估算单条消息 token(content + reasoning + 工具步骤的 args/result) */
+/** 估算单条消息 token(content + reasoning + 工具步骤的 args/result;消息对象体量口径,存储/内存预算参考。压缩路径勿用 —— 见 wire 变体) */
 export function estimateMessageTokens(m: AgentMessage): number {
   let s = typeof m.content === 'string' ? m.content : ''
   if (m.reasoning) s += m.reasoning
@@ -36,7 +36,24 @@ export function estimateMessageTokens(m: AgentMessage): number {
   return estimateTokens(s)
 }
 
-/** 估算一轮 token(user + 所有 assistant 消息) */
+/**
+ * 估算单条消息重发到模型的 token(仅 content)。跨 invoke 发送面(toLC)只重发 content ——
+ * 历史轮的 steps 工具结果/reasoning 出了当轮 invoke 就不再上 wire;压缩触发/窗口切分/inspectContextTool
+ * 共用此口径:全量口径会让长工具链会话(read/write result KB 级)估算虚高数倍 → 系统性过早压缩、近窗被压小
+ * (team-audit P2 修)。OOM 硬防线不受影响(createAgent 对真实 LC 请求消息实测,含当轮活 ToolMessage)。
+ */
+export function estimateMessageWireTokens(m: AgentMessage): number {
+  return estimateTokens(typeof m.content === 'string' ? m.content : '')
+}
+
+/** 估算一轮重发 token(user + 所有 assistant 的 content;与压缩触发同口径) */
+export function estimateRoundWireTokens(r: Round): number {
+  let t = estimateMessageWireTokens(r.userMsg)
+  for (const m of r.assistantMsgs) t += estimateMessageWireTokens(m)
+  return t
+}
+
+/** 估算一轮 token(user + 所有 assistant 消息;全量口径,见 estimateMessageTokens) */
 export function estimateRoundTokens(r: Round): number {
   let t = estimateMessageTokens(r.userMsg)
   for (const m of r.assistantMsgs) t += estimateMessageTokens(m)
@@ -138,7 +155,8 @@ export function resolvePromptSoftCap(contextWindow?: number, promptSoftCapTokens
  */
 export function shouldTriggerCompression(rounds: Round[], config: CompressionTriggerConfig): boolean {
   if (config.contextWindow && config.contextWindow > 0) {
-    const totalTokens = rounds.reduce((s, r) => s + estimateRoundTokens(r), 0)
+    // wire 口径(仅 content):历史 steps/reasoning 跨 invoke 不重发,计入会让长工具链会话虚高数倍
+    const totalTokens = rounds.reduce((s, r) => s + estimateRoundWireTokens(r), 0)
     const threshold = Math.min(
       config.contextWindow * (config.summaryThresholdRatio ?? 0.5),
       resolvePromptSoftCap(config.contextWindow, config.promptSoftCapTokens),

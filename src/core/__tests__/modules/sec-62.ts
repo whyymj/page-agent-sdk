@@ -28,6 +28,20 @@ export async function run(ctx: TestCtx) {
   assert(shouldTriggerCompression(tokenRounds, { contextWindow: 10, summaryThresholdRatio: 0.5 }) === true, '✓ shouldTrigger token 模式 → 超 threshold(contextWindow=10/ratio=0.5)触发')
   assert(shouldTriggerCompression(tokenRounds, { contextWindow: 1000000, summaryThresholdRatio: 0.5 }) === false, '✓ shouldTrigger token 模式 → 远未达 threshold 不触发')
 
+  // ===== wire 口径(4.9.2):估算只计重发面 content,历史 steps/reasoning 不计入 =====
+  // 长 tools result + reasoning 的轮:全量口径估算远超 threshold,wire 口径(仅 content)不触发
+  const stepMsgs: AgentMessage[] = [
+    { role: 'user', content: 'q', timestamp: 0 },
+    { role: 'assistant', content: 'a', timestamp: 1, reasoning: 'g'.repeat(2000), steps: [{ name: 'read', result: 'r'.repeat(4000) }] } as AgentMessage,
+  ]
+  assert(shouldTriggerCompression(groupRounds(stepMsgs), { contextWindow: 1000, summaryThresholdRatio: 0.5 }) === false, '✓ shouldTrigger wire 口径 → steps/reasoning 巨大但 content 小不触发(修前全量口径虚高触发)')
+  // 同窗口下 content 巨大照常触发(口径收窄不弱化真超窗检测)
+  const bigContentMsgs: AgentMessage[] = [
+    { role: 'user', content: 'q', timestamp: 0 },
+    { role: 'assistant', content: 'a'.repeat(4000), timestamp: 1 },
+  ]
+  assert(shouldTriggerCompression(groupRounds(bigContentMsgs), { contextWindow: 1000, summaryThresholdRatio: 0.5 }) === true, '✓ shouldTrigger wire 口径 → content 真超阈值照常触发')
+
   // ===== shouldTriggerCompression 轮数模式(严格 >)=====
   assert(shouldTriggerCompression(groupRounds(makeRounds(4)), { summaryThresholdRounds: 3 }) === true, '✓ shouldTrigger 轮数模式 → 4 > 3 触发')
   assert(shouldTriggerCompression(groupRounds(makeRounds(3)), { summaryThresholdRounds: 3 }) === false, '✓ shouldTrigger 轮数模式 → 3 = 3 不触发(严格 >)')

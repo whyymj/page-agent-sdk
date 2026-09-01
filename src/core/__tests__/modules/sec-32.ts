@@ -1,5 +1,5 @@
 import type { TestCtx } from './_ctx'
-import { tokenize, estimateMessageTokens, recallRounds, indexSummarize } from '../../composables/contextIndex'
+import { tokenize, estimateMessageTokens, estimateMessageWireTokens, recallRounds, indexSummarize } from '../../composables/contextIndex'
 import { createConflictManager } from '../../sdk/conflictManager'
 import { trimMemoryMessagesImpl, composeTrimSummary, MEMORY_SUMMARY_PREFIX } from '../../utils/rounds'
 import { extractVfsRefs, gcVfsLargeResults } from '../../utils/vfsGc'
@@ -26,6 +26,13 @@ export async function run(ctx: TestCtx): Promise<void> {
   // 含 steps 的消息:args/result 计入
   const estSteps = estimateMessageTokens({ role: 'assistant', content: 'x', steps: [{ name: 'read', result: 'y'.repeat(40) }] } as any)
   assert(estSteps > est || estSteps > 0, 'estimateMessageTokens → steps.result 计入估算')
+
+  // wire 口径估算(4.9.2):跨 invoke 发送面只重发 content → steps/reasoning 不计入;压缩触发/窗口切分/inspect 共用
+  const wireMsg = { role: 'assistant', content: 'x', reasoning: 'g'.repeat(500), steps: [{ name: 'read', args: { jsonPath: 'components.0' }, result: 'y'.repeat(2000) }] } as any
+  const wireEst = estimateMessageWireTokens(wireMsg)
+  assert(wireEst === estimateMessageWireTokens({ role: 'assistant', content: 'x' } as any), 'estimateMessageWireTokens → steps/reasoning 不计入(与裸 content 逐值相等)')
+  assert(wireEst < estimateMessageTokens(wireMsg), 'estimateMessageWireTokens → 恒 ≤ 全量口径(steps 巨大时显著小于)')
+  assert(estimateMessageWireTokens({ role: 'assistant', content: 'a'.repeat(100) } as any) > 0, 'estimateMessageWireTokens → content 计入(>0)')
 
   // recallRounds:关键词召回 top K
   const rounds = [

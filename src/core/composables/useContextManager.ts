@@ -16,7 +16,7 @@
  */
 import type { AgentMessage } from '../types'
 import { groupRounds, plainSummary, parseSummarySegment, type Round } from '../utils/rounds'
-import { estimateRoundTokens, indexSummarize, recallRounds, shouldTriggerCompression } from './contextIndex'
+import { estimateRoundWireTokens, indexSummarize, recallRounds, shouldTriggerCompression } from './contextIndex'
 import { estimateTokens } from '../utils/modelCaps'
 import type { CompressDecision } from '../sdk/compressDecision'
 
@@ -175,11 +175,12 @@ export function useContextManager(opts: Partial<ContextManagerOptions> = {}) {
     if (config.contextWindow && config.contextWindow > 0) {
       // token 模式:决策 windowRatio 覆盖静态比例(仍走累加循环,保留 token 封顶保证;不直接按 keepRounds 切,防大 JSON 压缩后仍超窗口)
       const windowBudget = config.contextWindow * (decision?.windowRatio ?? config.windowRatio ?? 0.4)
-      // 从最新轮往回累加 token,加进去就超预算的轮纳入 older(被摘),其后保留
+      // 从最新轮往回累加 token,加进去就超预算的轮纳入 older(被摘),其后保留(与触发同 wire 口径:仅 content,
+      // 历史 steps 工具结果不重发不该吃窗口预算 —— 大 result 轮修前会把 recent 挤到只剩最新 1 轮)
       let acc = 0
       let splitIdx = 0
       for (let i = rounds.length - 1; i >= 0; i--) {
-        acc += estimateRoundTokens(rounds[i])
+        acc += estimateRoundWireTokens(rounds[i])
         if (acc >= windowBudget) {
           splitIdx = i + 1
           break

@@ -9,7 +9,12 @@ import { ref } from 'vue'
 import IconGlyph from './IconGlyph.vue'
 import { useChatContext } from '../composables/chatContext'
 
-defineProps<{ placeholder: string; inputRows: number }>()
+defineProps<{
+  placeholder: string
+  inputRows: number
+  /** 挂起门禁期(确认/冲突条挂起):禁发送面(textarea/📎/发送),停止按钮不受影响 —— 死局修方案①,ChatDialog 计算 */
+  gatePending?: boolean
+}>()
 
 const ctx = useChatContext()
 const { inputText, send, keydown, canUndo, undo, focuses, removeFocus, focusChipClick, icons, messages: m } = ctx
@@ -85,20 +90,24 @@ const onPaste = (e: ClipboardEvent): void => {
         <!-- 输入侧图片错误(超限/损坏;4s 自动清) -->
         <div v-if="imageInputError" class="img-error" data-test="img-error">{{ imageInputError }}</div>
       </div>
+      <!-- 挂起门禁期禁发提示(gate-pending 死局修):确认/冲突条挂起时输入禁用,引导先处理确认条或停止 -->
+      <div v-if="gatePending" class="gate-hint" data-test="gate-hint">{{ m.inputGateHint }}</div>
       <textarea
         v-model="inputText"
         class="chat-input"
         :placeholder="placeholder"
         :rows="inputRows"
+        :disabled="gatePending"
         @keydown="keydown"
         @paste="onPaste"
       ></textarea>
       <div class="input-actions">
         <span class="send-hint">{{ m.sendHint }}</span>
-        <!-- 添加图片(📎):image-input-vision 三入口之一 -->
+        <!-- 添加图片(📎):image-input-vision 三入口之一(挂起门禁期同禁 —— 带图消息同样进不了队列) -->
         <button
           class="attach-btn"
           :title="m.attachImageTitle"
+          :disabled="gatePending"
           data-test="attach-btn"
           @click="openFilePicker"
         >
@@ -111,7 +120,7 @@ const onPaste = (e: ClipboardEvent): void => {
         <button
           class="send-btn"
           :class="{ 'stop-btn': state.loading }"
-          :disabled="!state.loading && !inputText.trim() && !pendingImages.length && !compressingImages"
+          :disabled="(!state.loading && !inputText.trim() && !pendingImages.length && !compressingImages) || (gatePending && !state.loading)"
           :title="state.loading ? m.stopTitle : m.sendTitle"
           @click="state.loading ? stop() : send()"
         >
@@ -201,6 +210,13 @@ const onPaste = (e: ClipboardEvent): void => {
   overflow-wrap: anywhere; word-break: break-word;
 }
 .chat-input::placeholder { color: var(--cs-bg-muted, #9ca3af); opacity: 0.7; }
+/* 挂起门禁期(gate-pending):输入禁用 + 琥珀提示行(与确认条色系呼应,区别于错误红) */
+.chat-input:disabled { opacity: 0.55; cursor: not-allowed; }
+.gate-hint {
+  padding: 6px 10px 0; font-size: 11px; line-height: 1.5; color: var(--cs-warn, #b45309);
+}
+.attach-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.attach-btn:disabled:hover { color: var(--cs-bg-muted, #6b7280); background: transparent; }
 .input-actions { position: absolute; bottom: 10px; right:  10px; display: flex; align-items: center; gap: 8px; }
 .send-hint { font-size: 10px; color: var(--cs-bg-muted, #9ca3af); opacity: 0.6; pointer-events: none; white-space: nowrap; }
 .attach-btn {

@@ -67,6 +67,8 @@ export interface DialogMessages {
   sendHint: string
   sendTitle: string
   stopTitle: string
+  /** 挂起门禁期禁发提示(确认/冲突条挂起时输入区禁用;gate-pending 死局修) */
+  inputGateHint: string
   // ===== ChatInput 图片输入(image-input-vision)=====
   attachImageTitle: string     // 添加图片(可拖拽 / 粘贴)
   imageDropHint: string        // 松开添加图片
@@ -302,6 +304,7 @@ export const MESSAGES_ZH_CN: DialogMessages = {
   sendHint: 'Enter 发送 · Shift+Enter 换行',
   sendTitle: '发送',
   stopTitle: '停止生成',
+  inputGateHint: '⏸ 有确认/冲突等待处理:请先点选上方确认条,或停止生成后再发送(挂起期间消息不会进入队列)',
   attachImageTitle: '添加图片(可拖拽 / 粘贴)',
   imageDropHint: '松开添加图片',
   imageCountLimitPrefix: '单轮最多 ',
@@ -531,6 +534,7 @@ export const MESSAGES_EN_US: DialogMessages = {
   sendHint: 'Enter to send · Shift+Enter for newline',
   sendTitle: 'Send',
   stopTitle: 'Stop generating',
+  inputGateHint: '⏸ A confirmation/conflict is waiting: resolve the bar above, or stop generating, before sending (messages are not queued while pending)',
   attachImageTitle: 'Add image (drag & drop / paste)',
   imageDropHint: 'Drop to attach image',
   imageCountLimitPrefix: 'Up to ',

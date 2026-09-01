@@ -572,7 +572,7 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 | 项 | 说明 | 触发条件 |
 |---|---|---|
 | 摘要缓存前缀对齐在 trim/restore 后失效 | useContextManager.ts:88-93 注释宣称「trim 错位时缓存不命中」与实现不符(命中判定只比 coveredCount 数值,③trim 后轮号重编 → 错位摘要);近窗原文无损纯质量问题。修:缓存条目存 older 首轮 user 指纹做对齐锚 | 长会话过 ③trim 后摘要质量异常实测 |
-| token 估算计入 steps/reasoning 而 toLC 从不发送 | contextIndex.ts:26-37 vs createAgent.ts:501;editor 类会话估算虚高数倍 → 系统性过早压缩 + 近窗被不必要压小(纯质量损失)。修:触发/窗口估算只计 content,steps 留给内存预算参考 | UI 长工具链会话压缩时机异常实测 |
+| ✅ token 估算计入 steps/reasoning 而 toLC 从不发送 | **已修销账 2026-09-01(4.9.2,wire 口径)**:新增 `estimateMessageWireTokens`/`estimateRoundWireTokens`(仅 content),压缩触发 + 窗口切分 + inspect_context 三消费方统一切换;公开导出 `estimateMessageTokens`/`estimateRoundTokens` 语义不变;OOM 硬防线本就对真实 LC 请求实测不受影响 | — |
 | 批读失效占位文案不实 | readInvalidation.ts:170-171 称「兄弟子树仍可参考」,实际 :252-256 整条 ToolMessage 原子替换未触及路径一并吞掉 → 模型凭旧值直写(恰是机制要消灭的行为);usageHints 明文鼓励批读。修:readPaths>1 改文案或失效判定逐路径 | 批读 + 部分击中后模型引用旧值实测 |
 | invoke 内新 offload 不进保护集 | createChatSdk.ts:1882/1956/2109 refs 均在 invoke 前算;单 invoke 连续大子树整读撑超 4MB 池 → 本轮早前 offload 被 LRU 淘汰 → 同轮 vfs_read 404(4.1 修的残留变体,主路径 mid-invoke 盲区,#217/#542 只登记子 agent 面)。修:offload 后回调并入保护集或「当轮创建恒保护」 | 单 invoke 多次大整读实测 404 |
 | userImages 保护判定带 isLarge 前置 | vfs.ts:128/139 仅 largeResults 池查 _protectedRefs → 图片池 LRU 淘汰保护不生效(vfsGc.ts:24 注释宣称的口径);优雅降级剩缩略图故 P3 | 多轮带图超 2MB 池后需原图实测 |
@@ -608,9 +608,9 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 | runSerial 排队中的 send 被外部 abort 后白等 | serialRunner.ts:13-20 无信号语义;B 排队 + 1 分钟后 abort → 仍等 A 跑完才以 '' 收口。修:sdk.send 包装内挂 signal 提前 reject race | headless 长任务排队 + abort 实测 |
 | automation budget-abort 空气泡消息 | 已并入上方 flow-robustness 登记「SYSTEM_PROMPT_OVER_BUDGET 空气泡」行(三入口一起修) | 同上 |
 
-### [2026-08-27] UI 挂起门禁期间的排队消息永不消费 — ⏸ 暂缓(产品行为待裁决)
+### [2026-08-27] UI 挂起门禁期间的排队消息永不消费 — ✅ 已实施(2026-09-01,随 4.9.2,方案①)
 
-**来源**:tool-surface-economy 重立基线实测(uispec S3):flash 撞 components.0 冻结字段后调 `request_human_confirmation` 转人工确认,场景以挂起收口;S4 消息进 useChat `queuedTasks` 后 **永不消费**(RHC hold() 被响应方接管后不限时)→ `msgs` 不增 → runner idle 判定永假干等 900s(测试侧已修:`_real-llm-lib.mjs` 场景间 `resolvePendingGates` 点保守选项放行;旧 8-16 基线 RHC 只在末位 S10 出现过,缺口从未暴露)。**真实用户面同款**:RHC/approval/conflict 条挂起时用户不打断直接输入新指令 → 消息排队但确认条不点则永不处理,且无任何提示。**候选修法**(产品裁决):①挂起期间禁用输入框 + 提示先处理确认条;②新输入视为隐式应答/取代(语义复杂);③排队提示条上显示「等待确认中」状态。**重启触发**:用户反馈排队消息丢失/困惑,或下次动 useChat/ApprovalBar。
+**来源**:tool-surface-economy 重立基线实测(uispec S3):flash 撞 components.0 冻结字段后调 `request_human_confirmation` 转人工确认,场景以挂起收口;S4 消息进 useChat `queuedTasks` 后 **永不消费**(RHC hold() 被响应方接管后不限时)→ `msgs` 不增 → runner idle 判定永假干等 900s(测试侧已修:`_real-llm-lib.mjs` 场景间 `resolvePendingGates` 点保守选项放行;旧 8-16 基线 RHC 只在末位 S10 出现过,缺口从未暴露)。**真实用户面同款**:RHC/approval/conflict 条挂起时用户不打断直接输入新指令 → 消息排队但确认条不点则永不处理,且无任何提示。**已实施(方案①,2026-09-01)**:任一门禁挂起(pendingApproval ∥ pendingConflict)时内置 ChatInput 禁发送面 + 琥珀提示行(`inputGateHint` 新 i18n 键);停止按钮逃生口不受影响(abort 收口恢复输入);sendMessage API 语义不动(自定义 UI 集成方可读同源状态自行禁用);正常在途流排队语义零变化。方案②③维持不做。
 
 ### [2026-08-27] 低频工具按需注入(restore/history/diff/resource_delete/schema_data 走 skill 按需)— ⏸ 暂缓(tool-surface-economy「不立项项」登记)
 

@@ -154,7 +154,7 @@ It also performs **keyword recall**: from old rounds, retrieve the Top-K most re
 2. `groupRounds(messages)` splits by user messages (a round = one user + all following assistants)
 3. **Extract head old-summary body**: if messages head already has a "【更早对话摘要】" system left by ③, extract its body (strip header) to merge into the new summary later (prevents ③'s accumulated history from being silently dropped by ②)
 4. **Window split** (token-driven first):
-   - With `contextWindow` → `totalTokens = Σ estimateRoundTokens(round)`; `totalTokens <= contextWindow × summaryThresholdRatio` → not triggered; else accumulate tokens backward from the newest until reaching `contextWindow × windowRatio`; rounds before that are old
+   - With `contextWindow` → `totalTokens = Σ estimateRoundWireTokens(round)` (**wire scope, content only**: steps tool results / reasoning of past rounds are never re-sent across invokes, so counting them inflated estimates several-fold for long tool-chain sessions → premature compression; 4.9.2); `totalTokens <= contextWindow × summaryThresholdRatio` → not triggered; else accumulate tokens backward from the newest until reaching `contextWindow × windowRatio`; rounds before that are old
    - Without `contextWindow` → round mode: `rounds.length <= summaryThresholdRounds` → not triggered; else keep the latest `windowRounds`, the rest are old
 5. **Summary generation**:
    - `enableLLMSummary && llmInvoke` → `summaryText = await llmInvoke(indexSummarize(older, preserveSet))` (falls back to index on failure)

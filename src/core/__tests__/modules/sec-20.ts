@@ -109,6 +109,20 @@ export async function run(ctx: TestCtx): Promise<void> {
     const rZero = await cmZero.compress(mkMsgs(4))
     assert(rZero.stats.triggered === true && !/token/.test(rZero.stats.strategy), 'contextWindow:0 → 回退轮数模式')
 
+    // wire 口径(4.9.2):steps 工具结果/reasoning 跨 invoke 不重发 → 不计入触发/窗口预算。
+    // 修前全量口径:2 轮各带 2000 字 result → 估算 ~1000 token > 400 阈值,错误触发 + recent 被挤到只剩 1 轮
+    {
+      const stepMsgs: any[] = [
+        { role: 'user', content: 'u0', timestamp: 0 },
+        { role: 'assistant', content: 'a0', timestamp: 1, steps: [{ name: 'read', result: 'x'.repeat(2000) }] },
+        { role: 'user', content: 'u1', timestamp: 2 },
+        { role: 'assistant', content: 'a1', timestamp: 3, steps: [{ name: 'write', result: 'y'.repeat(2000) }] },
+      ]
+      const cmSteps = useContextManager({ contextWindow: 800, summaryThresholdRatio: 0.5, windowRatio: 0.4 })
+      const rSteps = await cmSteps.compress(stepMsgs)
+      assert(rSteps.stats.triggered === false, 'token 模式 wire 口径:大 steps result 不再触发压缩(修前虚高触发)')
+    }
+
     // A + C:压缩时注入注册表快照 + preserveLastToolResults 保留指定工具结果摘要
     function mkMsgsWithSteps(n: number): any[] {
       const out: any[] = []

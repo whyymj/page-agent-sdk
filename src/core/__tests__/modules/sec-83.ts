@@ -13,6 +13,8 @@ export async function run(ctx: TestCtx): Promise<void> {
     const zhKeys = Object.keys(MESSAGES_ZH_CN).sort()
     const enKeys = Object.keys(MESSAGES_EN_US).sort()
     assert(zhKeys.join(',') === enKeys.join(','), `MESSAGES_ZH_CN 与 MESSAGES_EN_US 键集一致(${zhKeys.length} 键)`)
+    // gate-pending 死局修新键:双包齐备(挂起门禁期输入禁发提示)
+    assert(!!MESSAGES_ZH_CN.inputGateHint && !!MESSAGES_EN_US.inputGateHint, 'inputGateHint 键 zh/en 双包齐备')
     // 缺省 zh(不传 locale)行为零变化
     const zh = resolveDialogMessages()
     assert(zh.statusDone === '成功' && zh.defaultTitle === 'AI 助手', 'resolveDialogMessages 缺省 → zh-CN 包(默认行为零变化)')

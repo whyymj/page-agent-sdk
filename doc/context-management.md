@@ -158,7 +158,7 @@ base systemPrompt(集成方注入的身份/规则 + 自动追加的 reliableWrit
 2. `groupRounds(messages)` 按用户消息切分为轮次(一轮 = 一条 user + 其后所有 assistant)
 3. **提取头部旧摘要正文**:若 messages 头部已有③留下的「【更早对话摘要】」system,提取其正文(去 header),稍后并入新摘要(防③留下的累积历史被②静默丢失)
 4. **窗口切分**(token 驱动优先):
-   - 有 `contextWindow` → `totalTokens = Σ estimateRoundTokens(round)`;`totalTokens <= min(contextWindow × summaryThresholdRatio, promptSoftCap)` → 不触发;否则从最新轮往回累加 token 到 `contextWindow × windowRatio` 为止,其后为旧轮
+   - 有 `contextWindow` → `totalTokens = Σ estimateRoundWireTokens(round)`(**wire 口径,仅计 content**:历史轮的 steps 工具结果/reasoning 跨 invoke 不再重发,计入会让长工具链会话估算虚高数倍 → 过早压缩;4.9.2);`totalTokens <= min(contextWindow × summaryThresholdRatio, promptSoftCap)` → 不触发;否则从最新轮按同口径回累 token 到 `contextWindow × windowRatio` 为止,其后为旧轮
      - `promptSoftCap`(成本上限,context-economy-phase2):`resolvePromptSoftCap(contextWindow, promptSoftCapTokens)` 单一真源解析 —— 显式 >0 用该值 / 显式 0 = Infinity(关)/ 未传且窗口 ≥320K → 默认 160_000 / 其余不参与(Infinity)。取 `min` 语义:softCap 只会更早触发、不会放宽带宽,小窗口模型的原行为不受影响
      - 动机:大窗口模型(flash 类 1M)按 ratio 触发要烧到 50 万 token 才压缩,成本不可接受;softCap 把「何时压缩」从窗口维度改成成本维度
      - 反射:`inspect().getInfo().compression = { contextWindow, summaryThresholdRatio, promptSoftCap }` 可核对生效值

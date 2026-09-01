@@ -6,16 +6,17 @@
  * 不进主 agent 工具池。
  *
  * 数据源组合(design §2 评审修正,显式列三处):
- * - totalTokens:groupRounds + estimateRoundTokens(与 shouldTriggerCompression 同口径 → 决策主依据)
+ * - totalTokens:groupRounds + estimateRoundWireTokens(与 shouldTriggerCompression 同口径 → 决策主依据;
+ *   wire 口径仅计 content —— 历史 steps 工具结果跨 invoke 不重发,4.9.2)
  * - categories:复用 contextInspector 的 ContextSnapshot(analyzeContext 分类;能力关时空数组)
- * - rounds:groupRounds + estimateRoundTokens + roundToolNames + plainSummary(每轮 token/工具/首句)
+ * - rounds:groupRounds + estimateRoundWireTokens + roundToolNames + plainSummary(每轮 token/工具/首句)
  *
  * 参数:path 过滤分类 / role 聚焦首句角色 / limit 返回最近 N 轮(防返回过大)。
  */
 import { z } from 'zod'
 import { defineTool } from './defineTool'
 import { groupRounds, roundToolNames, plainSummary } from '../utils/rounds'
-import { estimateRoundTokens } from '../composables/contextIndex'
+import { estimateRoundWireTokens } from '../composables/contextIndex'
 import type { AgentMessage } from '../types'
 import type { ContextSnapshot } from '../utils/contextAnalysis'
 
@@ -63,7 +64,7 @@ export function createInspectContextTool(deps: InspectContextToolDeps) {
       const rounds = args.limit && capped.length > args.limit ? capped.slice(capped.length - args.limit) : capped
 
       const roundInfos = rounds.map((r) => {
-        const tokens = estimateRoundTokens(r)
+        const tokens = estimateRoundWireTokens(r)
         const tools = roundToolNames(r)
         // head:按 role 聚焦首句(默认 user 问题;assistant → 回复);system/tool 边缘默认 user
         const headMsg = args.role === 'assistant' ? r.assistantMsgs[0] ?? r.userMsg : r.userMsg

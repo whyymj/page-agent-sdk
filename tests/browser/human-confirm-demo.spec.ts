@@ -8,6 +8,7 @@ import { mockLlm, fillInput, clickSend, clickByText, waitForAgentIdle, clearChat
  * - 第一层:LLM 主动征询(request_human_confirmation)→ 选项按钮出现
  * - 用户选方案 → LLM 落地 write → 第二层写前确认(允许/拒绝)
  * - 用户点「允许」→ write 执行 → 页面 appConfig 更新
+ * - gate-pending 死局修:确认条挂起期输入禁发(挂起消息永不消费的死局消除),停止按钮逃生口不受影响
  */
 test.describe('human-confirm-demo: 两层确认', () => {
   test.beforeEach(async ({ page }) => {
@@ -104,5 +105,56 @@ test.describe('human-confirm-demo: 两层确认', () => {
     expect(config.theme).toBe('fresh-blue')
     expect(config.density).toBe('cozy')
     expect(config.radius).toBe(12)
+  })
+
+  test('gate-pending 死局修:确认条挂起期输入禁发 + 提示,两层门禁连续覆盖,解除后恢复', async ({ page }) => {
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'request_human_confirmation', arguments: {
+        question: '给你两个方案:',
+        options: ['方案A', '方案B'],
+      } }] },
+      { tool_calls: [{ name: 'write', arguments: { value: { theme: 'warm-orange', density: 'spacious', radius: 24 } } }] },
+      { text: '已完成。' },
+    ])
+    await fillInput(page, '换个风格')
+    await clickSend(page)
+
+    // === 第一层挂起:输入区禁发(textarea disabled + gate-hint 可见),停止按钮不受影响(逃生口)===
+    await page.waitForSelector('button:has-text("方案A")', { timeout: 15_000 })
+    await expect(page.locator('.chat-input')).toBeDisabled()
+    await expect(page.locator('[data-test="gate-hint"]')).toBeVisible()
+    await expect(page.locator('button.send-btn')).toBeEnabled()  // loading 中 = 停止态,可点
+
+    // 解除第一层 → 第二层写前确认立即挂起:输入保持禁发(连续门禁覆盖,无缝隙窗口)
+    await clickByText(page, '方案A')
+    await page.waitForSelector('button:has-text("允许")', { timeout: 15_000 })
+    await expect(page.locator('.chat-input')).toBeDisabled()
+
+    // 解除第二层 → 流收口:输入恢复,提示行消失
+    await clickByText(page, '允许')
+    await waitForAgentIdle(page)
+    await expect(page.locator('.chat-input')).toBeEnabled()
+    await expect(page.locator('[data-test="gate-hint"]')).toBeHidden()
+  })
+
+  test('gate-pending 逃生口:挂起期点停止 → 流中止,输入恢复不锁死', async ({ page }) => {
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'request_human_confirmation', arguments: {
+        question: '给你两个方案:',
+        options: ['方案A'],
+      } }] },
+    ])
+    await fillInput(page, '换个风格')
+    await clickSend(page)
+
+    // 挂起期:输入禁用,但停止按钮(stop 态)可点 —— 用户不想处理确认条时的逃生口
+    await page.waitForSelector('button:has-text("方案A")', { timeout: 15_000 })
+    await expect(page.locator('.chat-input')).toBeDisabled()
+
+    await page.click('button.send-btn.stop-btn')
+    await waitForAgentIdle(page)
+    // abort 收口(finally 清 pendingApproval)→ 门禁解除,输入恢复
+    await expect(page.locator('.chat-input')).toBeEnabled()
+    await expect(page.locator('[data-test="gate-hint"]')).toBeHidden()
   })
 })

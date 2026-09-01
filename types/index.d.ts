@@ -343,6 +343,8 @@ export interface DialogMessages {
   sendHint: string
   sendTitle: string
   stopTitle: string
+  /** 挂起门禁期禁发提示(确认/冲突条挂起时输入区禁用;gate-pending 死局修) */
+  inputGateHint: string
   // ===== QueuedBar =====
   queuedTitle: string
   queuedEditTitle: string

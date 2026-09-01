@@ -30,9 +30,9 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,3276 项断言)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,3283 项断言)
 npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,1026 项;tests/e2e/<module>.mjs 按模块拆分)
-npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,134 项;tests/browser/<demo>.spec.ts)
+npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,136 项;tests/browser/<demo>.spec.ts)
 ```
 
 ## 环境配置
@@ -81,7 +81,7 @@ skills/                         # 分发给使用者的 Agent Skill(入 npm 包 
 ### 记忆与上下文管理(详见 architecture.md §⑥⑮ + context-management.md)
 - `summarization`(compressInput 不改原数组)与 `trimMemoryMessages`(OOM 裁剪)独立;`maxMemoryRounds >= summaryThresholdRounds`;**llmCache epoch(4.5.0)**:LLM 摘要前缀缓存单例闭包,switchSession/resetSession 经控制面 `reset()` 清缓存 + epoch 翻转(在飞摘要 .then 不匹配丢弃;只清缓存不 epoch = 假修),防会话 A 摘要泄进会话 B 压缩
 - 压缩不丢关键信息:description 快照注入 + `preserveLastToolResults` + 写成功附 path + `reliableWriteRules`;压缩 LLM 摘要异步化(模板先行零阻塞 + 后台前缀缓存)
-- 健壮性:窗口 ≥200K 硬约束;三闸阈值跟随 `setLlm`;overflow → 激进 trim → 重试 → 仍超抛;vfs 引用保护;系统段预算 25%;mission/workingMemory/focus 跨刷新持久化;`agentCompression` opt-in(decide 6s 超时降级静态)
+- 健壮性:窗口 ≥200K 硬约束;三闸阈值跟随 `setLlm`;overflow → 激进 trim → 重试 → 仍超抛;vfs 引用保护;系统段预算 25%;mission/workingMemory/focus 跨刷新持久化;`agentCompression` opt-in(decide 6s 超时降级静态);**压缩估算恒 wire 口径(4.9.2,仅计 content)** —— 历史 steps 工具结果/reasoning 跨 invoke 不重发(toLC 只发 content),触发/窗口切分/inspect_context 共用 `estimateRoundWireTokens`;公开 `estimateMessageTokens`/`estimateRoundTokens` 保持对象体量口径;OOM 硬防线独立(对真实 LC 请求消息实测)
 - **stale-read-invalidation 写驱动过期读失效(3.42,默认开)**:单次 invoke 窗口内本批成功写(writeGate 四重门槛:writeCapable args-aware + 非 dryRun + 非 throw + 非 `ERROR:` 字符串)之后,被击中路径(等值/祖先/后代;remove/move/del 追加父数组防索引错位)的旧 read/query/search ToolMessage 替换为失效占位(钉原读路径引窄读 + 引用写结果新值/hash 反 thrash;query/search 分语「重跑」;del 不引用不撒谎);同批串行序写后读不失效,`maxParallelTools>1` 同批全失效;`query_data` 按 expr/queries 逐条静态前缀并集定界(批量 queries 为 4.6 W1 新面)、`search_data` 恒 root;resource_* 排除;workingMemory 联动写后刷新 lastHashes(hash 为 base36,原 `[0-9a-f]` 正则漏 g-z 已修);`staleReadInvalidation:false` 主/子一致关闭;委派写/集成方直改 bind/宿主 actions **不在失效面**(明示盲区,兜底=状态询问门禁);debugLogs `stage:'stale_read_invalidated'` + `inspect().staleReadsInvalidated` 会话累计;多组件写任务 `maxToolRounds` 默认 30、轮次预算感知两档提示(3.43:70% 起持续提醒/剩 ≤2 轮告急,注入 system 不污染历史)
 
 ### 规划与任务锚定
@@ -109,7 +109,7 @@ skills/                         # 分发给使用者的 Agent Skill(入 npm 包 
 ### 对话鲁棒性(详见 architecture.md §⑮)
 - **三档错误模型**:recoverable 回灌自纠 / fatal emit+中断 / observable 记录;导出 `routeError`/`asAgentError`/`agentError`
 - 重试:网络/429/5xx 指数退避(maxRetries=2);4xx 与 abort 不重试;⚠️ **先排除 abort 再判 status**;abort 保留 partial;**tool_call id 兜底回写 AIMessage(4.1+)**:provider 漏回 id 时兜底 id 同步写回 message.tool_calls(原只回填 ToolMessage → 下轮「无 id tool_call + 有 id ToolMessage」协议 400 单轮 fatal);**send/batch 落盘错误源分流(4.1+)**:store.flush 失败不再误归因 LLM fatal 触发 automation 重跑(PERSIST_FLUSH_FAILED 留痕放行,落盘交 debounce/pagehide 兜底);**send/batch 同 stream 刷新 vfs protectedRefs(4.1+)**(原只在 stream 注册 → 跨轮 LRU 淘汰被引用 large_results → vfs_read 404)
-- **挂起有界收口三契约**:① 超时默认值表(approval 30s / MCP 15s / skills fetch 30s / 流停滞 `streamStallMs` 90s 抛 `StreamStalledError` 不重试;**stream 启动闸同阈值** —— `streamer.stream()` 等响应头阶段假死(fetch 默认无超时)时 stall 看门狗不覆盖,P1-7b 补;**completion 截断检测回灌(4.1+)** —— 空输出+零工具调用且 completion 达 4000+(或 stop_reason 'length')→ 单次回灌分步写入指引(实测:整页 HTML 塞进一次 write 参数撞 max_tokens → 子 agent 静默空收口 → 主 agent 无限重委派;`completion_truncated_retry` 留痕);**流总时长 `streamMaxDurationMs` 1800s(2026-08-28 抬升:100K+ 输出生成需 20min+,600s 掐死合法长生成;空转仍由 stall 90s 主防)** —— 空转帧黑洞兜底:keepalive 空转不断重置间隔计时(实测冻结 7min+ 无报错),绝对截止抛 `StreamMaxDurationError`(继承 408 不重试,重委派/重发自愈);**集成方工具看门狗 `toolTimeoutMs` 120s(flow-robustness P0#1)** —— 只管集成方注入工具(defineTool/actions/skill 工厂/rag retriever 打 `__pgWatchdog` 标),永不 settle 时 recoverable 错误回灌不杀流;内置/MCP/委派(use_<id>/spawn_*)/conflict ask 挂起是设计内等待一律豁免;**approval/humanConfirm 无响应 30s(4.1+ 中间件级,响应方调事件 `hold()` 接管后不限时;approval.timeoutMs 覆盖/Infinity 关)**;**子 agent 单次委派总时长默认 1800s(2026-08-28 抬升对齐流总时长;subagent.timeoutMs 覆盖/0 关)**;**storage flush 逐项 5s + 初始化 ready 5s(4.1+;flushTimeoutMs 可调;超时放行留痕,落盘交后续 flush/pagehide 兜底)**);② 兜底收口必留痕;③ `activeControllers` core 级,unmount/switchSession/resetSession 先 abort 全部在途流;**abort→冲突收口联动全入口**(stream/send/batch,flow-robustness P0#2):signal abort 时挂起的乐观锁冲突自动按 keep_external 收口(send 不再永不返回;conflictManager.set 另接受可选 signal race 兜底,按 id 比对防 ref 深代理)
+- **挂起有界收口三契约**:① 超时默认值表(approval 30s / MCP 15s / skills fetch 30s / 流停滞 `streamStallMs` 90s 抛 `StreamStalledError` 不重试;**stream 启动闸同阈值** —— `streamer.stream()` 等响应头阶段假死(fetch 默认无超时)时 stall 看门狗不覆盖,P1-7b 补;**completion 截断检测回灌(4.1+)** —— 空输出+零工具调用且 completion 达 4000+(或 stop_reason 'length')→ 单次回灌分步写入指引(实测:整页 HTML 塞进一次 write 参数撞 max_tokens → 子 agent 静默空收口 → 主 agent 无限重委派;`completion_truncated_retry` 留痕);**流总时长 `streamMaxDurationMs` 1800s(2026-08-28 抬升:100K+ 输出生成需 20min+,600s 掐死合法长生成;空转仍由 stall 90s 主防)** —— 空转帧黑洞兜底:keepalive 空转不断重置间隔计时(实测冻结 7min+ 无报错),绝对截止抛 `StreamMaxDurationError`(继承 408 不重试,重委派/重发自愈);**集成方工具看门狗 `toolTimeoutMs` 120s(flow-robustness P0#1)** —— 只管集成方注入工具(defineTool/actions/skill 工厂/rag retriever 打 `__pgWatchdog` 标),永不 settle 时 recoverable 错误回灌不杀流;内置/MCP/委派(use_<id>/spawn_*)/conflict ask 挂起是设计内等待一律豁免;**approval/humanConfirm 无响应 30s(4.1+ 中间件级,响应方调事件 `hold()` 接管后不限时;approval.timeoutMs 覆盖/Infinity 关)**;**子 agent 单次委派总时长默认 1800s(2026-08-28 抬升对齐流总时长;subagent.timeoutMs 覆盖/0 关)**;**storage flush 逐项 5s + 初始化 ready 5s(4.1+;flushTimeoutMs 可调;超时放行留痕,落盘交后续 flush/pagehide 兜底)**);② 兜底收口必留痕;③ `activeControllers` core 级,unmount/switchSession/resetSession 先 abort 全部在途流;**abort→冲突收口联动全入口**(stream/send/batch,flow-robustness P0#2):signal abort 时挂起的乐观锁冲突自动按 keep_external 收口(send 不再永不返回;conflictManager.set 另接受可选 signal race 兜底,按 id 比对防 ref 深代理);**挂起门禁期输入禁发(gate-pending,4.9.2)**:RHC/approval/冲突条挂起时内置 ChatInput 禁发送面 + `inputGateHint` 提示行(挂起期排队消息永不消费的死局消除;hold() 接管后不限时),停止按钮逃生口不受影响,正常在途流排队语义零变化,sendMessage API 语义不动
 - **resetSession**(同步):abort + 收口冲突(keep_external)+ 重置全部内存态 + 新 sessionId;storage 关也完整执行
 - **会话恢复提示 resumeNotice**(默认开,无开关):applySnapshot 灌入非空历史(autoResume/session.id/switchSession 三路径)→ markResumed → 恢复后首轮 system prompt 注入「数据可能已变(刷新回退未保存态),断言已完成前先核实」pin 段;一次性 afterAgent 清除(switchSession/resetSession reset 防残留);防「生成未保存→刷新恢复会话→『重新生成』直接答完毕」(editor 实测事故)
 - **shareContext**:同 id 复用 AgentCore;串行闸与在途流注册表 **core 级**;收口中止共享 core 全部在途流
@@ -148,7 +148,7 @@ npm run build && npm run test:e2e    # node 跑 dist 产物,906 项
 
 #### 2.5 浏览器 E2E(改 UI/ChatDialog/dataOps 后必跑)
 ```bash
-npm run test:browser  # 134 项;也可 /browser-test 斜杠命令。**并行分片(browser-test-sharding)**:`workers:4` + `fullyParallel:false`(spec 文件级分片、文件内保序,与串行行为一致;实测全量 ~1.4-1.6min)。禁依赖「预启动 dev server + 复用」(遗留旧 server optimizeDeps 失配 → 强制 reload 假性失败,§3.5 前科);**依赖变更后首跑遇批量 reload 型失败 → 重跑一次预热,不判回归**;单跑复跑用 `--grep`;时序敏感观察名单(queue/icons 净化/page-demo 流式占位)如现 flake 优先加大 delays 窗口而非上 retries
+npm run test:browser  # 136 项;也可 /browser-test 斜杠命令。**并行分片(browser-test-sharding)**:`workers:4` + `fullyParallel:false`(spec 文件级分片、文件内保序,与串行行为一致;实测全量 ~1.4-1.6min)。禁依赖「预启动 dev server + 复用」(遗留旧 server optimizeDeps 失配 → 强制 reload 假性失败,§3.5 前科);**依赖变更后首跑遇批量 reload 型失败 → 重跑一次预热,不判回归**;单跑复跑用 `--grep`;时序敏感观察名单(queue/icons 净化/page-demo 流式占位)如现 flake 优先加大 delays 窗口而非上 retries
 ```
 **原理**:`tests/browser/_helpers.ts` 的 `mockLlm()` 用 `page.route()` 拦截 LLM API 端点,按脚本返回 SSE 流,使 agent ReAct 循环确定性走完,不依赖真 LLM。**双协议**:同时拦截 OpenAI 兼容(`**/chat/completions`)与 Anthropic Messages API(`**/v1/messages`),各返对应格式 SSE,共享 script 计数。spec 按 demo 拆分(complex-demo 27(含手动编辑三件套 4)/ page-demo 23 / html-page 8 / render-check 7 / customize 7 / i18n 6 / icons 6 / images 8 / header-labels 5 / rag 4 / nested 3 / lifecycle 3 / queue 3 / scrollbar 3 / error-recovery 2 / human-confirm 2 / xss 2)。写新测试模板见 `.claude/skills/browser-e2e-testing/SKILL.md`。
 
@@ -181,7 +181,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(3276/1048/134)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(3283/1048/136)与 README 中英文。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判)→ `npm run test:size` → `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证

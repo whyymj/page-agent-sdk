@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+## [4.9.2] - 2026-09-01
+
+### Fixed
+
+- **压缩 token 估算改 wire 口径(长工具链会话不再过早压缩;team-audit P2 上下文面残项)**:估算函数把 `content + reasoning + steps(args/result)` 全计入,但跨 invoke 发送面(toLC)只重发 content —— 历史轮工具结果出了当轮 invoke 就不上 wire,估算却永远计着 → 长工具链会话(read/write result KB 级)估算比真实发送面虚高数倍 → 系统性过早压缩、近窗被不必要压小(质量税无痛点可见)。修:新增 `estimateMessageWireTokens`/`estimateRoundWireTokens`(仅 content),压缩触发(`shouldTriggerCompression`)+ 窗口切分(`compress` 近轮累加)+ `inspect_context`(totalTokens/每轮 tokens,决策主依据)三消费方统一切 wire 口径;公开导出 `estimateMessageTokens`/`estimateRoundTokens` 语义不变(消息对象体量口径,存储/内存预算参考)。OOM 硬防线不受影响(createAgent 对真实 LC 请求消息实测 + trim 重试,含当轮活 ToolMessage);200K 硬约束语义不变
+- **挂起门禁期输入死局(gate-pending,方案①禁发+提示;2026-08-27 登记)**:RHC/approval/冲突条挂起时用户不打断直接输入 → 消息进排队区**永不消费**(hold() 被响应方接管后不限时,流永不收口)且零提示 —— 唯一的生产 UX 死角。修:任一门禁挂起(`pendingApproval` ∥ `pendingConflict`,ChatDialog 计算)时内置 ChatInput 禁发送面(textarea/📎/发送钮 + 琥珀提示行 `inputGateHint` 新 i18n 键 zh/en);**停止按钮不受影响**(逃生口:abort 收口 finally 清挂起 → 输入恢复);正常在途流(无门禁)排队语义零变化;`sendMessage` API 语义不动(自定义 UI 集成方可读同源状态自行禁用)
+
+### 测试
+
+- selftest 3276 → **3283**(+7:wire 口径三处 —— 纯函数逐值相等/恒≤全量/content 计入 + 触发不误触/真超照触 + compress 大 steps 不触发 + i18n 新键双包齐备)
+- browser 134 → **136**(+2:gate-pending 死局修 —— 挂起期禁发+提示+两层连续覆盖+解除恢复 / 停止逃生口中止后输入恢复)
+- e2e 1048 · exports 14 · types + src 真错 0 · alignment ✓ · size 6
+
 ## [4.9.1] - 2026-08-29
 
 ### Fixed
