@@ -125,6 +125,15 @@ export async function run(ctx: TestCtx) {
     // transitional:rounds>0 过渡性收口文本
     const tr = runFinishGates({ state: createGateChainState(), garbled: false, rounds: 1, finalContent: '好的,我先看看当前数据', todos: [], isSubagent: false, turnUsage: usage, isWriteToolByName: isW, messages: msgs })
     assert(tr?.kind === 'feedback' && tr.gate.stage === 'transitional_retry', '✓ runFinishGates → 过渡性收口回灌')
+    // 问句意图豁免(2026-09-02,nested-demo 实测):用户问「你能修改嵌套层级么」,模型用含「write/写入」
+    // 字样的说明表格作答 —— 叙述门禁不回灌(纯文本作答合法);同款叙述文本在祈使消息下照常回灌
+    const qMsgs = [{ _getType: () => 'human', content: '你能修改嵌套层级么' }]
+    const narrationTable = '**可以。** 结构如下:\n\n| 操作 | 说明 |\n|---|---|\n| **加深层级** | 用 write 增量 patch 写入 |\n\n层级不受深度限制,直接说,我照做。'
+    const qExempt = runFinishGates({ state: createGateChainState(), garbled: false, rounds: 0, finalContent: narrationTable, todos: [], isSubagent: false, turnUsage: usage, isWriteToolByName: isW, messages: qMsgs })
+    assert(qExempt === null, '✓ runFinishGates 问句豁免 → 问句消息下的说明性叙述不回灌(nested-demo 实测事故句)')
+    const impMsgs = [{ _getType: () => 'human', content: '修改嵌套层级,把商品列表包进新section' }]
+    const impFired = runFinishGates({ state: createGateChainState(), garbled: false, rounds: 0, finalContent: narrationTable, todos: [], isSubagent: false, turnUsage: usage, isWriteToolByName: isW, messages: impMsgs })
+    assert(impFired?.kind === 'feedback' && impFired.gate.stage === 'transitional_retry', '✓ runFinishGates 问句豁免边界 → 祈使消息下同款叙述照常回灌(豁免不弱化反幻觉)')
     // 预算池独立:transitional 耗尽不影响完结门禁
     const mixState = createGateChainState()
     mixState.transitionalRetries = 2

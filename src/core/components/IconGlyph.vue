@@ -23,4 +23,8 @@ const html = computed(() => (isHtml.value ? sanitizeIconHtml(props.icon) : ''))
 /* HTML 图标基线对齐(emoji 文本路径无包裹,维持原样式;svg/img 自带 width/height 或经 class 定制) */
 .icon-html { display: inline-flex; align-items: center; justify-content: center; }
 .icon-html :deep(svg), .icon-html :deep(img) { display: block; }
+/* emoji 文本图标字体栈 + 行高 1(minimal-demo 实测修,2026-09-02):宿主全局样式(如 font:14px/14px Arial)
+ * 级联进来时,无回退的纯 Arial 栈对 U+2795 等 emoji 码位渲染退化(实测 28 行像素只 2 行有墨,字形细线不可见)
+ * + 紧行高压缩字形。显式 emoji 字体链(苹果/视窗/Linux 顺序)+ line-height:1 让字形恒可渲染可占位 */
+.icon-text { line-height: 1; font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
 </style>

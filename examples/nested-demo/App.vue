@@ -189,7 +189,7 @@ onUnmounted(() => agent?.unmount())
 <style scoped>
 .layout { display: flex; width: 100vw; height: 100vh; overflow: hidden; }
 .pane-left { flex: 1; overflow: auto; background: var(--ark-bg); padding: 28px 32px; color: var(--ark-fg); }
-.pane-right { flex: 0 0 460px; border-left: 1px solid rgba(255, 255, 255, 0.06); background: var(--ark-panel); }
+.pane-right { flex: 0 0 460px; border-left: 1px solid rgba(255, 255, 255, 0.06); background: var(--ark-panel); ; min-width: 0; }
 .pane-right > :deep(.chat-dialog) { width: 100%; height: 100%; }
 
 h2 { font-size: 20px; margin: 0 0 12px; color: var(--ark-fg); }

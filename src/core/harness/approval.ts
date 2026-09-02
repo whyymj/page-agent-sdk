@@ -45,6 +45,7 @@ export function createApprovalMiddleware(opts: ApprovalOptions = {}): Middleware
           if (settled) return
           settled = true
           cleanup.forEach((fn) => fn())
+          ctx.logSink?.({ type: 'middleware', data: { stage: 'approval_resolved', toolName: ctx.name, approved: approved === false ? false : String(approved).slice(0, 60) } })
           if (approved === false) {
             // 兼容 vfs path / 数据 jsonPath / write 的 patch.jsonPath / patches[],让 LLM 知道被拒的精确范围
             const a = (ctx.args ?? {}) as Record<string, any>
@@ -96,6 +97,10 @@ export function createApprovalMiddleware(opts: ApprovalOptions = {}): Middleware
           resolve: finish,
           hold,
         })
+        // 挂起/收口双留痕(2026-09-02,nested-demo 诊断驱动):exportDiagnostics/debugLogs 此前只见
+        // tool_call 派发后无限 'running' 无 tool_result,无法判断「卡在等确认」—— 现在挂起即见
+        // approval_pending,用户裁决/自动拒/abort 后见 approval_resolved,时间线自解释(收口留痕在 finish 内)
+        ctx.logSink?.({ type: 'middleware', data: { stage: 'approval_pending', toolName: ctx.name } })
       })
     },
   }

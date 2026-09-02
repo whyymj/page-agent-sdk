@@ -44,8 +44,11 @@ export function detectActionImperative(text: string): boolean {
   const t = (text || '').trim()
   if (!t) return false
   if (NO_ACTION_RE.test(t)) return false
-  // 问句豁免:「做好了吗/改好了吗」类收尾问句是对状态的确认询问,非操作指令(首子句含「做/改」但语义是问)
-  if (/(吗|呢)[?？]?\s*$/.test(t) || /[?？]\s*$/.test(t)) return false
+  // 问句豁免:「做好了吗/改好了吗」类收尾问句是对状态的确认询问,非操作指令(首子句含「做/改」但语义是问)。
+  // 尾语气词补「么/嘛」(2026-09-02,nested-demo 实测):「你能修改嵌套层级么」修前被判祈使 →
+  // 零工具门禁接着 transitional 发难,问句答案被二次回灌。不用 detectQuestionIntent 整分类器 ——
+  // 查询词档会把「看看有哪些组件然后加一个」类复合祈使也豁免掉,零工具门禁漏拦
+  if (/(吗|呢|么|嘛)[?？]?\s*$/.test(t) || /[?？]\s*$/.test(t)) return false
   // 首子句(操作意图几乎总在开头;后文问句/闲聊不改变定性)。切分含全角标点(！？；，team-audit P2:
   // 只配半角时全角逗号常态输入下 16 字窗口退化为整句,只读反例误入 → 真写指令漏拦)
   const firstClause = t.split(/[。！？；，!?;,\n]/)[0] ?? t

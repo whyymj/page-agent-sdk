@@ -102,6 +102,10 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
             // flow-robustness P1#6:void fire-and-forget 补 catch → 失败 emit observable(原:二次 load/createSession
             // 拒绝变 unhandledRejection,UI 零反馈半切换态);API 侧 sdk.switchSession 仍正常 reject(集成方自处理)
             onNewSession: () => {
+              // 空会话去重(2026-09-02):当前会话零消息时点「新建」不再 createSession —— 空会话本身就是
+              // 「新会话」,重复点击只在 storage 堆积空记录。只在 UI 按钮层拦截;sdk.switchSession() API
+              // 语义不动(显式调用恒新建 —— mission/focus 等零消息运行态的重置依赖该契约)
+              if (!core.messages.length) return
               void ctx.runSerial(() => core.switchSession()).catch((e: unknown) =>
                 core.emit({ type: 'error', message: `新建会话失败:${e instanceof Error ? e.message : String(e)}`, severity: 'observable', code: 'SESSION_SWITCH_FAILED', context: { target: 'new' } } as any))
             },

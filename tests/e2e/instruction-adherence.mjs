@@ -251,9 +251,23 @@ export async function run() {
     )
     const sdk = createChatSdk({ ui: false, id: 'e2e-trans-nq', storage: false, llm, capabilities: CAPS })
     await sdk.mount()
-    const reply = await sdk.send('有什么方案?')
-    assert(llm.calls === 3, `✓ 非问句过渡表态 → 照常回灌 1 次(模型被调 3 次;实际 ${llm.calls})`)
+    const reply = await sdk.send('把标题改了,先给两套方案')
+    assert(llm.calls === 3, `✓ 非问句消息 + 非问句过渡表态 → 照常回灌 1 次(模型被调 3 次;实际 ${llm.calls})`)
     assert(/B 先确认/.test(reply), '✓ 回灌后正常收口')
+    sdk.unmount()
+  }
+  {
+    // 用户问句意图豁免(2026-09-02,nested-demo 实测):么尾问句 + 模型陈述式说明作答 → 零回灌
+    // (修前:叙述门禁只看模型收尾,问句答案被回灌逼成真改页面 —— 未被要求的操作)
+    const llm = stubModel(
+      { toolCalls: [{ name: 'inspect_env', args: {} }] },
+      { text: '**可以。** 层级不受深度限制,用 write 增量 patch 写入即可,不会整页重传。' },
+    )
+    const sdk = createChatSdk({ ui: false, id: 'e2e-trans-uq', storage: false, llm, capabilities: CAPS })
+    await sdk.mount()
+    const reply = await sdk.send('你能修改嵌套层级么')
+    assert(llm.calls === 2, `✓ 用户问句(么尾)→ 陈述式作答豁免零回灌(模型被调 2 次;实际 ${llm.calls})`)
+    assert(/可以/.test(reply), '✓ 说明性作答原样返回')
     sdk.unmount()
   }
 

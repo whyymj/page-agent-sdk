@@ -144,4 +144,35 @@ test.describe('nested-demo: 嵌套子路径写 + 确认 gating + checkpoint 回�
     const msgsAfter = await page.locator('.message-row').count()
     expect(msgsAfter).toBeLessThan(msgsBefore)
   })
+
+  test('宽内容不挤没左栏(contain: inline-size 宽度回归,2026-09-02)', async ({ page }) => {
+    // 修前:markdown 表格(nowrap 单元格)的 min-content 沿普通流穿透滚动容器,把固定宽
+    // pane-right(flex:0 0 460px)的 min-width:auto 地板抬到内容宽 → pane-left(flex:1)被挤没。
+    // 修后:.chat-dialog contain: inline-size 断固有尺寸链 + pane-right min-width:0 兜底
+    await mockLlm(page, [
+      { text: '| 操作 | 说明 | 示例 |\n|---|---|---|\n| **加深层级** | 给某区块加 children 嵌套子区块 | 把商品列表整块包进新 section 层级加一 |\n| **移动/重组** | 用 patch 的 move 把区块移到另一父节点 | 行动按钮从顶部 Banner 移到商品列表底部 |\n| **增删节点** | 任意层级插入或删除子区块 | 在热销专区下再加一个商品卡三号位占位 |' },
+      { text: '再看长单行:\n\n```json\n' + '{"id":"s-banner","style":{"background":"#1f4d3a","padding":32,"borderRadius":12},'.padEnd(600, 'x') + '}\n```' },
+    ])
+    const paneWidths = () =>
+      page.evaluate(`(function(){
+        var l = document.querySelector('.pane-left'), r = document.querySelector('.pane-right')
+        return { left: Math.round(l.getBoundingClientRect().width), right: Math.round(r.getBoundingClientRect().width) }
+      })()`)
+    const before = await paneWidths()
+    expect(before.right).toBe(460)  // 布局基线:固定 pane 460
+
+    await fillInput(page, '你能修改嵌套层级么')
+    await clickSend(page)
+    await page.waitForTimeout(1500)
+    const afterTable = await paneWidths()
+    expect(afterTable.right).toBe(460)  // 宽表格不抬 pane 宽
+    expect(afterTable.left).toBe(before.left)  // 左栏不被挤
+
+    await fillInput(page, '再来点长的')
+    await clickSend(page)
+    await page.waitForTimeout(1500)
+    const afterLongLine = await paneWidths()
+    expect(afterLongLine.right).toBe(460)  // 长单行代码块同不抬宽
+    expect(afterLongLine.left).toBe(before.left)
+  })
 })

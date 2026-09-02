@@ -51,6 +51,46 @@ test.describe('对话框图标自定义(dialog.icons)', () => {
     await expect(del).toHaveText('🗑️')
   })
 
+  test('emoji 文本图标渲染可见(字体栈回退修,2026-09-02)', async ({ page }) => {
+    await page.goto('/examples/minimal-demo/')
+    await page.waitForSelector('.chat-dialog')
+    // 修前:宿主全局 font:14px/14px Arial 级联进 SDK,无 emoji 回退的纯 Arial 栈对 U+2795 渲染退化
+    // (实测 28 行像素仅 2 行有墨,➕ 细线不可见);修后 .icon-text 显式 emoji 字体链 + line-height:1
+    const icon = page.locator('.chat-dialog [data-test="new-chat"] .icon-text')
+    await expect(icon).toHaveText('➕')
+    const shown = await icon.screenshot()
+    await icon.evaluate((el) => { (el as HTMLElement).style.opacity = '0' })
+    const hidden = await icon.screenshot()
+    expect(shown.equals(hidden)).toBe(false)  // 字形有像素贡献(修前两张截图逐字节相同)
+  })
+
+  test('空会话点「新建」不堆积空会话(2026-09-02)', async ({ page }) => {
+    await page.goto('/examples/minimal-demo/')
+    await page.waitForSelector('.chat-dialog')
+    const histCount = async (): Promise<number> => {
+      await page.click('.chat-dialog [data-test="toggle-history"]')
+      await page.waitForSelector('.chat-dialog .hist-item', { timeout: 5000 })
+      const n = await page.locator('.chat-dialog .hist-item').count()
+      await page.keyboard.press('Escape')  // 关面板(点外部 overlay 收起)
+      await page.mouse.click(10, 300)
+      return n
+    }
+    const initial = await histCount()
+
+    // 空会话连点「新建」×2:不 createSession(历史列表数不变,sessionId 不换)
+    await page.click('.chat-dialog [data-test="new-chat"]')
+    await page.click('.chat-dialog [data-test="new-chat"]')
+    expect(await histCount()).toBe(initial)
+
+    // 发一条消息后(非空)→ 新建照常落新会话
+    await mockLlm(page, [{ text: '第一条回复完成' }])
+    await fillInput(page, '第一条')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    await page.click('.chat-dialog [data-test="new-chat"]')
+    expect(await histCount()).toBeGreaterThan(initial)
+  })
+
   test('默认图标回归(未配 icons 的 demo 保持 🤖/💬)', async ({ page }) => {
     await page.goto('/examples/page-demo/')
     await page.waitForSelector('.chat-dialog')

@@ -62,7 +62,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     assert(mgr2.list().length === 0, '✓ 失败轮不入栈(下一轮正常数据照常快照)')
   }
 
-  // ===== D. transitional 门禁句尾问号豁免(与 completion/zero_tool 口径对齐)=====
+  // ===== D. transitional 门禁问句豁免(模型句尾问号 ∥ 用户问句意图,2026-09-02 扩)=====
   {
     const usage = { counts: {}, writePaths: [], failures: 0 }
     const msgs = [{ _getType: () => 'human', content: '有什么方案?' }]
@@ -70,9 +70,13 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 问句收尾(方案征询)→ 豁免
     const q = runFinishGates({ ...base, state: createGateChainState(), finalContent: '我先给出两套方案:A 直接改、B 先确认,你选哪套?' })
     assert(q === null, '✓ 问句收尾的方案征询 → transitional 豁免(全链放行,不与方案先行冲突)')
-    // 同句去问号 → 照常回灌(豁免不扩大)
-    const nq = runFinishGates({ ...base, state: createGateChainState(), finalContent: '我先给出两套方案:A 直接改、B 先确认,你选一套。' })
-    assert(nq?.kind === 'feedback' && nq.gate.stage === 'transitional_retry', '✓ 非问句过渡表态 → 照常回灌(豁免仅句尾问号口径)')
+    // 同句去问号 + 用户消息改祈使(非问句)→ 照常回灌(豁免不扩大;「有什么方案?」用户问句本身也豁免 —— 2026-09-02 扩)
+    const impBase = { ...base, messages: [{ _getType: () => 'human', content: '把首页改成暗色主题,先给方案' }] }
+    const nq = runFinishGates({ ...impBase, state: createGateChainState(), finalContent: '我先给出两套方案:A 直接改、B 先确认,你选一套。' })
+    assert(nq?.kind === 'feedback' && nq.gate.stage === 'transitional_retry', '✓ 非问句消息 + 非问句过渡表态 → 照常回灌(豁免=模型句尾问号 ∥ 用户问句)')
+    // 用户问句消息 + 模型非问句收尾 → 同样豁免(nested-demo 实测口径:问句下的纯文本作答合法)
+    const uq = runFinishGates({ ...base, state: createGateChainState(), finalContent: '可以先给出两套方案:A 直接改、B 先确认,你选一套。' })
+    assert(uq === null, '✓ 用户问句消息 → 模型陈述式作答豁免(问句意图豁免,nested-demo 实测)')
     // 全角问号同豁免
     const fq = runFinishGates({ ...base, state: createGateChainState(), finalContent: '我先看看环境,选哪套？' })
     assert(fq === null, '✓ 全角问号(？)同豁免')

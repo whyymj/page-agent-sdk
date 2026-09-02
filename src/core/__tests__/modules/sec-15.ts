@@ -24,6 +24,32 @@ export async function run(ctx: TestCtx): Promise<void> {
     await mw.wrapToolCall!(mkCtx('read', { path: 'a' }), async () => { nextCalled = true; return { content: 'ok', status: 'done' } })
     assert(nextCalled && !captured, '非确认工具 → 放行 next,不发 approval_request')
 
+    // 0. 挂起/收口双留痕(2026-09-02,nested-demo 诊断驱动):挂起即 approval_pending,resolve 后 approval_resolved
+    {
+      const logs: any[] = []
+      const mkLogCtx = (name: string, args: any): any => ({
+        name, args, signal: undefined,
+        emit: () => {},
+        logSink: (e: any) => logs.push(e.data),
+      })
+      let ev: any = null
+      const mwL = createApprovalMiddleware({ tools: ['write'] })
+      const pL = mwL.wrapToolCall!(mkLogCtx('write', { path: 'a' }), async () => ({ content: 'x', status: 'done' }))
+      await new Promise((r) => setTimeout(r, 10))
+      assert(logs.some((d) => d.stage === 'approval_pending' && d.toolName === 'write'), '✓ approval 挂起留痕 → approval_pending(writable 工具名)')
+      // 通过捕获事件 resolve……mkLogCtx 不捕获,改直连:重新构造带 emit 捕获的
+      logs.length = 0
+      const mwL2 = createApprovalMiddleware({ tools: ['write'] })
+      let ev2: any = null
+      const mkL2 = (name: string, args: any): any => ({ name, args, signal: undefined, emit: (e: any) => { ev2 = e }, logSink: (e: any) => logs.push(e.data) })
+      const p2L = mwL2.wrapToolCall!(mkL2('write', { path: 'b' }), async () => ({ content: 'y', status: 'done' }))
+      await new Promise((r) => setTimeout(r, 5))
+      ev2.resolve(false)
+      await p2L
+      assert(logs.some((d) => d.stage === 'approval_pending') && logs.some((d) => d.stage === 'approval_resolved' && d.approved === false), '✓ approval 收口留痕 → approval_resolved(拒绝记 approved=false)')
+      void pL
+    }
+
     // 2. 需确认 → 发 approval_request,resolve(true) → 执行 next
     captured = null
     let execResult = { content: 'written', status: 'done' as const }

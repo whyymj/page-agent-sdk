@@ -36,6 +36,7 @@ import {
   type TurnToolUsage,
 } from './actionGate'
 import { detectIncompleteFinish, buildGateFeedback } from './todos'
+import { detectQuestionIntent } from './intentGuard'
 import type { Todo } from './state'
 
 /** 门禁链可变预算状态(每 invoke 新建,与 turnUsage 同生命周期;引用传入内部自增) */
@@ -107,11 +108,23 @@ export function runFinishGates(i: RunFinishGatesInput): GateOutcome {
   const content = i.finalContent
   if (garbled) return null  // 乱码文本:门禁全跳(原文都不可信,回灌无意义)
 
+  // 最近一条 user 消息(问句豁免判定对象;后层 zero_tool/status_query 复用 —— 回灌也是 human,天然取最新指令)
+  let lastHumanContent = ''
+  for (let mi = i.messages.length - 1; mi >= 0; mi--) {
+    const m = i.messages[mi]
+    if (m._getType?.() === 'human') { lastHumanContent = String(m.content ?? ''); break }
+  }
+
   // 1. transitional:过程性收口(rounds>0 短文本过渡表态)/ 第 0 轮行动叙述(长文幻觉叙述)
   // flow-robustness P1#10:句尾问号豁免(与 completion/zero_tool 口径对齐)——「我先给出两套方案…你选哪套?」
   // 是方案征询(等用户裁决),命中 TRANSITIONAL_RE 回灌 ×2 会与方案先行(RHC)冲突
+  // 问句意图豁免(2026-09-02,nested-demo 真 LLM 实测):用户问「你能修改嵌套层级么」,模型用带表格的
+  // 说明文字正确作答,但表格含「write/写入」字样被判行动叙述 → 回灌逼模型真改页面(未被要求的操作)。
+  // 与 intentGuard 同口径(detectQuestionIntent):用户末条是问句时纯文本作答合法,叙述门禁让位;
+  // 形式问句实质请求(「能帮我改X吗」)由问句守卫文案的「除非明确要求操作」逃生门兜底
   const endsWithQuestion = /[?？]\s*$/.test(content.trim())
-  const transitional = !endsWithQuestion && (rounds > 0 ? detectTransitionalReply(content) : detectActionNarration(content))
+  const userAsksQuestion = !!lastHumanContent && detectQuestionIntent(lastHumanContent)
+  const transitional = !endsWithQuestion && !userAsksQuestion && (rounds > 0 ? detectTransitionalReply(content) : detectActionNarration(content))
   if (g.transitionalRetries < MAX_TRANSITIONAL_RETRIES && transitional) {
     g.transitionalRetries += 1
     return {
@@ -170,12 +183,6 @@ export function runFinishGates(i: RunFinishGatesInput): GateOutcome {
 
   // 主 agent 栈专属(以下两层:谎报检测,子栈不装)
   if (i.isSubagent) return null
-  // 最近一条 user 消息(zero_tool/status_query 的判定对象:门禁回灌也是 human 消息,天然取到最新指令)
-  let lastHumanContent = ''
-  for (let mi = i.messages.length - 1; mi >= 0; mi--) {
-    const m = i.messages[mi]
-    if (m._getType?.() === 'human') { lastHumanContent = String(m.content ?? ''); break }
-  }
 
   // 3. imperative-zero-tool-gate:操作祈使句 + 本轮零写/零委派 + 纯文本非问句收尾 → fact-sheet 对账回灌。
   //    出口①机械化:收口文本已含位置说明(mentionsLocation)不回灌。

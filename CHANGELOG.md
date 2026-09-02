@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+## [4.9.3] - 2026-09-02
+
+### Fixed
+
+- **宽内容把宿主布局挤没(nested-demo 实测,markdown 表格/长单行代码撑破固定宽 pane)**:消息里的宽内容(nowrap 表格单元格)的 min-content 会沿普通流**穿透滚动容器**向上抬宿主 flex 项的 `min-width: auto` 地板 —— `flex: 0 0 460px` 的 pane 被抬到内容宽(460→602),相邻 `flex: 1` 栏被挤没。修:`.chat-dialog { contain: inline-size }` 断固有尺寸链(inline 轴 only,不含 layout/paint 不建 containing block,fixed 定位子元素不受影响;不支持 contain 的老浏览器原行为无害降级)+ nested-demo/animation-demo 的 pane-right 补 `min-width: 0` 兜底;对话框宽度恒由宿主布局决定,内容再宽只在内部滚动/裁剪
+- **问句误判两连修(nested-demo 真 LLM 诊断驱动,「你能修改嵌套层级么」未被要求的页面改动)**:① 问句意图守卫正则漏「么/嘛」尾语气词与裸「能/可以/会/行」中信号(原只配「吗|呢」)→ 问句没 pin「先答勿做」;② 收口门禁族只看模型收尾文本 —— 模型用含「write/写入」字样的**说明表格**正确作答,被反幻觉叙述门禁(`detectActionNarration`)误判「光说不做」回灌,逼模型真改页面(最后一步被 approval 拦住才没改完)。修:B `QUESTION_TAIL_RE` 补 `么|嘛` + `QUESTION_WORD_RE` 补裸 `能|可以|会|行`(双条件收敛,祈使基线不命中);C gateChain transitional 门禁加**用户问句意图豁免**(`detectQuestionIntent(lastHumanContent)`,与问句守卫同口径;形式问句实质请求由守卫文案「除非明确要求操作」逃生门兜底)+ `detectActionImperative` 尾语气词豁免同步补 `么|嘛`(不用整分类器 —— 查询词档会把「看看有哪些组件然后加一个」类复合祈使也豁免,零工具门禁漏拦)
+- **空会话点「新建会话」不再堆积空记录(2026-09-02 用户反馈)**:当前会话零消息时 UI「新建会话」按钮直接 no-op —— 空会话本身就是「新会话」,重复点击只在 storage 堆积空会话记录 + 白换 sessionId。只在按钮层(mountChatDialog onNewSession)拦截;`sdk.switchSession()` API 语义不动(显式调用恒新建 —— 零消息运行态的 mission/focus 重置依赖该契约,存量 e2e 锁定)
+- **emoji 文本图标在宿主字体级联下渲染退化(minimal-demo「新建会话」➕ 不可见)**:宿主全局 `font: 14px/14px Arial` 级联进 SDK,无 emoji 回退的纯 Arial 栈对 U+2795 等码位渲染退化(像素级实测:28 行像素仅 2 行有墨,字形细线不可见)+ 紧行高压缩字形。修:`.icon-text` 显式 emoji 字体链(Apple/Segoe/Noto Color Emoji 顺序)+ `line-height: 1`,图标字形恒可渲染
+- **approval/humanConfirm 挂起零留痕(诊断盲区)**:`exportDiagnostics`/debugLogs 此前只见 tool_call 派发后无限 `running` 无 tool_result,无法判断「卡在等人工确认」(本次诊断靠 demo 配置反推)。修:挂起即 `approval_pending`、用户裁决/自动拒/abort 后 `approval_resolved`(带 toolName + approved/choice)双留痕进 debugLogs,时间线自解释
+
+### 测试
+
+- selftest 3283 → **3295**(+12:么/嘛尾问句七断言 + gateChain 问句豁免两态 + approval 挂起/收口留痕 + sec-112 用户问句豁免)
+- e2e 1048 → **1050**(+2:用户问句(么尾)陈述式作答零回灌 + 对照改祈使消息);browser 136 → **137**(+1:宽内容不挤没左栏 —— 表格/长单行两态 pane 宽恒 460)
+
 ## [4.9.2] - 2026-09-01
 
 ### Fixed

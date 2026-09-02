@@ -103,6 +103,7 @@ export function createHumanConfirmMiddleware(
           if (settled) return
           settled = true
           cleanup.forEach((fn) => fn())
+          ctx.logSink?.({ type: 'middleware', data: { stage: 'approval_resolved', toolName: ctx.name, choice: choice === false ? false : String(choice).slice(0, 60) } })
           // 3c 留痕回调:仅「options 方案被点选」记录(string choice 且本次征询带 options);
           // 允许(true)/拒绝(false)与非方案征询不记录(评审 2-5 口径:单组件删除确认不解除批量门禁武装)
           if (onResolved && typeof choice === 'string' && Array.isArray(ctx.args?.options) && ctx.args.options.length > 0) {
@@ -152,6 +153,8 @@ export function createHumanConfirmMiddleware(
         }
 
         ctx.emit?.({ type: 'approval_request', toolName: ctx.name, args: ctx.args, resolve: finish, hold })
+        // 挂起留痕(与 approval 中间件同款,2026-09-02):exportDiagnostics/debugLogs 可见「卡在等人工确认」
+        ctx.logSink?.({ type: 'middleware', data: { stage: 'approval_pending', toolName: ctx.name } })
       })
     },
   }

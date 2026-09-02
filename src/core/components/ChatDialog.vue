@@ -359,6 +359,12 @@ const drawerWidthStyle = computed(() => {
   flex-direction: column;
   width: 100%;
   height: 100%;
+  /* 宽度固有尺寸containment(nested-demo 实测修,2026-09-02):消息里的宽内容(markdown 表格 nowrap 单元格/
+   * 长单行代码)的 min-content 会沿普通流穿透滚动容器向上抬宿主 flex 项的 min-width:auto 地板,
+   * 把固定宽 pane(flex:0 0 Npx)撑大、挤没相邻栏。inline-size 只断 inline 轴固有尺寸链 ——
+   * 对话框宽度恒由宿主布局决定(100%/drawer 定宽),内容再宽也只在内部滚动/裁剪,不影响任何宿主布局。
+   * 不含 layout/paint,不建 containing block,fixed 定位子元素不受影响;不支持 contain 的老浏览器原行为(无害降级) */
+  contain: inline-size;
   border-radius: var(--cs-radius);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.08);
   background: var(--cs-bg);
