@@ -159,6 +159,7 @@ CDN 零配置：`<script src="https://unpkg.com/page-agent-sdk"></script>` → `
 | 🛡️ 压缩不丢信息 | 摘要内嵌当前 data 快照 + 保留指定工具结果；写返回附可操作 path；`systemPromptHelpers.reliableWriteRules` | 内置 |
 | 💰 上下文经济性 (3.10/3.11+) | 压缩触发成本上限 `promptSoftCapTokens`(窗口 ≥320K 默认 160K,大窗口模型不再烧几十万 token 才压缩;`inspect().compression` 反射)+ agent 预算自感知(轮次 70%/token 半程注入提示、连续写失败提醒、单轮预算 `roundTokenBudget` 友好收口)+ 工具描述瘦身(-40% prompt) | `contextOptions.promptSoftCapTokens`、`roundTokenBudget` |
 | 💾 持久化 | IndexedDB 多会话 + 配额淘汰 + 切换 | `storage` |
+| ⚡ 快捷指令 / 会话转移 (4.10+) | `dialog.quickActions` 输入区 chip 行一键发高频 prompt(不预填输入框,排队/门禁语义自动继承);`sdk.exportSession`/`importSession` 会话导出导入(可复全 JSON,副本语义不覆盖;`dialog.sessionTransfer:true` 历史面板入口);`dialog.onDropElement` 拖宿主元素进输入框回调(聚焦入口,映射归宿主);`approval.preview:true` write 审批确认条渲染结构化 old→new diff(校验失败批准前可见) | `dialog.{quickActions,sessionTransfer,onDropElement}` + `approval.preview` |
 | 🤖 无人值守自动化 (2.20+) | 资源预算闸（`tokenBudget`/`timeBudgetMs`）+ 致命错误自动恢复（`maxAutoRetries`：回退 checkpoint + 重试）+ 刷新续跑 + `sdk.batch(tasks)` 批处理 | `capabilities.automation` |
 | 📐 上下文健壮性 (2.30+) | 硬地板 `contextWindow ≥200K`(启动拒绝 <200K 模型如老款 `deepseek`/`gpt-4o`/`glm-4.5`);三道闸(压缩/trim/offload)阈值在 `setLlm` 后跟随实时窗口;遇 `context_length_exceeded` 反应性重试(激进 trim → 重试一次,不裸失败);vfs 大结果引用受保护免 LRU 淘汰 + OOM 1.5× 兜底;系统段预算(25% 窗口,丢弃非 pin 段保 base/mission/workingMemory) | 内置 |
 | 🎯 focus 自动切换 (2.31+) | AI 自动判断任务范围 → `set_focus`(局部任务)/ `clear_focus`(全局/完成);focus 跨刷新/切会话持久化(restore 经 `getSchemaAtPath` 校验 path,失效丢弃);子 agent 继承主焦点(三层收敛;主未聚焦 → 子无 focus 中间件,零回归) | `capabilities.focus` |

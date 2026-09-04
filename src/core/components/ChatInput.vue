@@ -4,21 +4,28 @@
  * inputText 绑 ctx.inputText(同一 ref,QueuedBar「修改」也写它);send/keydown 走 ctx;
  * loading/stop 走 ctx.chat;canUndo/undo 走 ctx;placeholder/inputRows 走 props(展示配置)。
  * 图片三入口:📎 按钮(file input)+ 拖拽(dragover/drop)+ 粘贴(paste clipboardData)→ ctx.addImageFiles 压缩闸。
+ * 快捷指令(ui-quick-wins Q1):quickActions chip 行,点击直接 sendMessage(prompt) 不预填输入框。
+ * 元素拖入(ui-quick-wins Q4):onDropElement 声明时 window 捕获 dragstart 记源元素,drop 无文件分流回调。
  */
-import { ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import IconGlyph from './IconGlyph.vue'
 import { useChatContext } from '../composables/chatContext'
+import type { QuickActionItem } from '../sdk/createChatSdk'
 
-defineProps<{
+const props = defineProps<{
   placeholder: string
   inputRows: number
   /** 挂起门禁期(确认/冲突条挂起):禁发送面(textarea/📎/发送),停止按钮不受影响 —— 死局修方案①,ChatDialog 计算 */
   gatePending?: boolean
+  /** 快捷指令 chip 行(点击直接发送 prompt;挂起门禁期/流中禁用) */
+  quickActions?: QuickActionItem[]
+  /** 拖拽宿主元素回调(与图片通道分流:files 优先;源元素经 window dragstart 捕获,须仍连文档) */
+  onDropElement?: (el: Element) => void
 }>()
 
 const ctx = useChatContext()
 const { inputText, send, keydown, canUndo, undo, focuses, removeFocus, focusChipClick, icons, messages: m } = ctx
-const { state, stop } = ctx.chat
+const { state, stop, sendMessage } = ctx.chat
 const { pendingImages, addImageFiles, removePendingImage, imageInputError, compressingImages } = ctx
 
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -33,7 +40,15 @@ const onFileChange = (e: Event): void => {
 const onDrop = (e: DragEvent): void => {
   dragOver.value = false
   const files = e.dataTransfer?.files
-  if (files?.length) void addImageFiles(files)
+  if (files?.length) {
+    void addImageFiles(files)
+    return
+  }
+  // 无文件 → 元素拖入分流(ui-quick-wins Q4):宿主声明回调 + 源元素仍连文档才回调;否则维持原状忽略
+  if (props.onDropElement && lastDraggedEl?.isConnected) {
+    props.onDropElement(lastDraggedEl)
+    lastDraggedEl = null
+  }
 }
 const onPaste = (e: ClipboardEvent): void => {
   const items = e.clipboardData?.items
@@ -47,6 +62,35 @@ const onPaste = (e: ClipboardEvent): void => {
   }
   if (files.length) void addImageFiles(files) // 图片粘贴不进 textarea(不触发默认文本插入行为即可,这里只加图)
 }
+
+/** 快捷指令点击:直接发送完整 prompt(不预填输入框);挂起门禁期/流中 no-op(与发送按钮 disabled 口径一致) */
+const runQuickAction = (qa: QuickActionItem): void => {
+  if (props.gatePending || state.loading) return
+  sendMessage(qa.prompt)
+}
+
+// 元素拖入源捕获(ui-quick-wins Q4):drop 的 event.target 是输入框自身拿不到被拖的源元素,
+// 故在 window 捕获阶段记 dragstart 目标;dragend/2s 超时清理(拖而不放不残留)。
+// 仅 onDropElement 声明时挂监听(零配置零开销);捕获不 preventDefault,不影响宿主既有拖拽行为。
+let lastDraggedEl: Element | null = null
+let dragCleanupTimer: ReturnType<typeof setTimeout> | null = null
+const onWindowDragStart = (e: Event): void => {
+  if (!(e.target instanceof Element)) return
+  lastDraggedEl = e.target
+  if (dragCleanupTimer) clearTimeout(dragCleanupTimer)
+  dragCleanupTimer = setTimeout(() => { lastDraggedEl = null }, 2000)
+}
+const onWindowDragEnd = (): void => { lastDraggedEl = null }
+onMounted(() => {
+  if (!props.onDropElement) return
+  window.addEventListener('dragstart', onWindowDragStart, true)
+  window.addEventListener('dragend', onWindowDragEnd, true)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('dragstart', onWindowDragStart, true)
+  window.removeEventListener('dragend', onWindowDragEnd, true)
+  if (dragCleanupTimer) clearTimeout(dragCleanupTimer)
+})
 </script>
 
 <template>
@@ -63,6 +107,19 @@ const onPaste = (e: ClipboardEvent): void => {
       <div v-if="dragOver" class="drop-hint">
         <svg class="drop-hint-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-4.35-4.35a1.5 1.5 0 0 0-2.12 0L5 20"/></svg>
         {{ m.imageDropHint }}
+      </div>
+      <!-- 快捷指令行(ui-quick-wins Q1):点击直接发送 prompt(title 提示全文);挂起门禁期/流中禁用 -->
+      <div v-if="quickActions?.length" class="quick-actions" data-test="quick-actions">
+        <button
+          v-for="(qa, i) in quickActions"
+          :key="i"
+          type="button"
+          class="quick-action-chip"
+          :disabled="gatePending || state.loading"
+          :data-test="`quick-action-${i}`"
+          :title="qa.prompt"
+          @click="runQuickAction(qa)"
+        >{{ qa.icon ? `${qa.icon} ` : '' }}{{ qa.label }}</button>
       </div>
       <!-- chip 区(流式布局,输入容器内顶部:聚焦标签 + 待发送图片 + 输入错误纵向堆叠,永不遮挡输入文字) -->
       <div v-if="focuses.length || pendingImages.length || imageInputError" class="chip-stack">
@@ -178,6 +235,18 @@ const onPaste = (e: ClipboardEvent): void => {
 }
 /* chip 区:容器内顶部流式堆叠(聚焦 → 图片 → 错误);自然撑高容器,输入文字永不被遮 */
 .chip-stack { display: flex; flex-direction: column; gap: 6px; padding: 8px 8px 0; }
+/* 快捷指令行(ui-quick-wins Q1):容器内顶部一行 chip,描边轻量形态与聚焦 chip 区分(可点击发起动作) */
+.quick-actions { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 8px 0; }
+.quick-action-chip {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 2px 10px; border: 1px solid rgba(var(--cs-primary-rgb, 31, 77, 58), 0.35); border-radius: 10px;
+  background: transparent; color: var(--cs-primary, #1f4d3a);
+  font-size: 11px; line-height: 1.6; cursor: pointer; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+.quick-action-chip:hover:not(:disabled) { background: rgba(var(--cs-primary-rgb, 31, 77, 58), 0.12); border-color: var(--cs-primary, #1f4d3a); }
+.quick-action-chip:disabled { opacity: 0.5; cursor: not-allowed; }
 .focus-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .focus-chip {
   display: inline-flex; align-items: center; gap: 2px;

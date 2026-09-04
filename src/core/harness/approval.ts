@@ -22,6 +22,28 @@ export interface ApprovalOptions {
   timeoutMs?: number
   /** 超时自动拒的留痕回调(observable 接线由调用方负责;abort/用户先收口不触发) */
   onAutoReject?: (info: { toolName: string; waitedMs: number }) => void
+  /**
+   * 审批 diff 预览计算(ui-quick-wins Q3;装配层注入,中间件保持通用):挂起前对需确认调用做只读预览,
+   * 结果附在 approval_request 载荷 preview 字段(UI 渲染 old→new)。返回 null/抛错 → 无 preview,不影响挂起流。
+   */
+  previewWrite?: (name: string, args: any) => ApprovalWritePreview | null
+}
+
+/** write 审批 diff 预览项(ui-quick-wins Q3):一个被写路径的 old→new 摘要 */
+export interface ApprovalPreviewItem {
+  op?: string
+  jsonPath?: string
+  oldSummary?: string
+  newSummary?: string
+}
+
+/** write 审批 diff 预览结果(ui-quick-wins Q3):三意图只读计算(dryRun 纯函数通道,不落盘) */
+export interface ApprovalWritePreview {
+  ok: boolean
+  intent: 'set' | 'edit' | 'delete'
+  items: ApprovalPreviewItem[]
+  /** ok=false 时的校验失败说明(预览即看到会被拒的原因) */
+  error?: string
 }
 
 export function createApprovalMiddleware(opts: ApprovalOptions = {}): Middleware {
@@ -89,6 +111,12 @@ export function createApprovalMiddleware(opts: ApprovalOptions = {}): Middleware
           hold = () => { held = true; clearTimeout(timer) } // 幂等:重复调/收口后调均无害
         }
 
+        // write 审批 diff 预览(ui-quick-wins Q3):只读计算挂载荷;失败静默省略(不影响挂起流)
+        let preview: ApprovalWritePreview | undefined
+        if (opts.previewWrite) {
+          try { preview = opts.previewWrite(ctx.name, ctx.args) ?? undefined } catch { preview = undefined }
+        }
+
         // 发确认请求事件:UI 调 resolve(approved) 收口;确认接管者调 hold() 取消无响应计时
         ctx.emit?.({
           type: 'approval_request',
@@ -96,7 +124,8 @@ export function createApprovalMiddleware(opts: ApprovalOptions = {}): Middleware
           args: ctx.args,
           resolve: finish,
           hold,
-        })
+          ...(preview ? { preview } : {}),
+        } as any)
         // 挂起/收口双留痕(2026-09-02,nested-demo 诊断驱动):exportDiagnostics/debugLogs 此前只见
         // tool_call 派发后无限 'running' 无 tool_result,无法判断「卡在等确认」—— 现在挂起即见
         // approval_pending,用户裁决/自动拒/abort 后见 approval_resolved,时间线自解释(收口留痕在 finish 内)

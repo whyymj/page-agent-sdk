@@ -19,7 +19,7 @@ import type { ChatSdkOptions, ChatSdk } from './sdk/createChatSdk'
 export function createChatSdk(options: ChatSdkOptions): ChatSdk {
   return _createChatSdk(options, mountChatDialog)
 }
-export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict, DialogConfig, I18nOptions, SystemAugmentContext } from './sdk/createChatSdk'
+export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict, DialogConfig, QuickActionItem, I18nOptions, SystemAugmentContext } from './sdk/createChatSdk'
 // system prompt 构建(refactor-module-extraction 从 createChatSdk 抽离;buildSystemPrompt 为纯函数,供 fix-introspection-consistency 的 getEffectiveSystemPrompt 复用)
 export { buildSystemPrompt, buildDataPrompt, DEFAULT_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT_EN } from './sdk/promptBuilder'
 export { resolveContextOptions, type ContextPreset, CONTEXT_PRESETS } from './sdk/contextPreset'
@@ -61,7 +61,7 @@ export type { ContextSnapshot, ContextCategory, AnalyzeContextOptions } from './
 export { createMemoryMiddleware } from './harness/memory'
 export type { MemorySource } from './harness/memory'
 export { createApprovalMiddleware } from './harness/approval'
-export type { ApprovalOptions } from './harness/approval'
+export type { ApprovalOptions, ApprovalWritePreview, ApprovalPreviewItem } from './harness/approval'
 export { createHumanConfirmTool, createHumanConfirmMiddleware, HUMAN_CONFIRM_TOOL_NAME, type PlanConfirmationRecord } from './harness/humanConfirm'
 export { measureWriteScale, type WriteScaleResult } from './harness/delegateNudge'
 export { createCheckpointManager, createCheckpointMiddleware } from './harness/checkpoint'

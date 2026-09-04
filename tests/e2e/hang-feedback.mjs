@@ -403,5 +403,36 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:hang-feedback] ui-quick-wins Q3:write 审批 diff 预览(approval.preview 载荷两态)')
+  {
+    const mk = async (preview) => {
+      const llm = stubModel(
+        { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'title', value: '新标题' } } }] },
+        { text: '(被拒后收口)' },
+      )
+      const approvals = []
+      const sdk = createChatSdk({
+        ui: false, id: preview ? 'e2e-preview-on' : 'e2e-preview-off', storage: false, llm, autoTitle: false,
+        data: { schema: z.object({ title: z.string() }), bind: { title: '旧标题' }, description: 'd' },
+        approval: { tools: ['write'], timeoutMs: 80, ...(preview ? { preview: true } : {}) },
+        capabilities: { ...CAPS, subagent: false },
+      })
+      await sdk.mount()
+      await sdk.stream([{ role: 'user', content: '改', timestamp: Date.now() }], (e) => {
+        if (e.type === 'approval_request') { approvals.push(e); e.resolve?.(false) }
+      }).catch(() => {})
+      sdk.unmount()
+      return approvals
+    }
+    const on = await mk(true)
+    assert(on.length >= 1, '✓ preview 开:write 挂起 approval(resolve(false) 拒绝收口)')
+    const p = on[0].preview
+    assert(!!p && p.ok === true && p.intent === 'edit', '✓ preview 开:approval_request 载荷附结构化预览(ok/intent)')
+    assert(p?.items?.[0]?.jsonPath === 'title' && p?.items?.[0]?.oldSummary === '"旧标题"' && p?.items?.[0]?.newSummary === '"新标题"',
+      '✓ preview 开:item 带 old→new(批准前即见改什么)')
+    const off = await mk(false)
+    assert(off.length >= 1 && off[0].preview === undefined, '✓ preview 默认关:载荷无 preview 字段(预览跑校验链有成本,显式开)')
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

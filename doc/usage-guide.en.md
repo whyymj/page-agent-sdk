@@ -1482,6 +1482,32 @@ createChatSdk({
 - headless custom UI: `sdk.send(text, { images })` (≤4); build image objects with the exported `compressImage(file)` (browser)
 - full runnable example: `examples/images-demo` (describe bound to an "analyze-form" vision endpoint: POST `{image: base64, mime}` → `{data:{description}}`; the endpoint URL lives only in the local `.env` as `VITE_VISION_URL`, with a `window.__VISION_CONFIG` runtime override for testing)
 
+### 6.18 Quick actions / session export-import / element drop-focus (4.10+ ui-quick-wins)
+
+Three lightweight UI-layer capabilities (UI increments + a few public APIs; zero core-contract changes):
+
+- **Quick actions `dialog.quickActions`**: a chip row above the input pins your host's high-frequency operations; a click sends the full prompt directly (**no pre-filling the input box**; queueing and pending-gate semantics are inherited automatically; chips disable while a gate is pending or a stream is running). `Array<{ label: string; prompt: string; icon?: string }>`; capped at 8 (warn + truncate), items missing label/prompt are filtered at assembly. `icon` is plain text/emoji (no HTML channel).
+- **Session export/import**: `sdk.exportSession(sessionId?)` → `{ formatVersion, exportedAt, sessionId, snapshot }` fully restorable JSON (the current session is flushed to the store first, so the export is exactly "what a restore would recover"; exporting another session reads its persisted state only); `sdk.importSession(jsonOrString)` → **always a new sessionId (copy semantics, never overwrites)**, does not auto-switch (call `switchSession` yourself). Rejections: bad JSON / unknown formatVersion / missing snapshot.messages / over 6MB; throws when storage is off. UI entry via `dialog.sessionTransfer: true`: "Export chat" (downloads .json) and "Import chat…" (file picker, imports and switches; a bad file emits observable `SESSION_IMPORT_FAILED` instead of crashing). Headless uses the plain API. **Note**: the export contains the full conversation in plaintext — the transfer channel (IM/cloud drive) is the integrator's responsibility.
+- **Element drop-focus `dialog.onDropElement?: (el: Element) => void`**: drag a **host page element into the chat input** to trigger the callback (the SDK is framework-agnostic and cannot know your component tree — map el→jsonPath→`sdk.setFocus` on the host side; an editor can reuse its canvas-selection mapping). Mechanism: a window-capture `dragstart` remembers the source element (the drop's event.target is the input itself, not the source); the callback fires only when the drop carries no files and the source element is still connected. **File drops keep priority** (existing image channel); zero overhead when undeclared.
+- The write-approval diff preview is documented alongside approval (`approval.preview: true`): a read-only dryRun preview attached to the `approval_request` payload, rendered by ApprovalBar as structured old→new; validation failures are visible before you approve.
+
+```ts
+createChatSdk({
+  // ...
+  dialog: {
+    quickActions: [
+      { label: 'Add a card', prompt: 'Add a card introducing the product highlights' },
+      { label: 'Recolor', prompt: 'Switch the primary color to a brighter green', icon: '🎨' },
+    ],
+    sessionTransfer: true, // export/import entries in the history panel (API works regardless)
+    onDropElement: (el) => {
+      const path = myElementToPath(el)       // your own element → jsonPath mapping
+      if (path) sdk.setFocus({ path, label: el.tagName })
+    },
+  },
+}).mount()
+```
+
 ## 9. Environment variables
 
 `.env` (VITE_ prefix):

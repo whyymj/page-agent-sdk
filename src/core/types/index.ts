@@ -116,7 +116,7 @@ export type StreamEvent =
   | { type: 'tool_call'; name: string; args: any; id?: string }
   | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error'; durationMs?: number; id?: string }
   | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result' | 'reasoning'; name: string; args?: any; result?: string; status?: 'done' | 'error'; delta?: string; /** 关联的主循环工具调用 id(并行双委派各归各的 UI step) */ toolCallId?: string }
-  | { type: 'approval_request'; toolName: string; args: any; resolve: (approved: boolean | string) => void; /** 响应方应答接管:调用的瞬间取消无响应自动拒计时(内置 UI 收到即调;无人调 → 超时自动拒;无计时器时缺省) */ hold?: () => void }
+  | { type: 'approval_request'; toolName: string; args: any; resolve: (approved: boolean | string) => void; /** 响应方应答接管:调用的瞬间取消无响应自动拒计时(内置 UI 收到即调;无人调 → 超时自动拒;无计时器时缺省) */ hold?: () => void; /** write 审批 diff 预览(ui-quick-wins Q3;approval.preview 开且 previewWrite 命中时附带;dryRun 纯函数只读计算不落盘) */ preview?: import('../harness/approval').ApprovalWritePreview }
   | { type: 'done'; content: string }
 
 /** 流式回调函数签名 */

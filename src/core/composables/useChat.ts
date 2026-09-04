@@ -33,6 +33,8 @@ export interface PendingApproval {
   toolName: string
   args: any
   resolve: (approved: boolean | string) => void
+  /** write 审批 diff 预览(ui-quick-wins Q3;approval_request 载荷透传;无则 undefined 走 args JSON 兜底呈现) */
+  preview?: import('../harness/approval').ApprovalWritePreview
 }
 
 export function useChat(
@@ -213,6 +215,7 @@ export function useChat(
                 toolName: event.toolName,
                 args: event.args,
                 resolve: event.resolve,
+                ...(event.preview ? { preview: event.preview } : {}),
               }
               break
             }

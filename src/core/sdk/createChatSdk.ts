@@ -328,6 +328,8 @@ export interface ChatSdkOptions {
     timeoutMs?: number
     /** 是否装载 request_human_confirmation 主动确认工具(传 approval 时默认 true;false 关闭) */
     humanConfirmTool?: boolean
+    /** write 审批 diff 预览(ui-quick-wins Q3;默认 false):挂起 write 时只读预览(dryRun 纯函数通道)附 approval_request 载荷,ApprovalBar 渲染 old→new;预览跑一次校验链有成本,args JSON 已有兜底呈现,故显式开 */
+    preview?: boolean
   }
   /**
    * 会话级 checkpoint 回滚(回到上次正常时)。默认关闭,不传 = 不装。
@@ -394,11 +396,27 @@ export interface I18nOptions {
   messages?: Partial<DialogMessages>
 }
 
+/** 快捷指令项(dialog.quickActions;ui-quick-wins Q1):点击即发送 prompt */
+export interface QuickActionItem {
+  /** 按钮文案(必填,空串项被过滤) */
+  label: string
+  /** 点击发送的完整消息(必填,空串项被过滤) */
+  prompt: string
+  /** 可选图标前缀(纯文本/emoji;不走 icons 的 HTML 净化通道,文案经模板插值恒转义) */
+  icon?: string
+}
+
 export interface DialogConfig {
   /** 对话框标题 */
   title?: string
   /** 输入框 placeholder */
   placeholder?: string
+  /** 快捷指令按钮(ui-quick-wins Q1):输入区顶部 chip 行,点击 = 直接发送 prompt(走既有 sendMessage 链,排队/挂起门禁语义自动继承,不预填输入框)。≤8 条超出 warn 截断;缺 label/prompt 的项过滤 */
+  quickActions?: QuickActionItem[]
+  /** 拖拽宿主元素入输入框回调(ui-quick-wins Q4 元素聚焦入口):window 捕获 dragstart 记源元素(drop 的 event.target 是输入框自身拿不到源),drop 无文件且源元素仍连文档时回调。映射 el→jsonPath→setFocus 归宿主(如复用画布选中联动)。未声明零开销 */
+  onDropElement?: (el: Element) => void
+  /** 会话导出/导入 UI 入口(ui-quick-wins Q2):历史面板底部显示「导出会话/导入会话…」(下载 .json / 选文件导入并切换)。默认 false 不显示;sdk.exportSession/importSession API 恒可用(与 UI 开关无关) */
+  sessionTransfer?: boolean
   /** 抽屉模式:ChatDialog 从右侧滑入 + 遮罩 + 关闭按钮(替代收起下箭头);点击遮罩/关闭按钮触发 unmount(带退出动画)。默认 false(inline 占满 container) */
   drawer?: boolean
   /** 抽屉模式宽度(像素或 CSS 字符串,如 500 / '500px' / '40vw');默认 420px。仅 drawer:true 生效。inline 模式宽度由 container 决定 */
@@ -455,6 +473,10 @@ export interface ChatSdk {
   readonly infoTick: Ref<number>
   /** 切换到指定会话(载入其上下文);不传 id 则新建。返回新会话 id。storage 未开启时抛错 */
   switchSession(sessionId?: string): Promise<string>
+  /** 导出会话快照(ui-quick-wins Q2):{ formatVersion, exportedAt, sessionId, snapshot } 可复全 JSON;跨会话导出传 sessionId;storage 未开启抛错 */
+  exportSession(sessionId?: string): Promise<Record<string, unknown>>
+  /** 导入会话快照副本(ui-quick-wins Q2):总是新 sessionId 不覆盖既有,不自动切换;坏 JSON/未知版本/缺 messages/超 6MB 抛错 */
+  importSession(data: unknown): Promise<{ sessionId: string }>
   /**
    * 新建/清空会话(同步;「清空对话」编程式入口,与 UI ChatHeader 清空同语义):
    * 中止在途流 + 收口挂起冲突(keep_external)+ 重置全部内存态(messages/vfs/todos/memory/mission/workingMemory/focus/checkpoint/debugLogs)
@@ -618,6 +640,10 @@ interface SendOptions {
 
 /** 内存中保留的对话轮数上限(超限压缩为摘要,防 OOM);0 表示关闭 */
 const DEFAULT_MAX_MEMORY_ROUNDS = 30
+/** 会话导出信封版本(ui-quick-wins Q2):不兼容的快照结构变更时递增,导入侧未知版本拒绝 */
+const SESSION_EXPORT_VERSION = 1
+/** 会话导入体积上限(字符数口径;≈6MB)—— 防误导入超大垃圾文件撑爆 store */
+const SESSION_EXPORT_MAX_BYTES = 6 * 1024 * 1024
 
 
 // ===== AgentCore:可被多实例共享的核心上下文 =====
@@ -696,6 +722,8 @@ export interface AgentCore {
   clearCodeReuse(): void
   send(message: string, options?: SendOptions): Promise<string>
   switchSession(sessionId?: string): Promise<string>
+  exportSession(sessionId?: string): Promise<Record<string, unknown>>
+  importSession(data: unknown): Promise<{ sessionId: string }>
   /** 新建/清空会话:重置内存态 + 新 sessionId + emit session_restored(onClear 调;P0-4 收编,原 onClear 闭包越界引用 buildCore 局部致 ReferenceError) */
   resetSession(): void
   stream: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>
@@ -1154,6 +1182,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const dataOpsController = useDataOps && finalDataConfig
     ? (dataOpsTools as StructuredToolInterface[] & { controller?: DataOpsController }).controller ?? null
     : null
+  // write 审批 diff 预览通道(ui-quick-wins Q3):createDataOps 闭包内只读预览函数(defineProperty 附挂,同 controller 模式)
+  const dataOpsPreviewWrite = useDataOps && finalDataConfig
+    ? (dataOpsTools as StructuredToolInterface[] & { previewWrite?: (args: Record<string, unknown>) => import('../harness/approval').ApprovalWritePreview }).previewWrite
+    : undefined
   // 受保护资源跨压缩 pin(augmentPrompt 每轮注入「受保护资源」段;资源清单天然跨压缩,无需持久化)
   const resourcesPinMw = (useDataOps && finalDataConfig?.resources?.length && dataOpsController?.getResourcesSnapshot)
     ? createResourcesPinMiddleware({
@@ -1369,7 +1401,15 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const permissionsMw = options.permissions?.length ? createPermissionsMiddleware(options.permissions) : undefined
   // timeoutMs 装配层归一:undefined → approvalNoRespMs(无 UI 默认 30s / UI 无限等);显式值(含 Infinity=0 无限等)原样透传
   const approvalMw = options.approval && (options.approval.tools !== undefined || !!options.approval.confirm)
-    ? createApprovalMiddleware({ ...options.approval, timeoutMs: options.approval.timeoutMs ?? approvalNoRespMs, onAutoReject: onApprovalAutoReject })
+    ? createApprovalMiddleware({
+        ...options.approval,
+        timeoutMs: options.approval.timeoutMs ?? approvalNoRespMs,
+        onAutoReject: onApprovalAutoReject,
+        // write 审批 diff 预览(ui-quick-wins Q3):approval.preview 显式开且 dataOps 就绪才注入;仅 write 工具名命中(中间件保持通用)
+        previewWrite: options.approval.preview === true && dataOpsPreviewWrite
+          ? (name: string, args: any) => (name === 'write' ? dataOpsPreviewWrite(args) : null)
+          : undefined,
+      })
     : undefined
   const childGuards: Middleware[] = [...(permissionsMw ? [permissionsMw] : []), ...(approvalMw ? [approvalMw] : []), ...(baselineGuardMw ? [baselineGuardMw] : [])]  // 序同主栈:permissions 外层 → approval 内层;baseline-guard 子栈自定义工具改 bind 同样刷基线
   const subagentMw =
@@ -2092,6 +2132,57 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       lastTitle = undefined; titleLLMDone = false   // 切会话:重置 title 缓存 + LLM 标志,新会话重新生成
       core.infoTick.value++ // 同 resetSession:focus 重置/快照恢复后 bump,防输入框聚焦 chip 残留旧焦点
       return target
+    },
+
+    /**
+     * 导出会话快照(ui-quick-wins Q2):可复全 JSON 信封 { formatVersion, exportedAt, sessionId, snapshot }。
+     * 当前会话先收口内存态(persistRuntime + flush)再 load —— 导出的就是「恢复时能得到的真值」(含 vfs/todos/mission/focus 等 kind);
+     * 跨会话导出(sessionId 显式指定)只读已持久态。storage 未开启抛错(与 switchSession 同口径;内存拼装会漏 vfs/checkpoints 非同步态,不做)。
+     */
+    async exportSession(sessionId?: string): Promise<Record<string, unknown>> {
+      if (!store) throw new Error('page-agent-sdk: storage 未开启,无法导出会话(请传 storage 选项)')
+      const sid = sessionId || core.sessionId
+      if (!sid) throw new Error('page-agent-sdk: 无可导出的会话')
+      if (sid === core.sessionId) {
+        // 当前会话:落最新内存态(不跑 trimMemoryMessages —— 导出不改变会话本身;与 afterRound 的差别仅此)
+        persistRuntime()
+        vfsStore.flush?.()
+        await store.flush()
+      }
+      const snap = await store.load(agentId, sid)
+      if (!snap) throw new Error(`page-agent-sdk: 会话 ${sid} 不存在或无可导出内容`)
+      return { formatVersion: SESSION_EXPORT_VERSION, exportedAt: new Date().toISOString(), sessionId: sid, snapshot: snap }
+    },
+
+    /**
+     * 导入会话快照副本(ui-quick-wins Q2):exportSession 产物 → 总是生成新 sessionId(副本语义,不覆盖既有会话),
+     * 导入后不自动切换(调用方自行 switchSession);返回 { sessionId }。
+     * 校验失败抛结构化错误:非 JSON / 未知 formatVersion / 缺 snapshot.messages / 超 6MB。
+     * snapshot 按 SNAPSHOT_KINDS 白名单落盘(store.save 逐 kind,未知键自动忽略)。
+     */
+    async importSession(data: unknown): Promise<{ sessionId: string }> {
+      if (!store) throw new Error('page-agent-sdk: storage 未开启,无法导入会话(请传 storage 选项)')
+      let obj: unknown = data
+      const rawLen = typeof data === 'string' ? data.length : 0
+      if (typeof data === 'string') {
+        try { obj = JSON.parse(data) } catch { throw new Error('page-agent-sdk: 导入内容不是合法 JSON') }
+      }
+      const envelope = (obj ?? {}) as { formatVersion?: unknown; snapshot?: unknown }
+      if (typeof obj !== 'object' || obj === null || envelope.formatVersion !== SESSION_EXPORT_VERSION) {
+        throw new Error(`page-agent-sdk: 未知会话导出格式(期望 formatVersion=${SESSION_EXPORT_VERSION};请用 sdk.exportSession 的产物)`)
+      }
+      const snap = envelope.snapshot
+      if (!snap || typeof snap !== 'object' || !Array.isArray((snap as SessionSnapshot).messages)) {
+        throw new Error('page-agent-sdk: 导入内容缺 snapshot.messages(非会话导出文件)')
+      }
+      const size = rawLen || JSON.stringify(envelope).length
+      if (size > SESSION_EXPORT_MAX_BYTES) {
+        throw new Error(`page-agent-sdk: 导入会话超过 ${Math.floor(SESSION_EXPORT_MAX_BYTES / 1024 / 1024)}MB 上限(${(size / 1024 / 1024).toFixed(1)}MB)`)
+      }
+      const sid = await store.createSession(agentId, options.session?.title)
+      await store.save(agentId, sid, snap as Partial<SessionSnapshot>)
+      void refreshSessions()
+      return { sessionId: sid }
     },
 
     /** 新建/清空会话:重置内存态(messages/vfs/todos/memory/mission/workingMemory/focus/checkpoint/debugLogs)+ 新 sessionId + emit session_restored。
@@ -3029,6 +3120,14 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
       core.abortAllActive() // P1-10 同根:切会话先中止在途流(防旧流写进新会话);approval/conflict 随 signal/既有逻辑收口
       return core.switchSession(...args)
     }),
+    /** 导出会话快照(ui-quick-wins Q2):{ formatVersion, exportedAt, sessionId, snapshot } 可复全 JSON;跨会话导出传 sessionId;storage 未开启抛错 */
+    async exportSession(sessionId?: string): Promise<Record<string, unknown>> {
+      return core.runSerial(() => core.exportSession(sessionId))
+    },
+    /** 导入会话快照副本(ui-quick-wins Q2):总是新 sessionId 不覆盖既有,不自动切换;坏 JSON/未知版本/缺 messages/超 6MB 抛错 */
+    async importSession(data: unknown): Promise<{ sessionId: string }> {
+      return core.runSerial(() => core.importSession(data))
+    },
     /** 新建/清空会话(P1-8/9 修复:storage 关也完整重置内存态 + 收口冲突);同步,委托 core.resetSession */
     resetSession: () => core.resetSession(),
     /** 历史会话列表(响应式;switchSession/deleteSession/onClear/init 后自动 refresh;直接消费无需手动 listSessions/refresh/hook) */

@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+## [4.10.0] - 2026-09-04
+
+### Added
+
+- **快捷指令 `dialog.quickActions`(ui-quick-wins Q1)**:输入区顶部 chip 行固化宿主高频操作(「换个配色」「加个 banner」),点击 = 直接发送完整 prompt(走既有 sendMessage 链,排队/挂起门禁语义自动继承,不预填输入框;挂起门禁期/流中禁用)。`Array<{ label, prompt, icon? }>` ≤8 条超出 warn 截断,缺 label/prompt 的项装配期过滤(`normalizeQuickActions` 纯函数);新导出 `QuickActionItem` 类型
+- **会话导出/导入 `sdk.exportSession` / `sdk.importSession`(ui-quick-wins Q2)**:可复全会话快照 JSON(`{ formatVersion, exportedAt, sessionId, snapshot }`,含 vfs/todos/mission/focus 等 kind)—— 当前会话导出先收口内存态(persistRuntime + flush)再 load,导出的就是「恢复时能得到的真值」;导入**总是生成新 sessionId(副本语义,不覆盖既有)**,导入后不自动切换。校验四态拒绝(坏 JSON / 未知 formatVersion / 缺 snapshot.messages / 超 6MB)+ storage 未开启抛错(与 switchSession 同口径)。UI 入口 `dialog.sessionTransfer: true` 显式开:历史面板底部「导出会话」(下载 .json)/「导入会话…」(选文件导入并切换;坏文件 observable `SESSION_IMPORT_FAILED` 不炸);新 i18n 键 `exportSession`/`importSession` zh+en
+- **write 审批 diff 预览 `approval.preview`(ui-quick-wins Q3;默认 false)**:write 挂起审批时自动跑只读预览(dryRun 纯函数通道:applyPatchesToBind/commitSetToBind 的 dryRun 形态 + delete clone 推演,不碰快照/基线/mutex),结构化 old→new(逐 patch / set 逐变更顶层键,摘要截 200 字符,>20 条折叠)附 `approval_request` 载荷 `preview` 字段,ApprovalBar 渲染(op 徽标 + path + 删除线旧值→新值);**校验失败也可见**(ok=false + error,批准前即知会被拒的原因)。createDataOps 附挂内部 `previewWrite`(defineProperty 同 controller 模式)经装配层闭包透传给 approval 中间件(中间件保持通用 `previewWrite?: (name, args) => ApprovalWritePreview | null`);新导出 `ApprovalWritePreview`/`ApprovalPreviewItem` 类型
+- **拖拽宿主元素聚焦入口 `dialog.onDropElement`(ui-quick-wins Q4)**:window 捕获 `dragstart` 记源元素(drop 的 event.target 是输入框自身拿不到源),drop 无文件且源元素仍连文档 → 回调 `(el: Element) => void`;映射 el→jsonPath→setFocus 归宿主(编辑器可复用画布选中联动映射)。files 优先走既有图片通道;未声明零开销(不挂监听);dragend/2s 超时清理
+
+### 测试
+
+- selftest 3295 → **3323**(+28:sec-117 quickActions 归一化 12 + sec-118 previewWrite 三意图/只读契约 16)
+- e2e 1050 → **1066**(+16:会话导出导入往返/校验四态/storage 未开启 12 + approval preview 载荷两态 4);browser 139 → **150**(+11:快捷指令 chips/点击发送/默认零渲染 + drop 分流三态 + sessionTransfer 入口/下载/导入恢复/坏文件不炸 + ApprovalBar 预览渲染/默认关)
+
 ## [4.9.3] - 2026-09-02
 
 ### Fixed

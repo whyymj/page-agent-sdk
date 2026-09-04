@@ -15,6 +15,7 @@ import type { ConflictResolution } from '../tools/dataOps'
 import type { Focus } from '../harness/state'
 import type { DialogMountContext, DialogController } from './createChatSdk'
 import type { SkillSpec } from '../harness/skills'
+import { normalizeQuickActions } from './optionsResolver'
 
 /**
  * 渲染 ChatDialog 到 ctx.el,返回 UI 生命周期控制器。
@@ -84,6 +85,8 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
           icons: dialogCfg.icons,
           headerLabels: dialogCfg.headerLabels !== false,
           toolStepView: dialogCfg.toolStepView,  // 工具步骤展示映射(纯展示层;MessageSteps 步骤行自定义名称/内容)
+          quickActions: normalizeQuickActions(dialogCfg.quickActions),  // 快捷指令(ui-quick-wins Q1):装配期归一化(过滤/截断),组件零防御
+          onDropElement: dialogCfg.onDropElement,  // 拖拽宿主元素聚焦入口(ui-quick-wins Q4):事件出口,映射归宿主
           i18n: ctx.i18n,
           // 上下文聚焦(指定组件精修;core.getFocus 返 undefined 时 chip 不显示;capabilities.focus:false → no-op chip 隐藏)
           getFocus: () => core.getFocus(),
@@ -114,6 +117,30 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
                 core.emit({ type: 'error', message: `切换会话失败(${id}):${e instanceof Error ? e.message : String(e)}`, severity: 'observable', code: 'SESSION_SWITCH_FAILED', context: { target: id } } as any))
             },
             onRemoveSession: async (id: string) => { if (id !== core.sessionId) { await core.store!.deleteSession(core.agentId, id); await core.refreshSessions() } },
+            // 会话导出/导入(ui-quick-wins Q2;dialog.sessionTransfer 显式开才注入,API 恒可用):
+            // 导出 = core.exportSession → 下载 .json(文件名带会话 id 尾 6 位);导入 = 读文件 → importSession 副本落库 → 切换过去
+            ...(dialogCfg.sessionTransfer === true ? {
+              onExportSession: async (): Promise<string> => {
+                const envelope = await core.exportSession()
+                const json = JSON.stringify(envelope, null, 2)
+                const sid = String(envelope.sessionId ?? '')
+                const a = document.createElement('a')
+                a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
+                a.download = `chat-session-${sid.slice(-6) || 'export'}.json`
+                a.click()
+                setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+                return json
+              },
+              onImportSession: async (file: File): Promise<void> => {
+                try {
+                  const text = await file.text()
+                  const { sessionId } = await core.importSession(text)
+                  await ctx.runSerial(() => core.switchSession(sessionId))
+                } catch (e) {
+                  core.emit({ type: 'error', message: `导入会话失败:${e instanceof Error ? e.message : String(e)}`, severity: 'observable', code: 'SESSION_IMPORT_FAILED', context: { file: file.name } } as any)
+                }
+              },
+            } : {}),
           } : {}),
         })
     },

@@ -30,6 +30,7 @@
   - [6.14 上下文聚焦 Focus(指定组件精修)](#614-上下文聚焦-focus指定组件精修focus-context)
   - [6.15 UI 定制与国际化(图标 / 主题 / 语言 / 文案覆盖)](#615-ui-定制与国际化图标--主题--语言--文案覆盖317321)
   - [6.17 图片输入(多模态直发 / 识图转述旁路)](#617-图片输入多模态直发--识图转述旁路)
+  - [6.18 快捷指令 / 会话导出导入 / 元素拖入聚焦](#618-快捷指令--会话导出导入--元素拖入聚焦410-ui-quick-wins)
 - [7. 高级:自定义中间件](#7-高级自定义中间件)
 - [8. 命令式 API](#8-命令式-api)
 - [9. 框架无关 / CDN 集成](#9-框架无关--cdn-集成)
@@ -1239,6 +1240,7 @@ createChatSdk({
     // confirm: (name, args) => args?.path?.startsWith('Editor.'),  // 自定义判定(优先于 tools)
     // timeoutMs: 30000,  // 无响应自动拒(4.1+ 默认 30000;响应方调事件 hold() 接管后不限时;Infinity/负数=不超时)
     // humanConfirmTool: false,  // 传 approval 时亦可关主动侧(等价于顶层 humanConfirm:false)
+    // preview: true,  // write 审批 diff 预览(4.10+,默认 false):确认条渲染结构化 old→new,见下方说明
   },
 })
 ```
@@ -1252,6 +1254,8 @@ createChatSdk({
 **主动征询示例**:LLM 调 `request_human_confirmation({ question: '主标题改红色还是蓝色?', options: ['红色','蓝色'], recommendation: '红色更醒目' })`,UI 弹出问题 + 两个选项按钮,用户点「红色」→ 工具返回 `用户选择了:红色` → LLM 据此执行。
 
 **abort 联动**:用户「停止生成」或进入时 signal 已 abort → 自动拒绝(防永久挂起);`timeoutMs` 超时也自动拒绝。
+
+**write 审批 diff 预览**(`approval.preview: true`,4.10+,默认 false):write 挂起审批时自动跑一次**只读预览**(dryRun 纯函数通道,不碰快照/乐观锁基线),确认条从「args 原文 JSON」升级为**结构化 old→new**(逐 patch / set 逐变更顶层键;op 徽标 + path + 删除线旧值→新值,摘要截 200 字符,>20 条折叠);**校验失败也可见**——预览跑完整校验链(schema/path/保护字段),`ok=false + error` 让用户批准前即知这次写会不会被拒。默认关的原因:预览跑一次校验链有成本,且 args JSON 已有兜底呈现;编辑器类宿主建议开。载荷形态 `approval_request` 事件 `preview?: ApprovalWritePreview` 字段(headless 自建 UI 同样可消费)。
 
 **headless 自建 UI**(`ui:false`):自监听 `approval_request` 事件,事件对象含 `{ toolName, args, resolve }`,自建确认框后调 `resolve(true/false/方案)` 收口。
 
@@ -2084,6 +2088,32 @@ createChatSdk({
 - describe 转述随消息持久化,重发/会话恢复不重复转述
 - headless 自建 UI:`sdk.send(text, { images })`(≤4 张);图片对象用导出的 `compressImage(file)` 制备(浏览器)
 - 完整可跑示例:`examples/images-demo`(describe 绑「analyze 形态」识图端点:POST `{image: base64, mime}` → `{data:{description}}`;端点地址只进本地 `.env` 的 `VITE_VISION_URL`,`window.__VISION_CONFIG` 运行时覆盖联调)
+
+### 6.18 快捷指令 / 会话导出导入 / 元素拖入聚焦(4.10+ ui-quick-wins)
+
+三个 UI 层轻能力,全部「UI 增量 + 少量公开 API」,零核心契约变化:
+
+- **快捷指令 `dialog.quickActions`**:输入区顶部 chip 行固化高频操作,点击 = 直接发送完整 prompt(**不预填输入框**;排队/挂起门禁语义自动继承;挂起门禁期/流中禁用)。`Array<{ label: string; prompt: string; icon?: string }>`;≤8 条超出 warn 截断,缺 label/prompt 的项装配期过滤;icon 为纯文本/emoji 前缀(不走 HTML 净化通道)。`title` 悬浮显示 prompt 全文。
+- **会话导出/导入**:`sdk.exportSession(sessionId?)` → `{ formatVersion, exportedAt, sessionId, snapshot }` 可复全 JSON(当前会话先收口内存态再读,导出的就是「恢复时能得到的真值」;跨会话导出传 sessionId 只读已持久态);`sdk.importSession(jsonOrString)` → **总是新 sessionId(副本语义,不覆盖既有)**,导入后不自动切换(自行 `switchSession`);校验拒绝:坏 JSON / 未知 formatVersion / 缺 snapshot.messages / 超 6MB;storage 未开启抛错。UI 入口 `dialog.sessionTransfer: true`:历史面板底部「导出会话」(下载 .json)/「导入会话…」(选文件导入并自动切换;坏文件 observable `SESSION_IMPORT_FAILED` 不炸)。headless 纯 API 恒可用。**注意**:导出含完整对话明文,流转渠道(IM/网盘)由集成方自担。
+- **元素拖入聚焦 `dialog.onDropElement?: (el: Element) => void`**:把宿主页面元素**拖进聊天输入框**触发回调(SDK 框架无关不认宿主组件树,映射 el→jsonPath→`sdk.setFocus` 归宿主 —— 编辑器可复用画布选中联动的同一映射函数)。机制:window 捕获 `dragstart` 记源元素(drop 的 event.target 是输入框自身拿不到源),drop 无文件且源元素仍连文档才回调;**文件拖入优先走既有图片通道**;未声明零开销(不挂监听)。
+- write 审批 diff 预览见 6.x approval 段(`approval.preview: true`)。
+
+```ts
+createChatSdk({
+  // ...
+  dialog: {
+    quickActions: [
+      { label: '加一张卡片', prompt: '帮我加一张介绍产品优点的卡片' },
+      { label: '换个配色', prompt: '把主色换成更明快的绿色', icon: '🎨' },
+    ],
+    sessionTransfer: true, // 历史面板显示导出/导入入口(API 不依赖此开关)
+    onDropElement: (el) => {
+      const path = myElementToPath(el)       // 宿主自己的元素 → jsonPath 映射
+      if (path) sdk.setFocus({ path, label: el.tagName })
+    },
+  },
+}).mount()
+```
 
 ## 9. 框架无关 / CDN 集成
 

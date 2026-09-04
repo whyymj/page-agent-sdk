@@ -32,6 +32,10 @@ const props = defineProps<{
   onNewSession?: () => void
   onOpenSession?: (sessionId: string) => void
   onRemoveSession?: (sessionId: string) => void
+  /** 导出当前会话(ui-quick-wins Q2;dialog.sessionTransfer 开启时 mountChatDialog 注入;返回 JSON 字符串由容器侧下载) */
+  onExportSession?: () => Promise<string>
+  /** 导入会话文件(ui-quick-wins Q2;file 由隐藏 input 选取;容器侧 importSession + switchSession) */
+  onImportSession?: (file: File) => Promise<void>
 }>()
 
 defineEmits<{ (e: 'close'): void }>()
@@ -61,6 +65,14 @@ function handleNewSession(): void {
 function handleOpenSession(id: string): void {
   reset()
   props.onOpenSession?.(id)
+}
+
+/** 会话导入文件选取(隐藏 input change;选完即清 value 防同名文件二次选取不触发) */
+const importFileInput = ref<HTMLInputElement | null>(null)
+function handleImportFile(e: Event): void {
+  const f = (e.target as HTMLInputElement).files?.[0]
+  ;(e.target as HTMLInputElement).value = ''
+  if (f) void props.onImportSession?.(f)
 }
 </script>
 
@@ -106,6 +118,18 @@ function handleOpenSession(id: string): void {
               <span v-else>✕</span>
             </button>
           </div>
+        </div>
+        <!-- 会话导出/导入(ui-quick-wins Q2;dialog.sessionTransfer 开启才注入回调):面板底部两行入口 -->
+        <div v-if="onExportSession || onImportSession" class="hist-transfer">
+          <button v-if="onExportSession" class="hist-transfer-btn" data-test="export-session" @click.stop="void onExportSession()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15V3"></path><path d="M7 10l5 5 5-5"></path><path d="M4 21h16"></path></svg>
+            <span>{{ m.exportSession }}</span>
+          </button>
+          <button v-if="onImportSession" class="hist-transfer-btn" data-test="import-session" @click.stop="importFileInput?.click()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M4 21h16"></path></svg>
+            <span>{{ m.importSession }}</span>
+          </button>
+          <input ref="importFileInput" type="file" accept="application/json,.json" hidden @change="handleImportFile" />
         </div>
       </div>
       <!-- 更多(调试 / skill / 清空 合并下拉) -->
@@ -225,6 +249,13 @@ function handleOpenSession(id: string): void {
 }
 .hist-item { padding: 8px 10px; border-radius: 6px; cursor: pointer; }
 .hist-item:hover { background: var(--cs-surface-hover, rgba(0, 0, 0, 0.06)); }
+/* 会话导出/导入入口(ui-quick-wins Q2):面板底部两行,与历史条目区分(顶部分隔线) */
+.hist-transfer { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--cs-surface-border, rgba(0, 0, 0, 0.08)); }
+.hist-transfer-btn {
+  display: flex; align-items: center; gap: 6px; padding: 6px 10px; border: none; border-radius: 6px;
+  background: transparent; color: var(--cs-bg-text); font-size: 12px; cursor: pointer; text-align: left;
+}
+.hist-transfer-btn:hover { background: var(--cs-surface-hover, rgba(0, 0, 0, 0.06)); }
 .hist-item.active { background: var(--cs-hist-active-bg, rgba(var(--cs-primary-rgb, 31, 77, 58), 0.15)); border-left: var(--cs-hist-active-border, 2px solid var(--cs-primary, #1f4d3a)); color: var(--cs-hist-active-text, inherit); }
 .hist-title { font-size: 13px; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hist-meta { display: flex; justify-content: space-between; align-items: center; font-size: 11px; opacity: 0.6; }

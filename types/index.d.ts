@@ -1007,6 +1007,28 @@ export interface ApprovalOptions {
   onAutoReject?: (info: { toolName: string; waitedMs: number }) => void;
   /** 是否装载 request_human_confirmation 主动确认工具(传 approval 时默认 true;false 关闭) */
   humanConfirmTool?: boolean;
+  /**
+   * write 审批 diff 预览计算(ui-quick-wins Q3;装配层注入,中间件保持通用):挂起前对需确认调用做只读预览,
+   * 结果附在 approval_request 载荷 preview 字段(UI 渲染 old→new)。返回 null/抛错 → 无 preview,不影响挂起流。
+   */
+  previewWrite?: (name: string, args: any) => ApprovalWritePreview | null;
+  /** write 审批 diff 预览(ui-quick-wins Q3;默认 false):挂起 write 时只读预览(dryRun 纯函数通道)附 approval_request 载荷,ApprovalBar 渲染 old→new;预览跑一次校验链有成本,args JSON 已有兜底呈现,故显式开 */
+  preview?: boolean;
+}
+/** write 审批 diff 预览项(ui-quick-wins Q3):一个被写路径的 old→new 摘要 */
+export interface ApprovalPreviewItem {
+  op?: string;
+  jsonPath?: string;
+  oldSummary?: string;
+  newSummary?: string;
+}
+/** write 审批 diff 预览结果(ui-quick-wins Q3):三意图只读计算(dryRun 纯函数通道,不落盘) */
+export interface ApprovalWritePreview {
+  ok: boolean;
+  intent: 'set' | 'edit' | 'delete';
+  items: ApprovalPreviewItem[];
+  /** ok=false 时的校验失败说明(预览即看到会被拒的原因) */
+  error?: string;
 }
 export declare function createApprovalMiddleware(opts?: ApprovalOptions): any;
 export declare function createHumanConfirmTool(): any;
@@ -1293,6 +1315,12 @@ export interface ChatSdkOptions {
 export interface DialogConfig {
   title?: string;
   placeholder?: string;
+  /** 快捷指令按钮(ui-quick-wins Q1):输入区顶部 chip 行,点击 = 直接发送 prompt(走既有 sendMessage 链,排队/挂起门禁语义自动继承,不预填输入框)。≤8 条超出 warn 截断;缺 label/prompt 的项过滤 */
+  quickActions?: QuickActionItem[];
+  /** 拖拽宿主元素入输入框回调(ui-quick-wins Q4 元素聚焦入口):window 捕获 dragstart 记源元素(drop 的 event.target 是输入框自身拿不到源),drop 无文件且源元素仍连文档时回调。映射 el→jsonPath→setFocus 归宿主。未声明零开销 */
+  onDropElement?: (el: Element) => void;
+  /** 会话导出/导入 UI 入口(ui-quick-wins Q2):历史面板底部显示「导出会话/导入会话…」(下载 .json / 选文件导入并切换)。默认 false 不显示;sdk.exportSession/importSession API 恒可用(与 UI 开关无关) */
+  sessionTransfer?: boolean;
   drawer?: boolean;
   drawerWidth?: number | string;
   drawerHidden?: boolean;
@@ -1314,6 +1342,16 @@ export interface DialogConfig {
    * 不影响发给 LLM 的工具名/协议/校验;子 agent 步骤(children)同样应用。
    */
   toolStepView?: ToolStepViewFn;
+}
+
+/** 快捷指令项(dialog.quickActions;ui-quick-wins Q1):点击即发送 prompt */
+export interface QuickActionItem {
+  /** 按钮文案(必填,空串项被过滤) */
+  label: string;
+  /** 点击发送的完整消息(必填,空串项被过滤) */
+  prompt: string;
+  /** 可选图标前缀(纯文本/emoji;不走 icons 的 HTML 净化通道,文案经模板插值恒转义) */
+  icon?: string;
 }
 /**
  * 国际化配置(顶层 i18n;3.22 起,原 dialog.locale/dialog.messages 两键移入此处合并)。
@@ -1373,6 +1411,10 @@ export interface ChatSdk {
   show(): void;
   send(message: string, options?: { mission?: Partial<Mission>; maxAutoRetries?: number; /** 中断信号(fix-hang-and-feedback P1-4) */ signal?: AbortSignal; /** 附带图片(image-input-vision;≤4 张,压缩后 AgentImage;需主模型多模态 vision 或配置 images.describe,否则 send 拒绝并 emit 结构化错误 —— 不静默丢图) */ images?: AgentImage[] }): Promise<string>;
   switchSession(sessionId?: string): Promise<string>;
+  /** 导出会话快照(ui-quick-wins Q2):可复全 JSON 信封 { formatVersion, exportedAt, sessionId, snapshot }(含 vfs/todos/mission/focus 等 kind)。当前会话先收口内存态再读,导出的就是「恢复时能得到的真值」;跨会话导出传 sessionId 只读已持久态。storage 未开启抛错 */
+  exportSession(sessionId?: string): Promise<Record<string, unknown>>;
+  /** 导入会话快照副本(ui-quick-wins Q2):exportSession 产物 → 总是生成新 sessionId(副本语义,不覆盖既有会话),导入后不自动切换(调用方自行 switchSession)。坏 JSON / 未知 formatVersion / 缺 snapshot.messages / 超 6MB 抛错;storage 未开启抛错 */
+  importSession(data: unknown): Promise<{ sessionId: string }>;
   /**
    * 新建/清空会话(同步;「清空对话」编程式入口,与 UI ChatHeader 清空同语义):
    * 中止在途流 + 收口挂起冲突(keep_external)+ 重置全部内存态(messages/vfs/todos/memory/mission/workingMemory/focus/checkpoint/debugLogs)

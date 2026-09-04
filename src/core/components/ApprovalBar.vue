@@ -36,6 +36,10 @@ const approvalArgsPreview = computed(() => {
     return String(a)
   }
 })
+/** write 审批 diff 预览项(ui-quick-wins Q3;approval.preview 开才有):>20 条折叠只显示计数 */
+const PREVIEW_MAX_ITEMS = 20
+const previewItems = computed(() => pendingApproval.value?.preview?.items ?? [])
+const previewHasMore = computed(() => previewItems.value.length > PREVIEW_MAX_ITEMS)
 </script>
 
 <template>
@@ -68,6 +72,16 @@ const approvalArgsPreview = computed(() => {
         </button>
       </div>
       <pre v-if="approvalArgsPreview && approvalArgsExpanded" class="approval-args">{{ approvalArgsPreview }}</pre>
+      <!-- write 审批 diff 预览(ui-quick-wins Q3):结构化 old→new(优于 args 原文 JSON;校验失败态显示 error,批准前即见会被拒的原因) -->
+      <div v-if="previewItems.length" class="approval-preview" data-test="approval-preview">
+        <div v-if="pendingApproval.preview && !pendingApproval.preview.ok" class="preview-error" data-test="preview-error">⚠ {{ pendingApproval.preview.error }}</div>
+        <div v-for="(it, i) in previewItems.slice(0, PREVIEW_MAX_ITEMS)" :key="i" class="preview-item" :data-test="`preview-item-${i}`">
+          <span class="preview-op">{{ it.op || 'set' }}</span>
+          <code class="preview-path">{{ it.jsonPath || '(主数据整体)' }}</code>
+          <span class="preview-diff"><span class="preview-old">{{ it.oldSummary ?? '—' }}</span><span class="preview-arrow"> → </span><span class="preview-new">{{ it.newSummary ?? '—' }}</span></span>
+        </div>
+        <div v-if="previewHasMore" class="preview-more">… 其余 {{ previewItems.length - PREVIEW_MAX_ITEMS }} 项</div>
+      </div>
       <!-- 方案确认上下文(save-and-plan-gates 3c):本会话已确认过方案 → 提示行帮用户快速判断该点同意;不自动跳过(拆兜底不可) -->
       <div v-if="planConfirmation" class="approval-plan-context">
         <IconGlyph :icon="ctx.icons.recommend" />{{ m.planConfirmedPrefix }}{{ planConfirmation.choice }}{{ m.planConfirmedSuffix }}
@@ -84,6 +98,17 @@ const approvalArgsPreview = computed(() => {
 /* 人工确认条:警示语义用 --cs-warn 色系(两主题各自适配),表面色随 --cs-* 主题变量 —— 深色主题不再出现刺眼奶黄块 */
 .approval-bar { margin: 10px 12px; padding: 12px 14px; border: 1px solid rgba(var(--cs-warn-rgb, 217, 119, 6), 0.35); border-left: 3px solid var(--cs-warn, #d97706); border-radius: 10px; background: linear-gradient(180deg, rgba(var(--cs-warn-rgb, 217, 119, 6), 0.09) 0%, rgba(var(--cs-warn-rgb, 217, 119, 6), 0.04) 100%); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06); }
 .approval-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--cs-bg-text); }
+/* write 审批 diff 预览(ui-quick-wins Q3):op 徽标 + path 等宽 + old→new 两色对照(行内折行,大值已截 200 字符) */
+.approval-preview { margin: 8px 0 2px; display: flex; flex-direction: column; gap: 4px; }
+.preview-item { display: flex; align-items: baseline; gap: 6px; font-size: 12px; line-height: 1.5; flex-wrap: wrap; }
+.preview-op { flex-shrink: 0; padding: 0 6px; border-radius: 6px; background: rgba(var(--cs-warn-rgb, 217, 119, 6), 0.15); color: var(--cs-warn, #d97706); font-size: 10px; font-weight: 600; }
+.preview-path { flex-shrink: 0; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; color: var(--cs-bg-muted, #6b7280); }
+.preview-diff { min-width: 0; word-break: break-all; }
+.preview-old { color: var(--cs-bg-muted, #9ca3af); text-decoration: line-through; text-decoration-color: rgba(var(--cs-err-rgb, 220, 38, 38), 0.5); }
+.preview-arrow { color: var(--cs-bg-muted, #9ca3af); }
+.preview-new { color: var(--cs-bg-text); font-weight: 500; }
+.preview-error { font-size: 12px; color: var(--cs-err, #dc2626); }
+.preview-more { font-size: 11px; color: var(--cs-bg-muted, #6b7280); }
 .approval-icon { font-size: 18px; }
 .approval-title { flex: 1; min-width: 0; }
 .approval-title code { padding: 2px 7px; border-radius: 5px; background: rgba(var(--cs-warn-rgb, 217, 119, 6), 0.14); color: var(--cs-warn, #d97706); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }

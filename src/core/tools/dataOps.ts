@@ -45,6 +45,7 @@ import {
   validateAtPath, resolveSchemaPath, schemaHasRefinement, arrayMinLength, elementSchemaCandidates,
 } from './schemaUtils'
 import type { VfsStore } from '../backends/vfs'
+import type { ApprovalWritePreview } from '../harness/approval'
 import type { ResourceProtectSpec, ProtectedCtx } from './resources'
 import { ResourceStore, renderReadPlaceholders, enforceSet, enforcePatches, matchProtectedEither, normalizePath, deepEqual, commitReanchors } from './resources'
 
@@ -1990,7 +1991,58 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     ...draftTools,
     ...resourceTools,
   ]
+
+  /**
+   * 审批 diff 预览(ui-quick-wins Q3):write 三意图只读预览 —— 复用 dryRun 分支同款纯函数通道
+   * (applyPatchesToBind / commitSetToBind 的 dryRun 形态 + delete 的 clone 推演),
+   * 不碰快照/基线/mutex/乐观锁;old 摘要 = 写前按 jsonPath 取 bind 现值。装配层(approval.preview)消费。
+   */
+  function previewWrite(args: Record<string, unknown>): ApprovalWritePreview {
+    const a = args as { value?: unknown; patch?: { op?: EditOp; jsonPath?: string; value?: unknown }; patches?: Array<{ op?: EditOp; jsonPath?: string; value?: unknown }>; del?: boolean }
+    const summarize = (v: unknown): string => {
+      if (v === undefined) return 'undefined' // safeStringify(undefined) 会抛(JSON.stringify 返 undefined),remove op 无 value 必经
+      const s = safeStringify(v, 200)
+      return s === undefined ? String(v) : s
+    }
+    const errText = (e: unknown): string => (typeof e === 'string' ? e : String((e as { content?: string })?.content ?? '校验失败'))
+    if (a.del) {
+      const jp = String(a.patch?.jsonPath ?? '')
+      return { ok: true, intent: 'delete', items: [{ op: 'delete', jsonPath: jp, oldSummary: summarize(getByPath(bindRef, jp)), newSummary: '(删除)' }] }
+    }
+    if (a.patches?.length || a.patch) {
+      const list = (a.patches?.length ? a.patches : [{ op: a.patch?.op ?? 'set', jsonPath: a.patch?.jsonPath ?? '', value: a.patch?.value }]) as Array<{ op?: EditOp; jsonPath?: string; value?: unknown }>
+      // dryRun 纯函数:走完整校验链(schema/path/保护字段)但不落盘不入快照 → 预览即暴露「批准后会不会被拒」
+      const r = applyPatchesToBind({ bindRef, patches: list, schema, allowKeys, snapshots, maxSnapshots, markDataDirty: () => {}, schemaErrorMode: 'zod', dryRun: true, protectedCtx })
+      if (!r.ok) return { ok: false, intent: 'edit', items: [], error: errText(r.error) }
+      return {
+        ok: true, intent: 'edit',
+        items: list.map((p) => ({
+          op: String(p.op ?? 'set'),
+          jsonPath: String(p.jsonPath ?? ''),
+          oldSummary: summarize(getByPath(bindRef, String(p.jsonPath ?? ''))),
+          newSummary: summarize(p.value),
+        })),
+      }
+    }
+    // set 整体(commitSetToBind dryRun:校验 + merge 语义预演;changedKeys 逐顶层键给 old→new,全等则整体一条)
+    // (edit 分支已 return,此处 a.patch 恒 undefined,payload 即顶层 value)
+    const pr = maybeParseValue(a.value)
+    if (pr.parseError) return { ok: false, intent: 'set', items: [], error: `JSON 解析失败:${pr.parseError}` }
+    const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit: () => {}, dryRun: true, protectedCtx, hashFn: hashBind })
+    if (!r.ok) return { ok: false, intent: 'set', items: [], error: errText(r.error) }
+    const before = (bindRef ?? {}) as Record<string, unknown>
+    const after = (r.data ?? {}) as Record<string, unknown>
+    const changedKeys = (allowKeys ?? []).filter((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]))
+    return {
+      ok: true, intent: 'set',
+      items: changedKeys.length
+        ? changedKeys.map((k) => ({ op: 'set', jsonPath: k, oldSummary: summarize(before[k]), newSummary: summarize(after[k]) }))
+        : [{ op: 'set', jsonPath: '', oldSummary: summarize(bindRef), newSummary: summarize(r.data) }],
+    }
+  }
+
   Object.defineProperty(tools, 'controller', { value: controller, enumerable: false, configurable: false, writable: false })
+  Object.defineProperty(tools, 'previewWrite', { value: previewWrite, enumerable: false, configurable: false, writable: false })
   // per-scope 基线 marker(P1-13):子 agent 工具池构建时按此识别 dataOps 工具并包 scope proxy
   // (不可枚举 → 不污染遍历;经 wrapWithPathGuard 的 Proxy 透传可见)
   for (const t of tools) Object.defineProperty(t, '__dataOpsScoped', { value: true, enumerable: false, configurable: false })

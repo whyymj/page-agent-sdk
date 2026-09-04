@@ -158,3 +158,45 @@ test.describe('human-confirm-demo: 两层确认', () => {
     await expect(page.locator('[data-test="gate-hint"]')).toBeHidden()
   })
 })
+
+test.describe('human-confirm-demo: write 审批 diff 预览(ui-quick-wins Q3,?preview=1)', () => {
+  test('write 挂起时 ApprovalBar 渲染结构化 old→new', async ({ page }) => {
+    await page.goto('/examples/human-confirm-demo/?preview=1')
+    await page.waitForSelector('.chat-dialog')
+    await clearChat(page)
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'write', arguments: { value: { theme: 'night-purple', density: 'compact', radius: 6 } } }] },
+      { text: '(预览态点拒绝收口)' },
+    ])
+    await fillInput(page, '直接切换风格')
+    await clickSend(page)
+    // 写前确认条出现 + 结构化预览(set 逐变更键 old→new)
+    await page.waitForSelector('[data-test="approval-preview"]', { timeout: 15_000 })
+    const item = page.locator('[data-test="preview-item-0"]')
+    await expect(item).toBeVisible()
+    await expect(item.locator('.preview-path')).toHaveText('theme')
+    await expect(item.locator('.preview-old')).toContainText('fresh-blue')
+    await expect(item.locator('.preview-new')).toContainText('night-purple')
+    // 预览是纯展示:点拒绝 → 工具被拒收口,数据未变
+    await clickByText(page, '拒绝')
+    await waitForAgentIdle(page)
+    const theme = await page.evaluate(() => (window as any).appConfig.theme)
+    expect(theme).toBe('fresh-blue')
+  })
+
+  test('默认关(? 无参):确认条无预览区(args JSON 兜底呈现)', async ({ page }) => {
+    await page.goto('/examples/human-confirm-demo/')
+    await page.waitForSelector('.chat-dialog')
+    await clearChat(page)
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'write', arguments: { value: { theme: 'night-purple', density: 'compact', radius: 6 } } }] },
+      { text: '(拒绝收口)' },
+    ])
+    await fillInput(page, '直接切换风格')
+    await clickSend(page)
+    await page.waitForSelector('button:has-text("拒绝")', { timeout: 15_000 })
+    await expect(page.locator('[data-test="approval-preview"]')).toHaveCount(0)
+    await clickByText(page, '拒绝')
+    await waitForAgentIdle(page)
+  })
+})

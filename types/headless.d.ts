@@ -973,6 +973,10 @@ export interface ChatSdk {
   show(): void;
   send(message: string, options?: { mission?: Partial<Mission>; maxAutoRetries?: number; /** 中断信号(fix-hang-and-feedback P1-4) */ signal?: AbortSignal; /** 附带图片(image-input-vision;需主模型多模态 vision 或 images.describe,否则拒绝 —— 不静默丢图) */ images?: AgentImage[] }): Promise<string>;
   switchSession(sessionId?: string): Promise<string>;
+  /** 导出会话快照(ui-quick-wins Q2):{ formatVersion, exportedAt, sessionId, snapshot } 可复全 JSON;跨会话导出传 sessionId;storage 未开启抛错 */
+  exportSession(sessionId?: string): Promise<Record<string, unknown>>;
+  /** 导入会话快照副本(ui-quick-wins Q2):总是新 sessionId 不覆盖既有,不自动切换;坏 JSON/未知版本/缺 messages/超 6MB 抛错 */
+  importSession(data: unknown): Promise<{ sessionId: string }>;
   /**
    * 新建/清空会话(同步;「清空对话」编程式入口):中止在途流 + 收口挂起冲突(keep_external)
    * + 重置全部内存态(messages/vfs/todos/memory/mission/workingMemory/focus/checkpoint/debugLogs)+ 换新 sessionId + emit session_restored。

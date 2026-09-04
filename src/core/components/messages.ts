@@ -17,6 +17,10 @@ export interface DialogMessages {
   newSession: string
   history: string
   more: string
+  /** 会话导出入口(ui-quick-wins Q2;历史面板底部;dialog.sessionTransfer 显式开) */
+  exportSession: string
+  /** 会话导入入口(ui-quick-wins Q2;历史面板底部;dialog.sessionTransfer 显式开) */
+  importSession: string
   close: string
   debugMenu: string
   debugMenuTitle: string
@@ -259,6 +263,8 @@ export const MESSAGES_ZH_CN: DialogMessages = {
   newSession: '新建会话',
   history: '历史记录',
   more: '更多',
+  exportSession: '导出会话',
+  importSession: '导入会话…',
   close: '关闭',
   debugMenu: '调试 / 日志',
   debugMenuTitle: '日志 / 执行流程 / Agent 信息',
@@ -489,6 +495,8 @@ export const MESSAGES_EN_US: DialogMessages = {
   newSession: 'New chat',
   history: 'History',
   more: 'More',
+  exportSession: 'Export chat',
+  importSession: 'Import chat…',
   close: 'Close',
   debugMenu: 'Debug / Logs',
   debugMenuTitle: 'Logs / execution flow / agent info',

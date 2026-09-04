@@ -624,3 +624,19 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 ### [2026-08-28] craftNotes [note] 漏写机制化(note-gate)— ✅ 已实施(4.8.1)
 
 **来源**:4.8 真 LLM uispec 复验 S1「笔记沉淀」连续 2 次失败(子 agent 收口无 [note] 行);htmlSubagent 提示词自记「漏写率 3/4」,纯提示词约定不可靠。**实施**:`createCraftNoteCheck` 挂 formatCheck verify 链尾(结构→渲染→笔记),缺 [note] 行回灌补写一次,预算与 maxVerifyAttempts 共享;`craftNotes:false`/`formatCheck:false` 不挂。**说明**:html-agent-craft-notes 登记的「wrapModelCall 捕获」不变,note-gate 复用同一 `__pgFinalText` holder;formatCheck:false 场景(craftNotes 开)无 beforeReturn 门禁可挂,维持提示词兜底(登记明示)。
+
+## 2026-09-03 功能拓展点咨询登记(ui-quick-wins 等 4 change 立项时的「不立项项」收敛)
+
+> 来源:2026-09-03 功能拓展点咨询 → 用户拍板「openspec 大纲规划」,A/B 档立项 4 个 change(见 `changes/README.md` 索引),以下为 C 档触发式/明确不做项集中登记。
+
+### [2026-09-03] 主动式 agent(宿主事件自动触发 send)— ⏸ 暂缓(无宿主需求)
+
+**现状基础**:`sdk.hook`/`onEvent` 运行时事件面 + `sdk.send`/`batch` 原语全在场,缺的只是官方「触发器」封装(如 `triggers: [{ event: 'conflict', prompt: '...' }]` 之类)。**暂缓理由**:触发语义(哪些事件/防抖/用户正在输入时是否打断/轮次预算归属)是产品决策面,没有宿主案例拍不了;且事件回调里集成方现在就能自己 `sdk.send`(`onEvent` + send 两行胶水),SDK 封装的增量价值未证。**重启触发**:宿主明确提出「冲突发生/校验失败/数据变更时 agent 主动介入」类需求,且两行胶水形态被实测证明不够(如需要打断在途流、去重、预算隔离)。**候选形态**:`automation` 既有能力组下加触发器配置,而非新顶层键。
+
+### [2026-09-03] 语音输入(Web Speech API)— ⏸ 暂缓(无宿主需求)
+
+**现状基础**:输入侧三入口(📎/拖/贴)图片通道已有,语音是同位扩展。**暂缓理由**:浏览器 SpeechRecognition 兼容面(Chrome 系可用/Safari 部分/Firefox 缺)+ 中文识别质量依赖浏览器引擎不可控 + 无宿主提出;纯 UI 增量随时可补,不值得占配置面。**重启触发**:宿主明确需求(尤其移动端/免打字场景)。
+
+### [2026-09-03] 端侧本地模型(WebGPU/transformers.js)+ A2A 协议 — ❌ 明确不做(过度工程)
+
+**评估结论**:两者都偏离「宿主页面 JSON 操作 Agent」主轴 —— 本地模型推理质量撑不起 tool-calling 纪律(实测 flash 级弱模型都需要门禁族兜底,本地小模型更甚),WebGPU 面版本碎片;A2A 的多 agent 互操作在「单宿主单 SDK」形态里没有消费者。**重启触发**:出现隐私强诉求宿主要求「摘要/分类等低智任务本地跑省 token」(届时只做 summarization LLM 的本地后端,不做主循环本地化);A2A 等标准被主流生态采纳且宿主有互操作实例。

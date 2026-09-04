@@ -26,6 +26,7 @@ import type { PendingConflict } from '../sdk/createChatSdk'
 import type { ConflictResolution } from '../tools/dataOps'
 import type { SessionMeta } from '../backends/storage'
 import type { Focus } from '../harness/state'
+import type { QuickActionItem } from '../sdk/createChatSdk'
 
 /** 区块键(9 个;sections[k]===false 关闭整块含 slot) */
 type SectionKey = 'header' | 'focus' | 'body' | 'queued' | 'approval' | 'conflict' | 'footer' | 'debug' | 'skill'
@@ -120,6 +121,14 @@ const props = withDefaults(defineProps<{
   i18n?: { locale?: DialogLocale; messages?: Partial<DialogMessages> }
   /** 工具步骤展示映射(dialog.toolStepView 透传;MessageSteps 步骤行工具名/补充说明自定义) */
   toolStepView?: ToolStepViewFn
+  /** 快捷指令 chip 行(ui-quick-wins Q1;mountChatDialog 已归一化过滤/截断);点击直接发送 prompt */
+  quickActions?: QuickActionItem[]
+  /** 拖拽宿主元素入输入框回调(ui-quick-wins Q4 元素聚焦入口;详见 dialog.onDropElement) */
+  onDropElement?: (el: Element) => void
+  /** 导出当前会话(ui-quick-wins Q2;返回 JSON 字符串由容器侧下载;dialog.sessionTransfer 开启才注入) */
+  onExportSession?: () => Promise<string>
+  /** 导入会话文件(ui-quick-wins Q2;容器侧 importSession + switchSession;dialog.sessionTransfer 开启才注入) */
+  onImportSession?: (file: File) => Promise<void>
 }>(), {
   showAvatar: true,
   showTyping: true,
@@ -221,6 +230,8 @@ const drawerWidthStyle = computed(() => {
           :on-new-session="onNewSession"
           :on-open-session="onOpenSession"
           :on-remove-session="onRemoveSession"
+          :on-export-session="onExportSession"
+          :on-import-session="onImportSession"
           @close="emit('close')"
         />
       </slot>
@@ -275,7 +286,7 @@ const drawerWidthStyle = computed(() => {
     <template v-if="renderSection('footer')">
       <Transition name="cs-slide">
         <slot name="footer" :chat="ctx">
-          <ChatInput :placeholder="placeholder || ctx.messages.inputPlaceholder" :input-rows="inputRows" :gate-pending="gatePending" />
+          <ChatInput :placeholder="placeholder || ctx.messages.inputPlaceholder" :input-rows="inputRows" :gate-pending="gatePending" :quick-actions="quickActions" :on-drop-element="onDropElement" />
         </slot>
       </Transition>
     </template>

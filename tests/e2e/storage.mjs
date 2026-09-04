@@ -387,5 +387,49 @@ export async function run() {
     assert(quotaLogs.length >= 1, `✓ P1#7 quota 拒写留痕进 debugLogs(修前:仅 debug 模式 console.log,零可观察面;实际 ${quotaLogs.length} 条)`)
   }
 
+  console.log('[e2e:storage] 会话导出/导入往返(ui-quick-wins Q2:副本语义 + 快照复全 + 不自动切换)')
+  {
+    const sdk = createChatSdk({ ui: false, id: 'e2e-session-transfer', storage: 'memory', llm: stubModel({ text: '导出测试回复' }), capabilities: MIN_CAPS })
+    await sdk.mount()
+    await sdk.send('第一条消息')
+    await sdk.send('第二条消息')
+    const envelope = await sdk.exportSession()
+    assert(envelope.formatVersion === 1, '✓ exportSession 信封 formatVersion=1')
+    assert(typeof envelope.exportedAt === 'string', '✓ 信封含 exportedAt(ISO 字符串)')
+    assert(Array.isArray(envelope.snapshot?.messages) && envelope.snapshot.messages.length >= 4, '✓ snapshot.messages 复全(双轮 user+assistant)')
+    const origSid = sdk.sessionId
+    const { sessionId: imported } = await sdk.importSession(JSON.stringify(envelope))
+    assert(imported && imported !== origSid, '✓ importSession 副本语义(新 sessionId,不覆盖原会话)')
+    assert((await sdk.listSessions()).some((s) => s.sessionId === imported), '✓ 导入会话出现在会话列表(refreshSessions 已触发)')
+    assert(sdk.sessionId === origSid, '✓ 导入后不自动切换(当前会话不变,切由调用方决定)')
+    await sdk.switchSession(imported)
+    assert(sdk.messages.some((m) => m.role === 'user' && m.content === '第一条消息'), '✓ 切到导入副本后消息完整恢复(applySnapshot 全量灌入)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:storage] importSession 校验四态 + storage 未开启抛错(ui-quick-wins Q2)')
+  {
+    const sdk = createChatSdk({ ui: false, id: 'e2e-import-validate', storage: 'memory', llm: FAKE_LLM, capabilities: MIN_CAPS })
+    await sdk.mount()
+    const cases = [
+      ['坏 JSON', '{not json'],
+      ['未知 formatVersion', JSON.stringify({ formatVersion: 99, snapshot: { messages: [] } })],
+      ['缺 snapshot.messages', JSON.stringify({ formatVersion: 1, snapshot: { todos: [] } })],
+      ['非会话对象', JSON.stringify({ foo: 1 })],
+    ]
+    for (const [name, payload] of cases) {
+      let threw = false
+      try { await sdk.importSession(payload) } catch { threw = true }
+      assert(threw, `✓ importSession 拒绝:${name}`)
+    }
+    sdk.unmount()
+    const ns = createChatSdk({ ui: false, id: 'e2e-transfer-nostore', storage: false, llm: FAKE_LLM, capabilities: MIN_CAPS })
+    await ns.mount()
+    let threw2 = false
+    try { await ns.exportSession() } catch { threw2 = true }
+    assert(threw2, '✓ storage 未开启 → exportSession 抛错(与 switchSession 同口径;内存拼装会漏 vfs/checkpoints 非同步态,不做)')
+    ns.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }
