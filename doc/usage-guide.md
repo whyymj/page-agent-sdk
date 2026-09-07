@@ -31,6 +31,7 @@
   - [6.15 UI 定制与国际化(图标 / 主题 / 语言 / 文案覆盖)](#615-ui-定制与国际化图标--主题--语言--文案覆盖317321)
   - [6.17 图片输入(多模态直发 / 识图转述旁路)](#617-图片输入多模态直发--识图转述旁路)
   - [6.18 快捷指令 / 会话导出导入 / 元素拖入聚焦](#618-快捷指令--会话导出导入--元素拖入聚焦410-ui-quick-wins)
+  - [6.19 回归工具 eval-toolkit](#619-回归工具-eval-toolkit升级前自跑场景回归)
 - [7. 高级:自定义中间件](#7-高级自定义中间件)
 - [8. 命令式 API](#8-命令式-api)
 - [9. 框架无关 / CDN 集成](#9-框架无关--cdn-集成)
@@ -2115,6 +2116,32 @@ createChatSdk({
 }).mount()
 ```
 
+### 6.19 回归工具 eval-toolkit(升级前自跑场景回归)
+
+SDK 自用的真 LLM 回归方法论判定核,公开为三个纯函数 —— **集成方为自己的宿主场景跑升级前回归**(SDK 测试全绿 ≠ 你的场景不回归;红线:只做判定/等待/对比,不做断言库/runner/不绑 Playwright):
+
+```ts
+import { createChatSdk, createEvalHarness, diffReport } from 'page-agent-sdk'
+
+const sdk = await createChatSdk({ /* 你的正式配置 */ }).mount()
+const harness = createEvalHarness({ sdk })
+
+// 场景:发一条真实业务指令 → 等 agent 真正跑完 → 采报告 → 对基线
+await sdk.send('把主标题改成红色,加一张促销卡片')
+await harness.waitForIdle()                     // ① idle 双条件:日志静默 + 无在飞子 agent(防 reasoning 静默期误判)
+const report = harness.collectReport()          // ② { at, messageCount, toolCount, usage }
+const verdict = diffReport(report.usage, baselineUsage)  // ③ 阈值判定
+
+if (verdict.status === 'worse') { /* ▲ token ±15% 且 ±2000 或 toolCount ±3 → 疑似回归,别急着升级 */ }
+```
+
+三件各自的坑位知识(烧出来的经验,都在判定核里处理了):
+
+- **`waitForIdle`**:双条件 = debugLogs 静默超阈值(默认 90s,盖过最长思考窗口)**且** 无在飞子 agent **且** 有新消息 **且** 有模型响应,连续 3 次采样满足才判完(单看「没日志了」会被 reasoning 阶段骗过);等待中日志被清空(切会话/页面 reload)立即抛错快速失败;超时抛错带诊断摘要(最近轮次/工具/在飞子标签)。你的测试栈(Playwright/vitest/任意)负责发消息与业务断言,它只管「等完 + 采数」。
+- **`collectReport`**:与 SDK 自用回归报告同构 —— 报给 SDK 维护者时格式互通,排查成本降一档。
+- **`diffReport(current, baseline, opts?)`**:token **±15% 且 ±2000 双阈同时超**才标 ▲▼(防小基数误报/大基数方差),toolCount ±3,elapsedSec 仅展示不判;阈值可用 `{ tokenPct, tokenAbs, toolCountAbs }` 覆盖。基线 = 上一次满意运行的 `collectReport()` 产出,存进你的仓库。
+- `createIdleDetector`(harness 内核,也可单独用):纯状态机,`push(sample)` 返回 `'pending' | 'done' | 'reset'` —— 自定义采样源(如远程页面经 CDP 取样)时直接复用判定核。
+
 ## 9. 框架无关 / CDN 集成
 
 宿主页面无需任何构建链路,用 IIFE 全量包一行接入:
@@ -2139,6 +2166,32 @@ createChatSdk({
 ```
 
 完整示例见仓库 `demo/plain.html`(importmap + esm.sh)。⚠️ 第三方页注入时,AI 配置对该页 origin 可见,请注意。
+
+### 9.1 服务端(node)运行 —— headless 同构(4.10+ 冒烟背书)
+
+同一套 SDK 可在 **node/服务端** 跑:核心 harness 本就不依赖 DOM(e2e 全家每天在 node 跑 dist 产物),`page-agent-sdk/headless` 子路径是 node-clean 的目标形态。4.10 起用 **真 LLM 双协议冒烟**(`npm run test:node-real`,OpenAI 兼容 + Anthropic 各走完整 read→write→restore_data 工具循环)背书了这个路径 —— 浏览器端「页面关了就停」的长任务可以移到服务端进程跑。
+
+```js
+// node ESM(仓库内示例 examples/node/headless-node.mjs;npm 包同款引入)
+import { createChatSdk, z } from 'page-agent-sdk/headless'
+
+const bind = { title: '标题', items: [] }
+const sdk = createChatSdk({
+  ui: false,                       // node 必须:无 UI 渲染(headless 入口本就无 ChatDialog)
+  storage: 'memory',               // node 无 IndexedDB;REST 持久化 = 自定义 backend 指向你的 API
+  llm: { apiKey, baseUrl, model },
+  data: { schema: z.object({ title: z.string(), items: z.array(z.object({ name: z.string() })) }), bind },
+})
+await sdk.mount()
+await sdk.send('把标题改成「hello server」')
+```
+
+**要点**:
+- **依赖解析**:peerDeps(`@langchain/*`/`zod`)在 node 从你项目的 node_modules 正常解析,与浏览器同一份产物
+- **storage**:node 无 IndexedDB/localStorage,默认 `memory`(进程内多会话);服务端持久化走 `storage: { backend: 自定义 }` 实现读 REST API(注入 headers/鉴权是你的 fetch 的事)
+- **浏览器域 API 明示不可用**:`compressImage`(canvas)、`get_dom`(友好 ERROR 回灌指引数据工具)、渲染级自检(render-check 自动降级);MCP 三种远程 transport(http/sse/websocket)node 可用,stdio 未暴露为配置项
+- **无人值守组合**(定时/webhook 触发的长任务):`approval` 自动拒超时 + `conflictPolicy: 'overwrite' | 'keep_external'`(无人裁决防流程永挂)+ `toolTimeoutMs`/`streamStallMs` 放宽 + `sdk.batch()` 批处理 + 每轮 `sdk.afterRound()` 落盘;跨进程重启恢复(快照在,流中断续跑)暂不在面,等真实定时任务案例
+- 冒烟脚本:仓库 `examples/node/headless-node.mjs`(`.env` 无 key 自动 skip,`--arm=anthropic` 单跑一臂)
 
 ## 10. 环境变量
 

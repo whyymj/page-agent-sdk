@@ -96,6 +96,11 @@ export function domToStructure(node: Element | null, opts: DomReadOptions): DomN
 
 export const getDomTool = tool(
   ({ selector, depth, attrs, includeText }) => {
+    // node/服务端守卫(server-companion P0 审计):非浏览器环境友好回灌而非裸 ReferenceError
+    // (render-check canRender 同款前科;domInspect 默认关,误开在 node 跑时给 LLM 可读出路)
+    if (typeof document === 'undefined') {
+      return 'ERROR: get_dom 仅在浏览器环境可用(当前运行在 node/服务端,无 DOM)。请改用数据工具(read/schema_data)排查结构。'
+    }
     const root = selector ? document.querySelector(selector) : document.body
     if (!root) return `未找到匹配元素:selector="${selector}"`
     const struct = domToStructure(root, {

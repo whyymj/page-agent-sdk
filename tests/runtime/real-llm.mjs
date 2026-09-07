@@ -61,7 +61,7 @@ if (onlyDiff) {
     const r = readReport(REGISTRY[name].out)
     if (r) current[name] = metricsOf(r)
   }
-  const { lines, regressions } = diffBaseline(current, baseline)
+  const { lines, regressions } = await diffBaseline(current, baseline)
   console.log(`\n===== 基线对比(基线录制于 ${baseline.recordedAt})=====`)
   lines.forEach((l) => console.log(l))
   console.log(regressions > 0 ? `\n⚠ ${regressions} 项指标超阈值(▲);确认预期后 --baseline-update 采集新基线` : '\n全部指标在阈值内 ✓')
@@ -92,7 +92,7 @@ if (updateBaseline) {
   const saved = saveBaseline(merged)
   console.log(`\n✓ 基线已更新 → ${BASELINE_PATH}(recordedAt ${saved.recordedAt};请随代码提交)`)
 } else if (baseline) {
-  const { lines, regressions } = diffBaseline(currentMetrics, baseline)
+  const { lines, regressions } = await diffBaseline(currentMetrics, baseline)
   console.log(`\n===== 基线对比(基线录制于 ${baseline.recordedAt})=====`)
   lines.forEach((l) => console.log(l))
   if (regressions > 0) console.log(`\n⚠ ${regressions} 项指标超阈值(▲);确认预期后 npm run test:real -- --baseline-update`)

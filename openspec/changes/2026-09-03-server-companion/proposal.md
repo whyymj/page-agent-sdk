@@ -1,6 +1,6 @@
 # Proposal: server-companion(Node/服务端同构运行)
 
-> 状态:**📋 大纲规划(2026-09-03 立项,待评审细化)**。优先级 P2(战略方向;**Phase 0 独立可先发**)。目标:把「浏览器端 agent 页面关了就停」的硬边界打开 —— harness 核心已在 node 跑通(e2e 每次都在 node 加载 dist + stub model 走完整 ReAct),本 change 把这件事**证明到真 LLM + 文档化 + 无人值守形态正式化**,让同一套 SDK 在服务端跑定时/webhook 触发的长任务。
+> 状态:**🔧 Phase 0 已实施(2026-09-04,双协议冒烟 8/8 一次通过;DOM 审计 12 文件:10 安全/1 修复 domTool 守卫/1 文档化设计 compressImage);Phase 1 文档 recipe 已随 §9.1 首版交付,余项待续**。优先级 P2(战略方向;**Phase 0 独立可先发**)。目标:把「浏览器端 agent 页面关了就停」的硬边界打开 —— harness 核心已在 node 跑通(e2e 每次都在 node 加载 dist + stub model 走完整 ReAct),本 change 把这件事**证明到真 LLM + 文档化 + 无人值守形态正式化**,让同一套 SDK 在服务端跑定时/webhook 触发的长任务。
 > 来源:2026-09-03 功能拓展点咨询收敛(「唯一能打开新维度的一项」);用户拍板「openspec 大纲规划」。
 
 ## 为什么可行(现状证据)

@@ -9,7 +9,7 @@
  */
 import { z } from 'zod'
 import { actionsToTools, actionsToInspectInfo } from '../../sdk/actions'
-import { domToStructure, searchDom, getElementInfo, buildCssPath, ensureDomListenerRecorder, getRecordedListeners, domInspectSkill } from '../../tools/domTool'
+import { domToStructure, searchDom, getElementInfo, buildCssPath, ensureDomListenerRecorder, getRecordedListeners, domInspectSkill, getDomTool } from '../../tools/domTool'
 import type { TestCtx } from './_ctx'
 
 export async function run(ctx: TestCtx): Promise<void> {
@@ -166,4 +166,10 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert(doc.includes('dom_search') && doc.includes('events 三源'), '✓ domInspectSkill → getContent 用法文档(工具要点 + 事件三源限制说明)')
   const skillTools = (domInspectSkill.tools as (() => unknown[])[])[0]()
   assert(Array.isArray(skillTools) && skillTools.length === 2 && (skillTools[0] as any).name === 'dom_search' && (skillTools[1] as any).name === 'dom_info', '✓ domInspectSkill → tools 工厂返回 dom_search/dom_info')
+
+  // ===== get_dom node/服务端守卫(server-companion P0 审计补,2026-09-04) =====
+  // selftest 本就跑在 node(typeof document === 'undefined')→ 直接调 get_dom 断言友好回灌(修前:裸 ReferenceError)
+  const domNodeResult = await invoke(getDomTool, {})
+  assert(String(domNodeResult).includes('ERROR') && String(domNodeResult).includes('node/服务端'),
+    '✓ get_dom node 守卫 → 友好 ERROR 回灌并指引数据工具(server-companion P0;修前裸 ReferenceError 炸工具调用)')
 }

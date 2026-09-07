@@ -1768,3 +1768,68 @@ export declare function copyText(text: string): Promise<boolean>;
  * 返回的 runSerial(fn):fn 排队执行(前一个无论成败都继续),返回 fn 的 Promise(透传结果/错误)。
  */
 export declare function createSerialRunner(): <T>(fn: () => Promise<T>) => Promise<T>;
+
+// ===== eval-toolkit(真 LLM 回归判定核,4.10+;openspec/changes/2026-09-03-eval-toolkit)=====
+/** idle 采样(harness 从 sdk 读;自用套件从 page.evaluate 读 —— 同一判定核吃两种采样器) */
+export interface EvalSample {
+  messageCount: number;
+  /** 距最近一条 debugLog 的毫秒;日志为空时返回 epoch 级巨值(>1e12 = 被清空信号) */
+  quietMs: number;
+  /** 是否已有至少一条模型响应(debugLogs 含 llm_response) */
+  hasResponse: boolean;
+  /** 在飞子 agent 数(inspect().subagent.active.length;无子能力恒 0) */
+  activeSubagents: number;
+  /** debugLogs 当前长度(诊断用) */
+  logCount: number;
+}
+export interface EvalIdleDetectorOptions {
+  /** 日志静默阈值 ms(默认 90000 —— reasoning/长生成期间不打日志,阈值须盖过最长思考窗口) */
+  quietMs?: number;
+  /** 连续几次采样满足全条件才判 done(默认 3;单次采样可能恰逢间隙) */
+  confirmSamples?: number;
+  /** 基线消息数:判定「有新消息」的下界(默认 0) */
+  baselineMessageCount?: number;
+}
+export type IdleVerdict = 'pending' | 'done' | 'reset';
+/** idle 状态机(纯函数):逐采样喂入返回判定;不碰定时器/DOM —— 自用套件与公开 harness 共用同一真相源 */
+export declare function createIdleDetector(opts?: EvalIdleDetectorOptions): { push: (sample: EvalSample) => IdleVerdict; reset: () => void };
+/** 回归报告快照(collectReport 产物;与自用 _real-llm-*.json 场景条目同构,可互相对 diff) */
+export interface EvalReport {
+  at: string;
+  messageCount: number;
+  toolCount: number;
+  usage: { prompt: number; completion: number; cacheRead?: number; cacheCreate?: number };
+}
+export interface EvalDiffOptions {
+  tokenAbs?: number;
+  tokenPct?: number;
+  toolCountAbs?: number;
+}
+export interface EvalDiffField {
+  key: string;
+  prev: number;
+  cur: number;
+  delta: number;
+  pct: number;
+  flag: '' | 'up' | 'down';
+}
+export interface EvalDiffResult {
+  status: 'ok' | 'worse' | 'better';
+  regressions: number;
+  fields: EvalDiffField[];
+}
+/** 单场景报告 vs 基线阈值判定(纯函数):token ±pct 且 ±abs 同时超才标 ▲▼,toolCount 超绝对差即标,elapsedSec 不判 */
+export declare function diffReport(current: Record<string, number>, baseline: Record<string, number> | null | undefined, opts?: EvalDiffOptions): EvalDiffResult;
+/** harness 依赖的最小 sdk 面(结构子集;ChatSdk 满足 —— 直接传 sdk 即可) */
+export interface EvalSdkLike {
+  messages: unknown[];
+  debugLogs: import('vue').Ref<DebugLog[]>;
+  usage?: { prompt: number; completion: number; cacheRead?: number; cacheCreate?: number };
+  inspect?: () => { subagent?: { active?: unknown[] } };
+}
+export interface EvalHarness {
+  waitForIdle(opts?: EvalIdleDetectorOptions & { timeoutMs?: number; sampleMs?: number; onSample?: (s: EvalSample) => void }): Promise<EvalSample>;
+  collectReport(): EvalReport;
+}
+/** 创建 eval harness:waitForIdle(idle 状态机驱动轮询)+ collectReport(报告快照)。纯判定/等待层 —— 发消息/断言业务结果归集成方 */
+export declare function createEvalHarness(opts: { sdk: EvalSdkLike }): EvalHarness;

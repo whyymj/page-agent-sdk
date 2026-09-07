@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+## [4.11.0] - 2026-09-07
+
+### Added
+
+- **服务端(node)运行冒烟背书(server-companion Phase 0)**:`examples/node/headless-node.mjs` + `npm run test:node-real` —— 同一套 SDK 的 headless dist 产物在 node 用**真 LLM 双协议**(OpenAI 兼容 + Anthropic)跑完整 read→write→restore_data 工具循环,bind 断言 8/8;`.env` 无 key 自动 skip,`--arm=` 单跑一臂。usage-guide 中英新增「服务端运行」章节(§9.1 / 8.6.4 后):依赖解析 / storage node 形态(memory 默认,REST 自定义 backend)/ 浏览器域 API 明示 / 无人值守组合旋钮。
+- **回归工具 eval-toolkit(判定核公开导出,openspec/changes/2026-09-03-eval-toolkit)**:SDK 自用真 LLM 回归方法论抽成纯函数公开 —— `createIdleDetector`(idle 状态机:日志静默 + 无在飞子 agent + 有新消息/响应,连续 N 采样确认;日志清空返回 'reset' 快败)、`createEvalHarness({sdk})`(waitForIdle 轮询 + collectReport 报告快照,超时带诊断摘要)、`diffReport`(token ±15% 且 ±2000 双阈同超才标 ▲▼ / toolCount ±3 / elapsedSec 不判,阈值可覆盖)。主包 + headless 双入口同带;**tests/runtime 自用迁移单一真相源**(_real-llm-lib 的 waitIdle/diffBaseline 改消费导出层,Playwright 胶水保留;真场景 S10 复验通过)。红线:只做判定/等待/对比纯函数,不做断言库/runner/不绑 Playwright/零 LLM 依赖。usage-guide §6.19 中英。
+
+### Fixed
+
+- **get_dom node/服务端守卫(DOM 引用面审计唯一真缺口)**:`typeof document === 'undefined'` 时友好 ERROR 回灌指引数据工具(修前裸 `ReferenceError` 炸工具调用;domInspect 默认关、误开在 node 跑时给 LLM 可读出路)。审计 12 文件:10 安全(prompt 文本/沙箱字符串/既有 typeof 守卫 —— mount headless 路径早于 document.querySelector 返回、envTool fallback、render-check canRender 三重守卫)/ 1 修复 / 1 文档化设计(compressImage 浏览器域,d.ts 已注明)
+
+### 测试
+
+- selftest 3323 → **3353**(+30:sec-119 判定核 29 + sec-36 get_dom node 守卫 1);e2e 1066 → **1072**(+6:eval-toolkit 双入口可达/harness stub 会话/diffReport dist 路径);新增 node 真 LLM 冒烟脚本(双协议 × read→write→restore 8 断言,无 key skip)
+
 ## [4.10.0] - 2026-09-04
 
 ### Added

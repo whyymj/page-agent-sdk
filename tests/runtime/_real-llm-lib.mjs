@@ -153,12 +153,15 @@ export async function resolvePendingGates(page) {
  *  删除不执行、场景以挂起收口假性失败 —— 产品行为正确(挂起等人工),缺口在测试侧。
  */
 export async function waitIdle(page, prevMsgCount, { timeoutMs = 900_000, onSample, gatePolicy } = {}) {
+  // eval-toolkit 单一真相源:判定核消费公开导出的 createIdleDetector(idle 语义/连续确认/reset 信号与集成方同一份);
+  // 本函数保留 Playwright 胶水(page.evaluate 采样器 + gate 自动应答 + 超时诊断 dump)
+  const { createIdleDetector } = await import('../../dist/page-agent-sdk.headless.js')
+  const detector = createIdleDetector({ quietMs: 90_000, confirmSamples: 3, baselineMessageCount: prevMsgCount })
   const t0 = Date.now()
-  let quiet = 0
   while (Date.now() - t0 < timeoutMs) {
     if (gatePolicy === 'approve') {
       const acted = await resolveGateOnce(page, { preferAllow: true })
-      if (acted) { quiet = 0; console.log(`  [gate] 场景内自动应答(approve):${acted}`) }
+      if (acted) { detector.reset(); console.log(`  [gate] 场景内自动应答(approve):${acted}`) }
     }
     const st = await page.evaluate(() => {
       const sdk = window.__sdk
@@ -170,16 +173,14 @@ export async function waitIdle(page, prevMsgCount, { timeoutMs = 900_000, onSamp
       const active = sdk?.getActiveSubagents?.().length ?? 0
       return { msgs, quietMs: Date.now() - lastTs, hasResp: !!lastResp, active, logN: logs.length }
     })
-    // 页面 reload 快速失败:debugLogs 清零 → quietMs 为 epoch 毫秒(>1e12)
-    if (st.quietMs > 1e12) {
+    const verdict = detector.push({ messageCount: st.msgs, quietMs: st.quietMs, hasResponse: st.hasResp, activeSubagents: st.active, logCount: st.logN })
+    // 页面 reload 快速失败:debugLogs 清零 → quietMs 为 epoch 毫秒(detector 'reset' 信号)
+    if (verdict === 'reset') {
       console.log('  ⚠ 页面已 reload(debugLogs 清零,logN=' + st.logN + ')—— 会话已断,快速失败本场景')
       throw new Error('page reloaded during scenario(debugLogs reset;vite HMR 掉线或页面崩溃;跑前须重启 dev server)')
     }
     onSample?.(st)
-    if (st.msgs > prevMsgCount && st.hasResp && st.active === 0 && st.quietMs > 90_000) {
-      quiet += 1
-      if (quiet >= 3) return st
-    } else quiet = 0
+    if (verdict === 'done') return st
     if (Math.random() < 0.12) console.log('   [采样]', JSON.stringify(st), 'prev=', prevMsgCount)
     await sleep(2500)
   }
@@ -309,10 +310,12 @@ export function saveBaseline(suiteMetrics, path = BASELINE_PATH) {
 
 /**
  * 当前指标 vs 基线 diff:输出对比行;超阈值标记 ▲▼(疑似回归/改善)。
- * 阈值:prompt ±15% 且 ±2000 token 才标(toolCount ±3);elapsedSec 仅展示不判(环境噪声大)。
+ * 阈值判定消费 eval-toolkit 公开导出 diffReport(单一真相源:token ±15% 且 ±2000 / toolCount ±3 / elapsedSec 不判);
+ * 本函数保留套件嵌套的行格式化。
  * 返回 { lines, regressions }(regressions > 0 → 入口退出码非零可选用;默认只警示不失败,需 --strict)。
  */
-export function diffBaseline(current, baseline) {
+export async function diffBaseline(current, baseline) {
+  const { diffReport } = await import('../../dist/page-agent-sdk.headless.js')
   const lines = []
   let regressions = 0
   for (const [suite, metrics] of Object.entries(current)) {
@@ -321,15 +324,9 @@ export function diffBaseline(current, baseline) {
     for (const [sKey, m] of Object.entries(metrics)) {
       const b = base[sKey]
       if (!b) { lines.push(`[${suite}] ${sKey}: (基线无此场景)`); continue }
-      const parts = []
-      for (const [k, cur] of Object.entries(m)) {
-        const prev = b[k] ?? 0
-        const delta = cur - prev
-        const pct = prev > 0 ? Math.round((delta / prev) * 100) : 0
-        const flag = k === 'elapsedSec' ? '' : (k === 'toolCount' ? (Math.abs(delta) > 3 ? (delta > 0 ? ' ▲' : ' ▼') : '') : (Math.abs(delta) > 2000 && Math.abs(pct) >= 15 ? (delta > 0 ? ' ▲' : ' ▼') : ''))
-        if (flag === ' ▲') regressions++
-        parts.push(`${k} ${prev}→${cur}(${pct >= 0 ? '+' : ''}${pct}%)${flag}`)
-      }
+      const r = diffReport(m, b)
+      regressions += r.regressions
+      const parts = r.fields.map((f) => `${f.key} ${f.prev}→${f.cur}(${f.pct >= 0 ? '+' : ''}${f.pct}%)${f.flag === 'up' ? ' ▲' : f.flag === 'down' ? ' ▼' : ''}`)
       lines.push(`[${suite}] ${sKey}: ${parts.join(' | ')}`)
     }
   }

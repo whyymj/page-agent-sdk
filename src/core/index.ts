@@ -45,6 +45,9 @@ export type { RagHit, RagRetrieveOptions, RagRetriever, RagLoader, CreateRagSuba
 export { createHtmlSubagent, createHtmlFormatCheck, createCraftNoteCheck, htmlFragmentSkill, buildHtmlFragmentSkill } from './sdk/htmlSubagent'
 export type { CreateHtmlSubagentOptions, HtmlFormatCheckOptions } from './sdk/htmlSubagent'
 export { createHtmlRenderCheck, composeStructureThenRender, buildSandboxSrcdoc, buildCollectorJs, normalizeRenderResult, renderInSandbox, getSandboxLifecycle } from './sdk/htmlRenderCheck'
+// eval-toolkit(真 LLM 回归判定核,纯函数/零浏览器依赖):idle 状态机 + harness + 基线 diff —— 集成方自跑升级前回归(server-companion 同款双端可用)
+export { createIdleDetector, createEvalHarness, diffReport } from './sdk/evalToolkit'
+export type { EvalSample, EvalIdleDetectorOptions, IdleVerdict, EvalReport, EvalDiffOptions, EvalDiffField, EvalDiffResult, EvalSdkLike, EvalHarness } from './sdk/evalToolkit'
 export type { HtmlRenderCheck, HtmlRenderCheckOptions, RenderSignal, RenderMetrics, RenderVerdict, RawRenderResult, SandboxRunOptions } from './sdk/htmlRenderCheck'
 export { validateHtmlFormat, HTML_VOID_TAGS } from './tools/htmlValidate'
 export type { HtmlFormatIssue } from './tools/htmlValidate'

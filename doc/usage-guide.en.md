@@ -1374,6 +1374,32 @@ See `demo/plain.html` (importmap + esm.sh providing peer deps). IIFE one-liner:
 
 Headless (`ui:false`): no built-in dialog; use `agent.messages` (reactive array) + `send`/`stream` to build your own UI — fully framework-agnostic (no Vue forced).
 
+##### Server-side (node) execution — headless isomorphism (smoke-backed since 4.10)
+
+The same SDK runs in **node** too: the core harness has no DOM dependency, and `page-agent-sdk/headless` is the node-clean artifact. Since 4.10 this path is backed by a **real-LLM dual-protocol smoke test** (`npm run test:node-real`: OpenAI-compatible + Anthropic each run a full read→write→restore_data tool loop) — long tasks that "die when the tab closes" can move to a server process.
+
+```js
+// node ESM (repo example: examples/node/headless-node.mjs; same import from the npm package)
+import { createChatSdk, z } from 'page-agent-sdk/headless'
+
+const bind = { title: 'title', items: [] }
+const sdk = createChatSdk({
+  ui: false,                       // required in node: no UI rendering (headless entry has no ChatDialog anyway)
+  storage: 'memory',               // no IndexedDB in node; REST persistence = custom backend pointing at your API
+  llm: { apiKey, baseUrl, model },
+  data: { schema: z.object({ title: z.string(), items: z.array(z.object({ name: z.string() })) }), bind },
+})
+await sdk.mount()
+await sdk.send('change the title to "hello server"')
+```
+
+**Notes**:
+- **Dependency resolution**: peer deps (`@langchain/*`/`zod`) resolve from your project's node_modules — the very same artifact as the browser consumes
+- **storage**: node has no IndexedDB/localStorage; default `memory` (in-process multi-session). Server-side persistence goes through `storage: { backend: custom }` implementing your REST API (headers/auth are your fetch's business)
+- **Browser-domain APIs are explicitly unavailable**: `compressImage` (canvas), `get_dom` (friendly ERROR pointing at data tools), render-level checks (auto-degraded). All three MCP remote transports (http/sse/websocket) work in node; stdio is not exposed as a config option
+- **Unattended combo** (scheduled/webhook long tasks): approval auto-reject timeout + `conflictPolicy: 'overwrite' | 'keep_external'` (no human to arbitrate) + relaxed `toolTimeoutMs`/`streamStallMs` + `sdk.batch()` + per-round `sdk.afterRound()` persistence. Cross-process restart recovery (snapshot survives, stream resume doesn't) is not covered yet — waiting for a real scheduled-task case
+- Smoke script: `examples/node/headless-node.mjs` (auto-skips without `.env` keys; `--arm=anthropic` runs one arm)
+
 #### 8.6.4 Anthropic Claude provider (out of the box, 2.28+)
 
 Besides OpenAI-compatible protocols, the SDK supports Anthropic Claude's native protocol out of the box (`provider:'anthropic'` dynamic-loads `@langchain/anthropic`, optional peer):
@@ -1507,6 +1533,32 @@ createChatSdk({
   },
 }).mount()
 ```
+
+### 6.19 Regression toolkit eval-toolkit (run scenario regressions before upgrading)
+
+The SDK's own real-LLM regression methodology, exposed as three pure functions — **integrators run their own pre-upgrade regressions for their own scenarios** (SDK tests green ≠ your scenario unbroken; red line: judging/waiting/comparing only — no assertion library, no runner, no Playwright coupling):
+
+```ts
+import { createChatSdk, createEvalHarness, diffReport } from 'page-agent-sdk'
+
+const sdk = await createChatSdk({ /* your production config */ }).mount()
+const harness = createEvalHarness({ sdk })
+
+// Scenario: send a real business instruction → wait until the agent truly finishes → collect → diff vs baseline
+await sdk.send('turn the main title red and add a promo card')
+await harness.waitForIdle()                     // ① idle dual-condition: logs quiet + no in-flight subagents
+const report = harness.collectReport()          // ② { at, messageCount, toolCount, usage }
+const verdict = diffReport(report.usage, baselineUsage)  // ③ threshold verdict
+
+if (verdict.status === 'worse') { /* ▲ token ±15% AND ±2000, or toolCount ±3 → suspected regression */ }
+```
+
+The hard-won knowledge baked into each piece:
+
+- **`waitForIdle`**: dual condition = debugLogs quiet past a threshold (default 90s, covering the longest thinking window) **and** no in-flight subagents **and** new messages **and** at least one model response, satisfied on 3 consecutive samples (watching "no logs anymore" alone gets fooled by the reasoning phase); logs wiped mid-wait (session switch/page reload) throws fast; timeout throws with a diagnostic digest (last round/tool/in-flight labels). Your test stack (Playwright/vitest/anything) sends messages and asserts business outcomes — this only handles "wait until done + collect".
+- **`collectReport`**: same shape as the SDK's own regression reports — hand one to the SDK maintainers and it parses for free.
+- **`diffReport(current, baseline, opts?)`**: token flags only when **both ±15% AND ±2000** are exceeded (guards against small-base false positives and large-base variance), toolCount ±3, elapsedSec display-only; thresholds overridable via `{ tokenPct, tokenAbs, toolCountAbs }`. Your baseline = the `collectReport()` output of a satisfying run, stored in your repo.
+- `createIdleDetector` (the harness core, usable standalone): pure state machine, `push(sample)` returns `'pending' | 'done' | 'reset'` — reuse the judging core with a custom sampling source (e.g. a remote page over CDP).
 
 ## 9. Environment variables
 

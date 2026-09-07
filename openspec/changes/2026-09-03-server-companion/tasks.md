@@ -2,12 +2,12 @@
 
 ## Phase 0:node 真跑证明(独立可发)
 
-- [ ] 1. 〔勘察〕DOM 引用面审计:grep core 层 window/document 直接引用;命中处 typeof 守卫降级(前科:render-check node 防线 / 3.22.1)
-- [ ] 2. 〔勘察〕storage REST 后端 node headers 注入面;MCP stdio transport node 可用性标注(optional)
-- [ ] 3. 冒烟脚本 `examples/node/headless-node.mjs`:真 LLM 构造(双协议)+ 完整 ReAct(read→write→restore 断言)+ memory 后端
-- [ ] 4. `.env` 无 key 自动 skip(与既有套件同口径);脚本进 package.json script
-- [ ] 5. 文档:usage-guide 中英「服务端运行」章节(headless node 接入 + 依赖解析说明)
-- [ ] 6. 门禁:npm test + build + test:e2e 零回归;README 中英场景段补「服务端/定时任务」
+- [x] 1. 〔勘察〕DOM 引用面审计:grep core 层 window/document 直接引用;命中处 typeof 守卫降级(前科:render-check node 防线 / 3.22.1)
+- [x] 2. 〔勘察〕storage REST 后端 node headers 注入面;MCP stdio transport node 可用性标注(optional)
+- [x] 3. 冒烟脚本 `examples/node/headless-node.mjs`:真 LLM 构造(双协议)+ 完整 ReAct(read→write→restore 断言)+ memory 后端
+- [x] 4. `.env` 无 key 自动 skip(与既有套件同口径);脚本进 package.json script
+- [x] 5. 文档:usage-guide 中英「服务端运行」章节(headless node 接入 + 依赖解析说明)
+- [x] 6. 门禁:npm test + build + test:e2e 零回归;README 中英场景段补「服务端/定时任务」
 
 ## Phase 1:无人值守形态
 
