@@ -130,6 +130,20 @@ onMounted(() => {
       title: '页面构建 Agent',
       placeholder: '试试:加一个"提交"按钮 / 主题改成 dark / 删掉列表 …',
       theme: 'dark', // 内置深色主题(方舟专题设计稿色板;--cs-* 变量驱动)
+      // ↓ 快捷指令(ui-quick-wins Q1):高频页面操作一键发,点击直接发送 prompt(不预填输入框)
+      quickActions: [
+        { label: '加一个 banner', prompt: '在页面顶部加一个 banner 组件,文案你来定' },
+        { label: '主题换 dark', prompt: '把页面主题切换为 dark', icon: '🎨' },
+        { label: '组件大扫除', prompt: '删掉所有组件,只保留页面标题' },
+      ],
+      // ↓ 会话导出/导入(ui-quick-wins Q2):storage 已开 indexed → 历史面板底部出现「导出会话/导入会话…」
+      sessionTransfer: true,
+      // ↓ 元素拖入聚焦(ui-quick-wins Q4):画布组件可拖(见 PageComponentView draggable)→ 拖进输入框聚焦该组件;
+      //   SDK 只回调源元素,el→jsonPath 映射归宿主(此处经 data-path 锚,同两步拾取)
+      onDropElement: (el: Element) => {
+        const p = (el as HTMLElement).closest?.('[data-path]')?.getAttribute('data-path') ?? (el as HTMLElement).getAttribute?.('data-path')
+        if (p) agent?.addFocus({ path: p, label: p.split('.').pop() || p })
+      },
       // ↓ 工具步骤展示映射(纯展示层拦截器):原始工具名对终端用户不友好 → 业务文案;可按 args 动态生成补充说明
       toolStepView: (s) => {
         if (s.name === 'write') {

@@ -28,6 +28,7 @@ import {
   detectStatusQuery,
   assertsCompletion,
   mentionsLocation,
+  declaresNoAction,
   buildTurnFactSheet,
   buildZeroToolFeedback,
   buildStatusQueryFeedback,
@@ -186,10 +187,13 @@ export function runFinishGates(i: RunFinishGatesInput): GateOutcome {
 
   // 3. imperative-zero-tool-gate:操作祈使句 + 本轮零写/零委派 + 纯文本非问句收尾 → fact-sheet 对账回灌。
   //    出口①机械化:收口文本已含位置说明(mentionsLocation)不回灌。
+  //    出口③机械化(2026-09-09):诚实未做声明(declaresNoAction,「未做任何修改/已停止/无法完成」类
+  //    否定完成态 + 无完成态断言)不回灌 —— RHC/审批拒绝后模型如实收口曾被回灌 ×2 烧满 + 误报 EXHAUSTED
   if (g.zeroToolRetries < MAX_ZERO_TOOL_RETRIES
     && isZeroEffectiveWrite(i.turnUsage, i.isWriteToolByName)
     && detectActionImperative(lastHumanContent)
     && !mentionsLocation(content)
+    && !declaresNoAction(content)
     && !/[?？]\s*$/.test(content.trim())) {
     g.zeroToolRetries += 1
     const factSheet = buildTurnFactSheet(i.turnUsage, i.todos, i.isWriteToolByName)
@@ -206,9 +210,11 @@ export function runFinishGates(i: RunFinishGatesInput): GateOutcome {
     return { kind: 'feedback', gate: { stage: 'status_query_gate', attempt: g.zeroToolRetries, feedback: buildStatusQueryFeedback(factSheet), logData: { factSheet } } }
   }
 
-  // 5. 预算耗尽仍零工具收尾:observable 留痕(谎报放行恰是最该让集成方知晓的时刻,不能零感知)
+  // 5. 预算耗尽仍零工具收尾:observable 留痕(谎报放行恰是最该让集成方知晓的时刻,不能零感知)。
+  //    诚实未做声明同样豁免(与第 3 层同口径):拒绝后如实收口不该被误报 EXHAUSTED
   if (g.zeroToolRetries >= MAX_ZERO_TOOL_RETRIES && isZeroEffectiveWrite(i.turnUsage, i.isWriteToolByName)
-    && detectActionImperative(lastHumanContent)) {
+    && detectActionImperative(lastHumanContent)
+    && !declaresNoAction(content)) {
     return {
       kind: 'observable',
       obs: {

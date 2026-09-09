@@ -29,7 +29,7 @@ import { DEFAULT_TOOL_TIMEOUT_MS, ToolTimeoutError, isWatchdogTool, withToolWatc
 import { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars, type ModelCaps } from '../utils/modelCaps'
 import { extractTextDelta, extractReasoningDelta, normalizeUsage } from '../utils/contentParts'
 import { createInitialState, type HarnessState, type LoopProgress } from './state'
-import { withRetry, isAbort, type RetryOptions } from './retry'
+import { withRetry, isAbort, isRetryable, type RetryOptions } from './retry'
 import { withStallTimeout, StreamStalledError, StreamMaxDurationError, EmptyLLMResponseError, DEFAULT_STREAM_STALL_MS, DEFAULT_STREAM_MAX_DURATION_MS } from '../utils/stallTimeout'
 import { isContextLengthError, decorateModelUnavailable } from './errors'
 import { type TurnToolUsage, DELEGATION_TOOL_RE } from './actionGate'
@@ -387,6 +387,10 @@ export function createAgent(options: CreateAgentOptions) {
   const debugLogs = shallowRef<DebugLog[]>([])
   // stale-read-invalidation 会话累计(跨 invoke;inspect().staleReadsInvalidated 反射,类比 debugLogs 闭包真相源)
   let staleReadsInvalidated = 0
+  // 模型调用重试/终败会话累计(跨 invoke;inspect().llmRetries/llmCallFailures 反射)。retry-visibility(2026-09-09):
+  // 网关断流事故实测「msgs 恒定 + debugLogs 静默」的黑洞假象排障 1h —— 重试/失败可见性是「环境故障 vs SDK 回归」的第一判据
+  let llmRetries = 0
+  let llmCallFailures = 0
   // evidence-audit-gate A2 会话级累计写路径集(每成功写并入 effectiveWritePaths 全量展开;整体写 = ROOT = 全覆盖)。
   // 跨 invoke 持续累积 —— 「上一轮写入、本轮标 completed」是正常节奏,只对本轮核对必误伤(评审 A-5)。
   // 陈旧性说明:集合只增不清(resetSession 后残留旧路径只会造成「漏报」方向的退化,宁漏勿误,可接受)
@@ -422,6 +426,8 @@ export function createAgent(options: CreateAgentOptions) {
     model,
     temperature,
     maxTokens: resolvedMaxTokens,
+    // retry-visibility:内层重试关闭,SDK withRetry(coreModelCall)独占重试且每次留痕(debugLogs model_retry)
+    maxRetries: 0,
     configuration: { ...(baseUrl ? { baseURL: normalizeBaseUrl(baseUrl) } : {}), fetch: stripStainlessFetch, ...extraConfig },
     ...(extraBody ? { modelKwargs: extraBody } : {}),
   })
@@ -530,7 +536,8 @@ export function createAgent(options: CreateAgentOptions) {
       baseDelayMs: retryDelayMs,
       onRetry: ({ attempt, error, waitMs }) => {
         const reason = (error as any)?.message ?? String(error)
-        log('error', { stage: 'model_retry', attempt, waitMs, error: reason })
+        llmRetries += 1
+        log('error', { stage: 'model_retry', at: 'launch', attempt, waitMs, error: reason })
         console.warn(`[Agent] 模型调用失败,第 ${attempt}/${maxRetries} 次重试(等 ${waitMs}ms):${reason}`)
       },
     }
@@ -582,7 +589,16 @@ export function createAgent(options: CreateAgentOptions) {
         return coreModelCall({ ...req, messages: trimmed }, onEvent, signal, caller)
       }
       // model-offline-guidance:网关/厂商下线模型面 → 打码 + message 附引导留痕(severity/重试语义不变,4xx 本就不重试)
-      if (decorateModelUnavailable(err)) log('error', { stage: 'model_unavailable', at: 'launch', status: (err as { status?: number })?.status })
+      if (decorateModelUnavailable(err)) {
+        llmCallFailures += 1 // 终败计数(审查补:离线模型是终态失败)
+        log('error', { stage: 'model_unavailable', at: 'launch', status: (err as { status?: number })?.status })
+      }
+      else {
+        // retry-visibility:启动阶段最终失败(重试耗尽/不可重试类)进 debugLogs + 计数 —— 修前此处直接 throw 零留痕,
+        // 网关断流形态排障只能靠手动 probe(黑洞假象:msgs 恒定 + 日志静默)
+        llmCallFailures += 1
+        log('error', { stage: 'model_call_failed', at: 'launch', retries: maxRetries, error: (err as any)?.message ?? String(err) })
+      }
       throw err
     }
     // catch 已 return/throw,此处 stream 必已赋值;narrow 防 TS 报 possibly undefined
@@ -607,6 +623,7 @@ export function createAgent(options: CreateAgentOptions) {
       // P1-7:流停滞/总时长超限 → abort 清理底层流 + 上抛(status=408 不被当网络错重试;UI 显错误,send 路径 throw)
       if (err instanceof StreamStalledError) {
         inner.abort()
+        llmCallFailures += 1 // 终败计数(审查补:迭代段停滞是终态,与启动段同错误同计数 —— 口径一致性)
         log('error', { stage: err instanceof StreamMaxDurationError ? 'stream_max_duration' : 'stream_stalled', waitedMs: err.waitedMs, stallMs, streamMaxMs })
         throw err
       }
@@ -627,8 +644,43 @@ export function createAgent(options: CreateAgentOptions) {
         console.warn(`[page-agent-sdk] 上下文超限 → 激进 trim 重试:${beforeTokens} → ${afterTokens} tokens(窗口 ${caps.contextWindow})`)
         return coreModelCall({ ...req, messages: trimmed }, onEvent, signal, caller)
       }
+      // body 阶段瞬时错 + 零 emit(首 chunk 前抛,如网关 SSE error 事件先于任何数据帧):等同启动失败,
+      // 重发安全 —— P1-d 忌讳的是已 emit 后重发(文本双份),零 emit 无此问题(与 _ctxRetry/_emptyRetry
+      // 同款递归重试)。inner maxRetries:0 后这是 body 阶段唯一的重试通道(retry-visibility:每次尝试都进
+      // debugLogs/inspect)。退避与启动段同式(base * 2^n,signal 可打断);预算与启动段各自独立 ——
+      // 同段失败合计 maxRetries+1 次尝试,交替段失败最坏 (maxRetries+1)² 次但全程可见可计数
+      const iterAttempt = ((req as any)._iterRetries ?? 0) + 1
+      if (aggregated === null && content === '' && iterAttempt <= maxRetries && isRetryable(err, signal)) {
+        ;(req as any)._iterRetries = iterAttempt
+        llmRetries += 1
+        const waitMs = retryDelayMs * Math.pow(2, iterAttempt - 1)
+        log('error', { stage: 'model_retry', at: 'iterate', attempt: iterAttempt, of: maxRetries, waitMs, error: (err as any)?.message ?? String(err) })
+        if (waitMs > 0) {
+          try {
+            await new Promise<void>((resolve, reject) => {
+              const onAbort = () => { clearTimeout(timer); reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })) }
+              const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve() }, waitMs)
+              if (signal?.aborted) { clearTimeout(timer); onAbort(); return }
+              signal?.addEventListener('abort', onAbort, { once: true })
+            })
+          } catch {
+            // 退避等待中用户 abort:与启动段 abort 同语义收口(零 emit ⇒ 空 partial 等同未开始)
+            return { message: new AIMessage(''), toolCalls: [], content: '', aborted: true }
+          }
+        }
+        return coreModelCall(req, onEvent, signal, caller)
+      }
       // model-offline-guidance:迭代中撞离线模型(已 emit,不重试)→ 同款打码 + 引导
-      if (decorateModelUnavailable(err)) log('error', { stage: 'model_unavailable', at: 'iterate', status: (err as { status?: number })?.status })
+      if (decorateModelUnavailable(err)) {
+        llmCallFailures += 1 // 终败计数(审查补:离线模型是终态失败)
+        log('error', { stage: 'model_unavailable', at: 'iterate', status: (err as { status?: number })?.status })
+      }
+      else {
+        // retry-visibility:迭代阶段最终失败进 debugLogs + 计数(修前直接 throw 零留痕;emitted 标记供
+        // 排障区分「已出字后断流」vs「零 chunk 即断」—— 前者重发有双份风险故不重试)
+        llmCallFailures += 1
+        log('error', { stage: 'model_call_failed', at: 'iterate', emitted: aggregated !== null || content !== '', error: (err as any)?.message ?? String(err) })
+      }
       throw err
     }
     // 流正常结束但零有效 chunk(网关回 200 + 错误 JSON 体非 SSE:LLM 代理黑洞实测形态,6003 error_code
@@ -645,6 +697,7 @@ export function createAgent(options: CreateAgentOptions) {
         return coreModelCall(req, onEvent, signal, caller)
       }
       log('error', { stage: 'empty_llm_response', retried: true, hint: '重试后仍零 chunk,抛 EmptyLLMResponseError 显式报错' })
+      llmCallFailures += 1 // 终败计数(审查补:网关 200+错误体形态是 LLM 代理黑洞的典型终态)
       throw new EmptyLLMResponseError()
     }
     const message = aggregated as unknown as BaseMessage
@@ -1251,8 +1304,11 @@ export function createAgent(options: CreateAgentOptions) {
     get allTools() { return allTools },
     /** stale-read-invalidation 会话累计失效数(getInfo/inspect 反射;createChatSdk 经 AgentInfo.staleReadsInvalidated 暴露) */
     getStaleReadsInvalidated: () => staleReadsInvalidated,
-    /** 会话切换/重置时清零(与 debugLogs 清空同点位调用,防旧会话计数带进新会话) */
-    resetStaleReadsInvalidated: () => { staleReadsInvalidated = 0 },
+    /** 模型调用重试/终败会话累计(inspect().llmRetries/llmCallFailures 反射;环境故障 vs SDK 回归的第一判据) */
+    getLlmRetries: () => llmRetries,
+    getLlmCallFailures: () => llmCallFailures,
+    /** 会话切换/重置时清零(与 debugLogs 清空同点位调用,防旧会话计数带进新会话;含 stale-read + 重试/终败三计数;审查建议随本批 surface 变化改名自描述) */
+    resetSessionCounters: () => { staleReadsInvalidated = 0; llmRetries = 0; llmCallFailures = 0 },
     setTools,
     setLlm,
     setModelCaps,

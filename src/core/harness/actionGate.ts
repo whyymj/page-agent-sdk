@@ -133,6 +133,33 @@ export function mentionsLocation(text: string): boolean {
   return LOCATION_MENTION_RE.test(text || '')
 }
 
+// ===== 诚实未做声明豁免(出口③机械化,2026-09-09)=====
+
+/**
+ * 否定完成态词(「否定前缀 + 有界间隔 + 动词」模式,容纳自然表述:「未对数据做任何修改」「已按要求停止」):
+ * 模型自己声明「没做」(未修改/已停止/无法完成…)。谎报面 = 声称做了;声称没做恰是出口③「如实说明」
+ * 的正确执行 —— 修前 RHC 拒绝场景实测:用户拒绝方案后模型诚实收口「已停止,未做任何修改」,仍被回灌 ×2
+ * 烧满预算 + 误报 ZERO_TOOL_GATE_EXHAUSTED(deferred 登记)。收口同时含完成态断言词(「此前未更新,
+ * 现已修复」类)时不豁免 —— 混合声明按谎报嫌疑走对账。
+ */
+const HONEST_DECLINE_RE = /(未|没有|暂未|暂不|尚未)[^。!?!?,,\n]{0,10}(修改|更改|改动|改变|写入|执行|操作|创建|新增|添加|删除|保存|更新|变更|做任何|动过)|已[^。!?!?,,\n]{0,6}(停止|取消|放弃|中止)|(保持|维持)(原样|不动|不变|现状)|无法(完成|执行|修改|做到)|做不到|未能完成/
+
+/** 完成态断言的对称模式(审查补:COMPLETION_ASSERT_RE 词面窄〔缺「已完成」最常用形〕且两处消费方向不同 ——
+ *  status_query 闸漏判只是少触发,本豁免漏判 = 谎报溜过出口;剥除否定语句后的剩余文本用本模式查混合声明) */
+const SOFT_COMPLETION_RE = /已[^。!?!?,,\n]{0,8}(完成|修改|改|写入|创建|新增|添加|删除|保存|更新|配置|生成|搭建|处理|修复|尝试|搞定)/
+
+/** 判定收口文本是否为「诚实未做声明」(纯函数;zero_tool 门禁与 EXHAUSTED observable 共用) */
+export function declaresNoAction(text: string): boolean {
+  const t = (text || '').trim()
+  if (!t) return false
+  if (!HONEST_DECLINE_RE.test(t)) return false
+  // 混合完成态声明不豁免:先剥掉否定未做语句,剩余文本仍含完成态断言 → 按谎报嫌疑走对账
+  // (「组件A已完成修改,组件B未修改」= 部分谎报;剥除防误伤纯拒绝表述「已按要求停止生成」——
+  //  剥掉「已按要求停止」后剩余「生成」无完成态前缀,豁免成立)
+  const remainder = t.replace(HONEST_DECLINE_RE, '。')
+  return !COMPLETION_ASSERT_RE.test(remainder) && !SOFT_COMPLETION_RE.test(remainder)
+}
+
 // ===== status-query-zero-verify-gate(状态询问零核实断言门禁,editor 真实会话 2026-08-21 驱动) =====
 
 /**

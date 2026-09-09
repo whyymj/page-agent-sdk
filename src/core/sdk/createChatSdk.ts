@@ -2115,7 +2115,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       if (checkpointMgr) checkpointMgr.importStack([])
       // 释放上一会话的调试日志(切会话后旧日志不再相关,立即释放内存)
       core.agent!.debugLogs.value = []
-      core.agent!.resetStaleReadsInvalidated?.() // stale-read 失效计数同点清零,防旧会话计数带进新会话
+      core.agent!.resetSessionCounters?.() // 会话级计数(stale-read 失效 + llm 重试/终败)同点清零,防旧会话计数带进新会话
       // 二次 load(新建会话路径):此时内存态已清/sessionId 已换,失败若上抛 = 半切换态且 UI 按钮路径无人接
       // (flow-robustness P1#6)→ 降级空会话 + observable 留痕(切换照常完成,快照可后续手动重载)
       if (!snap) {
@@ -2205,7 +2205,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       resumeNoticeMw.reset() // 清空会话:新会话无恢复历史,清待注入标记
       lastPlanConfirmation = undefined // 清空会话:清方案确认留痕(save-and-plan-gates 3c)
       if (checkpointMgr) checkpointMgr.importStack([])
-      if (core.agent) { core.agent.debugLogs.value = []; core.agent.resetStaleReadsInvalidated?.() }
+      if (core.agent) { core.agent.debugLogs.value = []; core.agent.resetSessionCounters?.() }
       if (store) {
         store.createSession(core.agentId, options.session?.title, core.sessionId).catch((e: unknown) => {
           if (options.debug) console.warn('[page-agent-sdk][persist] createSession 失败(已吞):', e)
@@ -2409,6 +2409,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         memory: memoryMw.get(),
         // stale-read-invalidation 会话累计(顶层字段,不寄生 inspect().context —— 那是 contextInspector 每轮覆盖快照且随其开关消失)
         staleReadsInvalidated: core.agent?.getStaleReadsInvalidated?.() ?? 0,
+        llmRetries: core.agent?.getLlmRetries?.() ?? 0,
+        llmCallFailures: core.agent?.getLlmCallFailures?.() ?? 0,
         middleware: middlewares.map((m) => m.name),
         todos: (core.agent?.getState?.()?.todos ?? []).map((t) => ({
           id: t.id, content: t.content, status: t.status,

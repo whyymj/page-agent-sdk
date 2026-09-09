@@ -12,6 +12,7 @@
 | [系统提示词构成](./system-prompt.md) | 两层拼接(base 身份+规则 / augmentPrompt 动态段)/ 数据段注入 / 各中间件段次序 / `augmentSystem` 钩子 |
 | [page-agent 架构对比](./page-agent-architecture-comparison.md) | 与阿里 `alibaba/page-agent` 逐行源码对比:定位差异 / 结构性差距(DOM 交互层 / MCP server 形态 / 模型兼容)/ 我方优势 / 可借鉴落地建议(MCP server → 薄客户端 → 强制反射) |
 | [占位符替换读写设计](./placeholder-protected-rw.md) | **待实施功能设计**:精确值保护(freeze 冻结 / verbatim 原样保留 / 资源池生命周期 / 跨压缩 pin)原理 + 6 张流程/时序/状态图 + 实施前审查结论(A1-A3 架构缺口 / B1-B4 语义锁死) |
+| [宿主升级采用包](./editor-upgrade-4.11.md) | 已集成宿主升级 4.11.0 一页 checklist:npm 环境坑 / 断点速查(4.0/4.1/4.9 移除项)/ 透明修复对号 / 新功能采用点(quickActions / approval.preview / sessionTransfer / onDropElement / eval-toolkit 升级前回归) |
 
 ## 已归档(历史参考)
 
@@ -29,7 +30,7 @@
 - **变更记录**(proposal / design / tasks):[`../openspec/changes/archive/`](../openspec/changes/archive/)
 - **项目指引 / 约定与坑**:[`../CLAUDE.md`](../CLAUDE.md)
 - **框架无关集成示例**:[`../demo/plain.html`](../demo/plain.html)
-- **自测**:`npm test`(`../src/core/__tests__/selftest.ts`,3283 项断言)+ `npm run test:e2e`(集成层 e2e,1048 项)+ `npm run test:browser`(浏览器 E2E,136 项)
+- **自测**:`npm test`(`../src/core/__tests__/selftest.ts`,3375 项断言)+ `npm run test:e2e`(集成层 e2e,1085 项)+ `npm run test:browser`(浏览器 E2E,153 项)
 
 ## 快速开始
 ```bash

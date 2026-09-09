@@ -69,3 +69,44 @@ test.describe('元素拖入聚焦入口 onDropElement(ui-quick-wins Q4)', () => 
     await expect(page.locator('.chat-dialog .chat-input')).toBeVisible()
   })
 })
+
+test.describe('page-demo 默认展示(demo 补充:ui-quick-wins 三项)', () => {
+  test('quickActions chips 默认渲染 + sessionTransfer 入口在', async ({ page }) => {
+    await page.goto('/examples/page-demo/')
+    await page.waitForSelector('.chat-dialog')
+    const chips = page.locator('.chat-dialog [data-test="quick-actions"] .quick-action-chip')
+    await expect(chips).toHaveCount(3)
+    await expect(chips.first()).toContainText('加一个 banner')
+    // storage indexed → 历史面板底部 transfer 入口
+    await page.click('.chat-dialog [data-test="toggle-history"]')
+    await expect(page.locator('.chat-dialog [data-test="export-session"]')).toBeVisible()
+  })
+
+  test('画布组件可拖 → 拖入输入框触发 onDropElement 聚焦', async ({ page }) => {
+    await page.goto('/examples/page-demo/')
+    await page.waitForSelector('.chat-dialog')
+    await page.evaluate(`(() => {
+      const src = document.querySelector('[data-path]')
+      src.dispatchEvent(new DragEvent('dragstart', { bubbles: true }))
+      document.querySelector('.chat-dialog .chat-input-wrap').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() }))
+    })()`)
+    // onDropElement → addFocus → 输入框聚焦 chip 出现(路径 = 画布首个组件 data-path)
+    await expect(page.locator('.chat-dialog .focus-chip', { hasText: 'components.0' })).toBeVisible({ timeout: 5_000 })
+  })
+})
+
+test.describe('eval-demo 加载冒烟(demo 补充:eval-toolkit)', () => {
+  test('页面渲染:标题 + 场景输入框 + 说明(无 key 时提示不炸)', async ({ page }) => {
+    await page.goto('/examples/eval-demo/')
+    await page.waitForSelector('h1')
+    await expect(page.locator('h1')).toContainText('eval-toolkit 回归面板')
+    // 有 key → 输入框 + 按钮出现;无 key → 提示行出现(两态都不炸)
+    const hasRun = await page.locator('button.primary').count()
+    if (hasRun) {
+      await expect(page.locator('textarea')).toBeVisible()
+      await expect(page.locator('button.primary')).toContainText('跑一轮回归')
+    } else {
+      await expect(page.locator('.warn')).toBeVisible()
+    }
+  })
+})

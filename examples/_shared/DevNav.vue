@@ -39,6 +39,7 @@ const GROUPS: NavGroup[] = [
     links: [
       { href: '/examples/headless-demo/', label: 'Headless', match: (p: string) => p.startsWith('/examples/headless-demo') },
       { href: '/examples/proxy-demo/', label: '代理 + Provider', match: (p: string) => p.startsWith('/examples/proxy-demo') },
+      { href: '/examples/eval-demo/', label: '回归面板', match: (p: string) => p.startsWith('/examples/eval-demo') },
     ],
   },
   {

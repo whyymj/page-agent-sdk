@@ -11,6 +11,7 @@
 | [Context & Compression](./context-management.md) / [EN](./context-management.en.md) | Context 3-part composition / offload + 3-layer compression (per-layer principle/flow/params/boundaries) / post-compression structure / 3 flow diagrams / presets / differences from Deep Agents |
 | [System Prompt Composition](./system-prompt.md) *(Chinese)* | Two-layer assembly (base identity+rules / dynamic augmentPrompt segments) / data-hint injection / middleware segment order / `augmentSystem` hook |
 | [Placeholder Protected Read/Write](./placeholder-protected-rw.md) *(Chinese)* | **Planned feature design**: exact-value protection (freeze / verbatim / resource-pool lifecycle / cross-compression pin) — principle + 6 flow/sequence/state diagrams + pre-implementation review conclusions (A1-A3 architecture gaps / B1-B4 semantic locks) |
+| [Host Upgrade Pack](./editor-upgrade-4.11.md) *(Chinese)* | One-page checklist for integrated hosts upgrading to 4.11.0: npm env gotchas / breaking-change quick table (4.0/4.1/4.9 removals) / transparent fixes you may have hit / adoption points (quickActions / approval.preview / sessionTransfer / onDropElement / eval-toolkit pre-upgrade regression) |
 
 ## Archived (historical reference)
 
@@ -28,7 +29,7 @@
 - **Change records** (proposal / design / tasks): [`../openspec/changes/archive/`](../openspec/changes/archive/)
 - **Project guide / gotchas**: [`../CLAUDE.md`](../CLAUDE.md)
 - **Framework-agnostic integration example**: [`../demo/plain.html`](../demo/plain.html)
-- **Self-tests**: `npm test` (`../src/core/__tests__/selftest.ts`, 2319 assertions) + `npm run test:e2e` (integration e2e, 718 assertions) + `npm run test:browser` (browser E2E, 80 assertions)
+- **Self-tests**: `npm test` (`../src/core/__tests__/selftest.ts`, 3375 assertions) + `npm run test:e2e` (integration e2e, 1085 assertions) + `npm run test:browser` (browser E2E, 153 assertions)
 
 ## Quick start
 ```bash

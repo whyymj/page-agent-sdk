@@ -134,6 +134,20 @@ export async function run(ctx: TestCtx) {
     const impMsgs = [{ _getType: () => 'human', content: '修改嵌套层级,把商品列表包进新section' }]
     const impFired = runFinishGates({ state: createGateChainState(), garbled: false, rounds: 0, finalContent: narrationTable, todos: [], isSubagent: false, turnUsage: usage, isWriteToolByName: isW, messages: impMsgs })
     assert(impFired?.kind === 'feedback' && impFired.gate.stage === 'transitional_retry', '✓ runFinishGates 问句豁免边界 → 祈使消息下同款叙述照常回灌(豁免不弱化反幻觉)')
+    // 诚实未做声明豁免(2026-09-09,RHC 拒绝实测):祈使消息 + 零写 + 模型声明「已停止,未做任何修改」→
+    // 不回灌(出口③机械化:声明没做恰是如实说明,不是谎报面);混合完成态断言不豁免;EXHAUSTED 同口径豁免
+    const honestDecline = runFinishGates({ state: createGateChainState(), garbled: false, rounds: 0, finalContent: '用户拒绝了该方案,已按要求停止,未对数据做任何修改。', todos: [], isSubagent: false, turnUsage: usage, isWriteToolByName: isW, messages: [{ _getType: () => 'human', content: '把标题改成X' }] })
+    assert(honestDecline === null, '✓ runFinishGates 诚实未做豁免 → RHC 拒绝后如实收口不回灌(修前烧满 2 次 + 误报 EXHAUSTED)')
+    const mixedClaim = runFinishGates({ state: createGateChainState(), garbled: false, rounds: 0, finalContent: '该字段此前未更新,现已更新修复。', todos: [], isSubagent: false, turnUsage: usage, isWriteToolByName: isW, messages: [{ _getType: () => 'human', content: '把标题改成X' }] })
+    assert(mixedClaim?.kind === 'feedback' && mixedClaim.gate.stage === 'zero_tool_gate', '✓ runFinishGates 诚实未做豁免边界 → 混合完成态断言(「此前未更新,现已更新修复」)不豁免照常对账')
+    const ztHonest = createGateChainState()
+    ztHonest.zeroToolRetries = 2
+    assert(runFinishGates({ state: ztHonest, garbled: false, rounds: 0, finalContent: '未修改任何数据,请确认方案后我再继续。', todos: [], isSubagent: false, turnUsage: usage, isWriteToolByName: isW, messages: [{ _getType: () => 'human', content: '把标题改成X' }] }) === null, '✓ runFinishGates 诚实未做豁免 → 预算耗尽后诚实声明不误报 ZERO_TOOL_GATE_EXHAUSTED')
+    // 审查 HIGH 补:「已完成」混合声明形态(COMPLETION_ASSERT_RE 词面缺「已完成」曾致溜过)+ 纯拒绝含动词尾巴不误伤
+    const partialLie = runFinishGates({ state: createGateChainState(), garbled: false, rounds: 0, finalContent: '组件A标题已完成修改,组件B未修改,稍后处理。', todos: [], isSubagent: false, turnUsage: usage, isWriteToolByName: isW, messages: [{ _getType: () => 'human', content: '把A和B的标题都改成X' }] })
+    assert(partialLie?.kind === 'feedback' && partialLie.gate.stage === 'zero_tool_gate', '✓ runFinishGates 诚实未做豁免边界 → 「已完成…未修改」混合声明不豁免(部分谎报照常对账)')
+    const stopGen = runFinishGates({ state: createGateChainState(), garbled: false, rounds: 0, finalContent: '已按要求停止生成,等你确认后再继续。', todos: [], isSubagent: false, turnUsage: usage, isWriteToolByName: isW, messages: [{ _getType: () => 'human', content: '把标题改成X' }] })
+    assert(stopGen === null, '✓ runFinishGates 诚实未做豁免 → 纯拒绝表述带动词尾巴(「停止生成」)仍豁免(剥除后无完成态前缀)')
     // 预算池独立:transitional 耗尽不影响完结门禁
     const mixState = createGateChainState()
     mixState.transitionalRetries = 2

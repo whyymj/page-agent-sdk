@@ -124,8 +124,9 @@ export function createVfs(
         .filter(([k]) => poolOf(k) === pool)
         .sort((a, b) => a[1].updatedAt - b[1].updatedAt)
       for (const [k] of ordered) {
-        // P4:被引用的 large_results 跳过(防 vfs_read 404);OOM 硬兜底时无视保护
-        if (isLarge && !oomForce && _protectedRefs.has(k)) continue
+        // P4:被引用的 large_results 跳过(防 vfs_read 404);OOM 硬兜底时无视保护。
+        // updatedAt ≥ _protectSinceTs = 本 invoke 内新 offload(当轮创建恒保护,mid-invoke 404 盲区)
+        if (isLarge && !oomForce && (_protectedRefs.has(k) || files[k].updatedAt >= _protectSinceTs)) continue
         delete files[k]
         if (poolBytesOf(pool) <= target) break
       }
@@ -136,7 +137,7 @@ export function createVfs(
       const totalOomForce = estimateFileBytes(files) > maxBytes * 1.5
       const ordered = Object.entries(files).sort((a, b) => a[1].updatedAt - b[1].updatedAt)
       for (const [k] of ordered) {
-        if (poolOf(k) === 'largeResults' && !totalOomForce && _protectedRefs.has(k)) continue
+        if (poolOf(k) === 'largeResults' && !totalOomForce && (_protectedRefs.has(k) || files[k].updatedAt >= _protectSinceTs)) continue
         delete files[k]
         if (estimateFileBytes(files) <= target) break
       }
@@ -148,6 +149,11 @@ export function createVfs(
   let _dirty = true
   // P4:被消息引用的 large_results path 集(enforceLimit 淘汰时跳过,防 vfs_read 404);由 createChatSdk stream 入口注入
   let _protectedRefs: Set<string> = new Set()
+  // 当轮创建恒保护(P4 补,2026-09-09):入口引用集在 invoke 前算,invoke 内新 offload 的大结果不在集内 →
+  // 同轮再触发 LRU 淘汰时 404(4.1 修的残留变体,mid-invoke 盲区)。记 setProtectedRefs 调用时刻为水位,
+  // updatedAt ≥ 水位的 large_results 视同被引用;下次 invoke 入口水位随引用集一起刷新(上轮文件回落到
+  // 引用集判定,被消息引用的仍保护)。初始 Infinity = 从未注入引用集时零行为变化(纯 createAgent 场景)
+  let _protectSinceTs = Number.POSITIVE_INFINITY
   let saveTimer: ReturnType<typeof setTimeout> | null = null
 
   function doSave(): void {
@@ -193,7 +199,10 @@ export function createVfs(
     files: proxy,
     isDirty: () => _dirty,
     consumeDirty: () => { const d = _dirty; _dirty = false; return d },
-    setProtectedRefs: (refs: Set<string>) => { _protectedRefs = refs },
+    setProtectedRefs: (refs: Set<string>) => {
+      _protectedRefs = refs
+      _protectSinceTs = now() // 当轮创建恒保护水位(见声明处注释)
+    },
     getPoolOf: (path: string) => poolOf(path),
     getPoolLimit: (pool: string) => poolMaxBytes[pool as VfsPoolKey] ?? DEFAULT_POOL_BYTES.userFiles,
   }

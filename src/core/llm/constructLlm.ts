@@ -132,6 +132,9 @@ export function constructOpenLlmSync(cfg: LLMConfig, opts: ConstructOpts = {}): 
     // maxTokens 缺省链尾接能力表(request-maxtokens-default):cfg 未设时按表内模型实际上限发 max_tokens,
     // 不发会落 provider/网关缺省(常 4K)—— 大输出任务(代码生成)易截断;未知模型不兜(防超发 400)
     maxTokens: opts.maxTokens ?? cfg.maxTokens ?? tableMaxOutputTokens(cfg.model),
+    // retry-visibility:内层重试关闭 —— SDK withRetry(coreModelCall)独占重试且每次留痕;LangChain 默认
+    // maxRetries=2 内外叠乘(最坏 9 次)且完全不可见。摘要/标题等直调路径有超时+降级兜底,不受影响
+    maxRetries: 0,
     configuration: {
       ...(cfg.baseUrl ? { baseURL: normalizeBaseUrl(cfg.baseUrl) } : {}),
       fetch: stripStainlessFetch,
@@ -196,6 +199,7 @@ export async function constructLlmFromConfig(cfg: LLMConfig, opts: ConstructOpts
     // extended thinking 开启 → API 要求 temperature=1(显式低温会 400);未开思考维持原覆盖链
     temperature: cfg.thinking ? 1 : (opts.temperature ?? cfg.temperature),
     maxTokens: opts.maxTokens ?? cfg.maxTokens ?? tableMaxOutputTokens(cfg.model),  // 表兜底同 openai 路径
+    maxRetries: 0,  // retry-visibility:内层重试关闭,SDK withRetry 独占(同 constructOpenLlmSync 注释)
     // anthropicApiUrl = baseUrl(Anthropic SDK 的 baseURL 别名);clientOptions 透传 extraConfig(fetch/headers 等)
     ...(cfg.baseUrl ? { anthropicApiUrl: normalizeBaseUrl(cfg.baseUrl) } : {}),
     ...(cfg.extraConfig ? { clientOptions: cfg.extraConfig } : {}),

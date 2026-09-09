@@ -62,6 +62,22 @@ export async function run(ctx: TestCtx) {
     assert(invalidateStaleReads(mk('components'), [W('write', { patch: { op: 'set', jsonPath: 'components2', value: 1 } })]).invalidatedCount === 0, '✓ 重叠 → components2 不误配 components')
   }
 
+  // 2.5 批读部分击中:占位文案如实(team-audit P2「批读失效占位文案不实」已修,回归钉死)——
+  // 整条 ToolMessage 原子替换,未触及的兄弟路径同样不可引用,不得再宣称「仍可参考」
+  {
+    const messages = [
+      ...mkRound([{ name: 'read', args: { jsonPaths: ['components.0', 'components.1'] } }], ['components.0={...}\ncomponents.1={...}']),
+      ...mkRound([{ name: 'write', args: { patch: { op: 'set', jsonPath: 'components.0.props.title', value: 'x' } } }], ['ok']),
+    ]
+    const wargs = { patch: { op: 'set', jsonPath: 'components.0.props.title', value: 'x' } }
+    const r = invalidateStaleReads(messages, [W('write', wargs)], { round: 2 })
+    assert(r.invalidatedCount === 1, '✓ 批读失效 → 部分路径击中,整条 ToolMessage 替换')
+    const c = CONTENT(r.messages[1] as BaseMessage)
+    assert(c.includes('整体已过期'), '✓ 批读失效文案 → 如实声明整体过期(含未触及的兄弟路径)')
+    assert(!c.includes('仍可参考') && !c.includes('仍为读取时原值'), '✓ 批读失效文案 → 不再误导「兄弟子树可参考」(防凭旧值直写)')
+    assert(c.includes('components.0、components.1'), '✓ 批读失效文案 → 钉全部原读路径引窄读')
+  }
+
   // 3. remove/move/del 兄弟失效(父数组前缀)
   {
     const mkMsg = () => [

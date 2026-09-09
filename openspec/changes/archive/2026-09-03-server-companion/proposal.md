@@ -1,6 +1,9 @@
 # Proposal: server-companion(Node/服务端同构运行)
 
-> 状态:**🔧 Phase 0 已实施(2026-09-04,双协议冒烟 8/8 一次通过;DOM 审计 12 文件:10 安全/1 修复 domTool 守卫/1 文档化设计 compressImage);Phase 1 文档 recipe 已随 §9.1 首版交付,余项待续**。优先级 P2(战略方向;**Phase 0 独立可先发**)。目标:把「浏览器端 agent 页面关了就停」的硬边界打开 —— harness 核心已在 node 跑通(e2e 每次都在 node 加载 dist + stub model 走完整 ReAct),本 change 把这件事**证明到真 LLM + 文档化 + 无人值守形态正式化**,让同一套 SDK 在服务端跑定时/webhook 触发的长任务。
+> 状态:**✅ 已实施并归档(2026-09-07 随 4.11.0 发布;Phase 0 冒烟 8/8 + DOM 审计 / Phase 1 无人值守组合 e2e 6/6 + recipe 文档 / D2 关闭 —— headless 冒烟零障碍,复用 /headless 不建独立 node 子路径;全 11 任务收口)**。
+>
+> **Phase 1 缺口裁决(task 8 留痕)**:无人值守 checklist 全旋钮已覆盖(approval 自动拒 timeoutMs / conflictPolicy 非问策略 / toolTimeoutMs / streamStallMs / streamMaxDurationMs / batch / afterRound),组合面 e2e 锁定(automation.mjs「无人值守组合」安全+效率双形态);**跨进程重启恢复(快照在,流中断续跑)→ deferred**,触发条件 = 真实定时任务场景出现。
+> **D2 裁决(task 10 留痕)**:Phase 0 node 真 LLM 冒烟双协议零障碍 → headless 产物即 node 形态,关闭「独立 node 子路径」选项(省一套构建面/types/size 门禁)。优先级 P2(战略方向;**Phase 0 独立可先发**)。目标:把「浏览器端 agent 页面关了就停」的硬边界打开 —— harness 核心已在 node 跑通(e2e 每次都在 node 加载 dist + stub model 走完整 ReAct),本 change 把这件事**证明到真 LLM + 文档化 + 无人值守形态正式化**,让同一套 SDK 在服务端跑定时/webhook 触发的长任务。
 > 来源:2026-09-03 功能拓展点咨询收敛(「唯一能打开新维度的一项」);用户拍板「openspec 大纲规划」。
 
 ## 为什么可行(现状证据)

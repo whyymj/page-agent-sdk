@@ -573,15 +573,15 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 |---|---|---|
 | 摘要缓存前缀对齐在 trim/restore 后失效 | useContextManager.ts:88-93 注释宣称「trim 错位时缓存不命中」与实现不符(命中判定只比 coveredCount 数值,③trim 后轮号重编 → 错位摘要);近窗原文无损纯质量问题。修:缓存条目存 older 首轮 user 指纹做对齐锚 | 长会话过 ③trim 后摘要质量异常实测 |
 | ✅ token 估算计入 steps/reasoning 而 toLC 从不发送 | **已修销账 2026-09-01(4.9.2,wire 口径)**:新增 `estimateMessageWireTokens`/`estimateRoundWireTokens`(仅 content),压缩触发 + 窗口切分 + inspect_context 三消费方统一切换;公开导出 `estimateMessageTokens`/`estimateRoundTokens` 语义不变;OOM 硬防线本就对真实 LC 请求实测不受影响 | — |
-| 批读失效占位文案不实 | readInvalidation.ts:170-171 称「兄弟子树仍可参考」,实际 :252-256 整条 ToolMessage 原子替换未触及路径一并吞掉 → 模型凭旧值直写(恰是机制要消灭的行为);usageHints 明文鼓励批读。修:readPaths>1 改文案或失效判定逐路径 | 批读 + 部分击中后模型引用旧值实测 |
-| invoke 内新 offload 不进保护集 | createChatSdk.ts:1882/1956/2109 refs 均在 invoke 前算;单 invoke 连续大子树整读撑超 4MB 池 → 本轮早前 offload 被 LRU 淘汰 → 同轮 vfs_read 404(4.1 修的残留变体,主路径 mid-invoke 盲区,#217/#542 只登记子 agent 面)。修:offload 后回调并入保护集或「当轮创建恒保护」 | 单 invoke 多次大整读实测 404 |
+| ✅ 批读失效占位文案不实 | **已修销账(先期已修,2026-09-09 补回归测试钉死 + 本表销账)**:buildPlaceholder 文案已改「原读取结果整体已过期(含未触及的兄弟路径)」如实口径,不再宣称「仍可参考」;sec-99 增批读部分击中回归断言(整体过期声明 + 无误导语 + 钉全部原读路径);逐路径行级重写仍不做(整条替换语义下文案如实即可) | — |
+| ✅ invoke 内新 offload 不进保护集 | **已修销账 2026-09-09(当轮创建恒保护方案)**:vfs `setProtectedRefs` 记 invoke 起点水位,`updatedAt ≥ 水位` 的 large_results 同轮 LRU 豁免(mid-invoke 新 offload 不需要进入口引用集);下次 invoke 入口水位随引用集刷新回落;OOM 1.5x 硬兜底仍可越保护强删;从未注入引用集零行为变化;sec-55 三态回归断言(当轮保护/未注入零变化/OOM 强删) | — |
 | userImages 保护判定带 isLarge 前置 | vfs.ts:128/139 仅 largeResults 池查 _protectedRefs → 图片池 LRU 淘汰保护不生效(vfsGc.ts:24 注释宣称的口径);优雅降级剩缩略图故 P3 | 多轮带图超 2MB 池后需原图实测 |
 
 ### 门禁面(P2×4 + P3×3)
 
 | 项 | 说明 | 触发条件 |
 |---|---|---|
-| 零工具门禁无「用户已拒绝/诚实做不到」出口 | gateChain.ts:182-213;用户拒绝后模型陈述句收口「已停止,未做任何修改」→ lastHumanContent 仍原祈使句 → 回灌×2 烧满 + 误报 ZERO_TOOL_GATE_EXHAUSTED;出口③诚实回答零机械化识别。修:否定完成态词豁免或 turnUsage 含 RHC 且收口无位置说明时降级 | RHC 拒绝场景实测误报 |
+| ✅ 零工具门禁无「用户已拒绝/诚实做不到」出口 | **已修销账 2026-09-09(否定完成态词豁免方案)**:actionGate 新增 `declaresNoAction`(「否定前缀 + 有界间隔 + 动词」模式:未…修改/已按要求停止/无法完成等,收口同时含完成态断言词不豁免防混合声明溜过);zero_tool 门禁与 EXHAUSTED observable 两层同口径豁免;sec-101 三断言(诚实收口放行/混合声明照常对账/预算耗尽不误报) | — |
 | ✅ COMPONENT_BUSY 计入等效写 | **已修销账 2026-08-28(4.9.1)**:TurnToolUsage 增 rejectedDelegations 计数(createAgent 捕获循环按「委派名 × content ERROR: 前缀」),全被拒不算等效写 + 事实清单如实标注「其中 N 次被拒未生效」+ 回灌文案补组件锁出口;e2e runtime 全链覆盖 | — |
 | caps.vfs:false + codeAsset 并存无守卫 | createChatSdk.ts:1019-1024 自动装配不查 caps.vfs → 子 agent 引导走 vfs_edit「工具不存在」白烧轮次,修改路径静默失效。修:装配期 warn 或强制开 | 集成方显式关 vfs + schema 含 code 数组 |
 | ✅ detectActionImperative 缺全角标点 | **已修销账 2026-08-28(4.8.1)**:切分字符类补 `！？；，`,首子句不再被全角逗号退化为整句(sec-95 断言:真写指令不再被后置只读动词漏拦) | — |
@@ -640,3 +640,7 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 ### [2026-09-03] 端侧本地模型(WebGPU/transformers.js)+ A2A 协议 — ❌ 明确不做(过度工程)
 
 **评估结论**:两者都偏离「宿主页面 JSON 操作 Agent」主轴 —— 本地模型推理质量撑不起 tool-calling 纪律(实测 flash 级弱模型都需要门禁族兜底,本地小模型更甚),WebGPU 面版本碎片;A2A 的多 agent 互操作在「单宿主单 SDK」形态里没有消费者。**重启触发**:出现隐私强诉求宿主要求「摘要/分类等低智任务本地跑省 token」(届时只做 summarization LLM 的本地后端,不做主循环本地化);A2A 等标准被主流生态采纳且宿主有互操作实例。
+
+### [2026-09-07] 跨进程重启恢复(定时任务中断续跑)— ⏸ 暂缓(server-companion Phase 1 缺口裁决)
+
+**来源**:`2026-09-03-server-companion` Phase 1 checklist 裁决。无人值守组合的其余旋钮全覆盖(approval 自动拒/conflictPolicy 非问策略/超时族/batch/afterRound,组合面 e2e 锁定);唯**进程重启后中断任务续跑**不在面 —— 快照经 storage 持久化存活,但在途流/轮次状态不续(重启后只能从最后落盘快照重开任务)。**重启触发**:真实定时任务场景出现(node 进程跑 cron 批任务被重启打断的续跑诉求)。**候选方案**:checkpoint exportStack 已持久化 + batch 断点续跑入口(automation 既有断点续跑面为页面刷新设计,进程外重启需补任务队列落盘)。

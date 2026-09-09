@@ -19,25 +19,25 @@ const slide = ref(0)
 
 <template>
   <!-- 标题(level 1-4 分档,>4 归 h4) -->
-  <h1 v-if="comp.type === 'heading' && (comp.level ?? 2) === 1" class="comp comp-h1" :data-path="path">{{ comp.text }}</h1>
-  <h2 v-else-if="comp.type === 'heading' && (comp.level ?? 2) === 2" class="comp comp-h2" :data-path="path">{{ comp.text }}</h2>
-  <h3 v-else-if="comp.type === 'heading' && (comp.level ?? 2) === 3" class="comp comp-h3" :data-path="path">{{ comp.text }}</h3>
-  <h4 v-else-if="comp.type === 'heading'" class="comp comp-h4" :data-path="path">{{ comp.text }}</h4>
-  <p v-else-if="comp.type === 'paragraph'" class="comp comp-paragraph" :data-path="path">{{ comp.text }}</p>
+  <h1 v-if="comp.type === 'heading' && (comp.level ?? 2) === 1" class="comp comp-h1" :data-path="path" draggable="true">{{ comp.text }}</h1>
+  <h2 v-else-if="comp.type === 'heading' && (comp.level ?? 2) === 2" class="comp comp-h2" :data-path="path" draggable="true">{{ comp.text }}</h2>
+  <h3 v-else-if="comp.type === 'heading' && (comp.level ?? 2) === 3" class="comp comp-h3" :data-path="path" draggable="true">{{ comp.text }}</h3>
+  <h4 v-else-if="comp.type === 'heading'" class="comp comp-h4" :data-path="path" draggable="true">{{ comp.text }}</h4>
+  <p v-else-if="comp.type === 'paragraph'" class="comp comp-paragraph" :data-path="path" draggable="true">{{ comp.text }}</p>
   <button
     v-else-if="comp.type === 'button'"
     class="comp comp-button"
     :data-variant="comp.variant || 'primary'"
-    :data-path="path"
+    :data-path="path" draggable="true"
   >
     {{ comp.label }}
   </button>
-  <img v-else-if="comp.type === 'image'" class="comp comp-image" :src="comp.src" :alt="comp.alt || ''" :data-path="path" />
-  <ul v-else-if="comp.type === 'list'" class="comp comp-list" :data-path="path">
+  <img v-else-if="comp.type === 'image'" class="comp comp-image" :src="comp.src" :alt="comp.alt || ''" :data-path="path" draggable="true" />
+  <ul v-else-if="comp.type === 'list'" class="comp comp-list" :data-path="path" draggable="true">
     <li v-for="(it, j) in comp.items" :key="j">{{ it }}</li>
   </ul>
   <!-- 卡片(可选 children 嵌套) -->
-  <div v-else-if="comp.type === 'card'" class="comp comp-card" :data-path="path">
+  <div v-else-if="comp.type === 'card'" class="comp comp-card" :data-path="path" draggable="true">
     <h3 class="card-title">{{ comp.title }}</h3>
     <p class="card-text">{{ comp.text }}</p>
     <div v-if="comp.children?.length" class="card-children">
@@ -52,7 +52,7 @@ const slide = ref(0)
     </div>
   </div>
   <!-- 轮播(children 每项一页;‹ › 切换,click.stop 防触发选中) -->
-  <div v-else-if="comp.type === 'carousel'" class="comp comp-carousel" :data-path="path">
+  <div v-else-if="comp.type === 'carousel'" class="comp comp-carousel" :data-path="path" draggable="true">
     <div v-if="comp.children.length" class="carousel-stage">
       <PageComponentView
         :comp="comp.children[slide % comp.children.length]"
@@ -68,7 +68,7 @@ const slide = ref(0)
     </div>
   </div>
   <!-- 瀑布流(CSS columns 分列;子项 break-inside 防跨列断裂) -->
-  <div v-else-if="comp.type === 'waterfall'" class="comp comp-waterfall" :data-path="path" :style="{ columnCount: comp.columns ?? 2 }">
+  <div v-else-if="comp.type === 'waterfall'" class="comp comp-waterfall" :data-path="path" draggable="true" :style="{ columnCount: comp.columns ?? 2 }">
     <div v-for="(c, i) in comp.children" :key="i" class="wf-item">
       <PageComponentView
         :comp="c"
@@ -79,7 +79,7 @@ const slide = ref(0)
     </div>
   </div>
   <!-- 纯代码组件(沙箱 iframe 渲染自包含 HTML,与宿主隔离) -->
-  <div v-else-if="comp.type === 'custom'" class="comp comp-custom" :data-path="path">
+  <div v-else-if="comp.type === 'custom'" class="comp comp-custom" :data-path="path" draggable="true">
     <iframe class="custom-frame" sandbox="allow-scripts" :srcdoc="comp.code" :title="comp.name || 'custom'"></iframe>
   </div>
 </template>

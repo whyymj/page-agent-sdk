@@ -291,5 +291,61 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:automation] 无人值守组合(server-companion Phase 1):approval 自动拒 / conflictPolicy overwrite × batch 全链有界')
+  {
+    // 单旋钮各有专测(approval 超时在 hang-feedback;conflictPolicy 在 conflict);此处验证**组合面**:
+    // ① 写被 approval 门控且无人应答 → 自动拒,batch 任务有界收口不永挂(安全形态)
+    // ② 写不门控 + 乐观锁武装 + overwrite → batch 写入冲突静默覆盖落地(效率形态)
+    // 无人值守 = 无 UI 响应方:approval timeoutMs 短路自动拒;conflict 非 ask 策略不挂起
+    {
+      const bind = { title: '初始' }
+      const llm = stubModel(
+        { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'title', value: '任务A写入' } } }] },
+        { text: '(写被拒后收口)' },
+        { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'title', value: '任务B写入' } } }] },
+        { text: '(写被拒后收口)' },
+      )
+      const sdk = createChatSdk({
+        ui: false, id: 'e2e-unattended-deny', storage: 'memory', llm,
+        data: { schema: z.object({ title: z.string() }), bind, description: 'd' },
+        approval: { tools: ['write'], timeoutMs: 60 },   // 无响应方:60ms 自动拒(无人值守安全口径)
+        capabilities: { ...MIN_CAPS, automation: true },
+      })
+      await sdk.mount()
+      const results = await sdk.batch(['任务A:改标题', '任务B:再改标题'])
+      assert(results.length === 2 && results.every((r) => r.ok), '✓ 组合①:approval 门控写被自动拒 → batch 双任务有界 ok(零人工介入不永挂)')
+      assert(bind.title === '初始', '✓ 组合①:被拒写零落地(自动拒 = 拒绝语义,数据不变)')
+      sdk.unmount()
+    }
+    {
+      const bind = { title: '初始' }
+      const conflicts = []
+      const llm = stubModel(
+        { toolCalls: [{ name: 'read', args: {} }] },
+        { toolCalls: [{ name: 'write', args: { value: { title: 'agent覆盖值' } } }] },
+        { text: '完成' },
+      )
+      const sdk = createChatSdk({
+        ui: false, id: 'e2e-unattended-ow', storage: 'memory', llm,
+        data: { schema: z.object({ title: z.string() }), bind, description: 'd' },
+        conflictWatchFields: ['*'],                        // 武装乐观锁
+        conflictPolicy: 'overwrite',                       // 真冲突自动覆盖不挂起
+        capabilities: { ...MIN_CAPS, automation: true },
+        onEvent: (e) => {
+          if (e.type === 'conflict') conflicts.push(e)
+          // read 落地后、write 前外部篡改 → agent 基线过期制造冲突窗口(batch 无法像 stream 中途注入,经事件钩子)
+          if (e.type === 'tool_result' && e.name === 'read') bind.title = '外部篡改值'
+        },
+      })
+      await sdk.mount()
+      await sdk.batch(['改标题'])
+      assert(bind.title === 'agent覆盖值', `✓ 组合②:overwrite 策略 batch 写入静默覆盖落地(实际 "${bind.title}")`)
+      assert(sdk.pendingConflict.value === null, '✓ 组合②:pendingConflict 全程不挂起(无人值守零卡点)')
+      assert(conflicts.some((c) => c.conflict.autoResolved === 'overwrite'),
+        `✓ 组合②:冲突自动裁决留痕(autoResolved=overwrite;实际 ${conflicts.length} 条 conflict 事件)`)
+      sdk.unmount()
+    }
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

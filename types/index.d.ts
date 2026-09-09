@@ -683,6 +683,10 @@ export interface AgentInfo {
   workingMemory?: WorkingMemory;
   /** 写驱动过期读失效会话累计(stale-read-invalidation;写后旧 read/query/search 结果被替换为占位的次数) */
   staleReadsInvalidated?: number;
+  /** 模型调用重试会话累计(retry-visibility;启动/body 阶段自动重试次数 —— 环境故障 vs SDK 回归的第一判据) */
+  llmRetries?: number;
+  /** 模型调用最终失败会话累计(retry-visibility;重试耗尽/不可重试类终败次数) */
+  llmCallFailures?: number;
   /** 当前上下文聚焦焦点(focus 中间件;兼容:首个;未聚焦/未开启 → undefined) */
   focus?: Focus;
   /** 全部聚焦焦点(multi-focus;空数组=未聚焦) */

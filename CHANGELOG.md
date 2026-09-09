@@ -2,7 +2,25 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
-## [Unreleased]
+## [4.11.1] - 2026-09-09
+
+### Fixed
+
+- **重试可见性(retry-visibility,网关断流事故驱动)**:①构造的 LangChain 客户端内层 `maxRetries` 恒 0(constructLlm/proxyLlm/createAgent 兜底共 5 处)—— SDK `withRetry` 独占重试,消除内层默认 2 次×外层 2 次的**不可见**叠乘(LLMConfig 构造路径;集成方传入预构造 `BaseChatModel` 实例不受影响,内层重试保留 —— 实例不可改,与 thinkingMode instance-noop 同哲学);②模型调用启动/迭代两阶段的最终失败全进 debugLogs(新 stage `model_call_failed`,含停滞/空响应/离线模型终态,修前多数直接 throw 零留痕)+ `inspect().llmRetries`/`llmCallFailures` 会话累计反射 —— 网关断流不再表现为「msgs 恒定 + 日志静默」的黑洞假象,环境故障 vs SDK 回归一眼可判;③body 阶段零 emit 瞬时错(如 SSE error 事件先于首 chunk)补递归重试(同 `_ctxRetry` 模式,零 emit 重发无双份文本风险;与启动段各自独立预算,同段失败合计 ≤ maxRetries+1 次,交替段失败最坏 (maxRetries+1)² 但全程可见可计数,退避与启动段同式)。
+- **零工具门禁「诚实未做声明」出口(deferred 登记「用户已拒绝/诚实做不到」销账)**:收口含否定完成态(`未…修改`/`已按要求停止`/`无法完成` 等「否定前缀 + 有界间隔 + 动词」模式)且无完成态断言词时,零工具门禁不回灌、EXHAUSTED observable 不误报 —— 修前 RHC 拒绝后模型如实收口「已停止,未做任何修改」仍被回灌 ×2 烧满预算 + 误报 `ZERO_TOOL_GATE_EXHAUSTED`;混合完成态声明(「此前未更新,现已更新修复」)不豁免照常对账。
+- **vfs 当轮创建恒保护(mid-invoke offload 404 盲区,deferred 销账)**:`setProtectedRefs` 记 invoke 起点水位,`updatedAt ≥ 水位` 的 large_results 同轮 LRU 豁免 —— 修前入口引用集在 invoke 前算,单轮连续大整读触发 LRU 时,本轮早前 offload 不在保护集被淘汰 → 同轮 `vfs_read 404`;OOM 1.5x 硬兜底仍可越保护强删;从未注入引用集(纯 createAgent)零行为变化。
+
+### Added
+
+- **无人值守组合 e2e 锁定(server-companion Phase 1 收尾,openspec change 整体归档)**:automation.mjs 增「无人值守组合」双形态断言 —— ①安全形态:approval 门控写 + 无响应方 60ms 自动拒 → batch 双任务有界 ok 零挂起、被拒写零落地;②效率形态:乐观锁武装 + `conflictPolicy:'overwrite'` → batch 写入冲突静默覆盖落地 + pendingConflict 全程不挂 + `autoResolved=overwrite` 留痕(冲突窗口经 onEvent tool_result 钩子制造)。**D2 裁决关闭**:node 真 LLM 冒烟零障碍 → headless 产物即 node 形态,不建独立 node 子路径;**跨进程重启恢复入 deferred**(触发 = 真实定时任务场景)。usage-guide「服务端运行」recipe 已随 4.11.0 交付。
+
+### Added
+
+- **demo 补全**:①`examples/page-demo` 默认开启 ui-quick-wins 三项展示 —— quickActions(页面操作指令)/ sessionTransfer(indexed storage 导出导入)/ **画布组件拖拽聚焦**(PageComponentView 12 处组件根加 `draggable` + 既有 `data-path` 锚 → `onDropElement` 映射 `addFocus`,编辑器形态示范);②新增 `examples/eval-demo` 回归面板(固定场景 → 跑一轮 → 报告/业务断言 → 存基线 localStorage → ▲▼ 对比;集成方可直接抄,DevNav 已收录);③usage-guide 中英补示例引用
+
+### 测试
+
+- e2e 1072 → **1077**(+5:无人值守组合双形态);browser 150 → **153**(+3:page-demo chips/transfer 默认渲染 + 画布拖拽→聚焦 chip + eval-demo 双态加载);openspec:ui-quick-wins/server-companion/eval-toolkit 三 change 归档,活跃仅剩 capability-pack-factories(等 first-user)
 
 ## [4.11.0] - 2026-09-07
 

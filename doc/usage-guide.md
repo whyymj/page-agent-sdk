@@ -2098,6 +2098,7 @@ createChatSdk({
 - **会话导出/导入**:`sdk.exportSession(sessionId?)` → `{ formatVersion, exportedAt, sessionId, snapshot }` 可复全 JSON(当前会话先收口内存态再读,导出的就是「恢复时能得到的真值」;跨会话导出传 sessionId 只读已持久态);`sdk.importSession(jsonOrString)` → **总是新 sessionId(副本语义,不覆盖既有)**,导入后不自动切换(自行 `switchSession`);校验拒绝:坏 JSON / 未知 formatVersion / 缺 snapshot.messages / 超 6MB;storage 未开启抛错。UI 入口 `dialog.sessionTransfer: true`:历史面板底部「导出会话」(下载 .json)/「导入会话…」(选文件导入并自动切换;坏文件 observable `SESSION_IMPORT_FAILED` 不炸)。headless 纯 API 恒可用。**注意**:导出含完整对话明文,流转渠道(IM/网盘)由集成方自担。
 - **元素拖入聚焦 `dialog.onDropElement?: (el: Element) => void`**:把宿主页面元素**拖进聊天输入框**触发回调(SDK 框架无关不认宿主组件树,映射 el→jsonPath→`sdk.setFocus` 归宿主 —— 编辑器可复用画布选中联动的同一映射函数)。机制:window 捕获 `dragstart` 记源元素(drop 的 event.target 是输入框自身拿不到源),drop 无文件且源元素仍连文档才回调;**文件拖入优先走既有图片通道**;未声明零开销(不挂监听)。
 - write 审批 diff 预览见 6.x approval 段(`approval.preview: true`)。
+- 完整可跑示例:`examples/page-demo` **默认开启** quickActions / sessionTransfer / 画布组件拖拽聚焦(组件 draggable + `data-path` 锚 → `onDropElement` 映射);minimal-demo 的 `?quick=1/?transfer=1/?drop=1` 为 e2e 开关
 
 ```ts
 createChatSdk({
@@ -2141,6 +2142,7 @@ if (verdict.status === 'worse') { /* ▲ token ±15% 且 ±2000 或 toolCount ±
 - **`collectReport`**:与 SDK 自用回归报告同构 —— 报给 SDK 维护者时格式互通,排查成本降一档。
 - **`diffReport(current, baseline, opts?)`**:token **±15% 且 ±2000 双阈同时超**才标 ▲▼(防小基数误报/大基数方差),toolCount ±3,elapsedSec 仅展示不判;阈值可用 `{ tokenPct, tokenAbs, toolCountAbs }` 覆盖。基线 = 上一次满意运行的 `collectReport()` 产出,存进你的仓库。
 - `createIdleDetector`(harness 内核,也可单独用):纯状态机,`push(sample)` 返回 `'pending' | 'done' | 'reset'` —— 自定义采样源(如远程页面经 CDP 取样)时直接复用判定核。
+- 完整可跑示例:`examples/eval-demo`(回归面板:固定场景指令 → 跑一轮 → 报告/业务断言展示 → 存基线 localStorage → 下次对比 ▲▼;可直接抄给自己的宿主)
 
 ## 9. 框架无关 / CDN 集成
 

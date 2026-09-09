@@ -11,11 +11,11 @@
 
 ## Phase 1:无人值守形态
 
-- [ ] 7. checklist 文档化:approval 自动拒/conflictPolicy/toolTimeoutMs/stream 阈值/afterRound 落盘/重试 —— 全部既有旋钮组合,零新配置(D1 决策留痕)
-- [ ] 8. 冒烟后缺口裁决:每项标「已覆盖旋钮」或 deferred 登记(跨进程重启恢复预期 deferred,带触发条件)
-- [ ] 9. e2e:无人值守组合配置冒烟(approval 自动拒 + conflictPolicy overwrite 下 batch 完整走通)
+- [x] 7. checklist 文档化:approval 自动拒/conflictPolicy/toolTimeoutMs/stream 阈值/afterRound 落盘/重试 —— 全部既有旋钮组合,零新配置(D1 决策留痕)
+- [x] 8. 冒烟后缺口裁决:每项标「已覆盖旋钮」或 deferred 登记(跨进程重启恢复预期 deferred,带触发条件)
+- [x] 9. e2e:无人值守组合配置冒烟(approval 自动拒 + conflictPolicy overwrite 下 batch 完整走通)
 
 ## Phase 2(可选,D2 裁决后可能关闭)
 
-- [ ] 10. D2 裁决记录:headless 在 node 零障碍 → 关闭并留痕;否则立 node 子路径评估(新构建面/types/size 门禁成本 vs 收益)
-- [ ] 11. CHANGELOG + 计数同步 CLAUDE.md + README 中英
+- [x] 10. D2 裁决记录:headless 在 node 零障碍 → 关闭并留痕;否则立 node 子路径评估(新构建面/types/size 门禁成本 vs 收益)
+- [x] 11. CHANGELOG + 计数同步 CLAUDE.md + README 中英

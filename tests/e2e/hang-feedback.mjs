@@ -434,5 +434,36 @@ export async function run() {
     assert(off.length >= 1 && off[0].preview === undefined, '✓ preview 默认关:载荷无 preview 字段(预览跑校验链有成本,显式开)')
   }
 
+  console.log('[e2e:hang-feedback] retry-visibility:模型重试/终败进 debugLogs + inspect 计数(2026-09-09)')
+  {
+    // 前两次 5xx 网关错(retryable)→ withRetry 自动重试 → 第三次文本收口;重试全程留痕
+    // (stub 对 Error 默认盖 status:400 防误重试 —— 模拟可重试网络错须显式 502)
+    const netErr = Object.assign(new Error('read_response_body_failed: upstream ended the stream before completion'), { status: 502 })
+    const llm = stubModel({ throw: netErr }, { throw: netErr }, { text: '已恢复' })
+    const sdk = createChatSdk({ ui: false, id: 'e2e-retry-vis-on', storage: false, llm, capabilities: CAPS })
+    await sdk.mount()
+    const reply = await sdk.send('跑任务')
+    assert(reply === '已恢复', `✓ retry-visibility e2e → 瞬时网络错重试后成功(实际 reply=${reply})`)
+    const stages = sdk.debugLogs.value.map((l) => l.data?.stage)
+    assert(stages.includes('model_retry'), '✓ retry-visibility e2e → 重试进 debugLogs(stage=model_retry;网关断流不再表现为静默黑洞)')
+    assert(sdk.inspect().llmRetries === 2, `✓ retry-visibility e2e → inspect().llmRetries=2(实际 ${sdk.inspect().llmRetries})`)
+    assert(sdk.inspect().llmCallFailures === 0, '✓ retry-visibility e2e → 恢复场景 llmCallFailures=0')
+    sdk.unmount()
+  }
+  {
+    // 终败:4xx 不重试 → model_call_failed 留痕 + send 失败如实抛/拒 + inspect 计数(修前此处零日志直接 throw)
+    const llm2 = stubModel({ throw: 'bad request (400)' })
+    const sdk2 = createChatSdk({ ui: false, id: 'e2e-retry-vis-off', storage: false, llm: llm2, capabilities: CAPS })
+    await sdk2.mount()
+    let threw = false
+    try { await sdk2.send('跑任务') } catch { threw = true }
+    assert(threw, '✓ retry-visibility e2e → 4xx 终败如实抛错(不吞不挂)')
+    const stages2 = sdk2.debugLogs.value.map((l) => l.data?.stage)
+    assert(stages2.includes('model_call_failed'), '✓ retry-visibility e2e → 最终失败进 debugLogs(stage=model_call_failed,修前零留痕)')
+    assert(sdk2.inspect().llmCallFailures >= 1, `✓ retry-visibility e2e → inspect().llmCallFailures≥1(实际 ${sdk2.inspect().llmCallFailures})`)
+    assert(sdk2.inspect().llmRetries === 0, '✓ retry-visibility e2e → 4xx 不重试 llmRetries=0')
+    sdk2.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

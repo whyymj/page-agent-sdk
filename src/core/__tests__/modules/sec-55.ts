@@ -94,6 +94,31 @@ export async function run(ctx: TestCtx) {
     // 池 1600 > 1000*1.5=1500 → OOM 强制删最旧(a)
     assert(vfs2.files['large_results/a.txt'] === undefined, 'P4 OOM:被引用撑爆 1.5x → 无视 protectedRefs 强制删最旧(防不收敛)')
   }
+  {
+    // 当轮创建恒保护(2026-09-09,mid-invoke offload 404 盲区):setProtectedRefs 之后的 invoke 内新 offload
+    // (不在入口引用集)视同被引用,不被同轮 LRU 淘汰;从未注入引用集(纯 createAgent)零行为变化;
+    // OOM 1.5x 硬兜底仍可越保护强删(防不收敛)
+    const vfs3: any = createVfs({}, { poolBytes: { largeResults: 2000 } } as any)
+    vfs3.setProtectedRefs?.(new Set()) // 空引用集 + 记水位(模拟 invoke 入口)
+    const t = Date.now()
+    vfs3.files['large_results/r1.txt'] = { content: 'A'.repeat(1500), updatedAt: t }  // 当轮新 offload(≥ 水位)
+    vfs3.files['large_results/r2.txt'] = { content: 'B'.repeat(1500), updatedAt: t }  // 同上;池 3000 > 2000 触发淘汰
+    assert(vfs3.files['large_results/r1.txt'] !== undefined && vfs3.files['large_results/r2.txt'] !== undefined, '当轮创建恒保护 → invoke 内新 offload 不被同轮 LRU 淘汰(mid-invoke vfs_read 404 盲区;空引用集下旧逻辑必删其一)')
+    const vfs4: any = createVfs({}, { poolBytes: { largeResults: 2000 } } as any)
+    vfs4.files['large_results/f1.txt'] = { content: 'A'.repeat(1500), updatedAt: Date.now() }
+    vfs4.files['large_results/f2.txt'] = { content: 'B'.repeat(1500), updatedAt: Date.now() }
+    assert(vfs4.files['large_results/f1.txt'] === undefined || vfs4.files['large_results/f2.txt'] === undefined, '当轮创建恒保护边界 → 从未注入引用集时零行为变化(照常 LRU)')
+    const vfs5: any = createVfs({}, { poolBytes: { largeResults: 1000 } } as any)
+    vfs5.setProtectedRefs?.(new Set())
+    const t5 = Date.now()
+    vfs5.files['large_results/o1.txt'] = { content: 'C'.repeat(800), updatedAt: t5 }
+    vfs5.files['large_results/o2.txt'] = { content: 'D'.repeat(800), updatedAt: t5 }  // 池 1600 > 1500 = OOM 强制
+    assert(vfs5.files['large_results/o1.txt'] === undefined || vfs5.files['large_results/o2.txt'] === undefined, '当轮创建恒保护边界 → OOM 1.5x 硬兜底无视水位强删(防全池被保护不收敛)')
+    // 水位回落(审查补):下一轮 invoke 入口再次 setProtectedRefs → 水位刷新,上轮未入引用集的文件回落 LRU
+    vfs3.setProtectedRefs?.(new Set()) // 模拟下一轮入口(空引用集:上轮消息已不在本轮保护面)
+    vfs3.files['large_results/next-round.txt'] = { content: 'Z'.repeat(1500), updatedAt: Date.now() } // 写入触发 LRU(池 4500 > 2000)
+    assert(vfs3.files['large_results/r1.txt'] === undefined && vfs3.files['large_results/r2.txt'] === undefined, '当轮创建恒保护边界 → 下轮入口水位刷新后,未入引用集的上轮文件回落 LRU(保护不无限累积)')
+  }
 
   // ===== resolveModelCaps 缺省 + longest-match 具体性 =====
   assert(resolveModelCaps({}).contextWindow === 32768, '✓ resolveModelCaps → 无 model/声明 → DEFAULT_CAPS contextWindow 32768 缺省')

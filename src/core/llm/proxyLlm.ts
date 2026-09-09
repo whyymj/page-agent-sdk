@@ -107,6 +107,7 @@ export function createProxyLlm(opts: ProxyLlmOptions): BaseChatModel {
       model,
       temperature,
       maxTokens,
+      maxRetries: 0,  // retry-visibility:内层重试关闭,SDK withRetry 独占重试且留痕(见 constructLlm 同款注释)
       configuration: baseURL ? { baseURL } : undefined,
     })
   }
@@ -171,6 +172,7 @@ export function createProxyLlm(opts: ProxyLlmOptions): BaseChatModel {
     model,
     temperature,
     maxTokens,
+    maxRetries: 0,  // retry-visibility:内层重试关闭,SDK withRetry 独占重试且留痕(见 constructLlm 同款注释);401 刷新重试由 customFetch 自理
     configuration: {
       baseURL: baseURL || '/',
       fetch: customFetch as unknown as typeof fetch,
