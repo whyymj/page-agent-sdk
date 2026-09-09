@@ -236,6 +236,46 @@ const MAX_DEBUG_LOGS = 300
 /** 单条日志内 message content 截断阈值:llm_request 每轮记录完整 messages(O(N²) 增长),截断既保可读又控内存 */
 const MAX_LOG_CONTENT_CHARS = 6000
 
+// ===== debugLogs 单条体积守卫(B7,2026-09-09 六路审计 stability)=====
+// 条数有界(300 FIFO)但单条字节无界:大 read 结果 / 整页 HTML write args / 长 tool 回灌单条可数 MB,
+// 300 × MB 级 = 内存 / DebugDrawer 渲染 / exportDiagnostics 导出全失控。chokepoint 收敛在 log()/pushLog()
+// 两个唯一写入点(浅两层:字符串级截断 + 整条序列化上限),诊断保真度变化(1200 字符内字符串原样,
+// 超长保前缀 + 截断标记)随 CHANGELOG Changed 段明示。
+/** 单条 debugLog 序列化后的总字符上限 */
+export const MAX_DEBUG_ENTRY_CHARS = 8000
+/** 单个字符串字段截断阈值(保前缀 1000 + 截断标记) */
+export const MAX_DEBUG_STR_CHARS = 1200
+
+/** 递归截断超长字符串/超长数组(保前缀 + 截断标记);环与深对象安全(seen + 深度上限),纯函数 */
+export function truncateLogValue(v: unknown, depth = 0, seen = new Set<object>()): unknown {
+  if (typeof v === 'string') return v.length > MAX_DEBUG_STR_CHARS ? v.slice(0, 1000) + `…(截断 ${v.length - 1000} 字符)` : v
+  if (v === null || typeof v !== 'object' || depth > 6) return v
+  if (seen.has(v as object)) return '[Circular]'
+  seen.add(v as object)
+  if (Array.isArray(v)) {
+    return v.length > 50 ? [...v.slice(0, 50).map((x) => truncateLogValue(x, depth + 1, seen)), `[…共 ${v.length} 项,截断]`] : v.map((x) => truncateLogValue(x, depth + 1, seen))
+  }
+  const out: Record<string, unknown> = {}
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) out[k] = truncateLogValue(val, depth + 1, seen)
+  return out
+}
+
+/** debugLog data 单条守卫:字符串级截断后仍超整条上限(海量小字段)→ 整体截断为前缀字符串;不可序列化 → String 兜底 */
+export function sanitizeDebugData(data: unknown): unknown {
+  if (data === null || data === undefined) return data
+  if (typeof data === 'string') {
+    return data.length > MAX_DEBUG_ENTRY_CHARS ? data.slice(0, MAX_DEBUG_ENTRY_CHARS) + `…(截断 ${data.length - MAX_DEBUG_ENTRY_CHARS} 字符)` : data
+  }
+  try {
+    const truncated = truncateLogValue(data)
+    const s = JSON.stringify(truncated)
+    if (s.length <= MAX_DEBUG_ENTRY_CHARS) return truncated
+    return { __truncated: s.slice(0, MAX_DEBUG_ENTRY_CHARS) + `…(单条日志超 ${MAX_DEBUG_ENTRY_CHARS} 字符整体截断,原 ${s.length})` }
+  } catch {
+    return { __unserializable: String(data).slice(0, MAX_DEBUG_ENTRY_CHARS) }
+  }
+}
+
 /**
  * 逐轮上下文保底压缩(纯函数,可单测):循环内每轮 tool 结果累积,单条已由 offload 限制,多条累积仍可能超。
  * 当总字符超过放行上限(maxChars)时,从最早的 ToolMessage 起截断为占位摘要,
@@ -397,7 +437,7 @@ export function createAgent(options: CreateAgentOptions) {
   const auditWritePaths = new Set<string>()
   function log(type: DebugLog['type'], data: any) {
     // 始终记录到 debugLogs(供日志抽屉查看请求上下文历史);debug 时额外输出到 console
-    const entry: DebugLog = { timestamp: Date.now(), type, data }
+    const entry: DebugLog = { timestamp: Date.now(), type, data: sanitizeDebugData(data) }
     debugLogs.value.push(entry)
     // 条目上限兜底:超限丢最旧(单轮内异常多 tool/子 agent 转发时防失控)
     if (debugLogs.value.length > MAX_DEBUG_LOGS) debugLogs.value.splice(0, debugLogs.value.length - MAX_DEBUG_LOGS)
@@ -407,7 +447,7 @@ export function createAgent(options: CreateAgentOptions) {
   }
   /** push 一条外部 debugLog 到主日志(供子 agent 经 ctx.logSink 转发) */
   const pushLog = (entry: DebugLog) => {
-    debugLogs.value.push(entry)
+    debugLogs.value.push({ ...entry, data: sanitizeDebugData(entry.data) })
     if (debugLogs.value.length > MAX_DEBUG_LOGS) debugLogs.value.splice(0, debugLogs.value.length - MAX_DEBUG_LOGS)
     triggerRef(debugLogs)
   }
@@ -822,78 +862,82 @@ export function createAgent(options: CreateAgentOptions) {
     // beforeAgent(正序):初始化中间件状态(todos/skills/memory 等)
     state = await runBeforeAgent(middlewares, state)
 
-    // 输入压缩(summarization 中间件,链式:每个中间件依次压缩)
-    let input = messages
-    for (const m of middlewares) {
-      if (m.compressInput) {
-        const r = await m.compressInput(input)
-        input = Array.isArray(r) ? r : r.messages
-        // 捕获最近一次压缩统计写入 state,供 DebugDrawer 可观测
-        if (r && !Array.isArray(r) && r.stats) {
-          state = { ...state, lastCompression: r.stats as any }
+    // B5(2026-09-09 六路审计 stability):try 边界上移至 runBeforeAgent 之后 —— compressInput 抛错 /
+    // systemPrompt 超预算 fatal 早退等**所有**后续路径都跑 afterAgent(中间件清理/flush 不被跳过;
+    // invokeFocuses 等泄漏面收敛)。beforeAgent 自身抛错不补跑:半初始化栈上跑 afterAgent 语义更错(宁漏不半跑)
+    try {
+
+      // 输入压缩(summarization 中间件,链式:每个中间件依次压缩)
+      let input = messages
+      for (const m of middlewares) {
+        if (m.compressInput) {
+          const r = await m.compressInput(input)
+          input = Array.isArray(r) ? r : r.messages
+          // 捕获最近一次压缩统计写入 state,供 DebugDrawer 可观测
+          if (r && !Array.isArray(r) && r.stats) {
+            state = { ...state, lastCompression: r.stats as any }
+          }
         }
       }
-    }
 
-    // Phase 5(harden-context-resilience):systemPrompt(base)本身超系统段预算 → fatal 早退
-    // buildSystemPrompt 截断只 drop 非 pin 段,base 截不掉;base 超窗 = 集成方传了过大 systemPrompt,无解
-    {
-      const baseTokens = estimateTokens(systemPrompt || '你是一个智能助手。')
-      const sysBudget = Math.max(2000, Math.round(caps.contextWindow * SYSTEM_BUDGET_RATIO))
-      if (baseTokens > sysBudget) {
-        const errMsg = `[page-agent-sdk] systemPrompt 本身(${baseTokens} tokens)超过系统段预算(${sysBudget} tokens,窗口 ${caps.contextWindow} 的 ${SYSTEM_BUDGET_RATIO * 100}%);请缩减 systemPrompt 或换更大窗口模型`
-        console.error(errMsg)
-        onEvent({ type: 'error', message: errMsg, severity: 'fatal', code: 'SYSTEM_PROMPT_OVER_BUDGET' } as any)
-        onEvent({ type: 'done', content: '' })
-        return ''
+      // Phase 5(harden-context-resilience):systemPrompt(base)本身超系统段预算 → fatal 早退
+      // buildSystemPrompt 截断只 drop 非 pin 段,base 截不掉;base 超窗 = 集成方传了过大 systemPrompt,无解
+      {
+        const baseTokens = estimateTokens(systemPrompt || '你是一个智能助手。')
+        const sysBudget = Math.max(2000, Math.round(caps.contextWindow * SYSTEM_BUDGET_RATIO))
+        if (baseTokens > sysBudget) {
+          const errMsg = `[page-agent-sdk] systemPrompt 本身(${baseTokens} tokens)超过系统段预算(${sysBudget} tokens,窗口 ${caps.contextWindow} 的 ${SYSTEM_BUDGET_RATIO * 100}%);请缩减 systemPrompt 或换更大窗口模型`
+          console.error(errMsg)
+          onEvent({ type: 'error', message: errMsg, severity: 'fatal', code: 'SYSTEM_PROMPT_OVER_BUDGET' } as any)
+          onEvent({ type: 'done', content: '' })
+          return ''
+        }
       }
-    }
-    let currentMessages = toLC(input)
-    log('context', { model: liveModel(), tools: allTools.map((t) => t.name), middleware: middlewares.map((m) => m.name) })
+      let currentMessages = toLC(input)
+      log('context', { model: liveModel(), tools: allTools.map((t) => t.name), middleware: middlewares.map((m) => m.name) })
 
-    const modelHandler = composeModelCall(middlewares, (req) => coreModelCall(req, onEvent, signal))
-    const toolHandler = composeToolCall(middlewares, coreExecTool)
+      const modelHandler = composeModelCall(middlewares, (req) => coreModelCall(req, onEvent, signal))
+      const toolHandler = composeToolCall(middlewares, coreExecTool)
 
-    // 自感知预算进度(context-economy-phase2 C1/C2):每 invoke 新建;state 经 runBeforeModel/runAfterModel 的 spread
-    // 更新不会丢嵌套引用,augmentPrompt(state) 每轮可读到最新值(轮次/累计 usage/写失败计数)
-    const progress: LoopProgress = {
-      rounds: 0,
-      maxToolRounds,
-      invokeUsage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-      writeFailures: {},
-      budgetHinted: false,
-    }
-    state.loopProgress = progress
+      // 自感知预算进度(context-economy-phase2 C1/C2):每 invoke 新建;state 经 runBeforeModel/runAfterModel 的 spread
+      // 更新不会丢嵌套引用,augmentPrompt(state) 每轮可读到最新值(轮次/累计 usage/写失败计数)
+      const progress: LoopProgress = {
+        rounds: 0,
+        maxToolRounds,
+        invokeUsage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        writeFailures: {},
+        budgetHinted: false,
+      }
+      state.loopProgress = progress
 
-    // imperative-zero-tool-gate:本轮工具用量(事实清单原料;每 invoke 新建,门禁局部消费)
-    const turnUsage: TurnToolUsage = { counts: {}, writePaths: [], failures: 0 }
-    // 收口门禁链预算(gateChain,evidence-audit-gate Phase 0 抽取;每 invoke 新建,transitional/completion/zeroTool/audit 四独立池由门禁内部自增)
-    const gateChainState = createGateChainState()
-    // evidence-audit-gate A2 审计面锚点:invoke 起点 todos status 快照(收口时 diff 出「本 invoke 翻转 completed」的项)
-    // 值含 content:id 复用防线 —— write_todos 不传 id 时框架按位置重生成 t-N,新任务会撞旧 id,
-    // 只比 status 会把「同 id 新任务」误判为跨轮遗留(2026-08-23 真 LLM 探针 S2 实证:审计面被清空)
-    const todosStatusAtStart = new Map((state.todos ?? []).map((t) => [t.id, { status: t.status, content: t.content }]))
-    // tool-call-economy C2:同工具同参连续失败 streak(每 invoke 新建;成功清零)
-    const failStreaks = new Map<string, number>()
-    // read 多路径引导(read-multi-path-nudge):同 invoke 单路径 read 连读计数,≥2 起成功结果尾附
-    // jsonPaths 批量引导(治「多次调用 read」烧轮次;真 LLM 实测高频);jsonPaths 批量读清零。
-    let singleReadCount = 0
-    /** writeCapable 标注判定(单一真相源;componentLock 同口径;标注缺失退 WRITE_TOOL_NAMES 名单) */
-    const isWriteToolByName = (name: string): boolean => {
-      const t = allTools.find((x) => x.name === name) as { writeCapable?: boolean | ((args: Record<string, unknown>) => boolean) } | undefined
-      if (t && 'writeCapable' in t) return typeof t.writeCapable === 'function' ? true : t.writeCapable === true  // 条件写(eval_script transform)按保守口径计写
-      return WRITE_TOOL_NAMES.has(name)
-    }
+      // imperative-zero-tool-gate:本轮工具用量(事实清单原料;每 invoke 新建,门禁局部消费)
+      const turnUsage: TurnToolUsage = { counts: {}, writePaths: [], failures: 0 }
+      // 收口门禁链预算(gateChain,evidence-audit-gate Phase 0 抽取;每 invoke 新建,transitional/completion/zeroTool/audit 四独立池由门禁内部自增)
+      const gateChainState = createGateChainState()
+      // evidence-audit-gate A2 审计面锚点:invoke 起点 todos status 快照(收口时 diff 出「本 invoke 翻转 completed」的项)
+      // 值含 content:id 复用防线 —— write_todos 不传 id 时框架按位置重生成 t-N,新任务会撞旧 id,
+      // 只比 status 会把「同 id 新任务」误判为跨轮遗留(2026-08-23 真 LLM 探针 S2 实证:审计面被清空)
+      const todosStatusAtStart = new Map((state.todos ?? []).map((t) => [t.id, { status: t.status, content: t.content }]))
+      // tool-call-economy C2:同工具同参连续失败 streak(每 invoke 新建;成功清零)
+      const failStreaks = new Map<string, number>()
+      // read 多路径引导(read-multi-path-nudge):同 invoke 单路径 read 连读计数,≥2 起成功结果尾附
+      // jsonPaths 批量引导(治「多次调用 read」烧轮次;真 LLM 实测高频);jsonPaths 批量读清零。
+      let singleReadCount = 0
+      /** writeCapable 标注判定(单一真相源;componentLock 同口径;标注缺失退 WRITE_TOOL_NAMES 名单) */
+      const isWriteToolByName = (name: string): boolean => {
+        const t = allTools.find((x) => x.name === name) as { writeCapable?: boolean | ((args: Record<string, unknown>) => boolean) } | undefined
+        if (t && 'writeCapable' in t) return typeof t.writeCapable === 'function' ? true : t.writeCapable === true  // 条件写(eval_script transform)按保守口径计写
+        return WRITE_TOOL_NAMES.has(name)
+      }
 
-    let rounds = 0
-    let iterations = 0 // 总循环计数(含自纠轮),受 maxIterations 硬上限约束防死循环(harden-react-loop-budget)
-    const maxIterations = computeMaxIterations(maxToolRounds, userMaxIterations)
-    let lastFinalContent: string | null = null // 自纠路径缓存:verify 拒掉的最终答,供 rounds 耗尽兜底优先返回
-    let formatRetries = 0 // 格式异常自纠计数:模型把工具调用写成文本(伪 XML/标签)时回灌反馈重生成,限次防死循环
-    let truncRetried = false // 截断自纠已用标记(completion_truncated 单次防死循环)
-    let pendingFormatRetry = false // 上一轮触发了格式自纠(已 push feedback 待 LLM 重发):让 while 暂时绕过 rounds 预算给重试机会——重试是格式修正、非工具轮次,不该被 maxToolRounds 挡。实测痛点:DSML 在 rounds 耗尽后出现,重试被 while 挡致未发生 → 仍静默死亡。maxIterations(maxToolRounds*3) 仍作死循环硬上限
-    const maxFormatRetries = 2
-    try {
+      let rounds = 0
+      let iterations = 0 // 总循环计数(含自纠轮),受 maxIterations 硬上限约束防死循环(harden-react-loop-budget)
+      const maxIterations = computeMaxIterations(maxToolRounds, userMaxIterations)
+      let lastFinalContent: string | null = null // 自纠路径缓存:verify 拒掉的最终答,供 rounds 耗尽兜底优先返回
+      let formatRetries = 0 // 格式异常自纠计数:模型把工具调用写成文本(伪 XML/标签)时回灌反馈重生成,限次防死循环
+      let truncRetried = false // 截断自纠已用标记(completion_truncated 单次防死循环)
+      let pendingFormatRetry = false // 上一轮触发了格式自纠(已 push feedback 待 LLM 重发):让 while 暂时绕过 rounds 预算给重试机会——重试是格式修正、非工具轮次,不该被 maxToolRounds 挡。实测痛点:DSML 在 rounds 耗尽后出现,重试被 while 挡致未发生 → 仍静默死亡。maxIterations(maxToolRounds*3) 仍作死循环硬上限
+      const maxFormatRetries = 2
       while ((rounds < maxToolRounds || pendingFormatRetry) && iterations < maxIterations) {
         iterations++ // 总循环计数(含自纠轮),触顶 maxIterations 强制退出防死循环
         // 每轮开始检查 abort(用户停止)
@@ -1017,6 +1061,9 @@ export function createAgent(options: CreateAgentOptions) {
               continue
             }
             if (gateOutcome?.kind === 'observable') {
+              // observable 统一落 debugLogs(B2,2026-09-09):修前只 onEvent 不进日志,
+              // ZERO_TOOL/AUDIT/COMPLETION 三类 EXHAUSTED 在 debugLogs 侧零感知(排障时只看日志会漏)
+              log('error', { stage: gateOutcome.obs.code, ...gateOutcome.obs.context, content: response.content.slice(0, 160) })
               onEvent({ type: 'error', message: gateOutcome.obs.message, severity: 'observable', code: gateOutcome.obs.code, context: gateOutcome.obs.context } as any)
             }
             // beforeReturn 钩子(正序):agent 返回前可拦截自纠(回灌 user 消息继续循环)。
@@ -1107,9 +1154,15 @@ export function createAgent(options: CreateAgentOptions) {
           const _failed = r.status === 'error' || (typeof r.content === 'string' && r.content.startsWith('ERROR:'))
           let _content = r.content
           if (_failed) {
-            const n = (failStreaks.get(_streakKey) ?? 0) + 1
-            failStreaks.set(_streakKey, n)
-            if (n >= 2) _content = `${r.content}\n(提示:同参数已连续失败 ${n} 次,原样重试大概率仍失败;请检查参数/换路径/换方法,或向用户如实说明困难)`
+            // 组件锁忙拒(B1 显式决策):COMPONENT_BUSY 的正确动作恰是「等锁释放后原样重试」,
+            // streak 提示「检查参数/换路径/换方法」是错误引导 → 不计入 streak(toolError 化后该回灌
+            // 才进入 _failed 口径,排除防新噪声;既有真实失败 streak 不受影响)
+            const _busyReject = typeof r.content === 'string' && r.content.includes('COMPONENT_BUSY')
+            if (!_busyReject) {
+              const n = (failStreaks.get(_streakKey) ?? 0) + 1
+              failStreaks.set(_streakKey, n)
+              if (n >= 2) _content = `${r.content}\n(提示:同参数已连续失败 ${n} 次,原样重试大概率仍失败;请检查参数/换路径/换方法,或向用户如实说明困难)`
+            }
           } else failStreaks.delete(_streakKey)
           // read 多路径引导:第 2 次起单路径 read 成功结果尾附批量提示(仅成功附,失败由 C2 同参提醒接管)
           if (ctxs[i].call.name === 'read' && !_failed) {

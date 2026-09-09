@@ -28,6 +28,12 @@ const READONLY_VERB_RE = /(看看|看一下|查|查一下|查询|了解|了解�
 /** 免操作词(明确声明不需要执行) */
 const NO_ACTION_RE = /(不用改|不用动|只是问|只是想问|先别动|先不要|不用写入|不要保存|只是确认|告诉我即可|不用执行)/
 
+/** 示例请求词(首子句窗口级豁免,B4 flow 审计 #4,2026-09-09):「给一个添加组件的示例」类文本请求
+ *  首子句 16 字窗口命中操作动词但用户要的是示例产出非数据操作,模型纯文本作答是正确行为。
+ *  只在首子句窗口判(非全文):「把标题改成红色,参考第二个示例」的「示例」在后部 → 不豁免照常命中
+ *  (全文级会把句尾提一嘴示例的真操作指令也豁免掉,漏判面大一档) */
+const EXAMPLE_REQUEST_RE = /(示例|例子|示范|样例)/
+
 /** 委派工具名模式(use_html / use_worker 等预声明子 agent) */
 export const DELEGATION_TOOL_RE = /^(use_|spawn_agent|spawn_agents)/
 
@@ -54,6 +60,7 @@ export function detectActionImperative(text: string): boolean {
   const firstClause = t.split(/[。！？；，!?;,\n]/)[0] ?? t
   const window = firstClause.slice(0, 16)
   if (READONLY_VERB_RE.test(window)) return false  // 反例优先(同位置只读动词压过操作动词)
+  if (EXAMPLE_REQUEST_RE.test(window)) return false  // 示例请求(要的是示例产出,非数据操作)
   return ACTION_VERB_RE.test(window)
 }
 

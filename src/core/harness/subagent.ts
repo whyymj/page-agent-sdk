@@ -31,6 +31,7 @@ import type { ZodType } from 'zod'
 import { normalizeUsage } from '../utils/contentParts'
 import { constructLlmFromConfig, applyThinkingMode, resolveEffectiveThinkingMode } from '../llm/constructLlm'
 import type { ComponentLock, ResolveComponentsResult } from '../sdk/componentLock'
+import { toolError } from '../tools/toolError'
 
 /** 子 agent 转发到主 UI 的进度(tool_call/tool_result 工具级 + reasoning 思考过程增量;text 不转发:是生成内容,经 vfs/data 落地,不进进度) */
 type SubProgress = Extract<StreamEvent, { type: 'tool_call' | 'tool_result' | 'reasoning' }>
@@ -936,7 +937,15 @@ export function createSubagentsMiddleware(
                 const acq = await lock.acquire(lockNames, lockOwner)
                 if (!acq.ok) {
                   logLock('conflict', { heldBy: acq.heldBy })
-                  return `COMPONENT_BUSY · 组件 [${lockNames.join(', ')}] 正在被子 agent(${acq.heldBy})修改,本次委派未执行。同一组件同一时间只能有一个委派在途;请先做其他组件,或等该委派结束后(下一轮)再重试本组件。`
+                  // toolError 化(B1,2026-09-09 六路审计 P1):修前裸串无 ERROR: 前缀且 status='done',
+                  // createAgent 的 rejectedDelegations 计数(startsWith('ERROR:'))恒不命中 → 4.9.1「被拒委派
+                  // 不算等效写」对真实锁路径失明,被拒后谎报完成照旧溜过零工具门禁(stub 桩自带前缀所以测试全绿)
+                  return toolError({
+                    code: 'COMPONENT_BUSY',
+                    message: `组件 [${lockNames.join(', ')}] 正在被子 agent(${acq.heldBy})修改,本次委派未执行`,
+                    hint: '同一组件同一时间只能有一个委派在途;请先做其他组件,或等该委派结束后(下一轮)再重试本组件',
+                    details: { components: lockNames, heldBy: acq.heldBy },
+                  })
                 }
                 lockRelease = acq.release
                 logLock('acquire')

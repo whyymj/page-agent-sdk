@@ -13,6 +13,7 @@
  *     read 返回完整安全序列化(不截断),交由 offload 决定外存 vfs 或截断。
  */
 import { tool } from '@langchain/core/tools'
+import { rawRead } from '../utils/rawRead'
 import { z } from 'zod'
 import type { ZodType } from 'zod'
 import type { StructuredToolInterface } from '@langchain/core/tools'
@@ -544,7 +545,7 @@ export function commitSetToBind(args: {
   const { bindRef, schema, allowKeys, snapshots, maxSnapshots, audit, dryRun, op = 'set', protectedCtx, snapshotLabel } = args
   let value = args.value
   // B __pgId:写前深快照(仅配 internalAfterWrite 的 codeAsset 场景捕获,零成本开关)
-  const beforeBind = args.internalAfterWrite ? deepClone(bindRef) : null
+  const beforeBind = args.internalAfterWrite ? deepClone(rawRead(bindRef)) : null  // C1:读侧 raw 解包(proxy 克隆 3.4× 放大)
   // 占位符夹带防线(subtree-summary 值防线):**enforceSet 之前**检 LLM 原始值 —— 与 patches 路径同口径
   // (团队审查 P1-1:enforceSet 会把 bind 既有受保护字段值/展开后的资源内容回填进 value,若那些内容本就含
   //  `<subtree ` 字面量(如 verbatim 保护的 SDK 文档文本),后置检查会把 LLM 从未写过的值当夹带 → 全部
@@ -568,7 +569,7 @@ export function commitSetToBind(args: {
     return { ok: false, error: toolError({ code: 'LEAF_BIND', message: `主数据 bind 为原始类型(${bindRef === null ? 'null' : typeof bindRef}),无法就地替换外部持有的值引用`, hint: '主数据 bind 必须为对象/数组;叶子值请用对象包裹(如 {value:"x"})或集成方通过 sdk.setData 替换 bind' }) }
   }
   // pushSnapshot 内联(纯函数不依赖 createDataOps 闭包的 pushSnapshot)
-  const before = deepClone(bindRef)
+  const before = deepClone(rawRead(bindRef))  // C1:读侧 raw 解包(code-review P1 补漏:整体 set 主路径)
   const id = snapshots.length ? snapshots[snapshots.length - 1].id + 1 : 1
   snapshots.push({ id, ts: Date.now(), op, value: before, ...(snapshotLabel ? { label: snapshotLabel } : {}) })
   while (snapshots.length > maxSnapshots) snapshots.shift()
@@ -584,7 +585,7 @@ export function commitSetToBind(args: {
   args.onWrite?.()  // 真正写入后通知(checkpoint 脏标记;dryRun 在上方早 return 不会触发)
   args.internalAfterWrite?.(bindRef, beforeBind)  // B __pgId 补齐(成功路径,before 用于按位置回填原 id)
   commitReanchors(protectedCtx)  // freeze-move:调序重锚定落地(注册表跟随元素迁移,防后续写误报)
-  return { ok: true, hash: args.hashFn ? args.hashFn() : hashValue(bindRef), data: writeData, notices: vr.notices }
+  return { ok: true, hash: args.hashFn ? args.hashFn() : hashValue(rawRead(bindRef)), data: writeData, notices: vr.notices }
 }
 
 /**
@@ -617,8 +618,8 @@ export function applyPatchesToBind(args: {
   protectedCtx?: ProtectedCtx
 }): { ok: true; applied: { op: EditOp; jp: string; value: unknown }[]; clone: unknown; notices: string[] } | { ok: false; error: string } {
   const { bindRef, patches, schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode = 'zod', snapshotLabel, dryRun, protectedCtx } = args
-  const beforeBind = args.internalAfterWrite ? deepClone(bindRef) : null  // B __pgId 写前快照
-  const clone = deepClone(bindRef)
+  const beforeBind = args.internalAfterWrite ? deepClone(rawRead(bindRef)) : null  // B __pgId 写前快照(C1:raw 解包)
+  const clone = deepClone(rawRead(bindRef))
   const applied: { op: EditOp; jp: string; value: unknown }[] = []
   // path-scoped-validation:append 追加元素 / move 移动元素的引用捕获(校验「新增/移动内容」用;
   // 引用在 clone 内,后续 patch 若继续改这些对象,校验时取到的即最终态)
@@ -681,7 +682,7 @@ export function applyPatchesToBind(args: {
   // write-path-cost-reduction B 段:codeAsset 模式(beforeBind 已深拷贝改前态)直接复用为快照值,省一次全量深拷贝;
   // 此刻 bindRef 仍是改前态(写回在 push 之后),两者等价。快照条目按不可变值对待(restore 消费方防御性深拷贝)。
   const id = snapshots.length ? snapshots[snapshots.length - 1].id + 1 : 1
-  snapshots.push({ id, ts: Date.now(), op: 'edit', value: beforeBind ?? deepClone(bindRef), ...(snapshotLabel ? { label: snapshotLabel } : {}) })
+  snapshots.push({ id, ts: Date.now(), op: 'edit', value: beforeBind ?? deepClone(rawRead(bindRef)), ...(snapshotLabel ? { label: snapshotLabel } : {}) })
   while (snapshots.length > maxSnapshots) snapshots.shift()
   // 外科手术式写回(path-scoped-validation):按 patch 原序把「局部 parse 后的值」重放到 live bind ——
   // 只动写目标路径,未触达子树原样保留(旧实现整对象 res.data 整体 merge 会把全树 strip 一遍,未触达组件的
@@ -959,6 +960,9 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   } : undefined
   let schema: ZodType = pgIdPaths.length ? extendSchemaWithPgId(config.schema, pgIdPaths).schema : config.schema
   let bindRef: any = config.bind
+  /** C1 读侧单点解包:全树值语义读(hash/clone/stringify/projection/查询)一律走 raw 目标;写仍经 bindRef proxy 保响应式触发。
+   *  bindRef 可经 controller.set 运行时替换 → 读时取当前值;非 reactive 输入恒等返回 */
+  const rawB = () => rawRead(bindRef)
   let description: string = config.description ?? '主数据对象'
   let allowKeys: string[] | null = getSchemaTopKeys(schema)
 
@@ -1034,7 +1038,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   const watchAll = watchList.includes('*')
   const watchKeys: ReadonlySet<string> | undefined = !watchAll && watchList.length ? new Set(watchList) : undefined
   const lockOn = watchList.length > 0
-  const hashBind = (): string => (watchKeys ? watchFieldsHash(bindRef, watchKeys) : hashValue(bindRef))
+  const hashBind = (): string => (watchKeys ? watchFieldsHash(rawB(), watchKeys) : hashValue(rawB()))  // C1:raw 解包(9.7×/3.1× 放大回收);hash 恒实时计算不变量不动
   // ===== 并发写互锁(write-conflict-final-hash C 形态,2026-08-25)=====
   // 闭包级 async mutex,单锁 bind 域(非 per-scope:主×子共享闭包与 bindRef,跨 scope 写本就不真正并发)。
   // 装配条件 maxParallelTools>1 && lockOn 相与:串行模式直通 no-op 零行为变化;未武装(lockOn=false)也直通
@@ -1129,6 +1133,9 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       return e ? { path: e.path, mode: e.mode, value: e.value, handle: e.handle } : undefined
     } : undefined,
     updateResource: resourceStore ? (path: string, value: unknown) => {
+      // B10 注记:同步签名无法 await 写互锁 —— 不加锁的可辩护性:互锁临界段([effHash→commit→setBaseline])
+      // 全同步,宿主同步调用只能在段间(宏任务间隙)落进 ask 挂起窗口,该窗口的并发改由裁决恢复点校验兜底;
+      // 与「人工直改 bind 是明示盲区、hash 恒实时计算兜底」同族语义。异步化 = 破坏公共 API 形态,不做
       const np = normalizePath(path)
       resourceStore.update(np, value)
       setByPath(bindRef, np, value)  // 同步 bind(D1 一致:池=bind,防下次 write 回显句柄被 D1 撤销)
@@ -1142,7 +1149,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   const audit = (entry: DataAuditEntry) => { opts.onAudit?.(entry) }
 
   function pushSnapshot(op: DataSnapshotEntry['op'], label?: string): number {
-    const before = deepClone(bindRef)
+    const before = deepClone(rawB())
     const id = snapshots.length ? snapshots[snapshots.length - 1].id + 1 : 1
     snapshots.push({ id, ts: Date.now(), op, label, value: before })
     while (snapshots.length > maxSnapshots) snapshots.shift()
@@ -1159,6 +1166,9 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     agentValue?: unknown,
     /** ask 拆段(write-conflict C 形态):互锁模式下挂起前放锁/裁决后重取;串行模式为 no-op handle(校验仍生效) */
     lock?: WriteMutexHandle,
+    /** per-call scope(B11,2026-09-09 六路审计 conc):裁决分支 setBaseline 此前用缺省 activeScope ——
+     *  并行 CA 下子 scope 裁决后会把刷新后的基线错刷进主 scope(或反之),后续写误 VERSION_CONFLICT */
+    scope?: string,
   ): Promise<string | null> {
     if (!expectedHash || expectedHash === '') return null
     const curHash = hashBind()
@@ -1167,27 +1177,45 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       return toolError({
         code: 'VERSION_CONFLICT',
         message: `乐观锁冲突:expectedHash=${expectedHash} 但当前 hash=${curHash}。主数据在你 read 之后已被修改(外部代码/其他 agent/用户手动改)。`,
-        hint: `重新 read 拿最新值与 hash,基于最新值修改后再写入。当前值:${safeStringify(bindRef, 400)}`,
+        hint: `重新 read 拿最新值与 hash,基于最新值修改后再写入。当前值:${safeStringify(rawB(), 400)}`,
       })
     }
     // ask 拆段(R1 防饥饿):放锁后再等人工/策略裁决 —— 挂起期间兄弟写不被人工等待阻塞(S3 照常落地刷基线);
     // 直通模式(串行/未武装)release 为 no-op,但下方恢复点校验仍生效(串行 ask 窗口的宿主直改同在防线面)
     lock?.release()
+    // B11:ConflictInfo.snapshotId 真实锚定 —— 裁决者所见时刻的最新快照 id(修前恒 0);restore 裁决按此
+    // 定位快照,挂起窗口内新落地的快照不会让「裁决者没见过的状态」被静默回退出来
+    const anchorSnapshotId = snapshots.length ? snapshots[snapshots.length - 1].id : 0
     const resolution = await opts.onConflict({
-      op, agentValue, currentValue: bindRef, currentHash: curHash, expectedHash, snapshotId: 0,
+      op, agentValue, currentValue: bindRef, currentHash: curHash, expectedHash, snapshotId: anchorSnapshotId,
     })
     if (resolution.action === 'keep_external') {
       // 不重取锁:caller 收非 null 直接返回不 commit,finally release 幂等 no-op
-      return `已保留外部修改(未写入)。当前值:${safeStringify(bindRef, 400)} (hash=${curHash})。请重新 read 拿最新值与 hash 再改。`
+      return `已保留外部修改(未写入)。当前值:${safeStringify(rawB(), 400)} (hash=${curHash})。请重新 read 拿最新值与 hash 再改。`
     }
     if (resolution.action === 'restore') {
       await lock?.reacquire()
-      if (!snapshots.length) return `无历史快照可回退(本次为首次操作)。当前值:${safeStringify(bindRef, 400)} (hash=${curHash})。请重新 read 再改或选「强制覆盖」。`
-      const entry = snapshots[snapshots.length - 1]
+      // B11:restore 裁决补恢复点新鲜度校验(与 overwrite 分支同锚 = 裁决者所见 curHash)—— 修前直接回退,
+      // ask 窗口内新落地的修改会被没见过它的裁决静默洗掉
+      const nowHash = hashBind()
+      if (nowHash !== curHash) {
+        audit({ op: 'conflict_recheck', detail: `restore 裁决基于 ${curHash} 恢复时 ${nowHash}(ask 窗口新修改落地,回退被拦)`, timestamp: Date.now() })
+        return toolError({
+          code: 'VERSION_CONFLICT',
+          message: `restore 裁决恢复点校验失败:裁决基于 hash=${curHash},恢复时主数据已变为 hash=${nowHash}(裁决等待期间又有新修改落地,裁决者未见过)。`,
+          hint: '重新 read 拿最新值与 hash,基于最新值修改后再写入(单次校验,不再二次挂起)。',
+        })
+      }
+      // B11:按裁决者所见锚定快照(显式出错不回落 last)—— 挂起窗口内若有新快照落地,回落 last 会回退到
+      // 裁决者没见过的状态;恢复点校验已拦 hash 变化,锚 miss 只剩「同 hash 不同快照」极端形态,显式报错宁拦勿错
+      if (!snapshots.length) return `无历史快照可回退(本次为首次操作)。当前值:${safeStringify(rawB(), 400)} (hash=${curHash})。请重新 read 再改或选「强制覆盖」。`
+      const entry = anchorSnapshotId ? snapshots.find((s) => s.id === anchorSnapshotId) : undefined
+      if (!entry) return toolError({ code: 'SNAPSHOT_STALE', message: `restore 裁决所锚定的快照 #${anchorSnapshotId} 已不在快照栈(可能被 maxSnapshots 淘汰)`, hint: '重新 read 拿最新值,或用 restore_data 显式指定快照 id 回退' })
       restoreLive(bindRef, deepClone(entry.value))
       markDataDirty()
-      setBaseline(hashBind())  // 顺手修(深审缺口):restore 裁决改了 bind,基线同步刷新,防紧后写连环误冲突
-      return `已回退主数据到历史快照 #${entry.id}[${entry.op}]。当前值:${safeStringify(bindRef, 400)} (hash=${hashBind()})。请基于回退后的值重写或停止。`
+      const h = hashBind()  // B11:同调用单算(修前 setBaseline + 消息体双算全量 hash)
+      setBaseline(h, scope)  // 顺手修(深审缺口):restore 裁决改了 bind,基线同步刷新,防紧后写连环误冲突
+      return `已回退主数据到历史快照 #${entry.id}[${entry.op}]。当前值:${safeStringify(rawB(), 400)} (hash=${h})。请基于回退后的值重写或停止。`
     }
     // overwrite(自动 policy 或人工裁决):重取锁 + 恢复点新鲜度校验(锚 = 裁决者所见 hash,非 effHash ——
     // 冲突本身即 bind≠effHash,对 effHash 校验会把每次 overwrite 裁决都打回,机制自我否决)
@@ -1202,7 +1230,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         hint: '重新 read 拿最新值与 hash,基于最新值修改后再写入(单次校验,不再二次挂起)。',
       })
     }
-    setBaseline(hashBind())  // 吸收基线(设计 #4):裁决后基线对齐现实,commit 失败路径也不连环误冲突
+    setBaseline(nowHash, scope)  // 吸收基线(设计 #4):裁决后基线对齐现实,commit 失败路径也不连环误冲突(B11:复用 nowHash + 补 per-call scope)
     return null
   }
 
@@ -1227,70 +1255,80 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
   const restoreData = tool(
     async ({ id }, config) => {
       const scope = scopeOf(config)  // CA 并发修复:per-call scope token
-      if (!snapshots.length) return toolError({ code: 'NO_SNAPSHOT', message: '无快照可回退', hint: 'write 各写意图会自动存快照;或 history_data({list:true}) 查看可用快照' })
-      const entry = id !== undefined ? snapshots.find((s) => s.id === id) : snapshots[snapshots.length - 1]
-      if (!entry) return toolError({ code: 'SNAPSHOT_NOT_FOUND', message: `未找到快照 #${id}`, hint: '用 history_data({list:true}) 查看可用快照序号' })
-      // A3(4.9.2):快照是历史既有活态(拍栈时 bind 真值,可能含宿主直改/快路径 commit 的兄弟脏数据,
-      // 从未经整体校验);schema 变更场景不可达(controller.set/update 换绑时 snapshots.length=0 清栈)。
-      // 整体 safeParse 株连合法回退(与写路径 path-scoped 哲学相悖;handleConflict restore 裁决路径
-      // 本就不校验)→ 降级 audit 留痕放行,诊断信号保留不拦截
-      const chk = schema.safeParse(entry.value)
-      if (!chk.success) audit({ op: 'restore', detail: `#${entry.id} 快照含当前 schema 违例 ${chk.error.issues.length} 处(历史既有数据非本次写入,放行回退)`, timestamp: Date.now() })
-      // restore-guard(4.9.1 ②):受保护字段(freeze/verbatim)选择性保留现值 —— 快照存 bind 真值(占位只在读边界),
-      // 整体回退会把宿主自管的字段洗回旧值(借 restore 绕 freeze 只读)。差异比对(per 注册表路径):
-      //  - 无差异(或未配资源)→ 原行为整体回退,零变化
-      //  - 有差异 → 回退快照后回填当前保护值;元素对应优先 __pgId(codeAsset 稳定 id,跨调序正确),
-      //    无 id 按字面路径(无调序主形态);快照窗口内元素已删/容器不在 → 保留快照值 + 警示(宁旧勿错,防错位写坏)
-      const differing: { p: string; cur: unknown }[] = []
-      if (protectedCtx && protectedCtx.resourcesByPath.size) {
-        for (const [p] of protectedCtx.resourcesByPath) {
-          const cur = getByPath(bindRef, p)
-          const snap = getByPath(entry.value, p)
-          if (deepEqual(cur, snap)) continue
-          differing.push({ p, cur })
+      // B10(2026-09-09 六路审计 conc):restore_data 补写互锁 —— 修前旁路互锁,并行批内与 write 的
+      // 排序退化为「同步体抢先」而非派发序串行,破坏「后写在锁内取前写刷新后基线」不变量。
+      // 空栈/快照查找一并移入锁内:并行派发 [write, restore] 时 restore 须等 write 落栈后再判
+      // (修前锁外判空 → 派发序被抢跑的 restore 误报 NO_SNAPSHOT)。body 全同步持锁成本 = 本体;
+      // componentLock 守卫(restore 锁内拒)在中间件层先于此拦截,互不影响
+      const restoreLock = await acquireWriteMutex()
+      try {
+        if (!snapshots.length) return toolError({ code: 'NO_SNAPSHOT', message: '无快照可回退', hint: 'write 各写意图会自动存快照;或 history_data({list:true}) 查看可用快照' })
+        const entry = id !== undefined ? snapshots.find((s) => s.id === id) : snapshots[snapshots.length - 1]
+        if (!entry) return toolError({ code: 'SNAPSHOT_NOT_FOUND', message: `未找到快照 #${id}`, hint: '用 history_data({list:true}) 查看可用快照序号' })
+        // A3(4.9.2):快照是历史既有活态(拍栈时 bind 真值,可能含宿主直改/快路径 commit 的兄弟脏数据,
+        // 从未经整体校验);schema 变更场景不可达(controller.set/update 换绑时 snapshots.length=0 清栈)。
+        // 整体 safeParse 株连合法回退(与写路径 path-scoped 哲学相悖;handleConflict restore 裁决路径
+        // 本就不校验)→ 降级 audit 留痕放行,诊断信号保留不拦截
+        const chk = schema.safeParse(entry.value)
+        if (!chk.success) audit({ op: 'restore', detail: `#${entry.id} 快照含当前 schema 违例 ${chk.error.issues.length} 处(历史既有数据非本次写入,放行回退)`, timestamp: Date.now() })
+        // restore-guard(4.9.1 ②):受保护字段(freeze/verbatim)选择性保留现值 —— 快照存 bind 真值(占位只在读边界),
+        // 整体回退会把宿主自管的字段洗回旧值(借 restore 绕 freeze 只读)。差异比对(per 注册表路径):
+        //  - 无差异(或未配资源)→ 原行为整体回退,零变化
+        //  - 有差异 → 回退快照后回填当前保护值;元素对应优先 __pgId(codeAsset 稳定 id,跨调序正确),
+        //    无 id 按字面路径(无调序主形态);快照窗口内元素已删/容器不在 → 保留快照值 + 警示(宁旧勿错,防错位写坏)
+        const differing: { p: string; cur: unknown }[] = []
+        if (protectedCtx && protectedCtx.resourcesByPath.size) {
+          for (const [p] of protectedCtx.resourcesByPath) {
+            const cur = getByPath(bindRef, p)
+            const snap = getByPath(entry.value, p)
+            if (deepEqual(cur, snap)) continue
+            differing.push({ p, cur })
+          }
         }
-      }
-      if (!differing.length) {
+        if (!differing.length) {
+          restoreLive(bindRef, deepClone(entry.value))
+          markDataDirty()
+          audit({ op: 'restore', detail: `#${entry.id}`, timestamp: Date.now() })
+          setBaseline(hashBind(), scope)
+          return `已回退主数据到快照 #${entry.id}[${entry.op}]${entry.label ? `(${entry.label})` : ''}。`
+        }
+        // 元素对应锚:保护路径父元素的 __pgId(当前 bind);有 id → 回退后在快照排列里按 id 找同元素(调序安全)
+        const anchors = differing.map(({ p }) => {
+          const parent = parentPathOf(p)
+          const pgId = parent ? getByPath(bindRef, `${parent}.__pgId`) : undefined
+          return { p, parent, pgId: typeof pgId === 'string' ? pgId : undefined }
+        })
+        // 回填用的当前保护值须在 restoreLive 之前取好(回退后 bind 即快照排列)
+        const saved = anchors.map((a) => ({ ...a, val: a.p ? getByPath(bindRef, a.p) : undefined }))
         restoreLive(bindRef, deepClone(entry.value))
-        markDataDirty()
-        audit({ op: 'restore', detail: `#${entry.id}`, timestamp: Date.now() })
-        setBaseline(hashBind(), scope)
-        return `已回退主数据到快照 #${entry.id}[${entry.op}]${entry.label ? `(${entry.label})` : ''}。`
-      }
-      // 元素对应锚:保护路径父元素的 __pgId(当前 bind);有 id → 回退后在快照排列里按 id 找同元素(调序安全)
-      const anchors = differing.map(({ p }) => {
-        const parent = parentPathOf(p)
-        const pgId = parent ? getByPath(bindRef, `${parent}.__pgId`) : undefined
-        return { p, parent, pgId: typeof pgId === 'string' ? pgId : undefined }
-      })
-      // 回填用的当前保护值须在 restoreLive 之前取好(回退后 bind 即快照排列)
-      const saved = anchors.map((a) => ({ ...a, val: a.p ? getByPath(bindRef, a.p) : undefined }))
-      restoreLive(bindRef, deepClone(entry.value))
-      const kept: string[] = []
-      const staleKept: string[] = []
-      for (const s of saved) {
-        const leaf = s.p.slice(s.p.lastIndexOf('.') + 1)
-        let target = s.p
-        if (s.pgId) {
-          // 按稳定 id 在快照排列里定位同元素(父元素的数组容器内扫 __pgId)
-          const container = parentPathOf(s.parent)
-          const arr = container ? getByPath(bindRef, container) : bindRef
-          const idx = Array.isArray(arr) ? arr.findIndex((el) => (el as { __pgId?: unknown })?.__pgId === s.pgId) : -1
-          if (idx < 0) { staleKept.push(s.p); continue }  // 元素在快照窗口内已不存在:保留快照值,不复活当前值
-          target = `${container ? `${container}.${idx}` : String(idx)}.${leaf}`
-        } else if (s.parent && getByPath(bindRef, s.parent) === undefined) {
-          staleKept.push(s.p)  // 容器不在快照里(路径对不上):同上,宁旧勿错
-          continue
+        const kept: string[] = []
+        const staleKept: string[] = []
+        for (const s of saved) {
+          const leaf = s.p.slice(s.p.lastIndexOf('.') + 1)
+          let target = s.p
+          if (s.pgId) {
+            // 按稳定 id 在快照排列里定位同元素(父元素的数组容器内扫 __pgId)
+            const container = parentPathOf(s.parent)
+            const arr = container ? getByPath(bindRef, container) : bindRef
+            const idx = Array.isArray(arr) ? arr.findIndex((el) => (el as { __pgId?: unknown })?.__pgId === s.pgId) : -1
+            if (idx < 0) { staleKept.push(s.p); continue }  // 元素在快照窗口内已不存在:保留快照值,不复活当前值
+            target = `${container ? `${container}.${idx}` : String(idx)}.${leaf}`
+          } else if (s.parent && getByPath(bindRef, s.parent) === undefined) {
+            staleKept.push(s.p)  // 容器不在快照里(路径对不上):同上,宁旧勿错
+            continue
+          }
+          if (s.val !== undefined) setByPath(bindRef as object, target, s.val)
+          else staleKept.push(s.p)  // 当前无值(宿主已清)但快照有:保留快照值保 schema 合法,警示复核
+          kept.push(s.p)
         }
-        if (s.val !== undefined) setByPath(bindRef as object, target, s.val)
-        else staleKept.push(s.p)  // 当前无值(宿主已清)但快照有:保留快照值保 schema 合法,警示复核
-        kept.push(s.p)
+        markDataDirty()
+        audit({ op: 'restore', detail: `#${entry.id}(保护字段保留 ${kept.length}${staleKept.length ? `,未能回填 ${staleKept.length}` : ''})`, timestamp: Date.now() })
+        setBaseline(hashBind(), scope)
+        const staleNote = staleKept.length ? `;⚠ 以下保护字段未能回填当前值(快照窗口内元素已变/已删,保留快照旧值,请由宿主侧核对):${staleKept.join('、')}` : ''
+        return `已回退主数据到快照 #${entry.id}[${entry.op}]${entry.label ? `(${entry.label})` : ''}。⚠ 受保护字段保留当前值未回退:${kept.join('、')}(freeze/verbatim 由宿主管辖,快照旧值不覆盖;history_data 看到的是快照原值,实际结果以 read 为准)${staleNote}`
+      } finally {
+        restoreLock.release()
       }
-      markDataDirty()
-      audit({ op: 'restore', detail: `#${entry.id}(保护字段保留 ${kept.length}${staleKept.length ? `,未能回填 ${staleKept.length}` : ''})`, timestamp: Date.now() })
-      setBaseline(hashBind(), scope)
-      const staleNote = staleKept.length ? `;⚠ 以下保护字段未能回填当前值(快照窗口内元素已变/已删,保留快照旧值,请由宿主侧核对):${staleKept.join('、')}` : ''
-      return `已回退主数据到快照 #${entry.id}[${entry.op}]${entry.label ? `(${entry.label})` : ''}。⚠ 受保护字段保留当前值未回退:${kept.join('、')}(freeze/verbatim 由宿主管辖,快照旧值不覆盖;history_data 看到的是快照原值,实际结果以 read 为准)${staleNote}`
     },
     {
       name: 'restore_data',
@@ -1346,7 +1384,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (bindRef == null || typeof bindRef !== 'object') {
         return toolError({ code: 'NOT_OBJECT', message: `主数据不是对象/数组,无法查询(当前为 ${bindRef === undefined ? 'undefined' : typeof bindRef})`, hint: 'query 仅适用于对象/数组;叶子用 read 读' })
       }
-      const queryTarget = allowKeys ? projectBySchemaDeep(bindRef, schema) : bindRef
+      const queryTarget = allowKeys ? projectBySchemaDeep(rawB(), schema) : rawB()
       const qFullText = fullTextPrefixesOf(config)
       /** 单条求值(批量与单次共用同一输出形态);语法错返回 ERROR: 串由调用方分流 */
       const evalOne = (e: string): string => {
@@ -1393,7 +1431,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     async ({ query, mode, fuzzyThreshold, matchKey, limit }) => {
       if (bindRef == null) return toolError({ code: 'EMPTY', message: '主数据为空,无可搜索内容' })
       try {
-        const searchTarget = allowKeys ? projectBySchemaDeep(bindRef, schema) : bindRef
+        const searchTarget = allowKeys ? projectBySchemaDeep(rawB(), schema) : rawB()
         const hits = searchJson(searchTarget, query, { mode: mode as SearchMode, fuzzyThreshold, matchKey, limit: limit ?? 50 })
         return safeStringify({ matched: hits.length, results: hits })
       } catch (e) {
@@ -1423,10 +1461,10 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       let source: unknown
       if (jp) {
         if (!isPathAllowed(jp, schema, allowKeys)) return toolError({ code: 'PATH_DENIED', message: `eval_script @ "${jp}" 不在 schema 声明字段内`, hint: '仅 schema 声明的 key 可作为子树' })
-        source = getByPath(bindRef, jp)
+        source = getByPath(rawB(), jp)
         if (allowKeys) { const ss = getSchemaAtPath(schema, jp); if (ss) source = projectBySchemaDeep(source, ss) }
       } else {
-        source = allowKeys ? projectBySchemaDeep(bindRef, schema) : bindRef
+        source = allowKeys ? projectBySchemaDeep(rawB(), schema) : rawB()
       }
       const data = deepClone(source)
       const timeout = jp && JSON.stringify(data).length > 100000 ? 8000 : 3000  // 子树较大时延长超时(默认 3s,>100KB 延至 8s)
@@ -1451,13 +1489,13 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
             // 乐观锁(eval-transform-lock,4.9.1):互锁七 commit 位补齐 —— 修前有 mutex+commit+setBaseline
             // 但无 effHash/handleConflict,armed 场景脚本执行窗口的外部修改被静默覆盖(CLAUDE.md 契约-实现分叉收敛)
             const effHash = lockOn ? getBaseline(scope) : undefined
-            const conflict = await handleConflict('edit', effHash, undefined, evalLock)
+            const conflict = await handleConflict('edit', effHash, undefined, evalLock, scope)
             if (conflict !== null) return conflict
             const r = applyPatchesToBind({ bindRef, patches: [{ op: 'set', jsonPath: jp, value: result }], schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'schema_invalid', snapshotLabel: 'eval_transform_subtree', internalAfterWrite, protectedCtx })
             if (!r.ok) return r.error
             audit({ op: 'edit', detail: `eval_transform_subtree @ ${jp}`, timestamp: Date.now() })
             setBaseline(hashBind(), scope)
-            return `已通过脚本 transform 子树 @ ${jp} 更新(耗时 ${res.elapsedMs}ms)。当前值: ${safeStringify(bindRef, 600)}`
+            return `已通过脚本 transform 子树 @ ${jp} 更新(耗时 ${res.elapsedMs}ms)。当前值: ${safeStringify(rawB(), 600)}`
           } finally {
             evalLock.release()
           }
@@ -1473,13 +1511,13 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           try {
             // 乐观锁(eval-transform-lock):patches 增量模式同款补齐(七 commit 位之二)
             const effHash = lockOn ? getBaseline(scope) : undefined
-            const conflict = await handleConflict('edit', effHash, undefined, evalLock)
+            const conflict = await handleConflict('edit', effHash, undefined, evalLock, scope)
             if (conflict !== null) return conflict
             const r = applyPatchesToBind({ bindRef, patches: (result as any).patches, schema, allowKeys, snapshots, maxSnapshots, markDataDirty, schemaErrorMode: 'schema_invalid', snapshotLabel: 'eval_transform', internalAfterWrite, protectedCtx })
             if (!r.ok) return r.error
             audit({ op: 'edit', detail: `eval_transform(${r.applied.length} patches)`, timestamp: Date.now() })
             setBaseline(hashBind(), scope)
-            return `已通过脚本 transform(patches) 更新主数据(${r.applied.length} 个 patch,耗时 ${res.elapsedMs}ms)。当前值: ${safeStringify(bindRef, 600)}`
+            return `已通过脚本 transform(patches) 更新主数据(${r.applied.length} 个 patch,耗时 ${res.elapsedMs}ms)。当前值: ${safeStringify(rawB(), 600)}`
           } finally {
             evalLock.release()
           }
@@ -1503,13 +1541,18 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         // team-audit P1#3:整体替换前捕写前快照(internalAfterWrite 回填原 __pgId 用;照 commitSetToBind :508 模式)。
         // 修前本分支零 internalAfterWrite 调用 → 脚本入参 data 经投影已剥 __pg* → 整组换掉后已有组件 id 也被 wipe,
         // vfs 工作副本按旧 id 定位断链 → 孤儿清理删副本、子 agent 未 commit 成果丢(2026-08-21 editor 同族事故)
-        const beforeBind = internalAfterWrite ? deepClone(bindRef) : null
         const evalLock = await acquireWriteMutex()
         try {
           // 乐观锁(eval-transform-lock):整体替换模式同款补齐(七 commit 位之三;整体替换 = set 语义)
           const effHash = lockOn ? getBaseline(scope) : undefined
-          const conflict = await handleConflict('set', effHash, evalResult, evalLock)
+          const conflict = await handleConflict('set', effHash, evalResult, evalLock, scope)
           if (conflict !== null) return conflict
+          // B9(2026-09-09 六路审计 conc):beforeBind 锚点 = 锁内 + handleConflict 裁决之后 —— 修前在 acquire
+          // 之前克隆,与 commitSetToBind/applyPatchesToBind「裁决后、落盘前克隆」参照形态不一致;等锁/ask 拆段
+          // 窗口内兄弟写的改动若落在克隆之后,before 陈旧 → internalAfterWrite 按位置回填 __pgId 错位。
+          // 可达性分析:当前兄弟写临界段全同步,克隆与 acquire 相邻同步语句间无 interleaving 窗口(推测级竞态
+          // 现阶段不可达);对齐性修复仍落地 —— 未来临界段加任何 await(异步 schema 钩子/资源解析)即静默可达
+          const beforeBind = internalAfterWrite ? deepClone(rawB()) : null
           const vr = validateRootValueLocally({ schema, allowKeys, value: evalResult, bindRef })
           if (!vr.ok) {
             return toolError({ code: 'SCHEMA_INVALID', message: `脚本返回值校验失败,未写入(transform 模式要求返回主数据的完整新值或顶层 key 子集)`, hint: `确认脚本 return 了完整新值(非部分);或返回 {patches:[...]} 走增量模式;按 schema_data() 查看格式`, details: (vr.error.match(/"details":\s*(\[[^\]]*\])/)?.[1] ?? '') || vr.error })
@@ -1526,7 +1569,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           if (internalAfterWrite) { internalAfterWrite(bindRef, beforeBind); markDataDirty() }
           audit({ op: 'edit', detail: 'eval_transform', timestamp: Date.now() })
           setBaseline(hashBind(), scope)
-          return `已通过脚本 transform 更新主数据(耗时 ${res.elapsedMs}ms)。当前值: ${safeStringify(bindRef, 600)}`
+          return `已通过脚本 transform 更新主数据(耗时 ${res.elapsedMs}ms)。当前值: ${safeStringify(rawB(), 600)}`
         } finally {
           evalLock.release()
         }
@@ -1551,7 +1594,12 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     async ({ jsonPath, jsonPaths, fields, depth, offset, limit }, config) => {
       const scope = scopeOf(config)  // CA 并发修复:per-call scope token(基线归属 + 大文本摘要主/子判定)
       const fullTextPrefixes = fullTextPrefixesOf(config)  // 聚焦态全文豁免前缀(subtree-summary 通道 ②)
-      const h = hashBind()  // 整体 hash(整 bind 域,乐观锁比对整体);多路径/分页/单路径统一取一次
+      const rb = rawB()  // C1:读侧 raw 解包(投影/stringify 经 proxy 3-10× 放大)
+      // C2(2026-09-09 perf):hash 惰性化 —— 修前首行恒全量 hashBind,窄读/失败读(PATH_DENIED/PATH_NOT_FOUND)
+      // 也付全 bind hash(500KB reactive 实测 6.3ms/次,read 为真 LLM 基线最高频工具);移到消费点按需算
+      // (成功读/合法多路径才付)。「冲突检查 hash 恒实时计算」不变量不动:仍每调用实时算,禁的是跨调用缓存
+      let h: string | undefined
+      const hOf = (): string => (h ??= hashBind())
       // 基线刷新时机(rv-core F3):原在路径校验前 setBaseline → PATH_DENIED/UNSAFE 失败读也刷基线,
       // 可构造「失败读吸收宿主改动 → 后续 autoLock 静默覆盖」;下移到校验通过后(保持同序,
       // 多路径至少一个合法路径才刷)
@@ -1562,7 +1610,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           const jp = jpRaw || ''
           if (!isPathAllowed(jp, schema, allowKeys)) return `- ${jp || '(根)'}: [PATH_DENIED: 不在 schema 声明字段内]`
           anyAllowed = true
-          let target = jp ? getByPath(bindRef, jp) : bindRef
+          let target = jp ? getByPath(rb, jp) : rb
           if (!jp && allowKeys) target = projectBySchemaDeep(target, schema)
           else if (allowKeys) { const ss = getSchemaAtPath(schema, jp); if (ss) target = projectBySchemaDeep(target, ss) }
           let resolved = target
@@ -1574,8 +1622,8 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           if (resolved === undefined) return `- ${jp} = (undefined)`
           return `- ${jp} = ${safeStringify(resolved)}`
         })
-        if (anyAllowed) setBaseline(h, scope)
-        return `多路径读取(共 ${jsonPaths.length} 项,hash=${h}):\n${lines.join('\n')}`
+        if (anyAllowed) setBaseline(hOf(), scope)
+        return `多路径读取(共 ${jsonPaths.length} 项,hash=${hOf()}):\n${lines.join('\n')}`
       }
       const jp = jsonPath || ''
       if (isUnsafePath(jp)) return toolError({ code: 'PATH_UNSAFE', message: `jsonPath "${jp}" 含非法段(__proto__/constructor/prototype)`, hint: '使用正常属性路径,如 components.0.text(数组索引数字)' })
@@ -1588,13 +1636,13 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       if (!isPathAllowed(jp, schema, allowKeys)) {
         // C2 错误即向导:键打错/拼错时附父级键集(省「读→猜→再读」试错轮)
         const parentJp0 = /[.[]/.test(jp) ? jp.replace(/[.[][^.[]*$/, '') : ''
-        const keys0 = suggestKeysOf(parentJp0, parentJp0 ? getByPath(bindRef, parentJp0) : bindRef)
+        const keys0 = suggestKeysOf(parentJp0, parentJp0 ? getByPath(rb, parentJp0) : rb)
         const keysHint = keys0.length
           ? `;父级 "${parentJp0 || '(root)'}" 的可用字段:${keys0.slice(0, 12).join(', ')}${keys0.length > 12 ? ' …' : ''}`
           : ''
         return toolError({ code: 'PATH_DENIED', message: `read @ "${jp}" 不在 schema 声明字段内`, hint: `主数据仅暴露 schema 声明的字段;若需操作该字段,集成方需在 schema 中声明它${keysHint}` })
       }
-      let target = jp ? getByPath(bindRef, jp) : bindRef
+      let target = jp ? getByPath(rb, jp) : rb
       // tool-call-economy C2 错误即向导:读不存在路径 → 附父级实况(键集/数组长度),省「读→猜→再读」试错轮。
       // 早于 setBaseline(失败读不吸收宿主改动);ERROR 结果走 toolError 单行契约(hint 字段带建议,零格式变化)
       if (jp && target === undefined) {
@@ -1605,7 +1653,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           && (sub as { isOptional: () => boolean }).isOptional()
         if (!isOptionalField) {
           const parentJp = /[.[]/.test(jp) ? jp.replace(/[.[][^.[]*$/, '') : ''
-          const parent = parentJp ? getByPath(bindRef, parentJp) : bindRef
+          const parent = parentJp ? getByPath(rb, parentJp) : rb
           const keys = suggestKeysOf(parentJp, parent)
           const suggest = Array.isArray(parent)
             ? `父级 "${parentJp || '(root)'}" 是 ${parent.length} 元数组,有效索引 0-${Math.max(parent.length - 1, 0)};先 read({jsonPath:"${parentJp}"}) 确认现状,追加元素走 write 的 append`
@@ -1623,7 +1671,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
       }
       let resolved = target
       if (protectedCtx) resolved = renderReadPlaceholders({ jp, resolved, resourcesByPath: protectedCtx.resourcesByPath, resourceStore: protectedCtx.resourceStore })
-      setBaseline(h, scope)  // 校验通过才刷基线(失败读不吸收宿主改动,防构造静默覆盖)
+      setBaseline(hOf(), scope)  // 校验通过才刷基线(失败读不吸收宿主改动,防构造静默覆盖;hash 同点惰性取)
       if (fields && fields.length) resolved = projectFields(resolved, fields)
       if (depth !== undefined && depth !== null) resolved = limitDepth(resolved, depth)
       // subtree-summary:结果根豁免(窄读通道 —— 根不摘要,内部大子树照占位);聚焦前缀全文(__pgFullTextPaths 任意深度豁免)
@@ -1640,10 +1688,10 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         const lim = Math.min(200, Math.max(1, limit ?? 50))
         const items = resolved.slice(off, off + lim)
         const hasMore = off + lim < total
-        return `${desc}主数据${jp ? ` @ ${jp}` : ''} 数组分页[offset=${off},limit=${lim}]${meta} = ${safeStringify(items)} (total=${total}, hasMore=${hasMore}) (hash=${h})`
+        return `${desc}主数据${jp ? ` @ ${jp}` : ''} 数组分页[offset=${off},limit=${lim}]${meta} = ${safeStringify(items)} (total=${total}, hasMore=${hasMore}) (hash=${hOf()})`
       }
-      if (resolved === undefined) return `${desc}主数据${jp ? ` @ ${jp}` : ''}${meta} = (undefined) (hash=${h})`
-      return `${desc}主数据${jp ? ` @ ${jp}` : ''}${meta} = ${safeStringify(resolved)} (hash=${h})`
+      if (resolved === undefined) return `${desc}主数据${jp ? ` @ ${jp}` : ''}${meta} = (undefined) (hash=${hOf()})`
+      return `${desc}主数据${jp ? ` @ ${jp}` : ''}${meta} = ${safeStringify(resolved)} (hash=${hOf()})`
     },
     {
       name: 'read',
@@ -1693,10 +1741,10 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
               return toolError({ code: hit.spec.mode === 'freeze' ? 'FROZEN_FIELD' : 'VERBATIM_PROTECTED', message: `write delete @ "${patch.jsonPath}" 命中受保护字段 "${hit.protectedPath}"(${hit.spec.mode}),不可删除`, hint: hit.spec.mode === 'freeze' ? '冻结字段不可删' : 'verbatim 字段不可直接删;先 resource_delete 释放' })
             }
           }
-          const conflict = await handleConflict('delete', effHash, undefined, writeLock)
+          const conflict = await handleConflict('delete', effHash, undefined, writeLock, scope)
           if (conflict !== null) return conflict
           if (dryRun) {
-            const dClone = deepClone(bindRef)
+            const dClone = deepClone(rawB())
             const dOk = deleteByPath(dClone, patch.jsonPath)
             return dOk ? `dryRun(delete): 将删除 @ ${patch.jsonPath}。预览剩余:${safeStringify(dClone, 600)}。未实际写入、未入快照。` : `dryRun(delete): @ ${patch.jsonPath} 不存在(无需删除)。未实际写入。`
           }
@@ -1711,7 +1759,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
 
         if (intent === 'edit') {
           if (bindRef == null || typeof bindRef !== 'object') return toolError({ code: 'NOT_OBJECT', message: `edit 仅适用于对象/数组主数据,当前是 ${bindRef === undefined ? 'undefined' : typeof bindRef}`, hint: '叶子用 write(value) 整体设置' })
-          const conflict = await handleConflict('edit', effHash, undefined, writeLock)
+          const conflict = await handleConflict('edit', effHash, undefined, writeLock, scope)
           if (conflict !== null) return conflict
           // 统一为 patch 列表:批量用 patches;单个用 [patch + 顶层 value]
           const list: { op?: EditOp; jsonPath?: string; value?: unknown }[] = (patches && patches.length) ? patches
@@ -1729,7 +1777,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         // set 整体(commitSetToBind 纯函数:校验+快照+merge+audit,与 draft_commit 共用)
         const pr = maybeParseValue(payload)
         if (pr.parseError) return jsonParseError('', payload, pr.parseError)
-        const conflict = await handleConflict('set', effHash, payload, writeLock)
+        const conflict = await handleConflict('set', effHash, payload, writeLock, scope)
         if (conflict !== null) return conflict
         const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit, dryRun, onWrite: markDataDirty, internalAfterWrite, protectedCtx, hashFn: hashBind })
         if (!r.ok) return r.error
@@ -1857,7 +1905,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
         const draftLock = await acquireWriteMutex()
         try {
           const effHash = lockOn ? getBaseline(scope) : undefined
-          const conflict = await handleConflict('set', effHash, parsed, draftLock)
+          const conflict = await handleConflict('set', effHash, parsed, draftLock, scope)
           if (conflict !== null) return conflict  // 冲突:草稿保留(未删),LLM 重 read 拿最新 hash 后再 commit
           // 复用 commitSetToBind(与 write(set) 共用:schema 校验 + 快照 + merge + audit);op='draft_commit' 标记快照/审计
           const r = commitSetToBind({ bindRef, value: parsed, schema, allowKeys, snapshots, maxSnapshots, audit, op: 'draft_commit', onWrite: markDataDirty, internalAfterWrite, protectedCtx, hashFn: hashBind })
@@ -1926,11 +1974,17 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
           const chk = subSchema.safeParse(value)
           if (!chk.success) return toolError({ code: 'SCHEMA_INVALID', message: `resource_update 值不符合 "${path}" 的类型`, hint: '按字段类型传值', details: formatZodIssues(chk.error.issues) })
         }
-        // verbatim:更新池 + 同步 bind(D1 一致)+ 标脏(D2)+ 刷新乐观锁 hash(H2,与其他写路径一致,防下次 write VERSION_CONFLICT);handle 路径派生不变
-        resourceStore!.update(np, value)
-        setByPath(bindRef, np, value)
-        setBaseline(hashBind(), scope)
-        markDataDirty()
+        // B10(2026-09-09 六路审计 conc):rupdate 补写互锁(与 restore_data 同款;校验段留在锁外持锁最小化)
+        const rLock = await acquireWriteMutex()
+        try {
+          // verbatim:更新池 + 同步 bind(D1 一致)+ 标脏(D2)+ 刷新乐观锁 hash(H2,与其他写路径一致,防下次 write VERSION_CONFLICT);handle 路径派生不变
+          resourceStore!.update(np, value)
+          setByPath(bindRef, np, value)
+          setBaseline(hashBind(), scope)
+          markDataDirty()
+        } finally {
+          rLock.release()
+        }
         const h = resourceStore!.get(np)?.handle
         return `已更新 verbatim 资源 "${path}" = ${safeStringify(value, 200)}(handle ${h ?? '(未知)'} 不变)。后续 write 该字段写回句柄 ⟦res:${h}⟧ 或新值`
       },
@@ -2030,7 +2084,7 @@ export function createDataOps(config: DataConfig, opts: DataOpsOptions = {}): St
     if (pr.parseError) return { ok: false, intent: 'set', items: [], error: `JSON 解析失败:${pr.parseError}` }
     const r = commitSetToBind({ bindRef, value: pr.parsed, schema, allowKeys, snapshots, maxSnapshots, audit: () => {}, dryRun: true, protectedCtx, hashFn: hashBind })
     if (!r.ok) return { ok: false, intent: 'set', items: [], error: errText(r.error) }
-    const before = (bindRef ?? {}) as Record<string, unknown>
+    const before = (rawB() ?? {}) as Record<string, unknown>
     const after = (r.data ?? {}) as Record<string, unknown>
     const changedKeys = (allowKeys ?? []).filter((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]))
     return {

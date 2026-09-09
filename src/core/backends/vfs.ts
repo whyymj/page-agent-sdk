@@ -96,14 +96,34 @@ export function createVfs(
     if (p.startsWith('resources/')) return 'resources'
     return 'userFiles'
   }
-  /** 单池当前字节数 */
-  function poolBytesOf(pool: VfsPoolKey): number {
-    let total = 0
-    for (const [k, f] of Object.entries(files)) {
-      if (poolOf(k) === pool) total += encodeLength(f.content)
-    }
-    return total
+
+  // ===== C3(2026-09-09 perf,六路审计 Bench D):池字节闭包计数器(O(1) 增量维护)=====
+  // 修前 poolBytesOf / estimateFileBytes 每次逐文件 TextEncoder 全内容重扫 —— 每次 proxy set 触发
+  // enforceLimit = 4 池 × poolBytesOf + 总量再全扫(每写 5 次全池重扫;实测 6MB 池每写 1.13ms,
+  // 超池淘汰写 max 6.2ms),计数器增量维护归零(~0.00ms)。
+  // 失效点全覆盖(漏一个 = 计数漂移 → 过度淘汰〔vfs_read 404 族〕或池失守):
+  //   proxy set/deleteProperty(所有工具写)、enforceLimit 内部 raw 删、hydrate raw 写、clear、构造 seed。
+  //   字节公式与 encodeLength(=storage.estimateBytes 口径)逐字相同,池/总量判定语义零变化。
+  const _bytesOf = new Map<string, number>()
+  const _poolBytes: Record<VfsPoolKey, number> = { largeResults: 0, drafts: 0, resources: 0, userFiles: 0 }
+  let _totalBytes = 0
+  /** 记账一次写入/覆盖/删除(delta 维护池与总量;与 poolOf 同口径规范化 key) */
+  function _account(rawKey: string, next: VfsFile | undefined): void {
+    const k = normalize(rawKey)
+    const prev = _bytesOf.get(k) ?? 0
+    const nb = next ? encodeLength(next.content) : 0
+    if (prev === nb) return
+    _poolBytes[poolOf(k)] += nb - prev
+    _totalBytes += nb - prev
+    if (nb === 0) _bytesOf.delete(k)
+    else _bytesOf.set(k, nb)
   }
+  /** 单池当前字节数(O(1);计数器与 files 恒同步,见 _account 失效点清单) */
+  function poolBytesOf(pool: VfsPoolKey): number {
+    return _poolBytes[pool]
+  }
+  // 构造 seed 记账(计数器声明后执行;一次性 O(n),与原 poolBytesOf 全扫同量级仅此一次)
+  if (initialFiles) for (const [k, v] of Object.entries(initialFiles)) _account(k, { content: v, updatedAt: 0 })
 
   /**
    * 内存上限淘汰:按池独立 LRU —— 每池超各自 poolMaxBytes → 仅在该池内按 updatedAt 最旧删到 ≤ 池上限*watermark。
@@ -128,18 +148,20 @@ export function createVfs(
         // updatedAt ≥ _protectSinceTs = 本 invoke 内新 offload(当轮创建恒保护,mid-invoke 404 盲区)
         if (isLarge && !oomForce && (_protectedRefs.has(k) || files[k].updatedAt >= _protectSinceTs)) continue
         delete files[k]
+        _account(k, undefined)
         if (poolBytesOf(pool) <= target) break
       }
     }
     // 总上限兜底(默认 = 三池之和)
-    if (estimateFileBytes(files) > maxBytes) {
+    if (_totalBytes > maxBytes) {
       const target = maxBytes * DEFAULT_VFS_WATERMARK
-      const totalOomForce = estimateFileBytes(files) > maxBytes * 1.5
+      const totalOomForce = _totalBytes > maxBytes * 1.5
       const ordered = Object.entries(files).sort((a, b) => a[1].updatedAt - b[1].updatedAt)
       for (const [k] of ordered) {
         if (poolOf(k) === 'largeResults' && !totalOomForce && (_protectedRefs.has(k) || files[k].updatedAt >= _protectSinceTs)) continue
         delete files[k]
-        if (estimateFileBytes(files) <= target) break
+        _account(k, undefined)
+        if (_totalBytes <= target) break
       }
     }
   }
@@ -179,6 +201,7 @@ export function createVfs(
     set(target, key, value) {
       const ok = Reflect.set(target, key, value)
       if (ok) {
+        _account(String(key), value as VfsFile)  // C3:计数器先记账(顺序无谓:enforceLimit 读计数器不读文件)
         _dirty = true
         enforceLimit()
         scheduleSave()
@@ -188,6 +211,7 @@ export function createVfs(
     deleteProperty(target, key) {
       const ok = Reflect.deleteProperty(target, key)
       if (ok) {
+        _account(String(key), undefined)  // C3:raw 删除记账
         _dirty = true
         scheduleSave()
       }
@@ -209,7 +233,7 @@ export function createVfs(
   if (persist) {
     store.hydrate = (incoming) => {
       // 恢复:直接写 raw target,不触发 save;恢复后限上限(防快照过大撑爆内存)
-      for (const [k, v] of Object.entries(incoming)) files[normalize(k)] = v
+      for (const [k, v] of Object.entries(incoming)) { files[normalize(k)] = v; _account(k, v) }
       enforceLimit()
       _dirty = true  // 恢复后内容确定,下次 save 应 clone 作新基线(防复用上个会话/旧栈的 lastVfsClone)
     }
@@ -221,8 +245,11 @@ export function createVfs(
       doSave()
     }
     store.clear = () => {
-      // 清空 raw target(新会话),触发落盘空
+      // 清空 raw target(新会话),触发落盘空;C3:计数器一并重置(防计数漂移 → 下轮过度淘汰)
       for (const k of Object.keys(files)) delete files[k]
+      _bytesOf.clear()
+      for (const p of POOL_KEYS) _poolBytes[p] = 0
+      _totalBytes = 0
       scheduleSave()
       _dirty = true  // 清空后内容变,下次 save 必 clone 新基线(空)
     }
@@ -236,8 +263,9 @@ function encodeLength(s: string): number {
   if (!_vfsEncoder) _vfsEncoder = new TextEncoder()
   return _vfsEncoder.encode(s).length
 }
-/** 工作区总字节估算(文件内容 UTF-8 长度,与 storage.estimateBytes 口径一致) */
-function estimateFileBytes(files: Record<string, VfsFile>): number {
+/** 工作区总字节估算(文件内容 UTF-8 长度,与 storage.estimateBytes 口径一致)。
+ *  C3 后运行时改走闭包计数器 _totalBytes(O(1));保留此纯函数作计数器一致性的测试对账基准(bench/selftest) */
+export function estimateFileBytes(files: Record<string, VfsFile>): number {
   let total = 0
   for (const f of Object.values(files)) total += encodeLength(f.content)
   return total

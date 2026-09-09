@@ -1,6 +1,10 @@
 # 活跃 Changes 优先级索引
 
-> **当前活跃 change:1(2026-09-07 整理)**:[`2026-09-03-capability-pack-factories`](./2026-09-03-capability-pack-factories/)(P3,**启动条件 = 首个宿主场景确认**,大纲就绪)。2026-09-03 立项的另三个已全部实施归档:**ui-quick-wins**(✅ 随 4.10.0)/ **server-companion**(✅ 随 4.11.0;Phase 0 冒烟 + Phase 1 无人值守组合 e2e + D2 关闭,跨进程重启恢复入 deferred)/ **eval-toolkit**(✅ 随 4.11.0;判定核导出 + tests/runtime 单一真相源迁移),见 [`archive/`](./archive/)。C 档触发式项在 [`../deferred.md`](../deferred.md) 2026-09-03 段。
+> **当前活跃 change:2(2026-09-09 立项)**:
+>
+> **[`2026-09-09-audit-remediation`](./2026-09-09-audit-remediation/)**(SDK+文档,**P1,分批 A/C/E/F**;2026-09-09 用户要求「彻底排查」驱动的六路并行只读审计整改 + **四路方案评审 v2 修订**):六路审计(主流程 4/5 · 并发 3.5/5 · 结构 3/5 · 性能 3.5/5 · API 3/5 · 文档 4.5/5,报告在 `local/*-audit-4.11.1.md`,以 deferred ~100 项为去重基线)。**净新增要点**:P1×1(组件锁真实回灌无 ERROR: 前缀 → 4.9.1 被拒委派计数对真锁路径失明)+ reactive 热路径 3-10× 放大实测(读入口单点 rawBind 解包 = 全项目单位代码行收益最大性能改动)+ 中间件契约类型面零安全(Middleware=[k:string]:any)+ createChatSdk 拆分触发条件实质满足(1787→3318 行 + 2 例结构性自回归)+ 文档元数据腐化(计数/清单/徽章;契约层 20/20 核实一致)。**v2 评审修订**(报告 `local/plan-review-*.md`,对照源码逐项核验):原 Batch D 并入 B(D2 真实数据损路径先行,checkpoint restore 锁除外→deferred)· 原 B8 headless 导出移 E(新增导出面属 minor)· **原 E4 @langchain/openai optional peer 否决**(三处静态 import 前提为假)· 原 E3 移 F 前置(8 处 cast 六处落拆分区)· B3 检测字段修 `caller?.maxRetries`(原字段死代码)· C1 改单点解包+getData 双用口陷阱守卫 · F2 拆两步+autoTitle e2e 前置。分批:A 文档+守卫(✅ 已完成 6986a54+勘误)→ B 稳定性+互锁(4.11.2,含 P1)→ C 性能(4.12.0)→ E API 面收口(4.13.0)→ F createChatSdk 拆分(4.14.0,前置 F0 三件)。
+>
+> [`2026-09-03-capability-pack-factories`](./2026-09-03-capability-pack-factories/)(P3,**启动条件 = 首个宿主场景确认**,大纲就绪)。2026-09-03 立项的另三个已全部实施归档:**ui-quick-wins**(✅ 随 4.10.0)/ **server-companion**(✅ 随 4.11.0;Phase 0 冒烟 + Phase 1 无人值守组合 e2e + D2 关闭,跨进程重启恢复入 deferred)/ **eval-toolkit**(✅ 随 4.11.0;判定核导出 + tests/runtime 单一真相源迁移),见 [`archive/`](./archive/)。C 档触发式项在 [`../deferred.md`](../deferred.md) 2026-09-03 段。
 >
 > **[`2026-09-03-ui-quick-wins`](./archive/2026-09-03-ui-quick-wins/)**(SDK,**P2 体验**,大纲):UI/交互层四项快赢 —— ①`dialog.quickActions` 快捷指令 chips(点击 = sendMessage,排队/挂起门禁语义自动继承)②会话导出/导入(`sdk.exportSession`/`importSession`,formatVersion 兼容 + 剥 debugLogs 易失态;ChatHeader 入口)③write 审批 diff 预览(approval 挂起时内部 dryRun 通道 → ApprovalBar 结构化 path+old→new 截断渲染,dryRun 现成只送 UI)④拖拽元素聚焦(`dialog.onDropElement` 事件出口,files 优先走图片通道;el→jsonPath 映射归宿主,复用 editor select.one 联动)。全部 UI 层+公开 API 小面,零核心契约变化。
 >

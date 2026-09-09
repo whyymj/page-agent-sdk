@@ -26,6 +26,7 @@ import type {
   ContextPreset, ContextManagerOptions, CompressionStats,
   ModelCaps, StorageConfig, StorageBackendType, SessionStore, SessionMeta, SessionSnapshot, StorageEvent, StorageBackend,
   CreateAgentOptions, DebugLog, PermissionRule, PermissionOp,
+  DialogIcons, DialogConfig,
 } from '../types/index'
 
 // 值导出存在(拼错/缺失则 tsc 报错)
@@ -133,6 +134,18 @@ export const _capKeys: Pick<NonNullable<ChatSdkOptions['capabilities']>,
   'dataOps' | 'fetch' | 'planning' | 'missionAnchor' | 'workingMemory' | 'focus' | 'skills' | 'vfs'
   | 'summarization' | 'memory' | 'subagent' | 'inspectEnv' | 'contextInspector' | 'verify' | 'domInspect'
   | 'draftWrite' | 'automation' | 'agentCompression'
+> = null as any
+
+// 5b. DialogIcons / DialogConfig 键集完整性(2026-09-09 审计 Batch A8;deferred 2026-08-18 登记的「4.0 大版本补断言」兑现 ——
+//     3.27 两度漏标(DialogIcons.send / DialogConfig.sections)的复发面;键增删须同步 types/index.d.ts 与本断言)
+export const _dialogIconKeys: Pick<DialogIcons,
+  'header' | 'subagent' | 'subagentProgress' | 'empty' | 'focus' | 'queued' | 'queuedEdit' | 'recommend'
+  | 'conflict' | 'assistantAvatar' | 'userAvatar' | 'send' | 'newSession' | 'history' | 'more' | 'close'
+  | 'sessionDelete' | 'attachImage'
+> = null as any
+export const _dialogConfigKeys: Pick<DialogConfig,
+  'title' | 'placeholder' | 'quickActions' | 'onDropElement' | 'sessionTransfer' | 'drawer' | 'drawerWidth'
+  | 'drawerHidden' | 'inputRows' | 'onClose' | 'theme' | 'icons' | 'sections' | 'headerLabels' | 'toolStepView'
 > = null as any
 
 // 6. send options per-call 字段(audit P1-24:d.ts 与 src SendOptions 对齐,防 maxAutoRetries 漂移)

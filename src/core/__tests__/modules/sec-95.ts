@@ -44,6 +44,15 @@ export async function run(ctx: TestCtx): Promise<void> {
       '✓ 全角逗号 → 首子句「把标题改成橙色」命中操作(修前窗口含「检查」只读反例优先 → 真写漏拦)')
     assert(detectActionImperative('总结一下刚才改了什么；然后重新生成一遍') === false,
       '✓ 全角分号 → 首子句「总结一下…」只读优先(切分含全角分号)')
+    // 示例请求豁免(B4,flow 审计 #4,2026-09-09):首子句窗口级 —— 窗口含示例词 = 要示例产出非数据操作
+    for (const ex of ['给一个添加组件的示例', '写一个删除组件的例子', '给我个改标题的示范', '来一段新增轮播的样例代码']) {
+      assert(detectActionImperative(ex) === false, `✓ 示例请求 → 「${ex}」不命中操作(纯文本作答合法,修前误伤回灌)`)
+    }
+    // 漏判边界(豁免不扩大到窗口外):「示例」在后部子句 → 首子句照常锚定操作动词
+    assert(detectActionImperative('把标题改成红色，参考第二个示例') === true,
+      '✓ 示例词在窗口外 → 照常命中操作(首子句「把标题改成红色」;全文级豁免会漏拦此类)')
+    assert(detectActionImperative('照示例的样子重新生成整个页面') === false,
+      '✓ 首子句含示例词 → 豁免(宁漏勿误方向:窗口级与门禁哲学一致)')
   }
 
   // ===== B. isZeroEffectiveWrite =====

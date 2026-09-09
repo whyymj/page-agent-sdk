@@ -28,7 +28,11 @@ export interface ConflictManager {
   resolve(action: ConflictResolution['action']): void
 }
 
-export function createConflictManager(getEmit?: () => SdkEventHandler | undefined, getPolicy?: () => ConflictPolicy): ConflictManager {
+export function createConflictManager(
+  getEmit?: () => SdkEventHandler | undefined,
+  getPolicy?: () => ConflictPolicy,
+  getLog?: () => Array<{ timestamp: number; type: string; data: Record<string, unknown> }> | undefined,
+): ConflictManager {
   const pendingConflict = ref<PendingConflict | null>(null)
   let conflictSeq = 0
   function set(info: ConflictInfo, signal?: AbortSignal): Promise<ConflictResolution> {
@@ -47,8 +51,17 @@ export function createConflictManager(getEmit?: () => SdkEventHandler | undefine
       // shareContext 多实例并发冲突时,新冲突覆盖旧 pendingConflict.value,旧 resolve 函数会丢失 → 旧工具永挂。
       // 兜底:覆盖前若仍有未解决冲突,自动按「保留外部」收口旧冲突(防 resolve 丢失)
       const prev = pendingConflict.value
-      if (prev) prev.resolve({ action: 'keep_external' })
       const pending = { ...info, id: ++conflictSeq, resolve }
+      if (prev) {
+        prev.resolve({ action: 'keep_external' })
+        // B6(conc 审计 #4,2026-09-09):自动收口 prev 留痕 —— 并行双写同窗双冲突时前写未经询问即被
+        // keep_external,其收到的「已保留外部修改」叙事可能与最终状态(后写裁决落地)不符。设计本身可
+        // 辩护(单 pendingConflict 槽防 resolve 丢失/永挂),但修前零痕迹:emit observable + debugLogs
+        // 供诊断;模型叙事校正需扩 ConflictResolution(superseded 标记)→ deferred(真 LLM 实到再做)
+        const ctx = { supersededConflictId: prev.id, newConflictId: pending.id, op: info.op, snapshotId: info.snapshotId }
+        getLog?.()?.push({ timestamp: Date.now(), type: 'middleware', data: { stage: 'conflict_prev_auto_resolved', ...ctx } })
+        getEmit?.()?.({ type: 'error', message: `并行冲突:前一个冲突(#${prev.id})已被新冲突(#${pending.id})自动按「保留外部修改」收口(未经询问);前一次写的完成叙事可能与最终数据不符`, severity: 'observable', code: 'CONFLICT_PREV_AUTO_RESOLVED', context: ctx } as never)
+      }
       pendingConflict.value = pending
       // 外发 conflict 事件(headless 集成方可经 onEvent/hook 收,无需 watch ref)
       const emit = getEmit?.()

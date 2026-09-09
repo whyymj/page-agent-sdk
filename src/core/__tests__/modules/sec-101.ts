@@ -113,10 +113,12 @@ export async function run(ctx: TestCtx) {
     // 主栈 → 触发 completion_gate feedback
     const g1 = runFinishGates({ state: createGateChainState(), garbled: false, rounds: 1, finalContent: '完成', todos, isSubagent: false, turnUsage: usage, isWriteToolByName: isW, messages: msgs })
     assert(g1?.kind === 'feedback' && g1.gate.stage === 'completion_gate' && g1.gate.attempt === 1 && g1.gate.feedback.includes('任务未完成'), '✓ runFinishGates → 主栈 pending todos 触发完结门禁回灌')
-    // 预算耗尽 → 完结门禁不再发难(非祈使零写轮:零工具门禁也不触发 → null)
+    // 预算耗尽 → 完结门禁不再回灌,但 B2(2026-09-09)起补 COMPLETION_GATE_EXHAUSTED observable 留痕
+    // (修前:静默放行零感知,与 audit/zero_tool 两层耗尽均有 observable 的口径不一致 —— flow 审计 #2)
     const exhausted = createGateChainState()
     exhausted.completionRetries = 2
-    assert(runFinishGates({ state: exhausted, garbled: false, rounds: 1, finalContent: '完成', todos, isSubagent: false, turnUsage: usage, isWriteToolByName: isW, messages: msgs }) === null, '✓ runFinishGates → 完结预算耗尽不再发难')
+    const exObs = runFinishGates({ state: exhausted, garbled: false, rounds: 1, finalContent: '完成', todos, isSubagent: false, turnUsage: usage, isWriteToolByName: isW, messages: msgs })
+    assert(exObs?.kind === 'observable' && exObs.obs.code === 'COMPLETION_GATE_EXHAUSTED' && Array.isArray(exObs.obs.context.pending) && exObs.obs.context.pending.length === 2, '✓ runFinishGates → 完结预算耗尽 = COMPLETION_GATE_EXHAUSTED 留痕(不再静默放行)')
     // 零工具预算耗尽 + 祈使用户消息 + 零等效写 → EXHAUSTED observable
     const zt = createGateChainState()
     zt.zeroToolRetries = 2

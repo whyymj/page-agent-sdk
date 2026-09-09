@@ -978,7 +978,11 @@ export async function run() {
     assert(llm.calls === 7, `✓ COMPONENT_BUSY:busy 委派零 model 调用(总 7 次,实际 ${llm.calls})`)
     assert(bind.components[0].code === '<section>重试后 hero</section>', '✓ COMPONENT_BUSY:下轮重委派成功(重试版本落地)')
     const results = sdk.debugLogs.value.filter((l) => l.type === 'tool_result')
-    assert(results.some((l) => String(l.data?.result).startsWith('COMPONENT_BUSY')), '✓ COMPONENT_BUSY:busy 回灌进 tool_result(主 LLM 可见可重试)')
+    // B1 真锁路径回归(2026-09-09 P1):回灌必须是 ERROR: 前缀结构化 toolError —— createAgent 的
+    // rejectedDelegations 计数按 startsWith('ERROR:') 判定,裸串形态 = 4.9.1 被拒委派计数对真锁路径失明
+    const busy = results.map((l) => String(l.data?.result)).find((c) => c.includes('COMPONENT_BUSY'))
+    assert(busy && busy.startsWith('ERROR:'), '✓ COMPONENT_BUSY:真锁路径回灌带 ERROR: 前缀(rejectedDelegations 计数可见;修前裸串失明)')
+    assert(busy && (() => { try { return JSON.parse(busy.slice(7)).error === 'COMPONENT_BUSY' } catch { return false } })(), '✓ COMPONENT_BUSY:回灌为结构化 toolError(code 可解析)')
     const lockLogs = sdk.debugLogs.value.filter((l) => l.type === 'middleware' && l.data?.name === 'component-lock')
     assert(lockLogs.some((l) => l.data?.kind === 'conflict'), '✓ COMPONENT_BUSY:conflict 留痕(logSink)')
     sdk.unmount()
@@ -1094,7 +1098,7 @@ export async function run() {
     await sdk.mount()
     await sdk.send('hero 改两处')
     assert(bind.components[0].code === '<section>串行二</section>', '✓ 默认串行:双委派按序执行(后者落地,零行为变化)')
-    assert(!sdk.debugLogs.value.some((l) => l.type === 'tool_result' && String(l.data?.result).startsWith('COMPONENT_BUSY')), '✓ 默认串行:不触发 COMPONENT_BUSY(锁只管并发)')
+    assert(!sdk.debugLogs.value.some((l) => l.type === 'tool_result' && String(l.data?.result).includes('COMPONENT_BUSY')), '✓ 默认串行:不触发 COMPONENT_BUSY(锁只管并发)')
     assert(llm.calls === 6, `✓ 默认串行:6 次 model 调用(实际 ${llm.calls})`)
     // 观察层:锁视图空闲(委派结束自动解锁)
     assert(Object.keys(sdk.inspect().subagent.lockedComponents ?? {}).length === 0, '✓ 默认串行:inspect().subagent.lockedComponents 空闲(委派结束自动解锁)')

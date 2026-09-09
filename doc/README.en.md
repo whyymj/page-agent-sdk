@@ -10,6 +10,7 @@
 | [Architecture](./architecture.md) *(Chinese)* | ①-⑮ full view: layering / assembly & mount / ReAct loop (format + verify self-correction) / window-op & optimistic lock / conflict human-in-the-loop / context compression & persistence / event flow / session restore / subagent orchestration / MCP / Approval / module extraction / UX plane / **data-slot deep dive (whitelist/RW chain/protected resources/vfs)** / **capability panorama & robustness contracts** (mermaid diagrams) |
 | [Context & Compression](./context-management.md) / [EN](./context-management.en.md) | Context 3-part composition / offload + 3-layer compression (per-layer principle/flow/params/boundaries) / post-compression structure / 3 flow diagrams / presets / differences from Deep Agents |
 | [System Prompt Composition](./system-prompt.md) *(Chinese)* | Two-layer assembly (base identity+rules / dynamic augmentPrompt segments) / data-hint injection / middleware segment order / `augmentSystem` hook |
+| [Real-LLM Regression Methodology](./real-llm-regression.md) *(Chinese)* | Unified suite entry / idle dual-condition detection / timeout-dump & reload diagnostics / baseline diff (`--baseline-diff` / `--baseline-update`) / "stop on environmental failure" principle |
 | [Placeholder Protected Read/Write](./placeholder-protected-rw.md) *(Chinese)* | **Planned feature design**: exact-value protection (freeze / verbatim / resource-pool lifecycle / cross-compression pin) — principle + 6 flow/sequence/state diagrams + pre-implementation review conclusions (A1-A3 architecture gaps / B1-B4 semantic locks) |
 | [Host Upgrade Pack](./editor-upgrade-4.11.md) *(Chinese)* | One-page checklist for integrated hosts upgrading to 4.11.0: npm env gotchas / breaking-change quick table (4.0/4.1/4.9 removals) / transparent fixes you may have hit / adoption points (quickActions / approval.preview / sessionTransfer / onDropElement / eval-toolkit pre-upgrade regression) |
 
@@ -29,7 +30,7 @@
 - **Change records** (proposal / design / tasks): [`../openspec/changes/archive/`](../openspec/changes/archive/)
 - **Project guide / gotchas**: [`../CLAUDE.md`](../CLAUDE.md)
 - **Framework-agnostic integration example**: [`../demo/plain.html`](../demo/plain.html)
-- **Self-tests**: `npm test` (`../src/core/__tests__/selftest.ts`, 3375 assertions) + `npm run test:e2e` (integration e2e, 1085 assertions) + `npm run test:browser` (browser E2E, 153 assertions)
+- **Self-tests**: `npm test` (`../src/core/__tests__/selftest.ts`, 3465 assertions) + `npm run test:e2e` (integration e2e, 1086 assertions) + `npm run test:browser` (browser E2E, 153 assertions)
 
 ## Quick start
 ```bash

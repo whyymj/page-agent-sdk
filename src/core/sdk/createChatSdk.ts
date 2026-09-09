@@ -59,7 +59,7 @@ import { createDelegateNudgeMiddleware } from '../harness/delegateNudge'
 import { createBaselineGuardMiddleware } from './baselineGuard'
 import { buildDiagnosticsReport, stringifyDiagnosticsReport, type DiagnosticsDataSummary } from './diagnostics'
 import { createHtmlSubagent } from './htmlSubagent'
-import { isChatModel, resolveLlm, deriveTitle } from './llmResolver'
+import { isChatModel, resolveLlm, deriveTitle, flagInstanceInnerRetries } from './llmResolver'
 import { constructLlmFromConfig, constructOpenLlmSync } from '../llm/constructLlm'
 import { createConflictManager, type ConflictPolicy } from './conflictManager'
 import { resolveStorage, resolveDialogConfig } from './optionsResolver'
@@ -94,6 +94,7 @@ import { normalizeUsage } from '../utils/contentParts'
 import type { AgentMessage, StreamHandler, AgentInfo, SdkEvent, SdkEventHandler, TokenUsage, BatchResult, BatchProgress, AgentImage, ImagesConfig, ToolStepViewFn } from '../types'
 import { lightenMessages, hydrateImages, makeThumb, MAX_IMAGES_PER_ROUND } from '../tools/imageInput'
 import type { ToolCallContext } from '../harness/middleware'
+import { rawRead } from '../utils/rawRead'
 
 export interface LLMConfig {
   apiKey: string
@@ -239,7 +240,7 @@ export interface ChatSdkOptions {
   maxRetries?: number
   /** LLM 流停滞看门狗(fix-hang-and-feedback P1-7):chunk 间隔(含等首个)超此 ms → 中断抛错防 loading 永转。默认 90s;0 = 关闭 */
   streamStallMs?: number
-  /** 单次模型调用流总时长上限:防空转帧黑洞(keepalive 空转不断喂饱间隔看门狗,实测冻结 7min+ 无报错;超限 → StreamMaxDurationError,重委派/重发即自愈)。默认 600s;0 = 关闭 */
+  /** 单次模型调用流总时长上限:防空转帧黑洞(keepalive 空转不断喂饱间隔看门狗,实测冻结 7min+ 无报错;超限 → StreamMaxDurationError,重委派/重发即自愈)。默认 1800s(2026-08-28 抬升,100K+ 输出生成需 20min+);0 = 关闭 */
   streamMaxDurationMs?: number
   /**
    * per-tool 看门狗(flow-robustness P0#1):单工具执行超此 ms → 放弃等待,recoverable 错误结果回灌自纠
@@ -947,7 +948,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const usage: TokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
   // ===== 乐观锁冲突人工介入(dataOps 写入时检测到主数据已被外部改过 → 挂起等用户决定保留外部/强制覆盖/回退) =====
   // ===== 乐观锁冲突人工介入管理器(emit getter 延迟求值:emit 在下方 listeners 后定义,set 运行时才调) =====
-  const conflictMgr = createConflictManager(() => emit, () => options.conflictPolicy ?? 'ask')
+  const conflictMgr = createConflictManager(() => emit, () => options.conflictPolicy ?? 'ask', () => core.agent?.debugLogs?.value)
   // Agent 信息刷新 tick:setSkills/setData 等运行时变更后 ++,经 ChatDialog 传给 DebugDrawer 触发 agentInfo 重新拉取(实时反映动态 skill/data)
   const infoTick = ref(0)
 
@@ -1202,7 +1203,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 守卫 hash 与 dataOps 基线口径同源:白名单模式仅监听字段参与前后比对;['*']/未声明走全量
   const gw = options.conflictWatchFields ?? []
   const guardWatchKeys: ReadonlySet<string> | undefined = !gw.includes('*') && gw.length ? new Set(gw) : undefined
-  const guardHash = (v: unknown): string => guardWatchKeys ? watchFieldsHash(v, guardWatchKeys) : hashValue(v)
+  // C1(2026-09-09 perf):guardHash 输入先经 rawRead 解包 —— 非托管工具每调用前后各一次全 bind hash,
+  // reactive 形态 watchFieldsHash 放大 9.7×(Bench A);hash 值对 raw 与 proxy 恒等,比对语义零变化
+  const guardHash = (v: unknown): string => guardWatchKeys ? watchFieldsHash(rawRead(v), guardWatchKeys) : hashValue(rawRead(v))
   const baselineGuardMw = dataOpsController
     ? createBaselineGuardMiddleware({
         getBind: () => liveData()?.bind,
@@ -2319,6 +2322,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       if (typeof (newLlm as any).bindTools !== 'function' && options.debug) {
         console.warn('[page-agent-sdk][setLlm] 新模型不支持 bindTools(tool calling 会失效)')
       }
+      // B3(retry-visibility 边界,2026-09-09):预构造实例内层重试 >0 → warn + observable(与装配期同口径)
+      flagInstanceInnerRetries(newLlm, { emit })
       currentLlm = llmOpt
       // harden-context-resilience:权威重算 modelCaps(用原 llmOpt,保留 LLMConfig.contextWindow 声明)+ 最小窗口校验 + 集中回灌
       // (setLlm 把 LLMConfig 构造成 BaseChatModel 实例后 contextWindow 声明丢失;onLlmChange 拿不到 → 在此用 llmOpt 重算)
@@ -2924,6 +2929,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     }
     // 主 LLM:实例直传;LLMConfig 经 constructLlmFromConfig(provider 分支,Anthropic 动态 import)构造实例注入
     const mainLlm = isChatModel(options.llm) ? options.llm : await constructLlmFromConfig(options.llm as LLMConfig)
+    // B3(retry-visibility 边界,2026-09-09):预构造实例内层重试 >0 → warn + observable(SDK 构造路径内层恒 0 不触发)
+    flagInstanceInnerRetries(mainLlm, { emit })
     core.agent = createAgent({
       llm: mainLlm,
       systemPrompt: baseSystemPrompt,

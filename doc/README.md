@@ -6,9 +6,10 @@
 
 | 文档 | 内容 |
 |---|---|
-| [**使用手册**](./usage-guide.md) | **入门首选** · 安装 / 快速开始 / 配置项 / 能力详解 / **UI 定制与国际化(6.15:图标/主题 + 顶层 `i18n` 配置组切语言/键级覆盖文案,富文本位支持 HTML)** / **图片输入(6.17:多模态直发 / 纯文本模型识图转述旁路 `images.describe`)** / **快捷指令与会话转移(6.18:`dialog.quickActions` 一键高频操作 / 会话导出导入 / 元素拖入聚焦 + `approval.preview` 审批 diff)** / **诊断报告导出(6.13c:`exportDiagnostics` 一键完整日志交排查)** / 自定义中间件 / FAQ |
+| [**使用手册**](./usage-guide.md) / [EN](./usage-guide.en.md) | **入门首选** · 安装 / 快速开始 / 配置项 / 能力详解 / **UI 定制与国际化(6.15:图标/主题 + 顶层 `i18n` 配置组切语言/键级覆盖文案,富文本位支持 HTML)** / **图片输入(6.17:多模态直发 / 纯文本模型识图转述旁路 `images.describe`)** / **快捷指令与会话转移(6.18:`dialog.quickActions` 一键高频操作 / 会话导出导入 / 元素拖入聚焦 + `approval.preview` 审批 diff)** / **诊断报告导出(6.13c:`exportDiagnostics` 一键完整日志交排查)** / 自定义中间件 / FAQ |
 | [功能架构](./architecture.md) | ①-⑮ 全景:分层结构 / 组装挂载 / ReAct 主循环(格式自纠+verify自纠) / 数据操作与乐观锁 / 冲突人工介入(状态机+abort联动) / 上下文压缩持久化 / 事件流 / 会话恢复 / 子 agent 编排 / MCP / Approval / 模块抽离 / 体验平面 / **数据槽深潜(白名单/读写链/受保护资源/vfs)** / **能力全景与鲁棒性契约**(多张 mermaid 图) |
 | [上下文组成与压缩策略](./context-management.md) / [EN](./context-management.en.md) | 上下文 3 部分组成 / 外存 + 3 层压缩(每层原理/流程/参数/边界)/ 压缩后结构 / 3 张流程图 / 预设档位 / 与 Deep Agents 差异 |
+| [真 LLM 回归方法论](./real-llm-regression.md) | 统一入口套件用法 / idle 双条件判定 / 超时 dump 与 reload 诊断 / 基线对比(--baseline-diff/--baseline-update)/ 环境性失败即停原则 |
 | [系统提示词构成](./system-prompt.md) | 两层拼接(base 身份+规则 / augmentPrompt 动态段)/ 数据段注入 / 各中间件段次序 / `augmentSystem` 钩子 |
 | [page-agent 架构对比](./page-agent-architecture-comparison.md) | 与阿里 `alibaba/page-agent` 逐行源码对比:定位差异 / 结构性差距(DOM 交互层 / MCP server 形态 / 模型兼容)/ 我方优势 / 可借鉴落地建议(MCP server → 薄客户端 → 强制反射) |
 | [占位符替换读写设计](./placeholder-protected-rw.md) | **待实施功能设计**:精确值保护(freeze 冻结 / verbatim 原样保留 / 资源池生命周期 / 跨压缩 pin)原理 + 6 张流程/时序/状态图 + 实施前审查结论(A1-A3 架构缺口 / B1-B4 语义锁死) |
@@ -30,7 +31,7 @@
 - **变更记录**(proposal / design / tasks):[`../openspec/changes/archive/`](../openspec/changes/archive/)
 - **项目指引 / 约定与坑**:[`../CLAUDE.md`](../CLAUDE.md)
 - **框架无关集成示例**:[`../demo/plain.html`](../demo/plain.html)
-- **自测**:`npm test`(`../src/core/__tests__/selftest.ts`,3375 项断言)+ `npm run test:e2e`(集成层 e2e,1085 项)+ `npm run test:browser`(浏览器 E2E,153 项)
+- **自测**:`npm test`(`../src/core/__tests__/selftest.ts`,3465 项断言)+ `npm run test:e2e`(集成层 e2e,1086 项)+ `npm run test:browser`(浏览器 E2E,153 项)
 
 ## 快速开始
 ```bash

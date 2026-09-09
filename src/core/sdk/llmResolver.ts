@@ -47,6 +47,33 @@ export function isChatModel(v: unknown): v is BaseChatModel {
   return !!v && typeof v === 'object' && typeof (v as any).invoke === 'function' && typeof (v as any).stream === 'function'
 }
 
+/**
+ * 预构造 BaseChatModel 实例的内层重试数(B3,retry-visibility 边界补全,2026-09-09 六路审计)。
+ * LangChain ChatOpenAI/ChatAnthropic 把 maxRetries 收在 AsyncCaller(`caller.maxRetries`);
+ * 直接读实例 `.maxRetries` 恒 undefined(曾按该口径写检测 = 死代码)。返回 undefined = 读不到(非本仓库
+ * 构造形态或自定义 caller),不告警。
+ */
+export function instanceInnerMaxRetries(llm: unknown): number | undefined {
+  if (!isChatModel(llm)) return undefined
+  const v = (llm as unknown as { caller?: { maxRetries?: unknown } }).caller?.maxRetries
+  return typeof v === 'number' && v >= 0 ? v : undefined
+}
+
+/**
+ * 预构造实例内层重试 >0 → warn + observable 留痕(装配期与 setLlm 双入口调用)。
+ * SDK 构造路径(LLMConfig)内层恒 0(retry-visibility,4.11.1);预构造实例内层缺省 **6 次**(LangChain
+ * AsyncCaller 缺省,非 2),与 SDK 外层 withRetry 叠乘 = 瞬时错误被不可见放大 —— 实例物理不可改,
+ * 只能提示集成方排障口径 + 建议构造时传 maxRetries:0。emit 缺省 = 只 warn(无事件通道的装配早期)。
+ */
+export function flagInstanceInnerRetries(llm: unknown, opts: { emit?: import('../types').SdkEventHandler } = {}): number | undefined {
+  const n = instanceInnerMaxRetries(llm)
+  if (n === undefined || n === 0) return n
+  const message = `预构造 LLM 实例内层 maxRetries=${n}(LangChain 缺省 6)与 SDK 外层重试叠乘:瞬时错误会被不可见放大;排障时先看实例内层。实例不可改,建议构造 ChatOpenAI/ChatAnthropic 时显式传 maxRetries:0(SDK 构造路径内层恒 0 无此问题)`
+  console.warn(`[page-agent-sdk][llm] ${message}`)
+  opts.emit?.({ type: 'error', message, severity: 'observable', code: 'LLM_INSTANCE_INNER_RETRIES', context: { maxRetries: n } } as Parameters<import('../types').SdkEventHandler>[0])
+  return n
+}
+
 /** 从 LLM 响应消息提取文本内容(content 可能是 string 或 content parts 数组) */
 export function extractText(msg: BaseMessage): string {
   const c = msg.content

@@ -66,7 +66,7 @@ export interface GateFeedback {
 
 /** observable 型结果(主循环:onEvent 留痕,不 continue) */
 export interface GateObservable {
-  code: 'ZERO_TOOL_GATE_EXHAUSTED' | 'AUDIT_GATE_EXHAUSTED'
+  code: 'ZERO_TOOL_GATE_EXHAUSTED' | 'AUDIT_GATE_EXHAUSTED' | 'COMPLETION_GATE_EXHAUSTED'
   message: string
   context: Record<string, unknown>
 }
@@ -211,16 +211,35 @@ export function runFinishGates(i: RunFinishGatesInput): GateOutcome {
   }
 
   // 5. 预算耗尽仍零工具收尾:observable 留痕(谎报放行恰是最该让集成方知晓的时刻,不能零感知)。
-  //    诚实未做声明同样豁免(与第 3 层同口径):拒绝后如实收口不该被误报 EXHAUSTED
+  //    诚实未做声明同样豁免(与第 3 层同口径):拒绝后如实收口不该被误报 EXHAUSTED;
+  //    句尾问号豁免(B2,flow 审计 #1,2026-09-09):回灌 ×2 后模型改为向用户征询(「要我继续修改吗?」)
+  //    非完成声明,文案「疑似谎报」对问句收尾属误报 —— 与第 3 层 startsWith 口径对齐,复用头部 endsWithQuestion
   if (g.zeroToolRetries >= MAX_ZERO_TOOL_RETRIES && isZeroEffectiveWrite(i.turnUsage, i.isWriteToolByName)
     && detectActionImperative(lastHumanContent)
-    && !declaresNoAction(content)) {
+    && !declaresNoAction(content)
+    && !endsWithQuestion) {
     return {
       kind: 'observable',
       obs: {
         code: 'ZERO_TOOL_GATE_EXHAUSTED',
         message: '操作指令经 2 次回灌后仍以零工具纯文本收尾(疑似谎报完成),已放行;最终回复可能不实',
         context: { factSheet: buildTurnFactSheet(i.turnUsage, i.todos, i.isWriteToolByName) },
+      },
+    }
+  }
+
+  // 6. 完结门禁预算耗尽(B2,flow 审计 #2,2026-09-09):audit/zero_tool 两层耗尽均有 observable,
+  //    唯 completion 层静默放行 —— todos 仍有未完成项、2 次回灌后仍纯文本收口,集成方对「任务未完成被
+  //    放行」零感知,与第 5 层自述「谎报放行恰是最该让集成方知晓的时刻」自相矛盾。零 LLM 纯留痕;
+  //    放在反馈层之后 = 不抢占下层仍可生效的回灌机会。问号豁免由 detectIncompleteFinish 内部口径复用
+  if (rounds > 0 && !i.isSubagent && g.completionRetries >= MAX_COMPLETION_RETRIES && detectIncompleteFinish(i.todos, content)) {
+    const pendingIds = i.todos.filter((t) => t.status !== 'completed').map((t) => t.id)
+    return {
+      kind: 'observable',
+      obs: {
+        code: 'COMPLETION_GATE_EXHAUSTED',
+        message: `todos 有 ${pendingIds.length} 项未完成,经 2 次回灌后仍以纯文本收口,已放行;任务可能未完成`,
+        context: { pending: pendingIds },
       },
     }
   }

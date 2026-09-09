@@ -197,6 +197,7 @@ createChatSdk({
   maxMemoryRounds: 30,             // dialog history memory cap (0 disables trim)
   staleReadInvalidation: true,     // write-driven stale read invalidation (3.42+, default on): old read/query/search results hit by a later successful write are replaced with a placeholder within the invoke window; false disables for main+subagent
   vfs: { maxBytes: 8*1024*1024, poolBytes? },  // workspace cap (default 8MB; 2.16.0+ three pools: large_results/drafts/userFiles, each its own LRU)
+  maxSnapshots: 20,  // data snapshots kept (default 20, FIFO). Perf note (4.12+): snapshots deep-copy bind — for large binds (several hundred KB+) lower this with size (e.g. 5-10) to bound memory
 
   // persistence
   storage: 'indexed',              // 'indexed'|'session'|'local'|'memory'|config|false (default off)
@@ -1112,8 +1113,8 @@ Full runnable example: `examples/complex-demo` (`PageRenderer.vue` / `CompRender
 import { type Middleware } from 'page-agent-sdk'
 const mw: Middleware = {
   name: 'telemetry',
-  // 8 hooks: beforeAgent / wrapModelCall / beforeModel / afterModel / wrapToolCall / afterAgent / beforeReturn
-  //         + augmentPrompt / compressInput / tools
+  // 9 hooks: beforeAgent / wrapModelCall / beforeModel / afterModel / wrapToolCall / afterAgent / beforeReturn
+  //         + augmentPrompt / compressInput (+ `tools` field for contributing custom tools)
   afterModel: async (ctx, next) => {
     await next(ctx)
     console.log('round done')

@@ -14,6 +14,7 @@ import type { Middleware } from './middleware'
 import type { AgentMessage } from '../types'
 import type { VfsStore } from '../backends/vfs'
 import type { VfsFile, Todo } from './state'
+import { rawRead } from '../utils/rawRead'
 
 export interface CheckpointMeta {
   id: number
@@ -69,12 +70,15 @@ export interface CheckpointDeps {
   maxCheckpoints?: number
 }
 
-/** 深拷贝(structuredClone 优先,降级 JSON) */
+/** 深拷贝(structuredClone 优先,降级 JSON)。
+ *  C1(2026-09-09 perf):structuredClone 输入先经 rawRead 解包 —— reactive Proxy 不可克隆(恒抛
+ *  DataCloneError → 恒落 5.4× 慢的 JSON 兜底,实测 6.12ms vs 1.13ms@500KB);解包后恢复快路径。
+ *  嵌套显式塞入的 reactive 值仍会抛 → JSON 兜底仍是安全网。非 proxy 输入恒等,零变化 */
 function clone<T>(v: T): T {
   if (v == null || typeof v !== 'object') return v
   if (typeof structuredClone === 'function') {
     try {
-      return structuredClone(v)
+      return structuredClone(rawRead(v))
     } catch {
       /* fallthrough */
     }

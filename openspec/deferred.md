@@ -208,7 +208,7 @@ SDK 定位是**框架无关的轻量页面 JSON 操作 Agent**(自研 Deep Agent
 3. ⏸ eval 子树(jsonPath 模式)缺 isUnsafePath ——【低】eval_script({jsonPath:'__proto__…'});加固项(与 P3「read jsonPaths 缺 isUnsafePath」同型)。
 4. ⏸ interceptors 仅守高层 read/write,advanced 底层全绕过 ——【中】需集成方依赖 interceptors 做脱敏/审计 + toolMode:'advanced' → set_data/edit_data/delete_data 直调不过拦截器。方向:底层也接入,或文档明示「advanced 底层工具绕过 interceptors」让集成方知情。
 5. ⏸ eval transform fork 写链未共用 commitSetToBind ——【低】读码级:eval transform 整体替换回写链与 write(set) 在个别校验项口径分叉(commitSetToBind 抽离时的遗漏分支)。
-6. ✅ **hashValue 双算冗余 + A3 惰性 hash 未做**(H3 证实;审计 A 专项评「推后清单里最值得做的一项」)——【必然】每次 autoLock 写 3-4 次全量 hash + deepClone×2,几百 KB bind 单次小 patch ≈ 6-7 次 O(N)。**已修(`write-path-cost-reduction`,2026-08-17 实施待发布)**:同调用 hash 单算(commitBaseline)+ codeAsset 改前态单拷贝(beforeBind 复用为快照条目);bench 实测 1MB 单写 median -12%/-19%、290KB -11%/-22%;「脏标记惰性 hash/轮内缓存」方向**显式否决并固化为不变量**(人工直改 reactive bind 不经 SDK 写路径,脏标记失明 → keep_external 保护失效,M4 实证)—— 注释 + change spec 双固化。
+6. ✅ **hashValue 双算冗余 + A3 惰性 hash 未做**(H3 证实;审计 A 专项评「推后清单里最值得做的一项」)——【必然】每次 autoLock 写 3-4 次全量 hash + deepClone×2,几百 KB bind 单次小 patch ≈ 6-7 次 O(N)。**已修(`write-path-cost-reduction`,2026-08-17 实施待发布)**:同调用 hash 单算(commitBaseline)+ codeAsset 改前态单拷贝(beforeBind 复用为快照条目);bench 实测 1MB 单写 median -12%/-19%、290KB -11%/-22%;「脏标记惰性 hash/轮内缓存」方向**显式否决并固化为不变量**(人工直改 reactive bind 不经 SDK 写路径,脏标记失明 → keep_external 保护失效,M4 实证)—— 注释 + change spec 双固化。**辨析注记(2026-09-09,audit-remediation C2)**:本条否决的是**跨调用缓存/脏标记**(读到旧 hash);C2「read 惰性 hash」是**同一次调用内把 hash 计算移到路径校验之后**(失败读零成本,成功读恒实时算),不触本不变量 —— 下次审计勿据本条误翻 C2。
 7. ⏸ checkpoint restore 不重置 dataOps 乐观锁基线 → 误 VERSION_CONFLICT ——【中-低】checkpoint:true + restore_last_checkpoint + 随后 autoLock 写:基线仍是 restore 前 read 的 hash,与 restore 后 bind 不匹配 → 误冲突(2.40 per-scope 基线不清此路径;仅 setData/替换 bind 清)。复现:read → write → restore → write(autoLock)。
 
 ### 上下文(7 项)
@@ -230,7 +230,7 @@ SDK 定位是**框架无关的轻量页面 JSON 操作 Agent**(自研 Deep Agent
 5. ⏸ 多标签页同会话分叉(定性)——【低】同 agentId+sessionId 双开标签并发写 → 后写胜,消息分叉。手动验证项(审计 §八.3)。
 6. ⏸ hydrate 合并非替换 → vfs_rm 删的种子文件复活 ——【低】vfs_rm 删内置种子文件 + 刷新 → hydrate 合并种子使其复活。方向:删除标记或替换语义。
 7. 🔁 switchSession 补 persist 不含 messages/todos ——【低】2.27 补 persist(mission/wm)+ 2.41 core 级串行闸已覆盖主场景;残留=流式进行中未 afterRound 即 switch 理论上丢最后一轮(runSerial 串行已大幅收窄)。
-8. ⏸ enforceLimit O(文件数²)——【必然但仅文件数多时敏感】vfs 数百文件场景的 LRU 淘汰扫描复杂度。
+8. ✅ enforceLimit 每写全池重扫——已修(2026-09-09,audit-remediation Batch C3):池字节闭包计数器 O(1) 增量维护,每写 5 次全池 TextEncoder 重扫归零(实测 6MB 池每写 1.13ms→~0.00ms);超限时的淘汰排序仅在该次超限事件内一次 O(n log n);失效点五类全覆盖 + estimateFileBytes 导出对账。
 
 ### 目标漂移(5 项)
 
@@ -276,7 +276,7 @@ SDK 定位是**框架无关的轻量页面 JSON 操作 Agent**(自研 Deep Agent
 
 ### 补充项(二审/A 专项,2 项)
 
-1. ⏸ **N4 reactive 深度代理对大 bind 的开销未量化**——【必然但未量化】几百 K bind 系目标场景:深度 reactive 追踪 + read 返回值二次代理化(toRaw?)未核实。需 profiling 后定级;若占每轮时间预算显著(>10%)升 P1。
+1. ✅ **N4 reactive 深度代理对大 bind 的开销**——已量化并修复(2026-09-09,audit-remediation Batch C1/C2):六路审计实测 501KB bind 全树读恒 +4~5ms(3-10× 放大);读侧 rawRead 单点解包 + read 惰性 hash 落地,实测读路径 -45~63%、单字段 patch 写 20.4→7.8ms(-62%,回 plain 水平)、checkpoint clone 5.4× 回收;响应性守卫三件(effect 触发/complex-demo/值等价)全绿。bench 脚本入库 tests/perf/ 可复跑。
 2. ⏸ A-5 headless 构建 assetFileNames 把任意 css 映射 style.css ——【极低】当前 headless 子树无 css import;将来出现会覆盖主包 UI css 产物。防御:headless vite config assetFileNames 命名空间化。
 
 ### P3 备查(不逐条登记)
@@ -417,7 +417,7 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 | 项 | 现状 | 触发条件 |
 |---|---|---|
 | DebugDrawer 日志 tab `tool_result` 模板分支可达性存疑 | IDE ts-plugin 报 narrowed union(`"error"\|"middleware"`)与 `"tool_result"` 无重叠 → 疑似死分支或前置 v-if 顺序吞掉了类型;功能表现正常(日志渲染无异常),行号随编辑漂移(556→585) | 下次动 DebugDrawer 日志 tab 时核实:死分支删除或调整 v-if 窄化顺序;顺手补一条类型层断言 |
-| `types/index.d.ts` 手动维护漂移防再发 | 3.27 又发现 `DialogIcons.send`(3.20 引入)漏标(连同 `DialogConfig.sections`);`tests/types.test-d.ts` 字段级 Pick 断言未覆盖 DialogIcons/DialogConfig 键集 → 符号级门禁抓不到键缺失 | 下次 types 漂移再现或 4.0 大版本时:把 DialogIcons/DialogConfig 键集纳入字段级断言(与 capabilities 17 开关 Pick 断言同模式) |
+| `types/index.d.ts` 手动维护漂移防再发 | ✅ **已兑现(2026-09-09,audit-remediation Batch A8)**:`tests/types.test-d.ts` 补 `_dialogIconKeys`(18 键)/`_dialogConfigKeys`(15 键)键集 Pick 断言(_capKeys 同模式);test:types 编译绿。键增删须同步 types/index.d.ts 与该断言 | —(已收口留痕) |
 | editor_fangzhou focus 联动(画布选中 → AI 聚焦) | ✅ 已接入(2026-08-18,随 editor 升 3.27.0):`select.one`(载荷=组件 id)→ `getComponentInfo` 查相对根 jsonPath → `sdk.setFocus({path, label})`;`select.noOne` → `clearFocus`;同批修 walkComponents 路径 bug(旧 'root.' 前缀致 select_component 传 null)、补 list_components/save_page 工具注册、`nodeInfo.replace` → setData 换树重绑 | —(已收口留痕) |
 
 ### [2026-08-18] codeAsset `forEachCodeItem` 嵌套遍历盲区 — ⏸ 暂缓(数据无损,机制失跟;等嵌套移动真需求)
@@ -644,3 +644,40 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 ### [2026-09-07] 跨进程重启恢复(定时任务中断续跑)— ⏸ 暂缓(server-companion Phase 1 缺口裁决)
 
 **来源**:`2026-09-03-server-companion` Phase 1 checklist 裁决。无人值守组合的其余旋钮全覆盖(approval 自动拒/conflictPolicy 非问策略/超时族/batch/afterRound,组合面 e2e 锁定);唯**进程重启后中断任务续跑**不在面 —— 快照经 storage 持久化存活,但在途流/轮次状态不续(重启后只能从最后落盘快照重开任务)。**重启触发**:真实定时任务场景出现(node 进程跑 cron 批任务被重启打断的续跑诉求)。**候选方案**:checkpoint exportStack 已持久化 + batch 断点续跑入口(automation 既有断点续跑面为页面刷新设计,进程外重启需补任务队列落盘)。
+
+## 2026-09-09 audit-remediation 方案评审登记(四路评审裁出的否决/暂缓/尾部项)
+
+> 来源:`2026-09-09-audit-remediation` 六路审计 → 四路方案评审(`local/plan-review-{batchB,batchCD,batchEF,completeness}.md`)。P1/HIGH 全部进方案;以下为评审裁决**不进本 change** 的项(否决留痕 + 暂缓 + LOW/MEDIUM 尾部),均带触发条件。
+
+### [2026-09-09] @langchain/openai → peerDependenciesMeta.optional — ❌ 否决(前提为假)
+
+**审计声称**「动态 import 已保证懒加载,转 optional peer 零成本」——评审核伪:`ChatOpenAI` 在 `llm/constructLlm.ts:15`、`llm/proxyLlm.ts:30`、**`harness/createAgent.ts:11`** 三处**静态 import**,vite external 后发布产物顶层硬依赖;改 optional peer = Anthropic-only 用户加载即崩 + esm.sh CDN 路径断。真做需三处 async 化重构(L 级,且破坏 `setLlm` 同步契约)。**重启触发**:出现「只装 @langchain/anthropic 不装 openai」的真实消费者诉求,且愿意接受 setLlm 异步化 breaking(届时随 major)。**替代动作**(归 Batch E 批尾):usage-guide/README 依赖说明处明示「@langchain/openai 为事实必需依赖(三处静态 import),optional peer 化已评估否决」。
+
+### [2026-09-09] checkpoint restore 补 acquireWriteMutex — ⏸ 暂缓(API 破坏面)
+
+**来源**:conc 审计「三写路径旁路互锁」之一;评审拆分裁决:restore_data/resource_update 两处已进 Batch B(B10),唯 `checkpoint.restore()` 特殊——同步函数 + mutex 是 dataOps 闭包私有,内部加锁会把 `sdk.restoreLastCheckpoint(): boolean` 变 Promise = **破坏性 API**;其写体纯同步且 B11(restore 裁决恢复点校验)兜底后边际价值最低。**重启触发**:checkpoint restore 与并行写互踩的真实场景出现。**候选修法**:在工具/automation 的异步调用点包锁(不改 sdk API 形态)。
+
+### [2026-09-09] 双冲突 W1 叙事修正(superseded 穿透 ConflictResolution)— ⏸ 暂缓
+
+**来源**:conc 审计「并行双冲突自动收口,后者 keep_external 的返回叙事误导模型」。Batch B(B6)只做留痕(emit observable + debugLogs);完整修正需扩 `ConflictResolution` 联合类型(dataOps.ts:82-85 加 `{action:'keep_external', superseded?:true}`)+ handleConflict 消费点 + 文案,动类型面超「留痕」范畴。**重启触发**:真 LLM 场景实到该分叉且叙事误导造成可观测损害。
+
+### [2026-09-09] 尾部卫生项(LOW/MEDIUM,分组登记,触发式)
+
+| 项 | 现状 | 触发条件 |
+|---|---|---|
+| config 61 键 + 未知键零告警(api#6) | ChatSdkOptions 键面过大,拼错静默忽略 | 与 config-surface-pruning round3 / CO fail-fast N3 合并触发 |
+| html 工厂选项 ≤24 软上限提醒(api#11) | 已拍板「设 ≤24 提醒即可」但未立任务 | createHtmlSubagent 选项再增时顺手 |
+| dataHint memoize(perf#7) | 每轮重算,501KB bind 下非热点 | perf 复测显示 dataHint 进热点剖面 |
+| struct#7 harness 反向 import capabilities | 层次方向不一致,无运行时害 | 下次动 harness/capabilities 边界时顺手 |
+| struct#8 emit 通道 as any | 事件面类型断点 | 随 E1 类型收口若顺手则做 |
+| struct#9 verify 旧标签残留 | 命名漂移,无行为影响 | 下次动 verify 中间件时顺手 |
+| struct#10 autoLock 墓碑注释收敛 | 废弃概念注释散落多处(dataOps 11 处,多为历史说明性墓碑) | 下次 dataOps 大改时顺手(4.11.2 B 批评估:纯注释化妆,不值当为本批再添 11 处 diff) |
+| 真 LLM 契约层无确定性兜底(drift 弱点2) | stub 与真 LLM 行为分叉只能靠真 LLM 套件抓,套件受网关健康度制约 | 网关稳定后基线刷新常态化;或出现 stub 全绿真 LLM 红的事故 |
+
+### [2026-09-09] uispec S10 真 LLM idle 判定挂死(quietMs:null)— ⏸ 暂缓(既有边界,非 4.11.2 引入)
+
+**现象**:uispec S10(模糊开放指令)采样 `quietMs:null` + logN 冻结 + hasResp=true + active=0 → idle 永不判定,挂到 900s 超时。**证据链**:9-06 旧报告(4.11.1 代码,Batch B/C 之前)S10 elapsed=960s ≈ timeoutMs+dump,同款挂法 → 既有边界非新回归。**根因线索**:`_real-llm-lib.mjs:174` `quietMs = Date.now() - lastTs`,null = lastTs NaN = 最后一条 debugLog 的 timestamp 为 undefined —— 全部已知写入点(createAgent log/pushLog、createChatSdk 直推 ×7、mountChatDialog、subagent onLog 转发)均带 timestamp,来源待复现定位(疑与门禁 observable/收尾轮某转发路径有关)。**重启触发**:下次动 debugLogs 写入面或真 LLM 套件再撞;修法候选:采样器对 NaN quietMs 兜底视为静默(测试侧一行)+ SDK 侧找到无 timestamp 写入点补齐。
+
+### [2026-09-09] Batch A 勘误留痕(已修,非暂缓)
+
+A3 曾写「116 个模块」,实测 sec-*.ts = **115**(runner import 同数)——当场勘误,且模块数已纳入 `scripts/check-test-counts.mjs` 机械对账(声明 vs 实际文件数,漂移即红),同类腐化不再靠人眼。

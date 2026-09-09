@@ -2,6 +2,38 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.12.0] - 2026-09-09
+
+> 六路审计整改 Batch B(稳定性小修 + 互锁补面)+ Batch C(性能包)合版。定级 minor:C 批含行为面变化
+> (debugLogs 单条截断 / checkpoint 快照保真度 / 三类新 observable)与内部模块新导出(rawRead/estimateFileBytes,
+> **包级公开导出面零变化**);B 批纯修复。整改方案与四路评审记录见 `openspec/changes/2026-09-09-audit-remediation/`。
+
+### Fixed
+
+- **组件锁真实回灌失明(P1,六路审计 conc#1)**:`COMPONENT_BUSY` 回灌 toolError 化(ERROR: 前缀结构化,code/hint/details 齐全)—— 修前裸串无前缀且 status='done',createAgent 的 rejectedDelegations 计数(`startsWith('ERROR:')`)恒不命中 → 4.9.1「被拒委派不算等效写」对**真实锁路径**失明,并行委派被拒后谎报完成照旧溜过零工具门禁(测试全绿因 stub 桩自带前缀);同参失败 streak 显式排除忙拒(等锁释放后原样重试是正确动作,streak「检查参数」提示是错误引导);e2e 真锁路径断言锁死 ERROR: 前缀 + code 可解析形态。
+- **restore 裁决恢复点校验缺失(B11)**:restore 分支补与 overwrite 同款的新鲜度校验(锚 = 裁决者所见 hash)—— 修前 ask 窗口内新落地的修改会被没见过它的裁决静默洗掉;`ConflictInfo.snapshotId` 真实锚定(裁决者所见最新快照 id,修前恒 0)+ 锚 miss 显式 `SNAPSHOT_STALE` 不回落 last;裁决分支 setBaseline 补 per-call scope 透传(修前缺省 activeScope,并行 CA 子 scope 裁决把基线刷错槽 → 后续写连环误 VERSION_CONFLICT);restore 分支同调用双算全量 hash 消重。
+- **并发写互锁 commit 位补全(B10)**:`restore_data` / `resource_update` 补 acquireWriteMutex(修前旁路互锁,并行批内排序退化为「同步体抢先」而非派发序串行;restore 的空栈/快照查找一并入锁 —— 修前并行派发 [write, restore] 时 restore 抢跑误报 NO_SNAPSHOT);`controller.updateResource` 同步签名无法持锁,注记可辩护性(互锁临界段全同步,宿主同步调用只落 ask 挂起窗口,由恢复点校验兜底);eval transform 整体替换的 beforeBind 锚点对齐(锁内 + handleConflict 裁决后,与 commitSetToBind/applyPatchesToBind 参照形态一致;可达性分析:现有临界段全同步,修前形态现阶段不可达,对齐性修复防未来临界段加 await 即静默可达)。
+
+### Changed
+
+- **gateChain EXHAUSTED 口径对齐(B2)**:①零工具 EXHAUSTED observable 补句尾问号豁免(回灌 ×2 后模型改为向用户征询「要我继续修改吗?」不再被误报「疑似谎报完成」);②完结门禁耗尽补 `COMPLETION_GATE_EXHAUSTED` observable(修前静默放行,todos 未完成被放行集成方零感知,与 audit/zero_tool 两层口径自相矛盾);③三类 gate observable 统一进 debugLogs(修前只 onEvent,排障只看日志会漏)。
+- **debugLogs 单条体积守卫(B7)**:`log()`/`pushLog()` 两个 chokepoint 单条序列化 ≤8KB —— 单个字符串字段超 1200 字符保前缀 1000 + 截断标记,海量小字段整体 `__truncated`,环对象 `[Circular]` 安全。修前条数有界(300 FIFO)但单条字节无界:大 read 结果/整页 HTML write args 单条可数 MB,内存/DebugDrawer 渲染/诊断导出全失控。**诊断保真度变化**:debugLogs 内超长字段现截至前缀(消息流/事件面不受影响),exportDiagnostics 导出同源截断。
+- **预构造 LLM 实例内层重试检测(B3,retry-visibility 边界补全)**:装配期 + setLlm 检测实例 `caller.maxRetries > 0`(LangChain 缺省 **6 次**,经 AsyncCaller 持有;直接读 `.maxRetries` 恒 undefined)→ warn + observable `LLM_INSTANCE_INNER_RETRIES`(建议构造 ChatOpenAI/ChatAnthropic 时传 maxRetries:0);SDK 构造路径(LLMConfig)内层恒 0 不触发。
+- **早退路径也跑 afterAgent(B5)**:stream 的 try 边界上移至 runBeforeAgent 之后 —— compressInput 抛错 / systemPrompt 超预算 fatal 早退等**所有**后续路径不再跳过中间件清理(invokeFocuses 等泄漏面收敛);beforeAgent 自身抛错不补跑(半初始化栈上跑 afterAgent 语义更错);正常路径仍恰好一次。
+- **并行双冲突自动收口留痕(B6)**:新冲突覆盖旧 pending 时的自动 keep_external 收口补 observable `CONFLICT_PREV_AUTO_RESOLVED` + debugLogs(修前零痕迹:前写的「已保留外部修改」叙事可能与最终状态不符而无从诊断;W1 叙事修正需扩 ConflictResolution 类型,登记 deferred)。
+- **示例请求豁免(B4)**:零工具门禁祈使句判定补首子句窗口级示例词豁免(示例/例子/示范/样例)——「给一个添加组件的示例」类文本请求模型纯文本作答是正确行为,修前被误伤回灌 ×2 + 误报 EXHAUSTED;窗口级口径:后部子句提示例的真操作指令(「把标题改成红色,参考第二个示例」)不受豁免。
+
+### Changed(性能包,Batch C)
+
+- **reactive 读侧单点解包(C1,六路审计 perf N4 落定)**:`utils/rawRead.ts`(vue `toRaw` 直通,非 reactive 恒等)落位于全部值语义读入口 —— dataOps 的 hashBind/快照 clone/写前 beforeBind/深投影/查询求值/eval 入参/消息 stringify、commitSetToBind/applyPatchesToBind 纯函数内克隆、baseline-guard guardHash、approval preview、checkpoint clone(structuredClone 输入先解包,恢复快路径;**附注行为面**:reactive bind 下 structuredClone 由「恒抛 → JSON 兜底」变「成功」,快照保真度提高 —— Date/Map 保留、值含 undefined 的键不再被 JSON 丢弃(restore 回写形态随之变化);JSON 形态 bind 零影响)。**写路径不动**(写经 proxy 保响应式触发;宿主响应式消费不经值语义读通道)。**实测(501KB reactive bind,tests/perf/bench-dataops)**:read 窄读 6.2→2.3ms(-63%)、read 整读 13.9→7.7ms(-45%)、**write patch 单字段 20.4→7.8ms(-62%,回到 plain 水平 7.5ms,不再超一帧预算 16.7ms)**、checkpoint clone 6.4→1.2ms(5.4×);write 整体 set 24.6→21.4ms(-13%,残余为 merge 写回经 proxy 的必要成本)。仅 reactive 集成形态受益(raw bind 集成零变化)。响应性守卫三件:selftest effect 触发(write 后 proxy 依赖照常)+ browser complex-demo 全绿 + 值等价断言(hash/序列化对 raw 与 proxy 恒等)。
+- **read 惰性 hash(C2)**:read 首行恒全量 hashBind 下移到消费点按需算(成功读/合法多路径才付)—— 失败读(PATH_DENIED/PATH_NOT_FOUND)零 hash 成本(修前 500KB reactive 6.3ms/次,read 为真 LLM 基线最高频工具);「冲突检查 hash 恒实时计算」不变量不动(禁的是跨调用缓存,本项是同调用内时序)。
+- **vfs 池字节闭包计数器(C3,O(1) 增量维护)**:修前每次 proxy set 触发 enforceLimit = 4 池 × poolBytesOf + 总量 estimateFileBytes **逐文件 TextEncoder 全内容重扫**(每写 5 次全池重扫,实测 6MB 池每写 1.13ms、超池淘汰写 max 6.2ms)。失效点全覆盖:proxy set/deleteProperty、enforceLimit 内部 raw 删、hydrate raw 写、clear 重置、构造 seed 记账;字节公式与 encodeLength 逐字相同,池/总量判定语义零变化;`estimateFileBytes` 转导出作测试对账基准。**实测:每写 0.25-1.13ms → ~0.00ms(max 0.06ms)**。
+- **性能 bench 入库(tests/perf/,C4)**:六路审计实测脚本固化(reactive/reactive2/dataops/vfs/tokens/persist + mkbind),先例 write-path-bench.mjs 同形态手动运行不进 CI;bench-reactive2 的 checkpoint clone 对照已对齐 SDK 修后行为(带 rawRead)。
+
+### 测试
+
+- selftest 3375 → **3465**(+90:Batch B 66 项〔gateChain 口径 sec-120 / B 批杂项 sec-121 / 互锁补面 sec-122 / 示例词豁免 sec-95 扩〕+ Batch C 24 项〔C1 值等价与响应性守卫(含整体 set/restore_data 两个最高危混淆点,code-review 补)/ C2 惰性 hash / C3 计数器精确性与失效点 sec-123〕);e2e 1085 → **1086**(+1:COMPONENT_BUSY 真锁路径 ERROR: 前缀 + 结构化 code 断言);browser **153** 持平(reactive 读侧解包后 complex-demo 全绿 = 响应性端到端守卫)
+
 ## [4.11.1] - 2026-09-09
 
 ### Fixed
@@ -20,7 +52,8 @@
 
 ### 测试
 
-- e2e 1072 → **1077**(+5:无人值守组合双形态);browser 150 → **153**(+3:page-demo chips/transfer 默认渲染 + 画布拖拽→聚焦 chip + eval-demo 双态加载);openspec:ui-quick-wins/server-companion/eval-toolkit 三 change 归档,活跃仅剩 capability-pack-factories(等 first-user)
+- selftest 3353 → **3375**(+22:retry 留痕 sec-09 / 诚实未做出口 sec-101 / 批读失效占位回归 sec-99 / vfs 当轮保护 sec-55);e2e 1072 → **1085**(+13:无人值守组合双形态 automation + hang-feedback 重试可见性 502 重试/4xx 终败);browser 150 → **153**(+3:page-demo chips/transfer 默认渲染 + 画布拖拽→聚焦 chip + eval-demo 双态加载);openspec:ui-quick-wins/server-companion/eval-toolkit 三 change 归档,活跃仅剩 capability-pack-factories(等 first-user)
+  > 勘误(2026-09-09 六路审计):原记「e2e 1077(+5)」漏计 hang-feedback 8 条、selftest 计数段整体漏写,按实测更正。
 
 ## [4.11.0] - 2026-09-07
 

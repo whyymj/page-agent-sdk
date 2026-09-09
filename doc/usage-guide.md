@@ -209,7 +209,7 @@ createChatSdk({
 
   /* ===== 容量与鲁棒性 ===== */
   vfs: { initialFiles?, maxBytes?, poolBytes? },  // 虚拟工作区(默认总上限 8MB;2.16.0+ 三池分池:large_results/drafts/userFiles 各自 LRU,`poolBytes` 单池配)
-  maxSnapshots: 20,             // 主数据快照数(默认 20,FIFO)
+  maxSnapshots: 20,             // 主数据快照数(默认 20,FIFO)。性能提示(4.12+):快照存 bind 深拷贝,大 bind(数百 KB+)建议随体积调低(如 5-10)控内存
   maxMemoryRounds: 30,          // 内存保留对话轮数(默认 30,超限压缩为摘要;0 关闭)
   staleReadInvalidation: true,  // 写驱动过期读失效(3.42+ 默认开):单次 invoke 窗口内成功写之后,被击中路径的旧 read/query/search 结果替换为失效占位;false 主/子一致关闭
   maxToolRounds: 30,            // 最多工具调用轮次(默认 30,3.43 起〔3.28 曾调 10→15,editor 实测复杂整页搭建仍触顶〕;只计真实工具轮,格式/verify 自纠不消耗;另有 maxIterations 总迭代硬上限防死循环)
@@ -1662,11 +1662,11 @@ containerEl.addEventListener('click', (e) => {
 
 > **path 校验是「类型合法」非「数据存在」**:`setFocus` 用 `getSchemaAtPath` 校验路径的 schema 形状。数组索引 `components.5` 类型合法即可聚焦(即使数据不足 6 个);叶子字段下取子路径(如 `title.sub`)或顶层不存在字段(如 `nope`)被拒。**开放 schema**(`z.record(...)` / `z.any()` / `z.unknown()` 子树)任意路径均可聚焦(如编辑器页面树 `z.record(z.string(), z.unknown())` 绑整个组件树,点选任一组件即 `setFocus` 其路径)。`capabilities.focus` 默认开,`false` 关闭(中间件 + 工具 + chip 都不装)。
 
-## 8. 高级:自定义中间件
+## 7. 高级:自定义中间件
 
 最彻底的外接方式 —— 把你的逻辑插到 Agent 生命周期的任意节点,和内置的 todos/skills/memory 平起平坐。
 
-**8 个钩子**:
+**10 个契约点(9 钩子 + 1 工具字段)**:
 
 | 钩子 | 时机 | 典型用途 |
 |---|---|---|
@@ -1677,6 +1677,8 @@ containerEl.addEventListener('click', (e) => {
 | `wrapModelCall(req, next)` | 包裹模型调用 | **拦截/改写请求与响应** |
 | `afterModel(res, state)` | 模型返回后 | 观察/埋点 |
 | `wrapToolCall(ctx, next)` | 包裹工具执行 | **审计/拦截/改写工具** |
+| `afterAgent(state)` | Agent 收口后 | 清理/收尾(埋点汇总、flush;早退异常路径不保证执行) |
+| `beforeReturn(state)` | 最终返回前 | **自检门禁**:返回 `{ feedback }` 即回灌自纠(受 `maxVerifyAttempts` 预算约束,默认 0 不跑;verify 自检/HTML 格式门禁即挂此钩子;注意轮次耗尽的 wrap-up 旁路不经过它) |
 | `tools` | (字段,非钩子) | 贡献自定义工具 |
 
 > 执行顺序:before 类正序、after 类逆序、wrap 类洋葱。用户中间件在内置之后注入。
@@ -2169,7 +2171,7 @@ if (verdict.status === 'worse') { /* ▲ token ±15% 且 ±2000 或 toolCount ±
 
 完整示例见仓库 `demo/plain.html`(importmap + esm.sh)。⚠️ 第三方页注入时,AI 配置对该页 origin 可见,请注意。
 
-### 9.1 服务端(node)运行 —— headless 同构(4.10+ 冒烟背书)
+### 9.1 服务端(node)运行 —— headless 同构(4.11+ 冒烟背书)
 
 同一套 SDK 可在 **node/服务端** 跑:核心 harness 本就不依赖 DOM(e2e 全家每天在 node 跑 dist 产物),`page-agent-sdk/headless` 子路径是 node-clean 的目标形态。4.10 起用 **真 LLM 双协议冒烟**(`npm run test:node-real`,OpenAI 兼容 + Anthropic 各走完整 read→write→restore_data 工具循环)背书了这个路径 —— 浏览器端「页面关了就停」的长任务可以移到服务端进程跑。
 

@@ -1,7 +1,7 @@
 /**
  * capabilities 能力开关注册表 + 单一解析(p2-architecture-refactor 子项 4)
  *
- * 消除 17 个开关 `=== true`(opt-in)/`!== false`(opt-out)在 createChatSdk / toolsets / usageHints
+ * 消除 18 个开关 `=== true`(opt-in)/`!== false`(opt-out)在 createChatSdk / toolsets / usageHints
  * 三处混用解析 —— 统一经 `resolveCapabilities`。注册表显式标 `defaultOn`(opt-in/opt-out),
  * `requires` 表达依赖(如 draftWrite 需 dataOps + vfs,任一关则强制关)。
  *
@@ -27,9 +27,9 @@ export type CapabilityFlags = Partial<Record<string, boolean>>
 export type ResolvedCapabilities = Record<string, boolean>
 
 /**
- * 能力注册表(21 开关)。
+ * 能力注册表(18 开关;以 CAPABILITIES.length 为准,增删时同步本注释与 types.test-d.ts _capKeys)。
  * - opt-out 默认开(13 个):核心能力,关才需显式 false
- * - opt-in 默认关(8 个):有 token 成本/最远能力,需显式 true 开启
+ * - opt-in 默认关(5 个):有 token 成本/最远能力,需显式 true 开启
  */
 export const CAPABILITIES: readonly Capability[] = [
   // —— opt-out 默认开 ——
