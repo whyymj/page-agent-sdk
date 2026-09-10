@@ -113,6 +113,8 @@
 npm install page-agent-sdk zod @langchain/openai @langchain/core
 ```
 
+> 注:`@langchain/openai` 为**事实必需依赖**(SDK 静态引用,Anthropic-only 用户也需安装;optional peer 化已评估否决)。`@langchain/anthropic` / `@modelcontextprotocol/sdk` 为真可选(动态 import)。
+
 ```ts
 import { createChatSdk } from 'page-agent-sdk'
 import { z } from 'zod'

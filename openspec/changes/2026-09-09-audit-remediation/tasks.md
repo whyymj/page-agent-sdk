@@ -44,13 +44,15 @@
 - [x] C6 批尾统一任务 + deferred 销账(N4 reactive 放大、持久化#8 视 C3 落地形态)
 
 ## Batch E:API 面收口(4.13.0)
+
+> **实施注记(2026-09-10)**:执行中挖出并修正 4 起既有漂移 —— ① `StreamEvent`/`SdkEvent` d.ts 旧形态(缺 approval_request 成员/reasoning kind/DebugLog.source);② `createVfs` d.ts 单参形态与实现(两参 initialFiles+opts)不符;③ **`SubagentOptions` 同名异物**(d.ts 声明的 spawn 运行时形态 ≠ src 实际导出的中间件选项形态,消费方拿到错误形状 —— 对齐 src,幽灵声明删除);④ `ContextSnapshot.compression` 内联对象漏 `decision`。Same 断言一次通过(负向验证过:必填字段差异会红;可选键差异靠 keyof 互补断言兜住 —— 同向弱点评审未提,执行中补)。E2 探针哨兵:paths 指向**缺失文件不阻断 node_modules 回退**(TS paths miss 即回退),改空导出哨兵文件才真挡 —— 评审方案的「指向不存在文件」形态实测无效。headless.d.ts 镜像时插错锚点(diffObjects 多行声明中段)被 test:types 抓回。
 > 原 E4 否决、原 E3 移 F 前置、原 B8 移入本批(E3 位)。E 批纯 types/文档 + 导出面,零运行时风险,排 F 前(E1 签名门禁反哺 F,拆分期间 d.ts 不变量单一)。
-- [ ] E1 Middleware 10 钩子真实签名(harness/middleware.ts:82-106 → d.ts:2003-2007 现全 any)+ ModelRequest/ModelResponse/ToolCallContext/StateUpdate 投射;**隐藏工作量(评审发现)**:d.ts 须一并投射 5 个成员类型(HarnessState+Todo/VfsFile/SkillMeta/SummarizationEvent/LoopProgress);核心 5 工厂 any 补齐(d.ts 816/1854/1857/1991/2190);types-alignment 增签名级**互赋值断言 `Same<A,B>`**(现有 41 行 keyof 模式可扩展,机械可执行);minor 定级成立(收紧只打击「新鲜字面量拼错钩子名」——该类代码运行期本就静默失效)
-- [ ] E2 vue 类型解耦:内联最小类型桩(~15 行)胜出 typesVersions 双 d.ts 方案;**headless.d.ts 必须一起解**(原方案遗漏::8 也 import vue,19 处引用);「无 vue 项目 tsc 验证」**完全脚本化**(tsconfig paths 阻断 vue 解析 + 静态 grep 断言,进 exports-consistency),不需人肉;严重度校准:skipLibCheck:true(脚手架默认)下是类型退化非编译失败
-- [ ] E3 (原 B8)headless 补 8 个非 UI 导出(moveByPath/detectTransitionalReply/sanitizeGarbledContent/normalizeBaseUrl/stripStainlessFetch/DEFAULT_SYSTEM_PROMPT_EN/htmlFragmentSkill/buildHtmlFragmentSkill)+ **types/headless.d.ts 同步(别漏)** + exports-consistency 第三向断言(主包非 UI ⊆ headless);semver 定性:新增公开导出面归 minor(与本批一致,E5 纪律自洽)
-- [ ] E4 (原 E5)semver 纪律成文 + **4 漏洞补丁**(评审发现):①「三版零调用」证据来源定义(自家真 LLM 基线 + e2e 调用计数,不得声称第三方遥测)② 覆盖**语义反转**形态(不只移除;4.1.0 exec.context:'host' 反转正是此形态漏网先例)③「公共面」枚举清单成文(与 E1 类型收紧判例互引防自相矛盾)④ deprecation 窗口机制(移除前一 minor 在 d.ts JSDoc 标 @deprecated);4.1.0/4.9.0 回溯标注
-- [ ] ~~E4 原案 @langchain/openai → optional peer~~ **否决**(前提为假:`ChatOpenAI` 在 constructLlm.ts:15 / proxyLlm.ts:30 / **createAgent.ts:11** 三处静态 import,vite external 后发布产物顶层硬依赖;改 optional peer = Anthropic-only 用户加载即崩 + esm.sh 路径断;真做需 async 化重构 L 级且破坏 setLlm 同步契约)→ 替代:usage-guide/README 文档化现状 + deferred 登记拒绝理由(A12 已办)
-- [ ] E5 批尾统一任务 + §4.5 发布后临时安装深化验证(node 实际调用本次新导出,不只 require 成功)+ usage-guide/README 依赖说明处明示「@langchain/openai 为事实必需依赖,optional peer 化已评估否决」(E4 否决的替代动作)
+- [x] E1 Middleware 10 钩子真实签名(harness/middleware.ts:82-106 → d.ts:2003-2007 现全 any)+ ModelRequest/ModelResponse/ToolCallContext/StateUpdate 投射;**隐藏工作量(评审发现)**:d.ts 须一并投射 5 个成员类型(HarnessState+Todo/VfsFile/SkillMeta/SummarizationEvent/LoopProgress);核心 5 工厂 any 补齐(d.ts 816/1854/1857/1991/2190);types-alignment 增签名级**互赋值断言 `Same<A,B>`**(现有 41 行 keyof 模式可扩展,机械可执行);minor 定级成立(收紧只打击「新鲜字面量拼错钩子名」——该类代码运行期本就静默失效)
+- [x] E2 vue 类型解耦:内联最小类型桩(~15 行)胜出 typesVersions 双 d.ts 方案;**headless.d.ts 必须一起解**(原方案遗漏::8 也 import vue,19 处引用);「无 vue 项目 tsc 验证」**完全脚本化**(tsconfig paths 阻断 vue 解析 + 静态 grep 断言,进 exports-consistency),不需人肉;严重度校准:skipLibCheck:true(脚手架默认)下是类型退化非编译失败
+- [x] E3 (原 B8)headless 补 8 个非 UI 导出(moveByPath/detectTransitionalReply/sanitizeGarbledContent/normalizeBaseUrl/stripStainlessFetch/DEFAULT_SYSTEM_PROMPT_EN/htmlFragmentSkill/buildHtmlFragmentSkill)+ **types/headless.d.ts 同步(别漏)** + exports-consistency 第三向断言(主包非 UI ⊆ headless);semver 定性:新增公开导出面归 minor(与本批一致,E5 纪律自洽)
+- [x] E4 (原 E5)semver 纪律成文 + **4 漏洞补丁**(评审发现):①「三版零调用」证据来源定义(自家真 LLM 基线 + e2e 调用计数,不得声称第三方遥测)② 覆盖**语义反转**形态(不只移除;4.1.0 exec.context:'host' 反转正是此形态漏网先例)③「公共面」枚举清单成文(与 E1 类型收紧判例互引防自相矛盾)④ deprecation 窗口机制(移除前一 minor 在 d.ts JSDoc 标 @deprecated);4.1.0/4.9.0 回溯标注
+- [x] ~~E4 原案 @langchain/openai → optional peer~~ **否决**(前提为假:`ChatOpenAI` 在 constructLlm.ts:15 / proxyLlm.ts:30 / **createAgent.ts:11** 三处静态 import,vite external 后发布产物顶层硬依赖;改 optional peer = Anthropic-only 用户加载即崩 + esm.sh 路径断;真做需 async 化重构 L 级且破坏 setLlm 同步契约)→ 替代:usage-guide/README 文档化现状 + deferred 登记拒绝理由(A12 已办)
+- [x] E5 批尾统一任务 + §4.5 发布后临时安装深化验证(node 实际调用本次新导出,不只 require 成功)+ usage-guide/README 依赖说明处明示「@langchain/openai 为事实必需依赖,optional peer 化已评估否决」(E4 否决的替代动作)
 
 ## Batch F:createChatSdk 三阶段拆分(4.14.0)
 > 行号全核验属实(3318 行/buildCore 945-2975=2031/类型段 98-648/core 字面量 1782/包装 2977)。「靠 e2e+browser 兜底」判断正确(selftest 触不到顶层作用域)。与 E 批**串行不并行**(同文件同区域硬冲突)。

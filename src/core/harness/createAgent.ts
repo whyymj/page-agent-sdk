@@ -187,7 +187,7 @@ export interface CreateAgentOptions {
   retryDelayMs?: number
   /** LLM 流停滞看门狗(fix-hang-and-feedback P1-7):chunk 间隔(含等首个)超此 ms → 中断抛错。默认 90s;0 = 关闭 */
   stallMs?: number
-  /** 单次模型调用流总时长上限(stream-max-duration):防空转帧黑洞(keepalive 不断喂饱间隔看门狗,实测冻结 7min+ 无报错)。默认 600s;0 = 关闭 */
+  /** 单次模型调用流总时长上限(stream-max-duration):防空转帧黑洞(keepalive 不断喂饱间隔看门狗,实测冻结 7min+ 无报错)。默认 1800s(2026-08-28 抬升对齐流总时长,100K+ 长生成需 20min+);0 = 关闭 */
   streamMaxMs?: number
   /**
    * per-tool 看门狗(flow-robustness P0#1):单工具执行超此 ms → 放弃等待,recoverable 错误结果回灌自纠。
@@ -1370,3 +1370,6 @@ export function createAgent(options: CreateAgentOptions) {
     getEffectiveSystemPrompt: () => buildSystemPrompt(),
   }
 }
+
+/** createAgent 返回实例类型别名(E1 API 面收口:供 types/ 对齐导出;结构 = 上述 return 对象) */
+export type AgentInstance = ReturnType<typeof createAgent>

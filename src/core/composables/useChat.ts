@@ -37,24 +37,25 @@ export interface PendingApproval {
   preview?: import('../harness/approval').ApprovalWritePreview
 }
 
-export function useChat(
-  opts: {
-    fetchResponse?: FetchFn
-    fetchStream?: StreamFn
-    /** 外部共享的消息数组(持久化恢复时传入,与父级共用同一响应式引用) */
-    messages?: AgentMessage[]
-    /** 一轮对话完成后回调(用于持久化);可返回 Promise,sendMessage 会 await 确保落盘后再关 loading */
-    onPersist?: (messages: AgentMessage[]) => void | Promise<void>
-    /** 清空对话时回调(用于新建会话) */
-    onClear?: () => void
-    /** stop() 清空排队任务时回调(fix-hang-and-feedback P1-5 可见性:丢弃条数与内容由消费方记日志,防无声丢失) */
-    onQueuedCleared?: (dropped: string[]) => void
-    /** regenerate 前回调(清代码资产复用缓存,强制子 agent 重新生成而非复用工作副本) */
-    onBeforeRegenerate?: () => void
-    /** 取当前实时焦点(排队任务开始执行时快照进 user 消息;与 invoke-freeze 生效口径一致 —— 排队 invoke 的实际作用域 = 启动那一刻的实时焦点) */
-    getFocuses?: () => Focus[]
-  } = {},
-) {
+/** useChat 选项(E1 API 面收口:抽为命名接口供 types/ 对齐导出) */
+export interface UseChatOptions {
+  fetchResponse?: FetchFn
+  fetchStream?: StreamFn
+  /** 外部共享的消息数组(持久化恢复时传入,与父级共用同一响应式引用) */
+  messages?: AgentMessage[]
+  /** 一轮对话完成后回调(用于持久化);可返回 Promise,sendMessage 会 await 确保落盘后再关 loading */
+  onPersist?: (messages: AgentMessage[]) => void | Promise<void>
+  /** 清空对话时回调(用于新建会话) */
+  onClear?: () => void
+  /** stop() 清空排队任务时回调(fix-hang-and-feedback P1-5 可见性:丢弃条数与内容由消费方记日志,防无声丢失) */
+  onQueuedCleared?: (dropped: string[]) => void
+  /** regenerate 前回调(清代码资产复用缓存,强制子 agent 重新生成而非复用工作副本) */
+  onBeforeRegenerate?: () => void
+  /** 取当前实时焦点(排队任务开始执行时快照进 user 消息;与 invoke-freeze 生效口径一致 —— 排队 invoke 的实际作用域 = 启动那一刻的实时焦点) */
+  getFocuses?: () => Focus[]
+}
+
+export function useChat(opts: UseChatOptions = {}) {
   const { fetchResponse, fetchStream, onPersist, onClear, onQueuedCleared, onBeforeRegenerate } = opts
 
   /** 对话状态:消息列表 + loading + 错误(messages 可与父级共享同一引用) */
@@ -396,3 +397,6 @@ export function useChat(
 
   return { state, scrollContainer, pendingApproval, queuedTasks, sendMessage, removeQueuedTask, clearMessages, stop, reset, retry, regenerate, resolveApproval, onScroll, onWheel }
 }
+
+/** useChat 返回类型别名(E1 API 面收口:供 types/ 对齐导出;结构 = 上述 return 对象) */
+export type UseChatReturn = ReturnType<typeof useChat>

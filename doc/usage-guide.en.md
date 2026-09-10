@@ -45,6 +45,10 @@ npm install page-agent-sdk
 npm install zod @langchain/openai @langchain/core
 ```
 
+> **Dependency note**: `@langchain/openai` is a **de-facto required dependency** (statically imported in three SDK code paths: LLM construction / proxy / fallback — loaded even in Anthropic-only setups). Making it an optional peer was evaluated and rejected (would break Anthropic-only consumers at load time). `@langchain/anthropic` (Anthropic protocol, dynamic import) and `@modelcontextprotocol/sdk` (MCP, dynamic import) are the truly optional ones.
+
+> **vue type stub note (since 4.13.0)**: The SDK's type declarations no longer `import 'vue'` (so projects without vue resolve them fully); `Ref<T>` uses an inline `{ value: T }` stub. In real vue projects, when passing SDK ref fields to vue's `watch`/`computed`, prefer the getter form (`watch(() => sdk.sessions.value, …)`) — the stub accepts real refs assigned *into* SDK-typed fields, but assigning the other way into vue's branded `Ref` type is a compile error (zero runtime impact).
+
 ```ts
 import { createChatSdk, z } from 'page-agent-sdk'
 ```

@@ -32,8 +32,7 @@ const typesExports = extractExports(typesContent)
 // type-only 辅助类型:d.ts 为 TS 使用者声明,但非 src/core/index.ts 运行时导出(audit P1-27/A 专项:多余名改 fail 需此白名单排除)
 const TYPES_ONLY_ALLOWLIST = new Set([
   'ChatDialogSections', 'ChatDialogProps', 'DebugDrawerProps', 'ChatModelLike',
-  'SkillExecSpec', 'SkillToolFactory', 'Checkpoint', 'SessionOptions', 'WorkingMemory', 'Mission',
-  'HumanConfirmOptions',
+  'SkillExecSpec', 'SkillToolFactory', 'Checkpoint', 'SessionOptions', 'HumanConfirmOptions',
 ])
 const missingInTypes = [...srcExports].filter(n => !typesExports.has(n))
 const extraInTypes = [...typesExports].filter(n => !srcExports.has(n))
@@ -70,7 +69,7 @@ console.log('[exports-consistency] headless 子路径:index.headless.ts ↔ head
   assert(missingInHeadlessTypes.length === 0, `headless.d.ts 无漏导出(缺失:${missingInHeadlessTypes.join(', ') || '无'})`)
 
   // headless 不导出 13 个 .vue 组件(源 + 类型两侧均不含)
-  const components = ['ChatDialog', 'MessageContent', 'CodePreview', 'SkillPanel', 'ChatHeader', 'ChatInput', 'MessageList', 'MessageRow', 'QueuedBar', 'ApprovalBar', 'ConflictBar', 'FocusBar', 'DebugDrawer']
+  const components = ['ChatDialog', 'MessageContent', 'CodePreview', 'SkillPanel', 'IconGlyph', 'ChatHeader', 'ChatInput', 'MessageList', 'MessageRow', 'QueuedBar', 'ApprovalBar', 'ConflictBar', 'FocusBar', 'DebugDrawer']
   const leakedInSrc = components.filter(c => headlessSrcExports.has(c))
   const leakedInTypes = components.filter(c => headlessTypesExports.has(c))
   assert(leakedInSrc.length === 0, `index.headless.ts 不导出 UI 组件(泄露:${leakedInSrc.join(', ') || '无'})`)
@@ -81,6 +80,37 @@ console.log('[exports-consistency] headless 子路径:index.headless.ts ↔ head
   assert(!!pkg.exports['./headless']?.import && pkg.exports['./headless'].import.endsWith('page-agent-sdk.headless.js'), 'subpath ./headless import 指向 page-agent-sdk.headless.js')
   // build 脚本含 build:headless
   assert(typeof pkg.scripts['build:headless'] === 'string' && pkg.scripts.build.includes('build:headless'), 'package.json 含 build:headless 脚本并纳入 build 链')
+}
+
+// 第三向断言(E3 API 面收口):主包非 UI 导出 ⊆ headless。主包独有导出必须显式挂 UI 白名单 ——
+// 新增纯核心导出只进主包不进 headless 时此处红灯,强制「进 headless 或挂白名单说明」二选一(防 headless 面腐化)
+{
+  console.log('[exports-consistency] 第三向:主包非 UI 导出 ⊆ headless(UI 白名单外零容忍)')
+  const headlessSrc2 = fs.readFileSync(new URL('../src/core/index.headless.ts', import.meta.url), 'utf-8')
+  const mainOnly = [...srcExports].filter(n => !extractExports(headlessSrc2).has(n))
+  const UI_ONLY_ALLOWLIST = new Set([
+    // 13 个 .vue 组件 + 图标/i18n/markdown 渲染(主包打包 marked/hljs/dompurify,headless 子路径不含)
+    'ChatDialog', 'ChatHeader', 'ChatInput', 'MessageList', 'MessageRow', 'QueuedBar', 'ApprovalBar', 'ConflictBar', 'FocusBar', 'DebugDrawer', 'MessageContent', 'CodePreview', 'SkillPanel', 'IconGlyph',
+    'DialogIcons', 'DEFAULT_DIALOG_ICONS', 'resolveDialogIcons', 'isIconHtml', 'sanitizeIconHtml',
+    'DialogLocale', 'DialogMessages', 'resolveDialogMessages', 'MESSAGES_EN_US', 'MESSAGES_ZH_CN', 'I18nOptions', 'QuickActionItem',
+    'HLJS_BLOCK_MAX_CHARS', 'markedToHtml', 'renderMarkdownHtml', 'sanitizeMessageHtml',
+    // 审批 diff 预览载荷类型:headless.d.ts 已为 StreamEvent 引用而声明,但 index.headless.ts 不导出(事件消费方从主包取类型亦可)
+    'ApprovalPreviewItem', 'ApprovalWritePreview',
+  ])
+  const violations = mainOnly.filter(n => !UI_ONLY_ALLOWLIST.has(n))
+  assert(violations.length === 0, `主包独有导出未挂 UI 白名单(要么补进 headless,要么挂白名单并注明理由):${violations.join(', ') || '无'}`)
+}
+
+// vue 类型解耦(E2 API 面收口):d.ts 引用 vue = 未装 vue 的 TS 项目解析退化(error type)。
+// 内联桩(types/*.d.ts 头部 Ref/InjectionKey/DefineComponent)是唯一合法形态;静态 grep 防回归零成本
+{
+  console.log('[exports-consistency] vue 类型解耦:d.ts 零 vue 引用(内联桩)')
+  for (const f of ['types/index.d.ts', 'types/headless.d.ts']) {
+    const content = fs.readFileSync(new URL('../' + f, import.meta.url), 'utf-8')
+    const stripped = content.replace(/^\s*\/\/.*$/gm, '')  // 剥行注释(桩头说明提到 'vue' 属文案非引用)
+    assert(!/from\s+['"]vue['"]/.test(stripped), `${f} 不含 from 'vue'(E2 内联桩,勿回退)`)
+    assert(!/import\(['"]vue['"]\)/.test(stripped), `${f} 不含 import('vue') 动态类型引用`)
+  }
 }
 
 console.log(`\n==== exports-consistency: ${pass} passed, ${fail} failed ====`)

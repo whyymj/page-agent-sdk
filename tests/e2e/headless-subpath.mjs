@@ -24,6 +24,16 @@ export async function run() {
     assert(typeof mod.useChat === 'function', 'useChat 导出(L2 拼装)')
     assert(typeof mod.chatContextKey === 'symbol', 'chatContextKey 导出为 symbol')
 
+    // E3 API 面收口(2026-09-09):8 个非 UI 导出从主包补进 headless(修前 headless 集成方拿不到,只能换主包)
+    assert(typeof mod.moveByPath === 'function', 'moveByPath 导出(write patch op move 的内核纯函数)')
+    assert(typeof mod.detectTransitionalReply === 'function', 'detectTransitionalReply 导出(过程性收口检测)')
+    assert(typeof mod.sanitizeGarbledContent === 'function', 'sanitizeGarbledContent 导出(garbled 文本剥离)')
+    assert(typeof mod.normalizeBaseUrl === 'function', 'normalizeBaseUrl 导出(baseUrl 容错归一)')
+    assert(typeof mod.stripStainlessFetch === 'function', 'stripStainlessFetch 导出(剥 x-stainless 遥测头)')
+    assert(typeof mod.DEFAULT_SYSTEM_PROMPT_EN === 'string' && mod.DEFAULT_SYSTEM_PROMPT_EN.length > 0, 'DEFAULT_SYSTEM_PROMPT_EN 导出非空字符串')
+    assert(!!mod.htmlFragmentSkill && typeof mod.htmlFragmentSkill.name === 'string', 'htmlFragmentSkill 导出为 SkillSpec')
+    assert(typeof mod.buildHtmlFragmentSkill === 'function', 'buildHtmlFragmentSkill 导出(自定义 root/codeField 构造)')
+
     // 13 个 .vue 组件全部缺失(headless 不含 UI 层)
     const absentComponents = [
       'ChatDialog', 'MessageContent', 'CodePreview', 'SkillPanel',

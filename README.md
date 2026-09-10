@@ -113,6 +113,8 @@ At its core, it gives the AI a **standardized, safe JSON-operation channel**. AI
 npm install page-agent-sdk zod @langchain/openai @langchain/core
 ```
 
+> Note: `@langchain/openai` is a **de-facto required dependency** (statically imported by the SDK — needed even for Anthropic-only setups; optional-peer conversion was evaluated and rejected). `@langchain/anthropic` / `@modelcontextprotocol/sdk` are truly optional (dynamic import).
+
 ```ts
 import { createChatSdk } from 'page-agent-sdk'
 import { z } from 'zod'

@@ -2,6 +2,31 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.13.0] - 2026-09-10
+
+> 六路审计整改 Batch E(API 面收口)。定级 minor:类型收紧 + 新增类型导出与 headless 导出补齐,运行时行为零变化
+> (仅 index.headless.ts 补 8 个既有函数/常量的 re-export)。方案见 `openspec/changes/2026-09-09-audit-remediation/`。
+
+### Added
+
+- **headless 子路径补 8 个非 UI 导出(E3)**:`moveByPath` / `detectTransitionalReply` / `sanitizeGarbledContent` / `normalizeBaseUrl` / `stripStainlessFetch` / `DEFAULT_SYSTEM_PROMPT_EN` / `htmlFragmentSkill` / `buildHtmlFragmentSkill`(全部主包既有,修前 headless 集成方拿不到只能换主包);`types/headless.d.ts` 同步声明;exports-consistency 增**第三向断言**(主包非 UI 导出 ⊆ headless,UI 白名单外零容忍 —— 新增纯核心导出只进主包不进 headless 时红灯)。
+- **类型级对齐门禁(E1)**:`test:types-alignment` 增 `Same<A,B>` 双向互赋值断言 + keyof 双向 Subset 互补(互赋值抓字段类型漂移、keyof 抓可选键漂移,两者正交)—— Middleware/上下文四类型/HarnessState+成员/五工厂参数全量锁定。
+- **无 vue 解析探针(E2)**:新增 `npm run test:types-novue`(`tests/no-vue/`):tsconfig paths 把 'vue' 指向**空导出哨兵文件**(paths miss 会回退 node_modules,空哨兵才真挡),编译消费两个 d.ts 的探针 —— 证明未装 vue 的 TS 项目可完整解析;exports-consistency 同步静态 grep(两个 d.ts 零 `from 'vue'`/`import('vue')`,防回退)。
+
+### Changed
+
+- **⚠️ 中间件类型收紧(E1,可能暴露此前静默失效的代码)**:`Middleware`(10 钩子)、`ModelRequest`/`ModelResponse`/`ToolCallContext`/`ToolExecResult`/`BeforeReturnContext`/`StateUpdate` 及 `HarnessState` + `Todo`/`VfsFile`/`SkillMeta`/`SummarizationEvent`/`LoopProgress` 由 `[k:string]:any` 换为**真实签名投射**(与 src 逐字段对齐)。核心五工厂同步补齐:`createAgent`(含 `CreateAgentOptions`/`AgentInstance` 返回面)/`createSubagentMiddleware`/`resolveContextOptions`(含 `ContextManagerOptions` 完整投射)/`createVfs`(两参真实签名 + `VfsOptions`/`VfsStore` 等)/`useChat`(含 `UseChatOptions`/`PendingApproval`/`UseChatReturn`)。影响面:中间件对象字面量里**拼错的钩子名**(如 `wrapToolcall`)现在编译报错 —— 此前运行期静默失效,编译错误是把已死代码显性化;**附带面**:字面量上挂自定义非钩子元数据字段(如 `order: 2`)同样触发 excess-property 检查(SDK 内部 `mw.controller` 模式即此形态,应经工厂返回值或变量注解传入);经变量/工厂返回传入的对象不受影响。迁移:改正钩子名 / 元数据走工厂返回值。
+- **vue 类型解耦(E2)**:`types/index.d.ts` + `types/headless.d.ts` 弃 `import ... from 'vue'`,改**内联最小桩**(`Ref<T> = { value: T }` / `InjectionKey` / `DefineComponent`,文件头部)。未装 vue 的 TS 项目(纯 headless 集成)类型不再退化(此前 skipLibCheck 下 Ref 字段成 error type,严格模式整面编译失败)。已知限制:真 vue 项目把 `ChatDialog` 等直接塞 SFC `components:{}` 时桩类型与 vue-tsc 期望的真 `DefineComponent` 可能不匹配(SDK 定位 mount() 挂载式,直接组件复用是次级路径,需要时集成方自行断言)。另一限制:桩 `{value:T}` 可接收真 ref 赋入 SDK 类型字段,但反向赋给 vue 品牌化 `Ref` 报编译错 —— 传 vue `watch`/`computed` 用 getter 形态(`watch(() => sdk.sessions.value, …)`),运行时零影响(详见 usage-guide 依赖说明)。
+- **类型漂移修正(E1 过程挖出)**:`StreamEvent`/`SdkEvent` subagent 成员补 `reasoning` kind + `delta`(`approval_request` 成员此前 d.ts 整个缺失);`DebugLog` 补 `source` 字段;`ContextSnapshot.compression` 引用 `CompressionStats`(修前内联对象漏 `decision`);`createVfs` 补首个参数 `initialFiles`(修前 d.ts 单参形态与实现不符)。
+- **semver 纪律成文(E4)**:CLAUDE.md 新增「公共面变更纪律」—— 公共面六项枚举(导出值/类型/配置项与 capabilities/事件形状/inspect 结构/行为契约)、定级规则(**语义反转 = major**,判例 4.1.0 `exec.context:'host'` 残值落沙箱;移除 = major 或 @deprecated 窗口)、「三版零调用」证据源限定自家真 LLM 基线 + e2e 计数(不得声称第三方遥测);CHANGELOG 回溯标注 4.1.0/4.9.0 两起定级瑕疵。
+
+### Fixed
+
+- **`SubagentOptions` 同名异物(E1 挖出)**:d.ts 声明的 `SubagentOptions`(spawn 运行时覆盖形态,role/tools/writablePaths)与 src 实际导出的 `SubagentOptions`(createSubagentMiddleware 选项,llm/allTools…)是两个不同形状 —— 消费方 import 该类型拿到的是错误形状。修:d.ts 对齐 src(中间件选项形态),spawn 运行时覆盖参数本就是 spawn 工具 zod args 非导出类型,幽灵声明删除。
+- **headless 侧漂移补齐(code-review M1/L2)**:headless.d.ts 的 `SdkEvent.tool_result` 补 `durationMs`(index 侧已修、headless 漏);`TokenUsage` 补 Anthropic prompt caching 两字段(`cache_read_input_tokens`/`cache_creation_input_tokens`);**门禁根因修**:types-alignment 此前只编 index.d.ts —— headless.d.ts 纳入同一编译单元 + 6 组 headless-vs-src `Same` 断言(StreamEvent/SdkEvent/DebugLog/TokenUsage/AgentMessage/ToolStep),该漂移类不再静默。
+- **`streamMaxMs` 文档默认值陈旧(code-review M2)**:d.ts 两处 + src 注释「默认 600s」更正为 **1800s**(2026-08-28 已抬升,文档未跟;ChatSdkOptions `streamMaxDurationMs` 同步)。
+- **文档依赖说明(4 检查点)**:README 中英 + usage-guide 中英明示 `@langchain/openai` 为**事实必需依赖**(SDK 三处静态引用,Anthropic-only 用户也需安装;optional peer 化已评估否决,理由登记 openspec/deferred.md)。
+
 ## [4.12.0] - 2026-09-09
 
 > 六路审计整改 Batch B(稳定性小修 + 互锁补面)+ Batch C(性能包)合版。定级 minor:C 批含行为面变化
@@ -128,6 +153,8 @@
 - browser 134/134 · exports 14 · types + src 真错 0 · alignment ✓ · size 6
 
 ## [4.9.0] - 2026-08-28
+
+> ⚠️ **回溯定级标注(2026-09-10,E4 semver 纪律补)**:本版移除 `describe_data` 工具属「移除公共面」类(工具名是集成方/提示词可引用的公共契约),按后立纪律应走 major 或 @deprecated 窗口;已以 minor 发出,留痕判例。「三版零调用」证据源为自家真 LLM 基线 + e2e 断言(非第三方遥测),口径见 CLAUDE.md 纪律段。
 
 ### Removed
 
@@ -363,6 +390,8 @@
 - 同参重复失败提醒(C2,3.44.1)在本事故中 R3 起即已注入 ToolMessage 但 flash 无视连发 7 次 —— 机制在场,根因是错误本身不可解,本次修的就是错误可解性;selftest +14(sec-58 白盒三路判定 / sec-59 集成含正路出口真的通)
 
 ## [4.1.0] - 2026-08-25
+
+> ⚠️ **回溯定级标注(2026-09-10,E4 semver 纪律补)**:本版的 `skillHostScript` 移除携带 **`exec.context:'host'` 残值语义反转**(残值落 sandbox 执行 = 宿主全权降级沙箱,签名不变而安全意义颠倒)—— 按后立纪律此形态应 major。已随 4.1.0 以 minor 发出不可回溯,此处留痕作判例:后续「移除/语义反转」类变更一律先过 CLAUDE.md「公共面变更纪律」。
 
 ### Fixed(completion-truncated:截断检测回灌,实测「无限重委派」事故驱动)
 

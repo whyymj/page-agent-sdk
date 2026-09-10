@@ -31,7 +31,7 @@ npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
 npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,3465 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,1086 项;tests/e2e/<module>.mjs 按模块拆分)
+npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,1094 项;tests/e2e/<module>.mjs 按模块拆分)
 npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,153 项;tests/browser/<demo>.spec.ts)
 npm run test:node-real  # node 真 LLM 冒烟(server-companion P0:headless dist 双协议 read→write→restore;无 key 自动 skip)
 ```
@@ -143,7 +143,7 @@ npm test    # tsx 跑 src/core/__tests__/selftest.ts,3465 项断言
 
 #### 2. 集成层 e2e(改 createChatSdk 顶层 API 后必跑)
 ```bash
-npm run build && npm run test:e2e    # node 跑 dist 产物,1086 项
+npm run build && npm run test:e2e    # node 跑 dist 产物,1094 项
 ```
 模块在 `tests/e2e/<module>.mjs`(33 个:systemprompt/dynamic-register/inspect/subagents/events/storage/exports/data-slots/presets/boundary/custom-injection/conflict/automation/llm-provider/focus/images/resources/agent-compression/headless-subpath/legacy-subpath/capability-packs/authorization-surface/hang-feedback/main-sub-isolation/session-integrity/context-economy/mcp/diagnostics/instruction-adherence/thinking-mode/eval-toolkit/evidence-audit/stale-read-invalidation),共享 stub 在 `tests/e2e/_helpers.mjs`(StubChatModel 在 `_stub-model.mjs`,响应队列驱动真 ReAct)。覆盖顶层 return 对象作用域。**改 createChatSdk 返回对象、AgentCore 接口、动态注册 API、默认提示词、新增导出/配置项后必跑**。
 
@@ -185,7 +185,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(3465/1086/153)与 README 中英文;`node scripts/check-test-counts.mjs` 静态对账(各文件声明计数互相一致),发布前 `--run` 实跑取真值。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
-`npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判)→ `npm run test:size` → `node scripts/check-test-counts.mjs`(三计数+README 徽章+CHANGELOG 对账;漂移即红)→ `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证
+`npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判,含 E1 的 Same 互赋值签名断言)→ `npm run test:types-novue`(无 vue 项目解析探针:paths 哨兵阻断,E2)→ `npm run test:size` → `node scripts/check-test-counts.mjs`(三计数+README 徽章+CHANGELOG 对账;漂移即红)→ `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证
 
 ## SDK 用法
 ```ts
@@ -212,6 +212,7 @@ createChatSdk({
 ## 编码规范
 - `<script setup lang="ts">`,Composition API;注释用中文,只解释非显而易见处
 - 新增 composable/组件/工具在 `src/index.ts` 导出并同步 `types/index.d.ts`(headless 子集同步 `types/headless.d.ts`)
+- **d.ts 类型面纪律(E 批 API 面收口 4.13.0)**:① `Middleware`/`HarnessState`/五工厂(`createAgent`/`createSubagentMiddleware`/`resolveContextOptions`/`createVfs`/`useChat`)等已是**真实签名投射** —— 新增钩子/字段必须同步投射,`npm run test:types-alignment` 的 Same 互赋值 + keyof 双向断言会红;② 两个 d.ts 用**内联 vue 桩**(`Ref`/`InjectionKey`/`DefineComponent`,文件头部),**严禁回退 `import 'vue'`**(exports-consistency 静态 grep + `test:types-novue` 哨兵探针双看守);③ 新增非 UI 导出必须**主包与 headless 双侧**同加(exports-consistency 第三向断言:UI 白名单外零容忍);④ `SubagentOptions` = createSubagentMiddleware 选项(spawn 运行时覆盖参数是 spawn 工具 zod args,勿再造同名异物类型)
 - 改构建依赖同步 `vite.config.ts` 的 external/globals
 - `.env` 的 `VITE_AI_SYSTEM_PROMPT` 写单行;**凭据只进 `.env`(gitignore),不进代码/仓库/文档**
 - **新增功能必须同步补测试**(见「新增功能测试同步约定」),无测试不予合并/发布
@@ -244,13 +245,36 @@ createChatSdk({
 - **2FA**:用 **Automation Access Token**(npmjs.com → Access Tokens → Classic → Automation),写入 `~/.npmrc`;用完即吊销
 - **发布后验证**:`npm view page-agent-sdk version` + 临时目录 `npm i` 验证可装 + CDN 可达性
 
+### 公共面变更纪律(semver,E4 API 面收口 2026-09-09)
+
+**「公共面」枚举**(凡动以下任一项都要过本纪律;bump 前逐条自查):
+1. 包导出**值**:工厂/函数/常量/类(`src/core/index.ts` + `index.headless.ts` 全集;exports-consistency 看守)
+2. 包导出**类型**:`types/index.d.ts` / `types/headless.d.ts` 声明的 interface/type(含字段级:`Middleware` 钩子签名这类成员变化也是公共面变化,E1 判例:收紧 = minor,因只「显性化本就静默失效的代码」)
+3. `ChatSdkOptions` 顶层配置项 + `capabilities` 开关 + 配置组字段(dialog/i18n/images/approval/subagent/…;types-alignment keyof 门禁看守)
+4. 事件形状:`StreamEvent`/`SdkEvent` union 成员及字段
+5. `inspect()`/`AgentInfo` 返回结构、`debugLogs` 条目结构(observable code 字符串亦然 —— 集成方按 code 分发)
+6. 行为契约语义(非类型但集成方依赖):见下「语义反转」
+
+**定级规则**(配合 checklist 第 3 步 bump):
+- **新增**(加法,不破坏存量)= minor;**修复** = patch
+- **移除/改名公共面任一项** = major;**收紧类型**(可选字段变必填、any 变具体)= minor(先例 4.13.0 Middleware);**放宽** = patch
+- **语义反转**(行为意义颠倒而签名不变)= major。判例:4.1.0 `skillHostScript` 的 `exec.context:'host'` 残值落 sandbox 执行(宿主全权 → 沙箱),签名零变化但安全语义反转 —— 此形态最易漏网,**「移除才 breaking」的心智模型不够**,变更评审须显式问「现有传值的行为意义变了吗」
+- **@deprecated 窗口**:计划移除的公共项,先在**前一 minor** 的 d.ts JSDoc 标 `@deprecated`(附替代方案),下一 major 才物理移除;残键静默忽略不算完成 deprecation(仍须 CHANGELOG 明示)
+
+**「三版零调用」证据纪律**(下线能力/工具/配置的依据声明):
+- 合法证据源 = **自家真 LLM 回归基线**(`tests/runtime/real-llm-baseline.json` 调用计数,`--baseline-diff` 可复核)+ **e2e 断言计数**(`tests/e2e/` 全绿 = 内部面无依赖)
+- **不得声称第三方遥测/用户数据**(没有这数据源;写出来就是虚构)
+- 声明模板:「真 LLM 基线连续 N 版 0 调用 + e2e 全绿(内部面零依赖)」;不满足就别下线,走 @deprecated 窗口
+
+**依赖事实**:`@langchain/openai` 为**事实必需依赖**(三处静态 import:constructLlm/proxyLlm/createAgent 兜底),optional peer 化已评估**否决**(Anthropic-only 用户加载即崩 + esm.sh 路径断;详见 openspec/deferred.md 2026-09-09 登记条目)——文档表述勿写「可选依赖」。
+
 ### 发布 checklist(代码 → 文档 → git → npm)
 
 > ⚠️ **发布触发约定**:不要在修 bug / 加功能后自动发布。每次 `git commit` 后**停下来询问用户「是否发布」**,由用户决定。仅在用户明确说「发布」/「publish」/「推上去」等时执行。
 
 1. **develop 开发**:新功能/修 bug 在 `develop`(在 master 先 checkout);改 `src/` → 同步 `types/index.d.ts`(手动维护)→ `src/core/index.ts` 导出
 2. **更新中英文文档**(同步勿漏单边):`README.md`(英)/`README.zh-CN.md`(中)/`doc/README.md`+`doc/README.en.md`/`doc/usage-guide.md`+`.en`/`CLAUDE.md`(内部);**`CHANGELOG.md` 补本次版本条目**(Keep a Changelog 风格,新版本段置 [Unreleased] 下;Added/Changed/Fixed/Removed 分类);**核对 `openspec/deferred.md`**(已实施归档的 change 从暂缓表移除/标 ✅,新增 deferred 残项登记,避免索引陈旧失真)
-3. **bump**:`npm version patch|minor|major --no-git-tag-version`(新 API minor/破坏 major/修复 patch;**package-lock.json 一并 commit**)
+3. **bump**:`npm version patch|minor|major --no-git-tag-version`(定级先过「公共面变更纪律」自查;**package-lock.json 一并 commit**)
 4. **门禁**:按「发布前必跑顺序」全绿
 5. **提交**:`git add -A && git commit -m "feat/fix/docs: ..."`
 6. **推双远程**:`git checkout master` → `./scripts/publish-github.sh "release x.x.x: 一句话总结"`(要求工作区干净;完成后切回 develop)

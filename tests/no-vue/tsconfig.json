@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ESNext",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": false,
+    "paths": {
+      "vue": [
+        "./__no_vue__.ts"
+      ]
+    }
+  },
+  "include": [
+    "probe.ts",
+    "../../types/index.d.ts",
+    "../../types/headless.d.ts",
+    "__no_vue__.ts"
+  ]
+}

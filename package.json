@@ -1,6 +1,6 @@
 {
   "name": "page-agent-sdk",
-  "version": "4.12.0",
+  "version": "4.13.0",
   "type": "module",
   "description": "AI agent SDK for web pages — embed a chat assistant that edits page data via schema-validated tools. A lighter, framework-agnostic alternative to CopilotKit/LangChain for in-page JSON-editing agents. Vue-bundled; works with DeepSeek, OpenAI, MCP.",
   "main": "./dist/page-agent-sdk.umd.cjs",
@@ -63,6 +63,7 @@
     "test:exports": "node tests/exports-consistency.mjs",
     "test:types": "tsc --noEmit -p tsconfig.test.json",
     "test:types-alignment": "tsc --noEmit -p tsconfig.types-alignment.json",
+    "test:types-novue": "tsc --noEmit -p tests/no-vue/tsconfig.json",
     "test:size": "node tests/size-check.mjs",
     "test:browser": "playwright test",
     "test:browser:ui": "playwright test --ui",

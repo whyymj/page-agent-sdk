@@ -19,7 +19,7 @@ export { z } from 'zod'
 // 代理连接模块(防 apiKey 泄露:proxy 代理模式 / direct 直连模式)
 export { createProxyLlm } from './llm/proxyLlm'
 export type { ProxyLlmMode, ProxyLlmOptions } from './llm/proxyLlm'
-export { constructLlmFromConfig, constructOpenLlmSync } from './llm/constructLlm'
+export { constructLlmFromConfig, constructOpenLlmSync, normalizeBaseUrl, stripStainlessFetch } from './llm/constructLlm'
 export type { ConstructOpts } from './llm/constructLlm'
 export { extractTextDelta, extractReasoningDelta, extractUsage, normalizeUsage } from './utils/contentParts'
 // SDK 命令式入口(headless:不注入 mountChatDialog → 不含 UI)
@@ -30,8 +30,8 @@ export function createChatSdk(options: ChatSdkOptions): ChatSdk {
 }
 export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict, DialogConfig, SystemAugmentContext } from './sdk/createChatSdk'
 // system prompt 构建
-export { buildSystemPrompt, buildDataPrompt, DEFAULT_SYSTEM_PROMPT } from './sdk/promptBuilder'
-export { resolveContextOptions, type ContextPreset, CONTEXT_PRESETS } from './sdk/contextPreset'
+export { buildSystemPrompt, buildDataPrompt, DEFAULT_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT_EN } from './sdk/promptBuilder'
+export { resolveContextOptions, type ContextPreset, type ContextOptionsInput, CONTEXT_PRESETS } from './sdk/contextPreset'
 // capabilities 能力开关注册表 + 单一解析
 export { resolveCapabilities, CAPABILITIES, type Capability, type CapabilityFlags, type ResolvedCapabilities } from './capabilities'
 export { defineTool } from './sdk/defineTool'
@@ -43,15 +43,15 @@ export type { SchemaHintOptions } from './presets'
 export { connectMcp, extractText } from './mcp/client'
 export type { McpServerConfig, McpTransport, McpConnection } from './mcp/client'
 // harness 核心 + 中间件契约
-export { createAgent, detectGarbledToolCall } from './harness/createAgent'
-export type { CreateAgentOptions, DebugLog } from './harness/createAgent'
-export type { Middleware, ModelRequest, ModelResponse, ToolCallContext, StateUpdate } from './harness/middleware'
+export { createAgent, detectGarbledToolCall, detectTransitionalReply, sanitizeGarbledContent } from './harness/createAgent'
+export type { CreateAgentOptions, DebugLog, AgentInstance } from './harness/createAgent'
+export type { Middleware, ModelRequest, ModelResponse, ToolCallContext, StateUpdate, ToolExecResult, BeforeReturnContext, BeforeReturnHook } from './harness/middleware'
 export { createSubagentMiddleware, createSubagentsMiddleware, createSubagentTracker } from './harness/subagent'
 export type { SubagentOptions, SubagentLlmConfig, SubagentConfig, SubagentsController, SubagentStep, SubagentRunState, SubagentTracker } from './harness/subagent'
 // 能力包(专用子 agent 工厂):RAG 多源检索(createRagSubagent)+ HTML 代码组件生成(createHtmlSubagent)
 export { createRagSubagent } from './sdk/ragSubagent'
 export type { RagHit, RagRetrieveOptions, RagRetriever, RagLoader, CreateRagSubagentOptions } from './sdk/ragSubagent'
-export { createHtmlSubagent, createHtmlFormatCheck, createCraftNoteCheck } from './sdk/htmlSubagent'
+export { createHtmlSubagent, createHtmlFormatCheck, createCraftNoteCheck, htmlFragmentSkill, buildHtmlFragmentSkill } from './sdk/htmlSubagent'
 export type { CreateHtmlSubagentOptions, HtmlFormatCheckOptions } from './sdk/htmlSubagent'
 export { createHtmlRenderCheck, composeStructureThenRender, buildSandboxSrcdoc, buildCollectorJs, normalizeRenderResult, renderInSandbox, getSandboxLifecycle } from './sdk/htmlRenderCheck'
 // eval-toolkit(真 LLM 回归判定核,纯函数/零浏览器依赖):idle 状态机 + harness + 基线 diff —— 集成方自跑升级前回归(server-companion 同款双端可用)
@@ -95,7 +95,7 @@ export type { SandboxResult } from './tools/sandbox'
 export {
   UNSAFE_KEYS, isUnsafePath, safeMerge, getByPath, setByPath, deleteByPath,
   deepClone, maybeParseValue, projectFields, limitDepth, safeStringify, hashValue, watchFieldsHash,
-  applyPatchToClone, applyPatchToLive, restoreLive, restoreInPlace, diffObjects, findStrippedKeys,
+  applyPatchToClone, applyPatchToLive, moveByPath, restoreLive, restoreInPlace, diffObjects, findStrippedKeys,
 } from './tools/jsonUtils'
 export type { EditOp } from './tools/jsonUtils'
 // schema 白名单投影纯函数
@@ -103,7 +103,7 @@ export { getSchemaTopKeys, isPathAllowed, unwrapSchema, getSchemaAtPath, project
 export type { SchemaNodeDesc } from './tools/schemaUtils'
 // 上下文索引纯函数
 export { STOP_WORDS, tokenize, estimateMessageTokens, estimateRoundTokens, indexSummarize, recallRounds, shouldTriggerCompression, resolvePromptSoftCap, SOFT_CAP_MIN_WINDOW, DEFAULT_PROMPT_SOFT_CAP } from './composables/contextIndex'
-export { CompressDecisionSchema, type CompressDecision } from './sdk/compressDecision'
+export { CompressDecisionSchema, type CompressDecision, type CompressDecisionInput } from './sdk/compressDecision'
 // LLM 解析
 export { isChatModel, resolveLlm, deriveTitle } from './sdk/llmResolver'
 // 乐观锁冲突管理器(headless 自建冲突 UI 可复用)
@@ -127,7 +127,7 @@ export { fetchTools, defineDataToolset, selectBuiltinTools, domToolsStatic } fro
 export { createUsageHintsMiddleware } from './harness/usageHints'
 export type { PermissionRule, PermissionOp } from './harness/permissions'
 // 虚拟工作区
-export { createVfs } from './backends/vfs'
+export { createVfs, type VfsOptions, type VfsStore, type VfsPersist, type VfsPoolKey } from './backends/vfs'
 // 持久化存储(IndexedDB + 多 agent 隔离 + 全局配额/LRU 淘汰)
 export { createSessionStore, createSessionStoreWithBackend, createMemoryBackend, createWebStorageBackend, isQuotaError } from './backends/storage'
 export type { StorageConfig, StorageBackendType, SessionStore, SessionMeta, SessionSnapshot, StorageEvent, StorageBackend } from './backends/storage'
@@ -135,9 +135,10 @@ export { createSkillStore } from './backends/skillStore'
 export type { SkillStore, SkillStoreConfig, PersistedSkill } from './backends/skillStore'
 // 通用消息 / 上下文类型
 export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, SdkEvent, SdkEventHandler, TokenUsage, ToolStep, ToolStepView, ToolStepViewFn, BatchResult, BatchProgress, AgentImage, ImagesConfig } from './types'
-export type { Focus } from './harness/state'
+export type { Focus, Mission, WorkingMemory, HarnessState, Todo, TodoStatus, VfsFile, SkillMeta, SummarizationEvent, LoopProgress } from './harness/state'
 export type { AgentInfo, ToolInfo, SkillInfo, DataInfo, SubagentInfo } from './types'
 export type { ContextManagerOptions, CompressionStats } from './composables/useContextManager'
+export type { SummarizationOptions } from './harness/summarization'
 export { resolveModelCaps, estimateTokens, offloadThresholdChars, offloadPassThroughChars, MIN_CONTEXT_WINDOW, tableMaxOutputTokens, lowCapsHint, LOW_CAPS_HINT_BASELINE } from './utils/modelCaps'
 export type { ModelCaps } from './utils/modelCaps'
 export { copyText } from './utils/clipboard'
@@ -146,4 +147,4 @@ export { createSerialRunner } from './utils/serialRunner'
 // headless 保留这些 API(无 UI 组件依赖);仅不导出 13 个 .vue 组件
 export { createChatContext, chatContextKey, useChatContext } from './composables/chatContext'
 export type { ChatContext, ChatContextOptions } from './composables/chatContext'
-export { useChat } from './composables/useChat'
+export { useChat, type UseChatOptions, type UseChatReturn, type PendingApproval } from './composables/useChat'

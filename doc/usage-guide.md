@@ -63,6 +63,10 @@ npm install page-agent-sdk
 npm install zod @langchain/openai @langchain/core
 ```
 
+> **依赖说明**:`@langchain/openai` 是**事实必需依赖**(SDK 三处静态引用:LLM 构造/代理/兜底,即便只用 Anthropic 协议也会加载)——optional peer 化已评估并否决,安装清单勿省它。`@langchain/anthropic`(Anthropic 协议,动态 import)与 `@modelcontextprotocol/sdk`(MCP,动态 import)才是真可选。
+
+> **vue 类型桩说明(4.13.0 起)**:SDK 的类型声明不再 `import 'vue'`(未装 vue 的项目也能完整解析),`Ref<T>` 用内联桩 `{ value: T }`。真 vue 项目里,把 SDK 返回的 ref 字段传给 vue 的 `watch`/`computed` 时建议用 getter 形态(`watch(() => sdk.sessions.value, …)` 或 `computed(() => useChat().queuedTasks.value)`)—— 桩 `{value:T}` 可接收真 ref,但反向赋值给 vue 品牌化的 `Ref` 类型会编译报错(运行时零影响)。
+
 ```ts
 import { createChatSdk, z } from 'page-agent-sdk'
 ```

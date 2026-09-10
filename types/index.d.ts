@@ -1,4 +1,11 @@
-import { DefineComponent, InjectionKey, Ref } from 'vue';
+// ===== vue 类型内联桩(E2 API 面收口,2026-09-09 audit-remediation)=====
+// d.ts 不再 import 'vue':未装 vue 的 TS 项目(纯 headless 集成)也能完整解析本声明文件,Ref 字段不再退化为 error type。
+// 桩形状与 vue 3.x 公开类型结构兼容(Ref = { value };InjectionKey = symbol 接口,与 vue 源码同式;DefineComponent = 构造器形态)。
+// 已知限制:真 vue 项目把 ChatDialog 等直接塞进 SFC components:{} 时,vue-tsc 期望真 DefineComponent —— SDK 定位
+// mount() 挂载式对话框(框架无关),直接组件复用是次级路径;需要时集成方自行 as 断言。详见 usage-guide 依赖说明。
+type Ref<T = any> = { value: T };
+type InjectionKey<T> = symbol & { __pgInjType?: T };
+type DefineComponent<P = any> = { new (...args: any[]): { $props?: P; [key: string]: any } };
 export { z } from 'zod';
 
 // 代理连接模块(防 apiKey 泄露:proxy 代理模式 / direct 直连模式)
@@ -152,13 +159,15 @@ export interface AgentState {
   error: string | null;
 }
 
+/** 流式事件,由 Agent 在流式生成过程中逐个抛出(与 src/core/types 同步;approval_request 仅流内,不进 onEvent) */
 export type StreamEvent =
   | { type: 'round_start'; round: number }
   | { type: 'reasoning'; delta: string }
   | { type: 'text'; delta: string }
-  | { type: 'tool_call'; name: string; args: any }
-  | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error' }
-  | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result'; name: string; args?: any; result?: string; status?: 'done' | 'error' }
+  | { type: 'tool_call'; name: string; args: any; id?: string }
+  | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error'; durationMs?: number; id?: string }
+  | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result' | 'reasoning'; name: string; args?: any; result?: string; status?: 'done' | 'error'; delta?: string; toolCallId?: string }
+  | { type: 'approval_request'; toolName: string; args: any; resolve: (approved: boolean | string) => void; hold?: () => void; preview?: ApprovalWritePreview }
   | { type: 'done'; content: string };
 
 export type StreamHandler = (event: StreamEvent) => void;
@@ -174,7 +183,7 @@ export type SdkEvent =
   | { type: 'text'; delta: string }
   | { type: 'tool_call'; name: string; args: any; id?: string }
   | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error'; durationMs?: number; id?: string }
-  | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result'; name: string; args?: any; result?: string; status?: 'done' | 'error'; /** 关联主循环工具调用 id(并行双委派各归各 UI step) */ toolCallId?: string }
+  | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result' | 'reasoning'; name: string; args?: any; result?: string; status?: 'done' | 'error'; delta?: string; /** 关联主循环工具调用 id(并行双委派各归各 UI step) */ toolCallId?: string }
   | { type: 'done'; content: string }
   | { type: 'data_change'; operation: 'set' | 'edit' | 'delete' | 'restore'; value?: unknown }
   | { type: 'message_update'; count: number }
@@ -226,6 +235,8 @@ export interface DebugLog {
   timestamp: number;
   type: 'context' | 'llm_request' | 'llm_response' | 'tool_call' | 'tool_result' | 'error' | 'middleware';
   data: any;
+  /** 日志来源(主 agent 省;子 agent 转发时为 '子:label',便于区分) */
+  source?: string;
 }
 
 /** ChatDialog 区块显隐控制(chatdialog-component-split):键=区块,false 关闭整块(含 slot);默认 undefined=全开 */
@@ -723,8 +734,8 @@ export interface ContextSnapshot {
   thresholdRatio: number;
   /** 分类明细(按 tokens 降序) */
   categories: ContextCategory[];
-  /** 最近一次压缩统计(复用 state.lastCompression) */
-  compression?: { triggered: boolean; roundsTotal: number; roundsSummarized: number; roundsRecalled: number; originalMessages: number; compressedMessages: number; strategy: string };
+  /** 最近一次压缩统计(直接引用 state.lastCompression,非新增写入) */
+  compression?: CompressionStats;
 }
 /** analyzeContext 选项(context-inspector) */
 export interface AnalyzeContextOptions {
@@ -813,7 +824,62 @@ export declare function useChatContext(): ChatContext;
 export declare const MessageContent: DefineComponent<any>;
 export declare const CodePreview: DefineComponent<any>;
 export declare const SkillPanel: DefineComponent<any>;
-export declare function useChat(opts?: any): any;
+/** useChat 选项(自定义 fetcher/持久化回调/共享 messages 引用;E1 API 面收口,与 src composables/useChat 对齐) */
+export interface UseChatOptions {
+  fetchResponse?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<string>;
+  fetchStream?: (messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal) => Promise<string>;
+  /** 外部共享的消息数组(持久化恢复时传入,与父级共用同一响应式引用) */
+  messages?: AgentMessage[];
+  /** 一轮对话完成后回调(用于持久化;可返回 Promise,sendMessage 会 await 确保落盘后再关 loading) */
+  onPersist?: (messages: AgentMessage[]) => void | Promise<void>;
+  /** 清空对话时回调(用于新建会话) */
+  onClear?: () => void;
+  /** stop() 清空排队任务时回调(丢弃条数与内容由消费方记日志,防无声丢失) */
+  onQueuedCleared?: (dropped: string[]) => void;
+  /** regenerate 前回调(清代码资产复用缓存,强制子 agent 重新生成而非复用工作副本) */
+  onBeforeRegenerate?: () => void;
+  /** 取当前实时焦点(排队任务开始执行时快照进 user 消息;与 invoke-freeze 生效口径一致) */
+  getFocuses?: () => Focus[];
+}
+/** 挂起的审批(approval 中间件 ask-first;UI 据此渲染审批条,resolveApproval 收口) */
+export interface PendingApproval {
+  toolName: string;
+  args: any;
+  resolve: (approved: boolean | string) => void;
+  /** write 审批 diff 预览(approval_request 载荷透传;无则 undefined 走 args JSON 兜底呈现) */
+  preview?: ApprovalWritePreview;
+}
+/** useChat 返回(对话状态 + 操作;内置 ChatDialog 消费,自建 UI 可直接用) */
+export interface UseChatReturn {
+  /** 对话状态(messages/loading/error,reactive) */
+  state: AgentState;
+  /** 消息列表容器 DOM 引用(自动滚动) */
+  scrollContainer: Ref<HTMLElement | null>;
+  /** 挂起的审批 */
+  pendingApproval: Ref<PendingApproval | null>;
+  /** 排队待发的任务内容(生成中再发 → 入队显示在排队区) */
+  queuedTasks: Ref<string[]>;
+  /** 发送(生成中再发 → 入排队区;images 需主模型多模态或 images.describe 配置,否则拒绝并 emit 结构化错误不静默丢图) */
+  sendMessage(content: string, focuses?: Focus[], images?: AgentImage[]): Promise<void>;
+  /** 手动撤销排队任务 */
+  removeQueuedTask(idx: number): void;
+  /** 清空对话(onClear 回调) */
+  clearMessages(): void;
+  /** 停止当前生成(abort 保留 partial + 清排队) */
+  stop(): void;
+  /** 重置(state 清空 + pendingApproval 收口) */
+  reset(): void;
+  /** 重试失败轮(移除失败 user/assistant 占位后重发) */
+  retry(): Promise<void>;
+  /** 重新生成最后一轮(onBeforeRegenerate 清复用缓存) */
+  regenerate(): Promise<void>;
+  /** 审批响应(true/false 或 RHC 方案 id 字符串) */
+  resolveApproval(approved: boolean | string): void;
+  /** 滚动绑定(保留给 @scroll;sticky 由 onWheel 管) */
+  onScroll(): void;
+  onWheel(e: WheelEvent): void;
+}
+export declare function useChat(opts?: UseChatOptions): UseChatReturn;
 /** 单代码块超过此字符数跳过 hljs 高亮(转义直出),防巨代码块单帧卡顿(P1-26 尺寸闸) */
 export declare const HLJS_BLOCK_MAX_CHARS: number;
 /** markdown → 未净化 HTML(marked + 代码块渲染,含 hljs 尺寸闸;**不含** DOMPurify;⚠️ 勿直接 v-html)。P1-26 抽离可单测 */
@@ -1242,7 +1308,7 @@ export interface ChatSdkOptions {
   maxRetries?: number;
   /** LLM 流停滞看门狗(fix-hang-and-feedback P1-7):chunk 间隔(含等首个)超此 ms → 中断抛错防 loading 永转。默认 90s;0 = 关闭 */
   streamStallMs?: number;
-  /** 单次模型调用流总时长上限:防空转帧黑洞(keepalive 空转不断喂饱间隔看门狗,超限 → StreamMaxDurationError,重委派/重发即自愈)。默认 600s;0 = 关闭 */
+  /** 单次模型调用流总时长上限:防空转帧黑洞(keepalive 空转不断喂饱间隔看门狗,超限 → StreamMaxDurationError,重委派/重发即自愈)。默认 1800s(2026-08-28 抬升:100K+ 输出长生成需 20min+,600s 掐死合法长生成;空转仍由 stall 90s 主防);0 = 关闭 */
   streamMaxDurationMs?: number;
   /**
    * per-tool 看门狗:单工具执行超此 ms → 放弃等待,recoverable 错误结果回灌自纠(防集成方工具永不 settle 拖死整轮:loading 永转 + stop 无效)。只对集成方注入工具生效(defineTool / actions / skill 工具工厂 / rag retriever);内置/MCP/委派与 conflict ask 挂起是设计内等待,豁免。默认 120s;0 = 关闭
@@ -1428,7 +1494,7 @@ export interface ChatSdk {
   /** 列出当前 agent 的所有历史会话(供「历史列表」UI;storage 未开启 → []) */
   listSessions(): Promise<SessionMeta[]>;
   /** 历史会话列表(响应式;switchSession/deleteSession/onClear/init 后自动 refresh;直接消费无需手动 listSessions/refresh/hook) */
-  readonly sessions: import('vue').Ref<SessionMeta[]>;
+  readonly sessions: Ref<SessionMeta[]>;
   /** 删除指定历史会话;不可删除当前会话(删当前请先 switchSession 切走);storage 未开启 → no-op + warn */
   deleteSession(sessionId: string): Promise<void>;
   /** 当前会话 id(switchSession/onClear 后实时反映;供历史列表高亮当前项) */
@@ -1733,7 +1799,7 @@ export declare function resolveLlm(options: any): { modelCaps: any; summaryLlmIn
 export declare function deriveTitle(msgs: AgentMessage[]): string | undefined;
 // ============ 乐观锁冲突管理器(conflictManager,refactor-module-extraction 期二 从 createChatSdk 抽离)============
 export interface ConflictManager {
-  pendingConflict: import('vue').Ref<any | null>;
+  pendingConflict: Ref<any | null>;
   set(info: any): Promise<any>;
   resolve(action: any): void;
 }
@@ -1851,10 +1917,175 @@ export declare const domInspectSkill: SkillSpec;
 export declare const fetchTools: any[];
 export declare function defineDataToolset(config: DataConfig, opts?: DataOpsOptions): any[];
 export declare function defineSkill(spec: SkillSpec): SkillSpec;
-export declare function createAgent(options: any): any;
+/** createAgent 选项(ReAct 循环 + 中间件 harness;createChatSdk 之下的层,集成方可直接用;E1 API 面收口) */
+export interface CreateAgentOptions {
+  /** 预构造的 LLM 实例(任意 provider);提供则优先于 apiKey/model 配置 */
+  llm?: import('@langchain/core/language_models/chat_models').BaseChatModel;
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  /** 集成方显式声明模型上下文窗口(token);缺省按 model 名查表,再缺省 32K。影响 offload 阈值与压缩触发 */
+  contextWindow?: number;
+  /** 集成方显式声明模型最大输出(token);缺省按 model 名查表,再缺省 4K。maxTokens 未传时作其缺省 */
+  maxOutputTokens?: number;
+  /** 透传 modelKwargs:额外请求 body 参数(如 deepseek thinking)。仅按配置构造时生效 */
+  extraBody?: Record<string, any>;
+  /** 透传 configuration 额外字段(headers/timeout/customFetch),与 baseUrl 合并。仅按配置构造时生效 */
+  extraConfig?: Record<string, any>;
+  systemPrompt?: string;
+  /** 用户自定义工具(与中间件贡献的工具合并) */
+  tools?: import('@langchain/core/tools').StructuredToolInterface[];
+  /** 中间件栈(顺序:内置在前,用户在后) */
+  middleware?: Middleware[];
+  maxToolRounds?: number;
+  /** 会话是否具备子 agent 委派能力(轮次预算提醒 70% 档按此感知;false 不点名 spawn_agent 等不存在的工具) */
+  hasSubagent?: boolean;
+  /** 循环总迭代硬上限(防自纠死循环;默认 max(maxToolRounds*3, 30)) */
+  maxIterations?: number;
+  /** 模型调用失败自动重试次数(默认 2;网络/429/5xx 重试,4xx 与 abort 不重试) */
+  maxRetries?: number;
+  /** 重试退避基数 ms(默认 500,第 n 次重试等待 = base*2^n + jitter) */
+  retryDelayMs?: number;
+  /** LLM 流停滞看门狗:chunk 间隔(含等首个)超此 ms → 中断抛错。默认 90s;0 = 关闭 */
+  stallMs?: number;
+  /** 单次模型调用流总时长上限(防空转帧黑洞)。默认 1800s(100K+ 输出长生成需 20min+);0 = 关闭 */
+  streamMaxMs?: number;
+  /** per-tool 看门狗:单工具执行超此 ms → recoverable 错误回灌自纠。只对集成方注入工具生效(内置/委派/冲突挂起豁免);默认 120s;0 = 关闭 */
+  toolTimeoutMs?: number;
+  /** 同轮多个工具调用的并发上限(默认 1 = 串行);>1 时并发执行 */
+  maxParallelTools?: number;
+  /** beforeReturn 自纠上限(默认 0 = 关闭,纯放行);>0 时 agent 返回前跑 beforeReturn 钩子 */
+  maxVerifyAttempts?: number;
+  /** 单次 invoke 的 token 预算上限(0=关;超限 → 中断收口 observable,已完成部分保留) */
+  roundTokenBudget?: number;
+  /** 日志下沉:每条 debugLog 产生时回调(子 agent 经此把日志转发到主 debugLogs) */
+  onLog?: (entry: DebugLog) => void;
+  /** 子 agent 标记(子栈门禁据此豁免:子纯文本收口是正常形态) */
+  __pgIsSubagent?: boolean;
+  /** LLM 运行时切换回调(setLlm 后触发,供重解析模型能力 contextWindow/maxOutputTokens) */
+  onLlmChange?: (newLlm: import('@langchain/core/language_models/chat_models').BaseChatModel) => void;
+  /** 显式声明主模型是否多模态识图(声明 > 查表 > 缺省 false) */
+  vision?: boolean;
+  /** content parts 协议形态(默认 'openai' LangChain 标准多模态格式;'anthropic' 原生 image block) */
+  imageContentFormat?: 'openai' | 'anthropic';
+  /** 写驱动过期读失效(默认 true);false = 主/子一致关闭 */
+  staleReadInvalidation?: boolean;
+  debug?: boolean;
+}
+/** createAgent 返回实例(headless/高级集成直接驱动的面) */
+export interface AgentInstance {
+  /** 单次对话 invoke(完整 ReAct 循环,返回最终文本) */
+  invoke(messages: AgentMessage[], signal?: AbortSignal, onEvent?: StreamHandler): Promise<string>;
+  /** 流式对话(事件逐个 onEvent,返回最终文本) */
+  stream(messages: AgentMessage[], onEvent: StreamHandler, signal?: AbortSignal): Promise<string>;
+  /** 运行态快照(messages/todos/files/mission/focuses 等) */
+  getState(): HarnessState;
+  /** 全部工具(getter:setTools 后重赋值,始终取最新) */
+  readonly allTools: import('@langchain/core/tools').StructuredToolInterface[];
+  /** stale-read-invalidation 会话累计失效数 */
+  getStaleReadsInvalidated(): number;
+  /** 模型调用重试会话累计(环境故障 vs SDK 回归的第一判据) */
+  getLlmRetries(): number;
+  getLlmCallFailures(): number;
+  /** 会话切换/重置时清零(stale-read + 重试/终败三计数) */
+  resetSessionCounters(): void;
+  /** 运行时重设用户工具(与中间件贡献工具合并) */
+  setTools(userTools: import('@langchain/core/tools').StructuredToolInterface[]): void;
+  /** 运行时切换 LLM 实例(替换 + rebind + onLlmChange 回调;新模型不支持 tool calling 时退裸 llm 不崩) */
+  setLlm(newLlm: import('@langchain/core/language_models/chat_models').BaseChatModel): void;
+  /** setLlm 后回灌模型能力(contextWindow/maxOutputTokens) */
+  setModelCaps(newCaps: ModelCaps): void;
+  /** 调试日志(响应式;FIFO ≤300,单条体积守卫) */
+  debugLogs: Ref<DebugLog[]>;
+  /** 内部权威拼装的最终 system prompt(base + Σ augmentPrompt,单一真相源) */
+  getEffectiveSystemPrompt(): string;
+}
+export declare function createAgent(options: CreateAgentOptions): AgentInstance;
 /** 检测模型把工具调用写成文本(伪 XML/标签)而非标准 tool_calls 的异常格式;主循环据此回灌 feedback 自纠 */
 export declare function detectGarbledToolCall(content: string): boolean;
-export declare function createSubagentMiddleware(opts: any): any;
+/** 子 agent LLM 配置(createSubagentMiddleware/子 agent 走 LLMConfig 构造时的模型面) */
+export interface SubagentLlmConfig {
+  apiKey: string;
+  /** provider 透传:缺省 'openai';'anthropic' 子 agent 同走 Claude 原生协议(动态 import 异步构造) */
+  provider?: 'openai' | 'anthropic';
+  baseUrl?: string;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  /** 透传 openai configuration 额外字段(headers/fetch 等;子 agent 兜底构造时同主 LLM 生效) */
+  extraConfig?: Record<string, any>;
+  /** 透传 modelKwargs(如 deepseek thinking);子 agent 兜底构造时同主 LLM 生效 */
+  extraBody?: Record<string, any>;
+  /** Anthropic prompt caching(provider:'anthropic' 时经构造透传生效) */
+  cacheControl?: boolean | '5m' | '1h';
+  /** Anthropic extended thinking(provider:'anthropic');通常不手配 —— 用 thinkingMode:'deep' 自动注入 */
+  thinking?: { type: 'enabled'; budget_tokens: number };
+}
+/** createSubagentMiddleware 选项(spawn_agent 的运行时覆盖参数是 spawn 工具 zod args,非此类型) */
+export interface SubagentOptions {
+  /** 主 agent 的 LLM(配置对象或预构造实例,子 agent 复用) */
+  llm: SubagentLlmConfig | import('@langchain/core/language_models/chat_models').BaseChatModel;
+  /** 主 agent 全部工具(子 agent 按白名单筛选只读子集);支持 getter:setTools 动态加的工具对子 agent 立即可见 */
+  allTools: import('@langchain/core/tools').StructuredToolInterface[] | (() => import('@langchain/core/tools').StructuredToolInterface[]);
+  /** 子 agent 额外可用的工具名(默认仅只读主数据 + fetch) */
+  allowedTools?: string[];
+  /** 子 agent 默认身份(spawn 运行时的 role 优先;都缺省用兜底) */
+  systemPrompt?: string;
+  /** 子 agent 温度(仅 llm 配置对象时生效;覆盖主 llm 温度) */
+  temperature?: number;
+  /** 子 agent maxTokens(仅 llm 配置对象时生效;覆盖主) */
+  maxTokens?: number;
+  /** 子 agent 专属 skills(独立,不继承主 agent skills) */
+  skills?: SkillSpec[];
+  /** 子 agent 额外工具(直接进工具池,不经 allTools 白名单筛选;供预声明子 agent 的专属 tools) */
+  extraTools?: import('@langchain/core/tools').StructuredToolInterface[];
+  /** 最大递归深度(默认 1:主可 spawn,子不可再 spawn) */
+  maxDepth?: number;
+  /** spawn_agents 并发上限(默认 4) */
+  maxParallel?: number;
+  /** 子 agent 最大工具轮次(默认 6) */
+  maxToolRounds?: number;
+  /** 当前递归深度(内部用;主=0) */
+  depth?: number;
+  debug?: boolean;
+  /** 子 agent 可写路径前缀白名单(写工具包 path guard,越界 PATH_OUT_OF_SCOPE;整体 set 禁) */
+  writablePaths?: string[];
+  /** 读主 agent 全部焦点(multi-focus:子 agent 继承主焦点 → 构造 initialFocuses) */
+  getFocuses?: () => Focus[];
+  /** 取主数据 schema getter(focus 视野收敛 + path 校验用;透传主 liveData schema) */
+  getSchema?: () => import('zod').ZodType | null | undefined;
+  /** 取主数据 bind getter(focus 尾部追加分判:读数组实际长度;透传主 liveData bind) */
+  getBind?: () => unknown;
+  /** 子 agent 自定义中间件(如给规划能力);装在 skills/递归/focus 之后,对齐主「内置→用户」序 */
+  middleware?: Middleware[];
+  /** 跨轮上下文压缩;true=默认索引摘要(零 LLM),或 SummarizationOptions 自配(含 llmInvoke 升级 LLM 摘要)。不传=不装 */
+  summarization?: boolean | SummarizationOptions;
+  /** 观察层 tracker(createChatSdk 注入共享实例;记录委派 active/history)。不传=不记录 */
+  tracker?: SubagentTracker;
+  /** 子栈继承的把关中间件(主 permissions/approval 同实例;序同主栈)。不传=无 guard */
+  guardMiddleware?: Middleware[];
+  /** 主 vfs files getter(子 offload 大结果桥接进主 vfs 共享池,子 vfs_* 回读不 404)。不传=无桥接 */
+  getVfsFiles?: () => Record<string, VfsFile>;
+  /** 进入数据 scope(子 agent 委派期间 autoLock 基线归属切到子 scope,防子 read 污染主基线)。返回恢复函数 */
+  enterDataScope?: (scopeId: string) => () => void;
+  /** 退出数据 scope(委派结束清子 scope 基线条目) */
+  exitDataScope?: (scopeId: string) => void;
+  /** 子流 settle 通知(内部 per-call:use_<id> 组件锁的 release 挂此点,防超时旧 wind-down 与重委派竞态) */
+  onStreamSettled?: (p: Promise<unknown>) => void;
+  /** 子 agent LLM usage 回传(createChatSdk 累加进 core.usage)。不传=不回传 */
+  onUsage?: (u: TokenUsage) => void;
+  /** 单个子 agent 执行超时 ms(超时 abort 子流 + recoverable 回灌;0/负 = 关) */
+  timeoutMs?: number;
+  /** beforeReturn 自纠上限(默认 0 = 关闭);>0 时子 agent 返回前跑中间件 beforeReturn 钩子(如 verify 格式门禁) */
+  maxVerifyAttempts?: number;
+  /** 思考深度锁定('deep' 注入 thinking / 'simple' 剥除)。仅 LLMConfig 构造路径生效;实例路径 warn + no-op */
+  thinkingMode?: 'simple' | 'deep';
+  /** 写驱动过期读失效透传(顶层 false 必须主/子一致;未设 = 子 agent 默认 true 与主一致) */
+  staleReadInvalidation?: boolean;
+}
+export declare function createSubagentMiddleware(opts: SubagentOptions): Middleware;
 export declare function createVerifyMiddleware(opts: VerifyMiddlewareOptions): any;
 export declare function createWriteBackCheck(opts?: WriteBackCheckOptions): VerifyCheck;
 export declare function createMemoryMiddleware(memory?: string | (() => string | Promise<string>)): any;
@@ -1988,7 +2219,12 @@ export declare function agentError(severity: ErrorSeverity, message: string, cod
 
 // === 与 src/core/index.ts 导出对齐(消费者类型完整;复杂内部类型用宽松声明,消费者主要消费工厂返回值) ===
 // 上下文压缩预设
-export declare function resolveContextOptions(options: any, modelContextWindow: number): any;
+/** createChatSdk/contextPreset 的压缩配置入口形态 */
+export interface ContextOptionsInput {
+  contextPreset?: ContextPreset;
+  contextOptions?: Partial<ContextManagerOptions> | false;
+}
+export declare function resolveContextOptions(options: ContextOptionsInput, modelContextWindow: number): Partial<ContextManagerOptions>;
 export type ContextPreset = 'auto' | 'conservative' | 'aggressive' | 'complex';
 export declare const CONTEXT_PRESETS: Record<string, any>;
 
@@ -1998,13 +2234,171 @@ export declare function extractText(result: any): string;
 export type McpTransport = 'http' | 'sse' | 'websocket';
 export interface McpConnection { [k: string]: any }
 
-// harness / 中间件
-export interface CreateAgentOptions { [k: string]: any }
-export interface Middleware { name: string; [k: string]: any }
-export interface ModelRequest { [k: string]: any }
-export interface ModelResponse { [k: string]: any }
-export interface ToolCallContext { [k: string]: any }
-export interface StateUpdate { [k: string]: any }
+// ===== harness / 中间件(E1 API 面收口:真实签名投射,与 src/core/harness 逐字段对齐;types-alignment Same<> 门禁锁定) =====
+/** todo 状态 */
+export type TodoStatus = 'pending' | 'in_progress' | 'completed';
+/** 计划项(write_todos 整表替换 + update_todo 增量更新) */
+export interface Todo {
+  /** 稳定标识:write_todos 时框架按 index 生成 t-1/t-2…(LLM 也可显式传);输出必有、输入可选(向后兼容) */
+  id: string;
+  content: string;
+  status: TodoStatus;
+  /** 父 todo id(表达层级;可选) */
+  parentId?: string;
+  /** 依赖的 todo id 数组(必须先完成;渲染标 ✓/⏳) */
+  deps?: string[];
+  /** 完成标准(可选,LLM 自填) */
+  criteria?: string;
+  /** 完成证据(可选,如实际写入的 jsonPath) */
+  evidence?: string;
+}
+
+/** 虚拟工作区文件 */
+export interface VfsFile {
+  content: string;
+  mimeType?: string;
+  updatedAt: number;
+}
+
+/** skill 元数据(渐进式披露的索引层) */
+export interface SkillMeta {
+  name: string;
+  description: string;
+}
+
+/** 上下文压缩事件(cutoff-event 模式:不删消息,记录截断点 + 摘要) */
+export interface SummarizationEvent {
+  cutoffIndex: number;
+  summary: string;
+  evictedTo?: string;
+}
+
+/** 单次 invoke 的执行进度(agent 自感知预算的数据源;中间件只读勿改) */
+export interface LoopProgress {
+  /** 已消耗工具轮次 */
+  rounds: number;
+  /** 本 invoke 工具轮预算(maxToolRounds) */
+  maxToolRounds: number;
+  /** 本 invoke 累计 token 用量(每轮模型调用后累加;与 sdk.usage 会话级口径区分) */
+  invokeUsage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  /** 写工具同路径连续失败计数(path → 次数;写成功清零) */
+  writeFailures: Record<string, number>;
+  /** 预算提示是否已注入(每任务一次,防每轮复读刷存在感) */
+  budgetHinted: boolean;
+}
+
+/** Harness 运行态(中间件维护 state 字段,last-writer 合并;Deep Agents 的 agent state 同位物) */
+export interface HarnessState {
+  /** 用户层对话历史(跨轮) */
+  messages: AgentMessage[];
+  /** 计划清单(planning 中间件维护) */
+  todos: Todo[];
+  /** 内存虚拟工作区(vfs 中间件维护) */
+  files: Record<string, VfsFile>;
+  /** 已注册 skill 的索引(name + description),注入 system prompt */
+  skillsMetadata: SkillMeta[];
+  /** 已加载全文的 skill 名(避免重复加载) */
+  skillsLoaded: string[];
+  /** AGENTS.md 风格持久指令 */
+  memory: string;
+  /** 上下文压缩事件(summarization 中间件维护) */
+  summarization?: SummarizationEvent;
+  /** 最近一次跨轮压缩统计(createAgent 写入,供 DebugDrawer 可观测) */
+  lastCompression?: CompressionStats;
+  /** beforeReturn 自纠计数(达 maxVerifyAttempts 强制 return 防死循环) */
+  verifyAttempts: number;
+  /** 子 agent 标记(spawn/use 委派建的子循环置 true;主栈门禁据此豁免) */
+  __pgIsSubagent?: boolean;
+  /** 会话级任务目标锚定(mission 中间件;augmentPrompt 每轮注入,天然跨压缩) */
+  mission?: Mission;
+  /** 跨压缩工作记忆(workingMemory 中间件;pin 最近定位 path + read hash) */
+  workingMemory?: WorkingMemory;
+  /** 聚焦焦点(focus=首个兼容旧读,focuses=全量数组 multi-focus) */
+  focus?: Focus;
+  focuses?: Focus[];
+  /** 当前 invoke 的执行进度(createAgent 每轮更新) */
+  loopProgress?: LoopProgress;
+}
+
+/** 模型调用请求 */
+export interface ModelRequest {
+  messages: import('@langchain/core/messages').BaseMessage[];
+  state: HarnessState;
+}
+
+/** 模型调用响应 */
+export interface ModelResponse {
+  message: import('@langchain/core/messages').BaseMessage;
+  toolCalls: Array<{ id?: string; name: string; args: Record<string, unknown> }>;
+  content: string;
+  /** 模型流被 abort(用户停止):true 时 content 为已累积的 partial,应保留并结束本轮(不再执行工具) */
+  aborted?: boolean;
+}
+
+/** beforeReturn 钩子上下文(agent 即将返回最终结果前) */
+export interface BeforeReturnContext {
+  messages: import('@langchain/core/messages').BaseMessage[];
+  state: HarnessState;
+  response: ModelResponse;
+  /** 日志下沉:写主 debugLogs(verify 对抗审查等用它记录可观察日志) */
+  log?: (type: string, data: unknown) => void;
+}
+
+/** beforeReturn 钩子:返回 feedback 字符串 → 回灌 user 消息继续循环(自纠);null/undefined → 放行 return */
+export type BeforeReturnHook = (ctx: BeforeReturnContext) => Promise<string | null> | string | null;
+
+/** 中间件返回的 state 更新(last-writer 合并) */
+export type StateUpdate = Partial<HarnessState>;
+
+/** 工具执行结果 */
+export interface ToolExecResult {
+  content: string;
+  status: 'done' | 'error';
+}
+
+/** 工具调用上下文 */
+export interface ToolCallContext {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+  state: HarnessState;
+  /** 当前 agent 循环的 abort signal(中间件可据此感知用户停止) */
+  signal?: AbortSignal;
+  /** 主循环事件转发(供 spawn 把子 agent 进度冒泡到 UI;不进入主 LLM 上下文) */
+  emit?: (event: StreamEvent) => void;
+  /** 日志下沉(供 spawn 把子 agent 的 debugLog 转发到主;子日志带 source 标签) */
+  logSink?: (entry: any) => void;
+  /** per-call 注入 bag:中间件在 wrapToolCall 往 ctx 写键值,coreExecTool 经 RunnableConfig.configurable 透传到工具 fn 第二参 */
+  callConfig?: Record<string, unknown>;
+}
+
+/**
+ * 中间件契约(10 钩子;生命周期 before 类正序、after 类逆序、wrap 类洋葱,装载序见 doc/architecture.md §②)。
+ * ⚠️ 4.13.0 起为真实签名(原 [k:string]:any 收紧):拼错的钩子名此前运行期静默失效,现在编译期报错(揭示已坏代码)。
+ */
+export interface Middleware {
+  name: string;
+  /** 该中间件贡献的工具,合并进工具集 */
+  tools?: import('@langchain/core/tools').StructuredToolInterface[];
+  /** 追加到 system prompt 的段(每轮模型调用前收集渲染) */
+  augmentPrompt?: (state: HarnessState) => string | undefined;
+  /** 构建上下文前压缩历史消息(summarization 中间件用,链式) */
+  compressInput?: (messages: AgentMessage[]) => Promise<{ messages: AgentMessage[]; stats?: unknown }> | AgentMessage[];
+  /** agent 启动时(正序) */
+  beforeAgent?: (state: HarnessState) => StateUpdate | void | Promise<StateUpdate | void>;
+  /** 每次模型调用前(正序,同步),可更新 state(随后重渲染 system) */
+  beforeModel?: (req: ModelRequest) => StateUpdate | void;
+  /** 包裹模型调用(洋葱,可改 messages / 拦截) */
+  wrapModelCall?: (req: ModelRequest, next: (req: ModelRequest) => Promise<ModelResponse>) => Promise<ModelResponse>;
+  /** 模型返回后(逆序) */
+  afterModel?: (res: ModelResponse, state: HarnessState) => StateUpdate | void;
+  /** 包裹工具执行(洋葱) */
+  wrapToolCall?: (ctx: ToolCallContext, next: (ctx: ToolCallContext) => Promise<ToolExecResult>) => Promise<ToolExecResult>;
+  /** agent 结束时(逆序,必跑含早退路径) */
+  afterAgent?: (state: HarnessState) => StateUpdate | void | Promise<StateUpdate | void>;
+  /** agent 即将返回最终结果前(正序):feedback 触发自纠(回灌 user 消息继续循环);null 放行。受 createAgent maxVerifyAttempts 约束 */
+  beforeReturn?: BeforeReturnHook;
+}
 
 // 子 agent
 export declare function createSubagentsMiddleware(opts: any): any;
@@ -2014,17 +2408,6 @@ export interface SubagentsController {
   remove(id: string): boolean;
   get(): SubagentConfig[];
 }
-/** spawn_agent / spawn_agents 运行时选项(role/tools/writablePaths 等可运行时覆盖) */
-export interface SubagentOptions {
-  role?: string;
-  tools?: string[];
-  /** 子 agent 可写路径前缀白名单(运行时覆盖;写工具包 path guard,越界 PATH_OUT_OF_SCOPE)。subagent-writable Phase 2 */
-  writablePaths?: string[];
-  model?: string;
-  [k: string]: any;
-}
-export interface SubagentLlmConfig { [k: string]: any }
-
 // 能力包(专用子 agent 工厂):RAG 多源检索 + HTML 代码组件生成(add-capability-packs)
 export interface RagHit { content: string; source?: string; score?: number }
 export interface RagRetrieveOptions { topK?: number }
@@ -2186,11 +2569,103 @@ export interface DataAuditEntry { [k: string]: any }
 export interface DataSnapshotEntry { [k: string]: any }
 export type PermissionOp = string;
 
-// vfs
-export declare function createVfs(opts?: any): any;
+// vfs(E1 API 面收口:createVfs 真实签名 + 四池配置类型;与 src backends/vfs 对齐)
+/** vfs 持久化钩子 */
+export interface VfsPersist {
+  /** 文件变更后回调(debounce 由 createChatSdk 控制落盘) */
+  save?: (files: Record<string, VfsFile>) => void;
+}
+/** vfs 分池键(按 path 前缀路由:large_results/* / drafts/* / resources/* / 其他) */
+export type VfsPoolKey = 'largeResults' | 'drafts' | 'userFiles' | 'resources';
+/** createVfs 选项 */
+export interface VfsOptions {
+  /** 持久化钩子(可选) */
+  persist?: VfsPersist;
+  /** 工作区总内存上限(默认 8MB,OOM 兜底;四池独立上限之和可能超过,由总上限最后约束);纯内存也生效 */
+  maxBytes?: number;
+  /** 单池上限(可选,覆盖默认 largeResults=4MB / drafts=2MB / userFiles=2MB / resources=4MB);四池独立 LRU 互不挤占 */
+  poolBytes?: Partial<Record<VfsPoolKey, number>>;
+}
+/** vfs 实例(Proxy 包裹 files:变更捕获 → 记账 + LRU;读写经工具层) */
+export interface VfsStore {
+  files: Record<string, VfsFile>;
+  /** 持久化恢复:直接灌入 raw target,不触发 save(仅 persist 模式) */
+  hydrate?: (files: Record<string, VfsFile>) => void;
+  /** 立即落盘(清 debounce 窗口);pagehide 兜底用(仅 persist 模式) */
+  flush?: () => void;
+  /** 清空工作区 + 触发落盘空(新会话用,仅 persist 模式) */
+  clear?: () => void;
+  /** 是否有未捕获到 checkpoint 的写(供 checkpoint 增量 save 检查;非持久化模式也暴露) */
+  isDirty?: () => boolean;
+  /** 读后清脏标记,返回是否脏;checkpoint save 消费(脏→clone 新基线,不脏→复用上次 clone) */
+  consumeDirty?: () => boolean;
+  /** 设置被引用保护集(LRU 淘汰时跳过被消息引用的 large_results,防 vfs_read 404) */
+  setProtectedRefs?: (refs: Set<string>) => void;
+  /** path → 所属池(超池预检用) */
+  getPoolOf?: (path: string) => string;
+  /** 池上限字节(超池预检用) */
+  getPoolLimit?: (pool: string) => number;
+}
+/**
+ * 创建一个 vfs 实例。
+ * @param initialFiles 初始文件(path → content)
+ * @param opts.persist 持久化钩子;提供则用 Proxy 捕获 store.files 变更 → debounce save
+ */
+export declare function createVfs(initialFiles?: Record<string, string>, opts?: VfsOptions): VfsStore;
 
-// 上下文管理
-export interface ContextManagerOptions { [k: string]: any }
+// 上下文管理(E1 API 面收口:与 src composables/useContextManager 对齐)
+export interface ContextManagerOptions {
+  /** 滑动窗口:保留最近几轮完整对话(轮数模式用) */
+  windowRounds: number;
+  /** 超过多少轮触发摘要压缩(轮数模式用,含窗口内) */
+  summaryThresholdRounds: number;
+  /** 旧工具结果截断长度(单轮 ReAct 内) */
+  toolResultMaxChars: number;
+  /** 是否启用关键词召回相关历史 */
+  enableRecall: boolean;
+  /** 召回的最大轮次数 */
+  recallTopK: number;
+  /** 是否启用 LLM 增强摘要(否则用零成本索引摘要) */
+  enableLLMSummary: boolean;
+  /** 用于摘要的 LLM invoke 函数(可选) */
+  llmInvoke?: (prompt: string) => Promise<string>;
+  /** 模型上下文窗口(token);提供则按 token 触发压缩 + token 窗口,否则按轮数 */
+  contextWindow?: number;
+  /** 触发压缩的 token 比例(默认 0.5) */
+  summaryThresholdRatio?: number;
+  /** prompt 软上限(token,成本维度);窗口 ≥320K 未传时默认 160K;显式传 0 关闭 */
+  promptSoftCapTokens?: number;
+  /** 保留最近窗口的 token 预算比例(默认 0.4) */
+  windowRatio?: number;
+  /** 压缩时注入「当前可操作数据」快照(防 LLM 基于过时记忆操作已卸载/新增的动态组件) */
+  getRegisteredData?: () => { description: string }[];
+  /** @deprecated 旧多对象模型遗留(单对象 data 模式用 getRegisteredData);仍兼容,返回值 path 字段忽略 */
+  getRegisteredSlots?: () => { path: string; description: string }[];
+  /** 跨轮摘要时,对这些工具的步骤 result 额外保留摘要片段进 summaryMsg(防字段描述被摘要掉) */
+  preserveLastToolResults?: string[];
+}
+/** 压缩决策输入(agent-driven-compression;decideInvoke 的载荷) */
+export interface CompressDecisionInput {
+  /** 当前消息(供 inspect_context 组合 rounds + totalTokens) */
+  getMessages: () => AgentMessage[];
+  /** contextInspector 快照(可选,inspect_context 的 categories 来源) */
+  getSnapshot?: () => ContextSnapshot | undefined;
+  /** 模型上下文窗口(inspect_context occupancy + 决策 prompt) */
+  contextWindow?: number;
+  /** 压缩触发阈值比例(进 prompt 供 LLM 参考) */
+  thresholdRatio?: number;
+  /** 触发原因(进 prompt,如「token 超阈值」「轮数超阈值」) */
+  triggerReason: string;
+  /** 触发模式(决定 LLM 填 keepRounds 还是 windowRatio) */
+  triggerMode: 'token' | 'rounds';
+}
+/** summarization 中间件选项(压缩策略;Partial<ContextManagerOptions> + LLM 决策钩子) */
+export interface SummarizationOptions extends Partial<ContextManagerOptions> {
+  /** 压缩决策 invoke(agentCompression 开启时;成功 → 用决策,失败/null → 降级静态) */
+  decideInvoke?: (input: CompressDecisionInput) => Promise<CompressDecision | null>;
+  /** contextInspector 快照 getter(供 inspect_context 的 categories + decide) */
+  getSnapshot?: () => ContextSnapshot | undefined;
+}
 export interface CompressionStats {
   triggered: boolean; roundsTotal: number; roundsSummarized: number; roundsRecalled: number;
   originalMessages: number; compressedMessages: number; strategy: string;
@@ -2229,7 +2704,17 @@ export declare function lowCapsHint(model: string | undefined, caps: { contextWi
 export declare function estimateTokens(text: string): number;
 export declare function offloadThresholdChars(contextWindow: number): number;
 export declare function offloadPassThroughChars(contextWindow: number): number;
-export interface ModelCaps { [k: string]: any }
+/** 模型能力(集成方声明 > model 名查表 > 缺省) */
+export interface ModelCaps {
+  /** 模型上下文窗口(token) */
+  contextWindow: number;
+  /** 模型最大输出(token) */
+  maxOutputTokens: number;
+  /** 是否支持多模态识图:true = user 消息 images 组装 content parts 直发;缺省 false(保守,宁走旁路/报错不误发 parts 吃 400) */
+  vision?: boolean;
+  /** 是否支持思考/推理模式:true = 集成方未显式配置时默认注入 thinking(deep)保质量;缺省 false(未知模型不猜,防 400) */
+  thinking?: boolean;
+}
 
 // 剪贴板复制(clipboard API + execCommand 降级,兼容非 secure context / 旧浏览器)
 export declare function copyText(text: string): Promise<boolean>;
@@ -2294,7 +2779,7 @@ export declare function diffReport(current: Record<string, number>, baseline: Re
 /** harness 依赖的最小 sdk 面(结构子集;ChatSdk 满足 —— 直接传 sdk 即可) */
 export interface EvalSdkLike {
   messages: unknown[];
-  debugLogs: import('vue').Ref<DebugLog[]>;
+  debugLogs: Ref<DebugLog[]>;
   usage?: { prompt: number; completion: number; cacheRead?: number; cacheCreate?: number };
   inspect?: () => { subagent?: { active?: unknown[] } };
 }
