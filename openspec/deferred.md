@@ -116,6 +116,10 @@ SDK 定位是**框架无关的轻量页面 JSON 操作 Agent**(自研 Deep Agent
 
 ## 2026-08-03 新增:p2-architecture-refactor 重构子项拆出(等痛点驱动)
 
+> **2026-09-10 销账(F 批,4.14.0)**:**子项①(createChatSdk 拆分)已兑现** —— F0 前置三件(skillsMw 微修/ControllerCarrier 8 cast 清零/autoTitle 四场景 e2e)+ F1 类型段→sdk/options.ts + F2 sessionVars 收敛→sessionLifecycle.ts 八函数族 + F3 三岛(mcp/connectAll·sdk/toolAssembly·imageInput 管线);createChatSdk 由 3318 行降至约 2400 行,门禁全绿。「重启触发」中①的痛点条件随之失效。
+> **子项②维持 deferred**(createAgent 回归中间件契约:零回归证据原则不变,动 ReAct 主循环无痛点不做)。
+> **子项③标废弃**:read/get_data 合并已被 4.9.0 legacy-crud-dedup 消费(get/set/edit/delete_data 四件移除,read 单入口),残项不存在。
+
 > `p2-architecture-refactor` 的 ①(createChatSdk 1787 行拆分)+ ②(createAgent 回归中间件契约)+ ③剩余(read/get_data 合并 + writeSlot 拆)从原 change 拆出暂缓。原 change 已归档(实际完成 ③ 装饰器 + ④ capabilities 注册表 + ⑤ types 防漂移),底稿见 `changes/archive/2026-08-02-p2-architecture-refactor/`。
 
 **拆出理由(基于代码核实)**:

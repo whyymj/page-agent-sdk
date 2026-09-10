@@ -19,7 +19,7 @@ import type { StructuredToolInterface } from '@langchain/core/tools'
 import { createAgent } from './createAgent'
 import { decorateModelUnavailable } from './errors'
 import { createSkillsMiddleware, type SkillSpec } from './skills'
-import type { Middleware } from './middleware'
+import type { Middleware , ControllerCarrier, ReconfigureHookCarrier} from './middleware'
 import { runPool } from '../utils/pool'
 import type { StreamEvent, TokenUsage } from '../types'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
@@ -859,7 +859,7 @@ export interface SubagentsController {
 export function createSubagentsMiddleware(
   subagents: SubagentConfig[],
   main: SubagentsMiddlewareOptions,
-): Middleware & { controller: SubagentsController } {
+): Middleware & ControllerCarrier<SubagentsController> & ReconfigureHookCarrier {
   // 当前主循环 signal/emit/logSink(供 use_<id> 继承/转发子进度)。
   // CA 并发修复(per-call 通道):优先工具 fn 第二参 config.configurable.__pgSubagentCall(并发各持独立值),
   // 闭包单变量降 fallback —— 同 spawn 侧 callCtxOf 模式
@@ -1061,5 +1061,5 @@ export function createSubagentsMiddleware(
     value: (fn: (() => void) | undefined) => { onReconfigure = fn },
     enumerable: false,
   })
-  return mw as Middleware & { controller: SubagentsController }
+  return mw as Middleware & ControllerCarrier<SubagentsController> & ReconfigureHookCarrier
 }

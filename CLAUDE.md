@@ -30,8 +30,8 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,3465 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,1094 项;tests/e2e/<module>.mjs 按模块拆分)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,3473 项断言)
+npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,1103 项;tests/e2e/<module>.mjs 按模块拆分)
 npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,153 项;tests/browser/<demo>.spec.ts)
 npm run test:node-real  # node 真 LLM 冒烟(server-companion P0:headless dist 双协议 read→write→restore;无 key 自动 skip)
 ```
@@ -50,9 +50,9 @@ src/core/                       # 通用 SDK 核心(框架无关)
 │   ├── (骨架) createAgent/middleware/state/errors/retry/budget/pool/serialRunner/checkpoint/humanConfirm
 │   └── (能力) todos/skills/memory/permissions/summarization/subagent/verify/usageHints/focus/mission/workingMemory/resourcesPin/contextInspector
 ├── sdk/                        # createChatSdk 入口(_createChatSdk 内部工厂 + mountChatDialog 可注入 UI,依赖反转)
-│   └── defineTool/promptBuilder/llmResolver/conflictManager/optionsResolver/events/contextPreset/ragSubagent/htmlSubagent/toolRegistry
+│   └── defineTool/promptBuilder/llmResolver/conflictManager/optionsResolver/events/contextPreset/ragSubagent/htmlSubagent/toolRegistry/options(类型段 F1)/sessionLifecycle(会话族 F2)/toolAssembly(装配岛 F3)
 ├── tools/                      # 纯函数:dataOps/fetchDoc/dataSlotQuery/jsonUtils/schemaUtils/resources/sandbox/domTool/envTool/htmlValidate/toolError
-├── toolsets.ts · backends/{vfs,storage,skillStore}.ts · mcp/client.ts · llm/{proxyLlm,constructLlm}.ts
+├── toolsets.ts · backends/{vfs,storage,skillStore}.ts · mcp/{client,connectAll}.ts(MCP 全连接编排 F3) · llm/{proxyLlm,constructLlm}.ts
 ├── composables/                # useChat/useContextManager/useMarkdown/contextIndex/chatContext(provide/inject)
 ├── components/                 # ChatDialog(组合容器:provide ctx + 9 区块 slot)+ MessageContent/CodePreview/DebugDrawer/ChatHeader/ChatInput/QueuedBar/ApprovalBar/ConflictBar/FocusBar/SkillPanel/message/*
 └── presets.ts · types/index.ts · index.ts(主入口,注入 UI)· index.headless.ts(headless)
@@ -137,15 +137,15 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test    # tsx 跑 src/core/__tests__/selftest.ts,3465 项断言
+npm test    # tsx 跑 src/core/__tests__/selftest.ts,3473 项断言
 ```
-按模块拆分:`src/core/__tests__/modules/sec-NN.ts`(119 个模块)各导出 `run(ctx)`,runner 汇总;共享 `TestCtx` 在 `modules/_ctx.ts`。tsx 跑源码(不经构建),触不到 createChatSdk 顶层 API 作用域。**改任何核心模块后必跑**。
+按模块拆分:`src/core/__tests__/modules/sec-NN.ts`(121 个模块)各导出 `run(ctx)`,runner 汇总;共享 `TestCtx` 在 `modules/_ctx.ts`。tsx 跑源码(不经构建),触不到 createChatSdk 顶层 API 作用域。**改任何核心模块后必跑**。
 
 #### 2. 集成层 e2e(改 createChatSdk 顶层 API 后必跑)
 ```bash
-npm run build && npm run test:e2e    # node 跑 dist 产物,1094 项
+npm run build && npm run test:e2e    # node 跑 dist 产物,1103 项
 ```
-模块在 `tests/e2e/<module>.mjs`(33 个:systemprompt/dynamic-register/inspect/subagents/events/storage/exports/data-slots/presets/boundary/custom-injection/conflict/automation/llm-provider/focus/images/resources/agent-compression/headless-subpath/legacy-subpath/capability-packs/authorization-surface/hang-feedback/main-sub-isolation/session-integrity/context-economy/mcp/diagnostics/instruction-adherence/thinking-mode/eval-toolkit/evidence-audit/stale-read-invalidation),共享 stub 在 `tests/e2e/_helpers.mjs`(StubChatModel 在 `_stub-model.mjs`,响应队列驱动真 ReAct)。覆盖顶层 return 对象作用域。**改 createChatSdk 返回对象、AgentCore 接口、动态注册 API、默认提示词、新增导出/配置项后必跑**。
+模块在 `tests/e2e/<module>.mjs`(34 个:systemprompt/dynamic-register/inspect/subagents/events/storage/exports/data-slots/presets/boundary/custom-injection/conflict/automation/llm-provider/focus/images/resources/agent-compression/headless-subpath/legacy-subpath/capability-packs/authorization-surface/hang-feedback/main-sub-isolation/session-integrity/context-economy/mcp/diagnostics/instruction-adherence/thinking-mode/eval-toolkit/evidence-audit/stale-read-invalidation/auto-title),共享 stub 在 `tests/e2e/_helpers.mjs`(StubChatModel 在 `_stub-model.mjs`,响应队列驱动真 ReAct)。覆盖顶层 return 对象作用域。**改 createChatSdk 返回对象、AgentCore 接口、动态注册 API、默认提示词、新增导出/配置项后必跑**。
 
 #### 2.5 浏览器 E2E(改 UI/ChatDialog/dataOps 后必跑)
 ```bash
@@ -182,7 +182,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(3465/1086/153)与 README 中英文;`node scripts/check-test-counts.mjs` 静态对账(各文件声明计数互相一致),发布前 `--run` 实跑取真值。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(3473/1103/153)与 README 中英文;`node scripts/check-test-counts.mjs` 静态对账(各文件声明计数互相一致),发布前 `--run` 实跑取真值。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判,含 E1 的 Same 互赋值签名断言)→ `npm run test:types-novue`(无 vue 项目解析探针:paths 哨兵阻断,E2)→ `npm run test:size` → `node scripts/check-test-counts.mjs`(三计数+README 徽章+CHANGELOG 对账;漂移即红)→ `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证

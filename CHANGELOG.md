@@ -2,10 +2,27 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.14.0] - 2026-09-10
+
+> 六路审计整改 Batch F(createChatSdk 三阶段拆分)。**纯内部重构,运行时行为零变化**(全门禁绿为证);
+> 价值 = 可维护性:3318 行巨文件降至约 2400 行,闭包隐式捕获改显式依赖契约(P0-4 类根因温床清除)。
+> 方案与评审见 `openspec/changes/archive/2026-09-09-audit-remediation/`;deferred `p2-architecture-refactor` 子项①销账。
+
+### Changed(内部结构,零行为面)
+
+- **F0 前置三件**:skillsMw 构造提升出 composeMiddlewareStack 数组字面量(修前赋值藏在 spread 内,四读取点依赖隐含时序,重构极易踩断);controller duck 通道类型化(`ControllerCarrier<T>`/`ReconfigureHookCarrier`/`GetControllerCarrier` + `hasGetController` 守卫)—— 装配层 8 处 `(mw as any).controller/_setGetController/setReconfigureHook` 清零,改名/改类型从此编译期反馈;autoTitle 补四缺失 e2e 场景(规则 title 先落→LLM 延迟覆盖生命周期/autoTitle:false 门/switchSession 迟到守卫/标题 LLM 抛错吞掉;审计「全库零覆盖」经核不准,storage.mjs 两例在)。
+- **F1 类型段抽取**:createChatSdk L98-648 九接口 + SendOptions + PendingConflict → `sdk/options.ts`;createChatSdk 仅留 import/export type 两行保符号(消费方 import 路径零变化;exports-consistency F4 断言机械化保符号链)。
+- **F2 会话族抽取**:F2a 三散 let(lastTitle/titleLLMDone/lastPlanConfirmation)收敛 `SessionVars` 单对象(P0-4 根因形态 = 闭包变量跨作用域赋值);F2b persist 三 helper + persistRuntime + refreshSessions + switchSession/resetSession/exportSession/importSession 八函数 → `sdk/sessionLifecycle.ts`,`SessionLifecycleCtx` 显式依赖契约(store 经 getter 传活引用),core 字面量改委托。
+- **F3 三岛抽取**:MCP 全连接编排 → `mcp/connectAll.ts`(逐 server 渐进注入/3 次退避/release 先行/保留字拒注/失败 observable 语义零变);工具装配策略 → `sdk/toolAssembly.ts`(八来源 dedupe 序 + 看门狗打标 + 碰撞告警;集合所有权留主文件经 getter);图片发送管线 → `tools/imageInput.ts` `createImagePipeline`(stow 原图收口 + describe 旁路)。仅 debug 级日志措辞微调(MCP 尾日志工具数→server 数)。
+
+### Added(测试)
+
+- e2e 新模块 `auto-title`(9 断言)+ selftest sec-124(载体 ×4)/sec-125(SessionVars ×4);exports-consistency +6 断言(F4 保符号链)。计数:selftest 3465→3473(121 模块)/ e2e 1094→1103(34 模块)/ browser 153 不变。
+
 ## [4.13.0] - 2026-09-10
 
 > 六路审计整改 Batch E(API 面收口)。定级 minor:类型收紧 + 新增类型导出与 headless 导出补齐,运行时行为零变化
-> (仅 index.headless.ts 补 8 个既有函数/常量的 re-export)。方案见 `openspec/changes/2026-09-09-audit-remediation/`。
+> (仅 index.headless.ts 补 8 个既有函数/常量的 re-export)。方案见 `openspec/changes/archive/2026-09-09-audit-remediation/`。
 
 ### Added
 
@@ -31,7 +48,7 @@
 
 > 六路审计整改 Batch B(稳定性小修 + 互锁补面)+ Batch C(性能包)合版。定级 minor:C 批含行为面变化
 > (debugLogs 单条截断 / checkpoint 快照保真度 / 三类新 observable)与内部模块新导出(rawRead/estimateFileBytes,
-> **包级公开导出面零变化**);B 批纯修复。整改方案与四路评审记录见 `openspec/changes/2026-09-09-audit-remediation/`。
+> **包级公开导出面零变化**);B 批纯修复。整改方案与四路评审记录见 `openspec/changes/archive/2026-09-09-audit-remediation/`。
 
 ### Fixed
 

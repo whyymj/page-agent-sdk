@@ -105,6 +105,19 @@ export interface Middleware {
   beforeReturn?: BeforeReturnHook
 }
 
+// ===== 载体形状(F0b 2026-09-10,拆分前置):工厂把 controller/hooks 以 defineProperty/字面量挂到返回的 Middleware 上 =====
+// (duck 通道)。修前装配层全靠 `(mw as any).controller` 消费,改名/改类型零编译反馈;类型化后消费点直读字段。
+/** 控制器载体(createSkillsMiddleware/createSubagentsMiddleware 的 controller 通道) */
+export interface ControllerCarrier<T> { controller: T }
+/** 运行时重配置钩子载体(createSubagentsMiddleware:set/add/remove 后触发 rebind) */
+export interface ReconfigureHookCarrier { setReconfigureHook(hook: () => void): void }
+/** getController 注入槽载体(htmlSubagent validate/verify 中间件:装配期注入同源 dataOpsController) */
+export interface GetControllerCarrier<G extends (getter: never) => unknown = (getter: () => unknown) => void> { _setGetController: G }
+/** 运行时 duck 判定型守卫(_setGetController 为可选挂载:仅 validate/verify 中间件带,普通 Middleware 返 false) */
+export function hasGetController(m: Middleware): m is Middleware & GetControllerCarrier {
+  return typeof (m as Partial<GetControllerCarrier>)._setGetController === 'function'
+}
+
 /** 合并 state 更新 */
 export function applyUpdate(state: HarnessState, update: StateUpdate | void): HarnessState {
   if (!update) return state

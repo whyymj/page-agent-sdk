@@ -15,7 +15,7 @@
 import { tool } from '@langchain/core/tools'
 import type { StructuredToolInterface } from '@langchain/core/tools'
 import { z } from 'zod'
-import type { Middleware } from './middleware'
+import type { Middleware , ControllerCarrier} from './middleware'
 import { createSandboxRunner } from '../tools/sandbox'
 
 export interface SkillSpec {
@@ -273,7 +273,7 @@ async function resolveSkillTools(s: SkillSpec): Promise<StructuredToolInterface[
 export function createSkillsMiddleware(
   initialSkills: SkillSpec[],
   opts?: SkillsMiddlewareOptions,
-): Middleware {
+): Middleware & ControllerCarrier<SkillsController> {
   let skills = [...initialSkills]
   let skillMap = new Map(skills.map((s) => [s.name, s]))
   // 本轮已加载记录(同轮内拦截重复 load,避免浪费);beforeAgent 每轮清空 → 跨轮可重新 load(用缓存)
@@ -382,5 +382,5 @@ export function createSkillsMiddleware(
   }
   // 挂 controller(不可枚举,供 createChatSdk 暴露 sdk.setSkills/invalidateSkillCache)
   Object.defineProperty(mw, 'controller', { value: controller, enumerable: false, configurable: false, writable: false })
-  return mw
+  return mw as Middleware & ControllerCarrier<SkillsController>
 }

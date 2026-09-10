@@ -22,7 +22,7 @@ import { z } from 'zod'
 import type { StructuredToolInterface } from '@langchain/core/tools'
 import type { SubagentConfig, SubagentLlmConfig } from '../harness/subagent'
 import type { SkillSpec } from '../harness/skills'
-import type { Middleware } from '../harness/middleware'
+import type { Middleware , GetControllerCarrier} from '../harness/middleware'
 import type { SummarizationOptions } from '../harness/summarization'
 import type { VfsFile } from '../harness/state'
 import type { VerifyCheck, VerifyCheckResult } from '../harness/verify'
@@ -309,14 +309,15 @@ export function createHtmlValidateToolsMiddleware(vfsPrefix: string): Middleware
       }),
     },
   )
-  const mw: Middleware = {
+  // F0b:注入槽进字面量(GetControllerCarrier 类型化),修前 (mw as any)._setGetController 赋值零类型反馈
+  const mw: Middleware & GetControllerCarrier<(g: () => DataOpsController | null | undefined) => void> = {
     name: 'html-validate-tools',
     // vfs 桥接后 state.files 指向主 vfsStore.files(vfs-bridge 先序执行);捕获引用供 validate_code 读取
     beforeAgent: (state) => { filesRef = state.files },
     tools: [validateCode],
+    // jsonPath 能力注入槽:createChatSdk 装配期识别 _codeAsset 后调,注入同源 dataOpsController(validate_code 直读 data code)
+    _setGetController: (g) => { getController = g },
   }
-  // jsonPath 能力注入槽:createChatSdk 装配期识别 _codeAsset 后调,注入同源 dataOpsController(validate_code 直读 data code)
-  ;(mw as any)._setGetController = (g: () => DataOpsController | null | undefined) => { getController = g }
   return mw
 }
 
@@ -378,7 +379,8 @@ export function createHtmlSubagent(options: CreateHtmlSubagentOptions = {}): Sub
     })
     // getController 注入通道(同 validate_code 先例:createChatSdk 装配期识别 _setGetController 后注入同源 dataOpsController,
     // 供渲染检查读 write 新建组件的 bind code)
-    if (renderCheck) (verifyMw as any)._setGetController = renderCheck.setGetController
+    // F0b:Object.assign + satisfies 免 as any(赋值后 verifyMw 满足载体形状,类型由 satisfies 校验)
+    if (renderCheck) Object.assign(verifyMw, { _setGetController: renderCheck.setGetController } satisfies GetControllerCarrier<typeof renderCheck.setGetController>)
     middleware.push(verifyMw)
   }
   // 注意:checkout/commit 钩子不由本工厂装(createChatSdk 装配期识别 _codeAsset 标记后追加 ——

@@ -55,16 +55,17 @@
 - [x] E5 批尾统一任务 + §4.5 发布后临时安装深化验证(node 实际调用本次新导出,不只 require 成功)+ usage-guide/README 依赖说明处明示「@langchain/openai 为事实必需依赖,optional peer 化已评估否决」(E4 否决的替代动作)
 
 ## Batch F:createChatSdk 三阶段拆分(4.14.0)
+> **实施注记(2026-09-10)**:F2b 范围裁决 = persist 族 + 四生命周期函数全迁 sessionLifecycle.ts(SessionLifecycleCtx 21 成员显式契约);switch/reset 的 core 身份突变(sessionId/applySnapshot)经 ctx.core 传入而非再拆。F3 岛3 裁决 = 装配**策略**外移(toolAssembly),八集合所有权留主文件(getter 传入)—— 所有权收敛属 F4 之后再议,避免单批动状态归属面过大。F4「保符号机械化」核实:链断本就双层覆盖(src/index 再转出 TS2305 + exports-consistency 名称差集),补显式断言 6 条使意图成文。deferred p2-architecture-refactor 只销子项①,②维持/③标废弃(已被 4.9 消费)。
 > 行号全核验属实(3318 行/buildCore 945-2975=2031/类型段 98-648/core 字面量 1782/包装 2977)。「靠 e2e+browser 兜底」判断正确(selftest 触不到顶层作用域)。与 E 批**串行不并行**(同文件同区域硬冲突)。
-- [ ] F0 前置项(动工雷区,三件必须先做):
-  - [ ] F0a skillsMw compose 数组内赋值微修(struct#3 HIGH,评审明示「重构极易踩断」)
-  - [ ] F0b (原 E3)controller 通道 ControllerCarrier<T> 类型化:**8 处 as any 非 6 处**(补 1618/2967-8);6/8 落在 F2/F3 搬移区,单独先发必产冲突,并入前置后 SessionDeps 直接携类型化 controller
-  - [ ] F0c autoTitle stub e2e 模块补建(**全库唯一零覆盖盲区**:e2e 现有用例全是 `autoTitle:false`,标题生成路径恰在 F2 拆分区)
-- [ ] F1 Phase 1 类型段 L98-648 → sdk/options.ts(re-export 保符号,零行为风险)
-- [ ] F2 Phase 2 **拆两步**(评审:真正难点不是 15+ 依赖面,而是 lastTitle/lastPlanConfirmation 等**可变闭包状态归属**):F2a sessionVars 显式收敛(状态归位,带测试)→ F2b 函数抽取 sdk/sessionLifecycle.ts(SessionDeps 接口);一步到位会复刻 P0-4 ReferenceError
-- [ ] F3 Phase 3 三座小岛(images → imageInput / MCP 连接 IIFE → mcp/connectAll.ts / 工具装配 → sdk/toolAssembly.ts)
-- [ ] F4 每阶段门禁:selftest + e2e + browser 全绿 + **test:exports + test:types**(「re-export 保符号」目前是无守卫的口头承诺,必须机械化)
-- [ ] F5 CLAUDE.md 目录结构同步 + deferred p2-architecture-refactor **只销子项①**(createChatSdk 拆分);②createAgent 契约化零回归证据维持 deferred;③read/get_data 合并已被 4.9 消费应标废弃 —— 条目不整体删除
+- [x] F0 前置项(动工雷区,三件必须先做):
+  - [x] F0a skillsMw compose 数组内赋值微修(struct#3 HIGH,评审明示「重构极易踩断」)
+  - [x] F0b (原 E3)controller 通道 ControllerCarrier<T> 类型化:**8 处 as any 非 6 处**(补 1618/2967-8);6/8 落在 F2/F3 搬移区,单独先发必产冲突,并入前置后 SessionDeps 直接携类型化 controller
+  - [x] F0c autoTitle stub e2e 模块补建(**全库唯一零覆盖盲区**:e2e 现有用例全是 `autoTitle:false`,标题生成路径恰在 F2 拆分区)
+- [x] F1 Phase 1 类型段 L98-648 → sdk/options.ts(re-export 保符号,零行为风险)
+- [x] F2 Phase 2 **拆两步**(评审:真正难点不是 15+ 依赖面,而是 lastTitle/lastPlanConfirmation 等**可变闭包状态归属**):F2a sessionVars 显式收敛(状态归位,带测试)→ F2b 函数抽取 sdk/sessionLifecycle.ts(SessionDeps 接口);一步到位会复刻 P0-4 ReferenceError
+- [x] F3 Phase 3 三座小岛(images → imageInput / MCP 连接 IIFE → mcp/connectAll.ts / 工具装配 → sdk/toolAssembly.ts)
+- [x] F4 每阶段门禁:selftest + e2e + browser 全绿 + **test:exports + test:types**(「re-export 保符号」目前是无守卫的口头承诺,必须机械化)
+- [x] F5 CLAUDE.md 目录结构同步 + deferred p2-architecture-refactor **只销子项①**(createChatSdk 拆分);②createAgent 契约化零回归证据维持 deferred;③read/get_data 合并已被 4.9 消费应标废弃 —— 条目不整体删除
 
 ## Deferred 登记清单(评审新增,随 A12 写入 openspec/deferred.md)
 1. @langchain/openai optional peer —— ❌ 否决留痕(三处静态 import,前提为假;async 化重构需破坏 setLlm 同步契约,无消费者诉求)

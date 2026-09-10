@@ -201,3 +201,88 @@ export async function makeThumb(dataUri: string): Promise<string> {
   canvas.getContext('2d')!.drawImage(img, 0, 0, tw, th)
   return canvas.toDataURL('image/jpeg', 0.7)
 }
+
+// ===== 图片发送管线(F3 2026-09-10 从 createChatSdk 抽出):stow(原图收口)+ describe 旁路 =====
+import type { SdkEvent, ImagesConfig } from '../types'
+
+export interface ImagePipelineDeps {
+  getConfig: () => ImagesConfig | undefined
+  /** 主模型多模态能力(vision → 直发,describe 旁路跳过) */
+  getVision: () => boolean
+  emit: (e: SdkEvent) => void
+  getVfsStore: () => { files: Record<string, { content: string; updatedAt: number }> } | undefined
+  /** 缩略图失败留痕(persist 族 notePersistFailure) */
+  noteFailure: (stage: string, e: unknown) => void
+}
+
+/** 返回 { stowImages, describeIfNeeded }(send/stream 双路径共用) */
+export function createImagePipeline(deps: ImagePipelineDeps) {
+  /**
+   * 图片原图收口(image-input-vision,send/stream 前调):
+   * - 配 images.upload(集成方 OSS):缩略图 → 上传换 url → 释放 dataUri(url 即持久引用,不入 vfs;content parts 用 URL 形态)。
+   *   上传失败回退 dataURI 内联(留痕不阻塞)。
+   * - 未配 upload:原图入 vfs `userImages/<id>`(userFiles 池,2MB LRU;轻形态持久化引用锚)。
+   * 就地补挂 im.url / im.vfsRef / im.thumb。失败留痕不阻塞 —— 会话内直发不受影响,仅丢跨刷新恢复。
+   */
+  async function stowImages(images: AgentImage[]): Promise<void> {
+    const upload = deps.getConfig()?.upload
+    for (const im of images) {
+      // 三步各自独立容错:缩略图失败不带崩 upload/vfs(headless Node 无 Image 也照常收口)
+      try {
+        if (im.dataUri && !im.thumb) im.thumb = await makeThumb(im.dataUri)
+      } catch (e) {
+        deps.noteFailure('imageThumb', e)
+      }
+      if (upload && im.dataUri && !im.url) {
+        try {
+          const url = await upload(im.dataUri, im)
+          if (url) {
+            im.url = url
+            im.dataUri = undefined // 释放内联:直发/持久化均走 url
+            const vfs = deps.getVfsStore()
+            if (im.vfsRef && vfs) delete vfs.files[im.vfsRef] // 上传成功撤 vfs 副本(url 已是持久引用)
+          }
+        } catch (e) {
+          console.warn('[page-agent-sdk][images] upload 失败,回退 dataURI 内联直发:', (e as Error)?.message ?? e)
+        }
+      }
+      const vfs = deps.getVfsStore()
+      if (im.dataUri && !im.vfsRef && vfs) {
+        im.vfsRef = `userImages/${im.id}`
+        vfs.files[im.vfsRef] = { content: im.dataUri, updatedAt: Date.now() }
+      }
+    }
+  }
+
+  /**
+   * 识图转述旁路(image-input-vision,集成方绑定):非多模态主模型 + 配 images.describe 时,
+   * 发送前逐图调 describe(集成方识图子 agent / 自有 vision API),转述文本写 im.description
+   * (toLC 拼入该轮 user 上下文,图片不直发;随消息持久化,恢复后不重复转述)。
+   * 单图超时(describeTimeoutMs,默认 15s)/失败 → 占位描述 + observable VISION_DESCRIBE_FAILED,对话继续(D6 诚实降级)。
+   */
+  async function describeIfNeeded(images: AgentImage[], text: string): Promise<void> {
+    const describe = deps.getConfig()?.describe
+    if (deps.getVision() || !describe) return
+    const timeoutMs = deps.getConfig()?.describeTimeoutMs ?? 15000
+    for (const im of images) {
+      if (im.description) continue // 已转述(重发/恢复场景)不重复
+      try {
+        const ac = new AbortController()
+        const timer = setTimeout(() => ac.abort(), timeoutMs)
+        try {
+          im.description = (await Promise.race([
+            describe(im, { text }),
+            new Promise<never>((_, rej) => ac.signal.addEventListener('abort', () => rej(new Error(`识图转述超时(${timeoutMs}ms)`)))),
+          ])).trim()
+        } finally {
+          clearTimeout(timer)
+        }
+      } catch (e) {
+        im.description = '[图片描述不可用]'
+        deps.emit({ type: 'error', message: `识图转述失败:${(e as Error)?.message ?? String(e)}`, severity: 'observable', code: 'VISION_DESCRIBE_FAILED' } as any)
+      }
+    }
+  }
+
+  return { stowImages, describeIfNeeded }
+}

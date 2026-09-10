@@ -101,6 +101,23 @@ console.log('[exports-consistency] headless 子路径:index.headless.ts ↔ head
   assert(violations.length === 0, `主包独有导出未挂 UI 白名单(要么补进 headless,要么挂白名单并注明理由):${violations.join(', ') || '无'}`)
 }
 
+// F4(2026-09-10):「re-export 保符号」机械化 —— F1/F2/F3 抽取后 createChatSdk.ts 须保 re-export/委托链:
+// ① 类型段:10 类型名经 ./options 转出(链断时 src/index 的再转出立即 TS2305,本断言防「整段静默删除」)
+// ② 委托接线:四抽取模块工厂须被 createChatSdk import(防抽取体被内联回去)
+{
+  console.log('[exports-consistency] F4 re-export 保符号链(options/sessionLifecycle/toolAssembly/imageInput/connectAll)')
+  const csdk = fs.readFileSync(new URL('../src/core/sdk/createChatSdk.ts', import.meta.url), 'utf-8')
+  const m = csdk.match(/export type \{([^}]*)\} from '\.\/options'/)
+  assert(!!m, 'createChatSdk.ts 保 export type {...} from ./options(F1 保符号行)')
+  const names = new Set((m ? m[1] : '').split(',').map((x) => x.trim()).filter(Boolean))
+  const expected = ['LLMConfig', 'SessionOptions', 'SystemAugmentContext', 'ChatSdkOptions', 'I18nOptions', 'QuickActionItem', 'DialogConfig', 'ChatSdk', 'SendOptions', 'PendingConflict']
+  const missing = expected.filter((n) => !names.has(n))
+  assert(missing.length === 0, `options re-export 覆盖 10 类型名(缺:${missing.join(', ') || '无'})`)
+  for (const imp of ['createSessionLifecycle', 'createToolRebuilder', 'createImagePipeline', 'connectAllMcpServers']) {
+    assert(csdk.includes(imp), `createChatSdk import ${imp}(委托接线,防抽取体内联回)`)
+  }
+}
+
 // vue 类型解耦(E2 API 面收口):d.ts 引用 vue = 未装 vue 的 TS 项目解析退化(error type)。
 // 内联桩(types/*.d.ts 头部 Ref/InjectionKey/DefineComponent)是唯一合法形态;静态 grep 防回归零成本
 {
