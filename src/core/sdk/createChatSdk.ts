@@ -66,13 +66,15 @@ import { resolveContextOptions, PRESET_PRESERVE } from './contextPreset'
 import { composeMiddlewareStack } from './middlewareStack'
 import { createSessionVars, createSessionLifecycle } from './sessionLifecycle'
 import { createToolRebuilder } from './toolAssembly'
-import { createImagePipeline } from '../tools/imageInput'
+import { createImagePipeline, buildImageContentParts } from '../tools/imageInput'
+import { createScreenshotTool } from '../tools/screenshot'
+import { HumanMessage } from '@langchain/core/messages'
 import { createVfs, createVfsMiddleware, VFS_TOOL_NAMES, normalize as normalizeVfsPath, type VfsStore } from '../backends/vfs'
 import type { VfsFile, Mission, Focus } from '../harness/state'
 import { createDataOps, type DataConfig, type DataOpsController, type ConflictResolution } from '../tools/dataOps'
 import { hashValue, watchFieldsHash } from '../tools/jsonUtils'
 import { fetchDocTools } from '../tools/fetchDoc'
-import { domTools, domInspectSkill, domSearchTool, domInfoTool } from '../tools/domTool'
+import { domTools, makeDomInspectSkill, domInspectSkillName, makePageAnalysisSkill, pageAnalysisSkillName, domSearchTool, domInfoTool } from '../tools/domTool'
 import { inspectTools } from '../tools/envTool'
 import { createBudgetMiddleware } from '../harness/budget'
 import { actionsToTools, actionsToInspectInfo } from './actions'
@@ -90,7 +92,7 @@ import { extractVfsRefs, gcVfsLargeResults } from '../utils/vfsGc'
 import { DEFAULT_STREAM_STALL_MS, DEFAULT_STREAM_MAX_DURATION_MS } from '../utils/stallTimeout'
 import { createSerialRunner } from '../utils/serialRunner'
 import { normalizeUsage } from '../utils/contentParts'
-import type { AgentMessage, StreamHandler, AgentInfo, SdkEvent, SdkEventHandler, TokenUsage, BatchResult, BatchProgress, MessageQuote } from '../types'
+import type { AgentMessage, StreamHandler, AgentInfo, SdkEvent, SdkEventHandler, TokenUsage, BatchResult, BatchProgress, MessageQuote, AgentImage } from '../types'
 import { normalizeQuoteText } from '../tools/quoteInput'
 import { hydrateImages, MAX_IMAGES_PER_ROUND } from '../tools/imageInput'
 import type { ToolCallContext } from '../harness/middleware'
@@ -598,7 +600,16 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 最终 systemPrompt 的 base 段(不含数据段):用户 systemPrompt(或默认)+ 可选 reliableWriteRules 追加,统一由 buildSystemPrompt 处理
   // 数据段移交 dataHint 中间件每轮从 liveData() 动态重算(修 setData 不同步 Bug);inspect 与 createAgent 共用 baseSystemPrompt 保持一致
   // dialog-i18n Phase 2:locale='en-US' 时默认 prompt/追加规则段用英文版(与 UI 同语言;自定义 systemPrompt 不受影响)
-  const baseSystemPromptRaw = buildSystemPrompt({ ...options, locale: options.i18n?.locale })
+  // 4.16 能力感知默认身份:传 dataOps/domInspect/screenshot —— dataOps:false 时默认身份不再是「JSON 操作助手」、
+  // 也不追加写入规则(写入工具不在池,勿教不存在的工具);screenshotCapable 在此前置(只依赖 caps/modelCaps/options)
+  const screenshotCapable = caps.domInspect && (modelCaps.vision === true || typeof options.images?.describe === 'function')
+  const baseSystemPromptRaw = buildSystemPrompt({
+    ...options,
+    locale: options.i18n?.locale,
+    dataOps: useDataOps && !!finalDataConfig,
+    domInspect: caps.domInspect === true,
+    screenshot: screenshotCapable,
+  })
   // 主 agent 编排自适应注入(集成方零配置):有 html 子 agent→委派编排 / 无 agent+schema 有 code 字段→自己写编排+warn / 无 code 字段→不注入
   let baseSystemPrompt = baseSystemPromptRaw
   if (hasCodeAsset) {
@@ -672,8 +683,68 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     : undefined
   // 工具来源标注(builtin / mcp:<name> / user),供 getInfo 展示(DebugDrawer 区分内置/MCP/用户工具)
   const toolSources = new Map<string, string>()
-  // skills 关 + domInspect 开 → dom_search/dom_info 无法经 skill 注入,降级直接进工具池(功能可达优先,牺牲常驻 schema)
-  const domToolsForPool = caps.domInspect && !caps.skills ? [...domTools, domSearchTool, domInfoTool] : domTools
+  // ===== take_screenshot 条件注入(page-screenshot)=====
+  // 条件 = domInspect 开 && (主模型多模态 || images.describe 已配):screenshotCapable 常量已上移到
+  // buildSystemPrompt 调用前(能力感知默认身份要用);此处只留装配 warn。满足 → sdk 层工厂(闭包 vfs
+  // stow/识图旁路/事件富化/渲染钩子)。setLlm 运行时降级由工具内 getVision 活值守卫(诚实拒绝文案);升级不动态补装(v1 重建生效)
+  if (caps.domInspect && !screenshotCapable) {
+    console.warn('[page-agent-sdk][take_screenshot] domInspect 已开启但主模型不支持图片(vision=false)且未配 images.describe,截图工具未装载(视觉验证退回 get_dom/dom_info 结构推断;换多模态模型 / llm.vision:true / 配 images.describe 后重建 SDK 生效)')
+  }
+  /** 截图产出队列:wrapModelCall 消费为「合成 user 消息带图 parts」(req.messages 即循环 currentMessages
+   *  同引用 → 本轮 invoke 内存活、随 invoke 消亡;免疫 trimContextIfNeeded 只裁 ToolMessage 与 offload 字符串化) */
+  const pendingShots: Array<{ image: AgentImage; meta: { mode: string; selector?: string; vfsRef?: string }; eventConsumed?: boolean }> = []
+  /** tool_result 事件富化(page-screenshot 观察面):事件消费侧打标不复用,消息消费侧整队列 drain */
+  const enrichToolResultEvent = <T extends { type: string; name?: string }>(e: T): T => {
+    if (e.type === 'tool_result' && e.name === 'take_screenshot') {
+      const shot = pendingShots.find((s) => !s.eventConsumed)
+      if (shot) {
+        shot.eventConsumed = true
+        return Object.assign(e, { image: { dataUri: shot.image.dataUri, vfsRef: shot.meta.vfsRef } })
+      }
+    }
+    return e
+  }
+  const screenshotTool = screenshotCapable
+    ? createScreenshotTool({
+        render: options.screenshot?.renderer,
+        stow: (image) => {
+          if (!image.dataUri) return undefined
+          try {
+            const path = `userImages/${image.id}`
+            vfsStore.files[path] = { content: image.dataUri, updatedAt: Date.now() } // VfsFile 形态对齐 stowImages
+            return path
+          } catch { return undefined }
+        },
+        getVision: () => modelCaps.vision === true,
+        describe: options.images?.describe,
+        onShot: (image, meta) => { pendingShots.push({ image, meta }) },
+      })
+    : undefined
+  // 截图合成消息格式 + 通道中间件:每次模型调用前 drain pendingShots → 追加 user 消息带图 parts。
+  // req.messages 即循环 currentMessages 同引用(:977 直传)→ 注入消息在本轮 invoke 内持续存活、随 invoke 消亡;
+  // trimContextIfNeeded 只裁 ToolMessage(HumanMessage 免疫),offload 只作用于工具结果字符串 —— 双保险
+  const imageContentFormat: 'openai' | 'anthropic' = (!isChatModel(options.llm) && ((options.llm as LLMConfig).provider ?? 'openai') === 'anthropic') ? 'anthropic' : 'openai'
+  const screenshotChannelMw: Middleware | null = screenshotTool
+    ? {
+        name: 'screenshotChannel',
+        wrapModelCall: async (req, next) => {
+          if (pendingShots.length) {
+            const shots = pendingShots.splice(0)
+            const text = shots
+              .map((s, i) => `[截图 ${i + 1}] ${s.meta.mode}${s.meta.selector ? ` selector="${s.meta.selector}"` : ''}${s.meta.vfsRef ? `(原图 vfs:${s.meta.vfsRef})` : ''}`)
+              .join('\n') + '\n(take_screenshot 结果如上,请结合图片回答/继续)'
+            const parts = buildImageContentParts(text, shots.map((s) => ({ dataUri: s.image.dataUri })), imageContentFormat)
+            if (parts) req.messages.push(new HumanMessage({ content: parts as unknown as string }))
+          }
+          return next(req)
+        },
+      }
+    : null
+  // skills 关 + domInspect 开 → dom_search/dom_info 无法经 skill 注入,降级直接进工具池(功能可达优先,牺牲常驻 schema);
+  // take_screenshot 常驻(装配态进池,与 get_dom/read_page 同级主力)
+  const domToolsForPool = caps.domInspect
+    ? [...domTools, ...(screenshotTool ? [screenshotTool] : []), ...(caps.skills ? [] : [domSearchTool, domInfoTool])]
+    : []
   const builtinTools = selectBuiltinTools(caps, dataOpsFiltered, fetchDocTools, domToolsForPool, inspectTools)
   builtinTools.forEach((t) => toolSources.set(t.name, 'builtin'))
   // userTools 可变:支持运行时 setTools/addTool/removeTool 动态增删用户工具
@@ -978,6 +1049,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     {
       ...caps,
       humanConfirm: useHumanConfirm,
+      screenshot: !!screenshotTool, // page-screenshot:非 capability(装配条件含 vision/describe,hints 直接访问)
       // 预声明子 agent(供"规划-反思-执行"路由提示;只取 id/description/temperature 轻量字段)
       subagents: effectiveSubagents?.map(reflectSubagentThinking),
     },
@@ -1099,7 +1171,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ? createSkillsMiddleware([
         // domInspect 开 → 并入 DOM 检视 skill(dom_search/dom_info 按需 load_skill 注入,不占常驻 tool schema;
         // 集成方同名 skill 显式声明优先,不重复)
-        ...(caps.domInspect && !(options.skills || []).some((s) => s.name === domInspectSkill.name) ? [domInspectSkill] : []),
+        ...(caps.domInspect && !(options.skills || []).some((s) => s.name === domInspectSkillName) ? [makeDomInspectSkill({ withScreenshot: !!screenshotTool })] : []),
+    // page-analysis(页面内容分析策略:问题分型/探索纪律/回答纪律;截图段随装配态)
+    ...(caps.domInspect && !(options.skills || []).some((s) => s.name === pageAnalysisSkillName) ? [makePageAnalysisSkill({ withScreenshot: !!screenshotTool })] : []),
         ...(options.skills || []),
       ], {
         // vfs 启用时注入 readVfs,让 skill 文档源(vfs://path)能读取 vfs 文件
@@ -1165,6 +1239,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       : []),
     ...(augmentSystemMw ? [augmentSystemMw] : []),
     ...(contextInspectorMw ? [contextInspectorMw] : []),  // context-inspector:wrapModelCall 快照实际消息构成(大小/分类/占比)
+    ...(screenshotChannelMw ? [screenshotChannelMw] : []),  // page-screenshot:vision 截图合成 user 消息通道(工具结果后带图 parts)
     ...(options.middleware || []),
     // 资源预算闸(automation-layer Phase 4):wrapModelCall 每轮检查 token/time,超限 → aborted response 停止 agent + emit BUDGET_EXCEEDED
     ...(useAutomation ? [createBudgetMiddleware(usage, { tokenBudget: options.tokenBudget, timeBudgetMs: options.timeBudgetMs }, emit)] : []),
@@ -1188,7 +1263,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     return (e) => {
       // F1(send/batch 全量事件外发):headless 用 send() 的集成方经 sdk.hook 听 tool_call/reasoning/text
       // 等过程(approval_request 仍不外发 —— 无 UI 响应方路径由中间件 30s 自动拒收口)。
-      if ((e as any).type !== 'approval_request') emit(e as any)
+      if ((e as any).type !== 'approval_request') emit(enrichToolResultEvent(e as any) as any)
     }
   }
 
@@ -1559,7 +1634,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       // 包装:流式事件恒转发内部 UI handler + emit(外发 options.onEvent + sdk.hook listeners)。
       // 修复(P1-23):旧实现仅当传了 options.onEvent 才调 emit → 不传 onEvent 时 sdk.hook() 收不到流式事件。
       const wrappedHandler: StreamHandler = (event) => {
-        onEvent?.(event); emit(event as SdkEvent)
+        onEvent?.(enrichToolResultEvent(event)); emit(enrichToolResultEvent(event) as SdkEvent)
         // 子 agent 工具进度 → bump infoTick 让 DebugDrawer「🤖 子 agent」tab 实时刷新
         // (reasoning 高频不 bump:主 UI 已实时展示思考过程,避免 DebugDrawer 高频重算)
         if (event.type === 'subagent' && (event.kind === 'tool_call' || event.kind === 'tool_result')) core.infoTick.value++
@@ -2135,7 +2210,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       maxOutputTokens: modelCaps.maxOutputTokens,
       // image-input-vision:多模态主模型 user 消息图片直发;anthropic provider 用原生 image block 格式
       vision: modelCaps.vision,
-      imageContentFormat: (!isChatModel(options.llm) && ((options.llm as LLMConfig).provider ?? 'openai') === 'anthropic') ? 'anthropic' : 'openai',
+      imageContentFormat,
       // verify 自纠上限:装载 verify 时用 verify.maxAttempts(默认 2),否则 0(关闭自纠 = 现状)
       maxVerifyAttempts: useVerify ? verifyMaxAttempts : 0,
       // C4 单 invoke token 预算(opt-in,默认关):超限友好收口;与 automation 全局 tokenBudget 正交

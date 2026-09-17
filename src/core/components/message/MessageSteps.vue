@@ -180,6 +180,19 @@ function copyDetail(text: string, truncated: boolean, full?: unknown): void {
           {{ expanded.has(sIdx) ? messages.collapse : messages.expand }}
         </button>
       </div>
+      <!-- 截图缩略图(page-screenshot 观察面):行内直出无需展开,点击新窗放大;用户能看到 agent「看到了什么」 -->
+      <div v-if="step.calls?.some((c) => c.image)" class="step-shots" data-test="step-shots">
+        <a
+          v-for="(c, cIdx) in step.calls"
+          :key="cIdx"
+          v-show="c.image"
+          class="step-shot"
+          :href="c.image?.dataUri"
+          target="_blank"
+          rel="noopener noreferrer"
+          :title="messages.screenshotAlt"
+        ><img v-if="c.image" class="step-shot-img" :src="c.image.thumb || c.image.dataUri" :alt="messages.screenshotAlt" /></a>
+      </div>
       <!-- 展开细节:每次调用的入参 + 返回值(×N 合并组逐次列出;超长截断,复制得全量) -->
       <div v-if="expanded.has(sIdx) && step.calls?.length" class="step-detail">
         <div v-for="(c, cIdx) in step.calls" :key="cIdx" class="step-detail-call">
@@ -214,6 +227,10 @@ function copyDetail(text: string, truncated: boolean, full?: unknown): void {
 <style scoped>
 .steps-block { margin-bottom: 6px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 .step-item { display: flex; flex-direction: column; gap: 3px; align-self: flex-start; padding: 5px 10px; border-radius: 8px; background: var(--cs-step-bg); border: 1px solid var(--cs-step-border); font-size: 11px; color: var(--cs-step-text); max-width: 100%; user-select: text; -webkit-user-select: text; }
+/* 截图缩略图(page-screenshot 观察面):行内小图,点击新窗放大 */
+.step-shots { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 2px 14px; }
+.step-shot { display: block; width: 72px; height: 54px; border-radius: 6px; overflow: hidden; border: 1px solid var(--cs-surface-border, rgba(0,0,0,0.1)); }
+.step-shot-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .step-head { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .step-name { font-family: 'SF Mono', Monaco, Consolas, monospace; font-weight: 600; }
 /* 展示映射补充说明(纯文本,元信息色;不进 monospace —— 是自然语言不是代码名) */

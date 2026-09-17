@@ -155,6 +155,18 @@ export async function run(ctx: TestCtx): Promise<void> {
     'buildSystemPrompt → appendReliableWriteRules:false 不追加',
   )
 
+  // === buildSystemPrompt 能力感知默认身份(4.16:dataOps 关闭时不再教不存在的写入工具) ===
+  const pagePrompt = buildSystemPrompt({ dataOps: false, domInspect: true })
+  assert(pagePrompt.includes('页面内容助手'), '✓ dataOps:false+domInspect:true → 默认身份切「页面内容助手」(文档站场景不再谎称 JSON 操作助手)')
+  assert(!pagePrompt.includes('JSON 操作助手') && !pagePrompt.includes('可靠写入规则'), '✓ 页面身份不含数据操作身份/写入规则(写入工具不在池,勿教不存在的工具)')
+  assert(pagePrompt.includes('[引用原文]') && pagePrompt.includes('以页面为准'), '✓ 页面身份含引用块轻量引导 + 回答纪律(页面实料优先)')
+  assert(buildSystemPrompt({ dataOps: false, domInspect: true, screenshot: true }).includes('take_screenshot'), '✓ 页面身份 screenshot:true → 教截图(视觉验证优先)')
+  assert(!buildSystemPrompt({ dataOps: false, domInspect: true }).includes('take_screenshot'), '✓ 页面身份未传 screenshot → 不教截图(未装配不教)')
+  assert(buildSystemPrompt({ dataOps: false }).includes('智能助手。'), '✓ dataOps:false 且无 domInspect → 通用助手兜底(与 createAgent 兜底同文案)')
+  assert(buildSystemPrompt({ systemPrompt: '定制', dataOps: false }) === '定制', '✓ 自定义 prompt + dataOps:false → 不追加写入规则(修前教幻影 read/write)')
+  assert(buildSystemPrompt({ dataOps: false, domInspect: true, locale: 'en-US' }).includes('page content assistant'), '✓ 页面身份英文镜像(locale:en-US)')
+  assert(buildSystemPrompt({ dataOps: true, domInspect: true }) === DEFAULT_SYSTEM_PROMPT, '✓ dataOps:true(缺省同)→ JSON 身份零回归(domInspect 并开不抢身份)')
+
   // === htmlPageOrchestrator / htmlPageProposeFirst 片段(add-html-orchestrator-prompt) ===
   assert(
     systemPromptHelpers.htmlPageOrchestrator.includes('use_html') &&

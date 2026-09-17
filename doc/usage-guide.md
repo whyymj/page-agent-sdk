@@ -33,6 +33,7 @@
   - [6.18 快捷指令 / 会话导出导入 / 元素拖入聚焦](#618-快捷指令--会话导出导入--元素拖入聚焦410-ui-quick-wins)
   - [6.19 回归工具 eval-toolkit](#619-回归工具-eval-toolkit升级前自跑场景回归)
   - [6.20 划词引用与页面问答(page-quote / read_page / pageContext)](#620-划词引用与页面问答page-quote--read_page--pagecontext)
+  - [6.21 截图查看与页面内容分析(take_screenshot / page-analysis)](#621-截图查看与页面内容分析take_screenshot--page-analysis)
 - [7. 高级:自定义中间件](#7-高级自定义中间件)
 - [8. 命令式 API](#8-命令式-api)
 - [9. 框架无关 / CDN 集成](#9-框架无关--cdn-集成)
@@ -193,7 +194,7 @@ createChatSdk({
 
   /* ===== 身份与隔离 ===== */
   id: 'my-app',                 // agent 实例 id(强烈建议传稳定值;多 agent 共存隔离 + 刷新恢复)
-  systemPrompt: '...',          // Agent 身份与业务流程指令(可选:不传用内置默认——JSON 操作助手 + reliableWriteRules;传了则完全覆盖。默认 appendReliableWriteRules:true 自动用 '---' 分隔线追加 reliableWriteRules,设 false 关闭)
+  systemPrompt: '...',          // Agent 身份与业务流程指令(可选:不传用内置默认——JSON 操作助手 + reliableWriteRules;传了则完全覆盖。默认 appendReliableWriteRules:true 自动用 '---' 分隔线追加 reliableWriteRules,设 false 关闭;**4.16 能力感知**:dataOps:false + domInspect:true(文档站形态)默认身份切「页面内容助手」且不追加写入规则(勿教池里不存在的工具),双无用通用兜底)
   // ⚠️ 工具用法(read/write/get/set/patch/snapshot 等)由 usageHints 中间件按能力开关自动注入,无需在此声明;systemPrompt 只写「业务知识」:身份、可改字段含义、业务流程、技能引用
   shareContext: false,          // true:同 id 的多个实例共享同一 Agent(同页多对话框 = 同一 agent);串行闸 core 级 —— 跨实例 send/switchSession 串行,生命周期收口(unmount/switch/reset)中止共享 core 全部在途流(2.41.0+)
 
@@ -1704,6 +1705,33 @@ createChatSdk({
 **read_page 细节**:默认 `limit: 4000`(上限 20000);`hasMore: true` 时下次传 `offset += 本次 text 长度` 续读;返回 JSON `{ text, totalChars, offset, hasMore, container }`;大结果自动走 vfs 外存(超阈值不占上下文)。智能容器按优先级逐个探测(article → main → [role=main] → .content/.article-content/.post-content/.markdown-body/#content → body),显式 `selector` 覆盖。
 
 **完整示例**:`examples/docs-demo`(静态学习文章 + 划词引用 + read_page 翻页答问 + 页面锚点),可作你网站的集成模板。隐私注记:`autoQuote` 默认关 —— 自动把页面划词发给 LLM 属隐私敏感行为,由集成方显式开启并告知用户。
+
+### 6.21 截图查看与页面内容分析(take_screenshot / page-analysis)
+
+`capabilities.domInspect` 开启且**主模型多模态(`llm.vision` / 模型名查表)或已配 `images.describe` 识图旁路**时,自动装配 `take_screenshot` 工具 —— agent 获得「看」页面的视觉能力(不满足不装,console.warn 留痕;`setLlm` 后降级由工具运行时诚实拒绝):
+
+| 模式 | 调用 | 场景 |
+|---|---|---|
+| 局部截图 | `take_screenshot({ selector })` | 验证指定区块/组件渲染(先用 dom_search 定位更稳) |
+| 整页截图 | `take_screenshot({ fullPage: true })` | 整页版式(超长文档 >32768px 拒,改 selector 分段) |
+| 视口截图 | `take_screenshot()` | 当前可见区域 |
+
+**截图怎么到模型(分层通道)**:多模态主模型 → 截图经压缩闸(长边 ≤1568 jpeg,PNG 带透明通道保真)后作为**合成 user 消息的 image parts** 出现在工具结果之后(双协议零方差;工具结果本身是纯文本元数据,base64 不进对话消息);纯文本主模型 → 自动走 `images.describe` 识图转述,文本回灌。**原图恒收 vfs**(`userImages/` 池,LRU + 持久化),工具结果带 vfsRef 可审计。**UI 观察面**:工具步骤行直接渲染截图缩略图(点击放大),用户能看到 agent「看到了什么」。
+
+**渲染器**:默认内置 html-to-image(SVG foreignObject);宿主页面 CSP 禁 SVG data URL 或需特殊裁剪时,传顶层配置覆盖:
+
+```ts
+createChatSdk({
+  ...,
+  capabilities: { domInspect: true },        // 前置开关
+  llm: { ..., vision: true },                // 或 images: { describe } 旁路
+  screenshot: { renderer: async (el, opts) => myRender(el, opts) },  // 可选自定义渲染
+})
+```
+
+**page-analysis skill**(domInspect 开即随 skills 挂载):页面内容分析策略 —— 问题分型(引用原文/整页理解/定位/结构/视觉 → 各自的主力工具)、探索纪律(先窄后宽/翻页不重复/定位失败换路/大结果外存)、回答纪律(基于页面实料、页面≠训练数据、不确定就说不确定)。与 dom-inspect skill 分工:那边教工具用法,这边教场景怎么打。
+
+完整示例:`examples/docs-demo?shot=1`(截图 quickAction + 真渲染演示;纯文本模型勿开 vision,走 describe 旁路参照 images-demo)。成本注记:截图走多模态 token(每图数百~数千 token 随轮次重复计),验证型任务建议 selector 局部截图控制面积。
 
 ## 7. 高级:自定义中间件
 

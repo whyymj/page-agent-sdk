@@ -149,6 +149,29 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:systemprompt] 默认身份能力感知(4.16):dataOps:false+domInspect → 页面内容助手,不教不存在的写入工具')
+  {
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-page-default', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, dataOps: false, domInspect: true },  // 文档站形态:无主数据、纯页面问答
+    })
+    await sdk.mount()
+    const sp = sdk.inspect().systemPrompt
+    assert(/页面内容助手/.test(sp), 'dataOps:false+domInspect:true 未传 systemPrompt → 默认身份 = 页面内容助手')
+    assert(!/JSON 操作助手/.test(sp), '页面身份不残留「JSON 操作助手」身份(修前对无数据集成谎称主数据对象)')
+    assert(!/可靠写入规则/.test(sp), '页面身份不追加 reliableWriteRules(写入工具不在池,勿教不存在的工具)')
+    sdk.unmount()
+    // 自定义 systemPrompt 同口径:dataOps:false 不自动追加写入规则
+    const sdk2 = createChatSdk({
+      ui: false, id: 'e2e-page-custom', storage: 'memory', llm: FAKE_LLM,
+      capabilities: { ...MIN_CAPS, dataOps: false, domInspect: true },
+      systemPrompt: '你是站点向导。',
+    })
+    await sdk2.mount()
+    assert(!/可靠写入规则/.test(sdk2.inspect().systemPrompt), '自定义 prompt + dataOps:false → 不追加写入规则(修前教幻影 read/write)')
+    sdk2.unmount()
+  }
+
   console.log('[e2e:systemprompt] planning 开 → 默认 usageHints 含「自适应规划」引导(add-adaptive-planning)')
   {
     const sdk = createChatSdk({

@@ -165,7 +165,7 @@ createChatSdk({
   ui: true,                        // false = headless (build UI with agent.messages + send/stream)
   id: 'my-agent',                  // stable id (multi-agent isolation + persistence resume)
   llm: { apiKey, baseUrl, model, temperature?, maxTokens? },  // or a LangChain BaseChatModel instance
-  systemPrompt: '...',             // Agent identity + business flow (optional: built-in default — JSON operation assistant + reliableWriteRules — used if omitted; passing your own fully overrides it. appendReliableWriteRules defaults to true: auto-appends reliableWriteRules with a '---' separator; set false to disable)
+  systemPrompt: '...',             // Agent identity + business flow (optional: built-in default — JSON operation assistant + reliableWriteRules — used if omitted; passing your own fully overrides it. appendReliableWriteRules defaults to true: auto-appends reliableWriteRules with a '---' separator; set false to disable. **4.16 capability-aware default**: with dataOps:false + domInspect:true (docs-site shape) the default identity becomes "page content assistant" and write rules are no longer auto-appended (never teach tools not in the pool); with neither, a generic fallback applies)
   // ⚠️ Tool usage (read/write/get/set/patch/snapshot etc.) is auto-injected by the usageHints middleware per capability flags — do NOT declare it here; systemPrompt should only carry "business knowledge": identity, field meanings, business flow, skill refs
 
   // page data
@@ -1578,6 +1578,33 @@ createChatSdk({
 **read_page details**: default `limit: 4000` (max 20000); when `hasMore: true`, continue with `offset += returned text length`; returns `{ text, totalChars, offset, hasMore, container }`; oversized results offload to vfs automatically. The smart container probe order is article → main → [role=main] → .content/.article-content/.post-content/.markdown-body/#content → body; an explicit `selector` overrides.
 
 **Full example**: `examples/docs-demo` (static learning article + selection quoting + paginated read_page QA + page anchor) — a ready-made integration template. Privacy note: `autoQuote` defaults to off — automatically sending page selections to an LLM is privacy-sensitive; integrators enable it explicitly and inform their users.
+
+### 6.21 Screenshot viewing & page content analysis (take_screenshot / page-analysis)
+
+When `capabilities.domInspect` is on **and** the main model is multimodal (`llm.vision` / table hit) or `images.describe` is configured, the `take_screenshot` tool is assembled automatically — the agent gains the ability to *see* the page (otherwise not installed, with a console.warn; a later `setLlm` downgrade gets an honest runtime rejection):
+
+| Mode | Call | Use |
+|---|---|---|
+| Partial DOM | `take_screenshot({ selector })` | Verify a specific block/component (locate with dom_search first) |
+| Full page | `take_screenshot({ fullPage: true })` | Whole-page layout (documents >32768px rejected — use selector segments) |
+| Viewport | `take_screenshot()` | The currently visible area |
+
+**How the shot reaches the model (layered channel)**: multimodal main model → the screenshot passes a compression gate (long edge ≤1568 jpeg; PNG kept when it has alpha) and arrives as **image parts of a synthetic user message right after the tool result** (dual-protocol, zero variance; the tool result itself is plain-text metadata — base64 never enters message content); text-only main model → automatically captioned via `images.describe`, text returned. **Originals always stow to vfs** (`userImages/` pool, LRU + persisted); the tool result carries a vfsRef for audit. **UI observability**: tool step rows render the screenshot thumbnail inline (click to enlarge) — users see what the agent saw.
+
+**Renderer**: built-in html-to-image (SVG foreignObject) by default; override via the top-level option when the host CSP blocks SVG data URLs or you need custom cropping:
+
+```ts
+createChatSdk({
+  ...,
+  capabilities: { domInspect: true },        // prerequisite
+  llm: { ..., vision: true },                // or the images: { describe } bypass
+  screenshot: { renderer: async (el, opts) => myRender(el, opts) },  // optional custom renderer
+})
+```
+
+**page-analysis skill** (mounted with skills whenever domInspect is on): a page-content-analysis playbook — question triage (quoted text / whole-page / locate / structure / visual → the right tool for each), exploration discipline (narrow before wide / paginate without re-reading / switch strategies on miss / oversized results stay in vfs), and answering discipline (ground answers in actual page content; the page ≠ your training data; say so when unsure). Division of labor with the dom-inspect skill: that one teaches tool usage, this one teaches scenario strategy.
+
+Full example: `examples/docs-demo?shot=1` (screenshot quick action + real rendering; do not enable vision on text-only models — see images-demo for the describe bypass). Cost note: screenshots cost multimodal tokens (hundreds to thousands per image, re-billed each round); prefer selector-scoped shots for verification tasks.
 
 ### 6.19 Regression toolkit eval-toolkit (run scenario regressions before upgrading)
 

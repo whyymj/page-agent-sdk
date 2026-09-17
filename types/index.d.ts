@@ -59,6 +59,8 @@ export interface ToolStep {
   /** 工具执行耗时(毫秒,tool_result 时回填) */
   durationMs?: number;
   /** 子 agent 工具步骤(spawn 委派时展示子进度) */
+  /** 截图产出(page-screenshot;tool_result 事件富化,MessageSteps 渲染缩略图观察面) */
+  image?: { dataUri: string; thumb?: string; vfsRef?: string };
   children?: ToolStep[];
   /** 子 agent 思考过程累积(reasoning 转发;超长截尾仅留尾部);展示"在想什么" */
   subReason?: string;
@@ -173,7 +175,7 @@ export type StreamEvent =
   | { type: 'reasoning'; delta: string }
   | { type: 'text'; delta: string }
   | { type: 'tool_call'; name: string; args: any; id?: string }
-  | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error'; durationMs?: number; id?: string }
+  | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error'; durationMs?: number; id?: string; /** 截图产出(page-screenshot;vision 通道合成消息之外的可观察面,UI 缩略图消费) */ image?: { dataUri: string; thumb?: string; vfsRef?: string } }
   | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result' | 'reasoning'; name: string; args?: any; result?: string; status?: 'done' | 'error'; delta?: string; toolCallId?: string }
   | { type: 'approval_request'; toolName: string; args: any; resolve: (approved: boolean | string) => void; hold?: () => void; preview?: ApprovalWritePreview }
   | { type: 'done'; content: string };
@@ -190,7 +192,7 @@ export type SdkEvent =
   | { type: 'reasoning'; delta: string }
   | { type: 'text'; delta: string }
   | { type: 'tool_call'; name: string; args: any; id?: string }
-  | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error'; durationMs?: number; id?: string }
+  | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error'; durationMs?: number; id?: string; /** 截图产出(page-screenshot;vision 通道合成消息之外的可观察面,UI 缩略图消费) */ image?: { dataUri: string; thumb?: string; vfsRef?: string } }
   | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result' | 'reasoning'; name: string; args?: any; result?: string; status?: 'done' | 'error'; delta?: string; /** 关联主循环工具调用 id(并行双委派各归各 UI step) */ toolCallId?: string }
   | { type: 'done'; content: string }
   | { type: 'data_change'; operation: 'set' | 'edit' | 'delete' | 'restore'; value?: unknown }
@@ -1340,6 +1342,11 @@ export interface ChatSdkOptions {
   maxOutputTokens?: number;
   /** 图片输入配置组(image-input-vision):images.upload 上传换 URL(集成方 OSS)/ images.describe 绑定识图转述(集成方识图子 agent / 自有 vision API,非多模态主模型时转述注入) */
   images?: ImagesConfig;
+  /**
+   * 截图配置组(take_screenshot;装配条件 = capabilities.domInspect 开 && (主模型多模态 vision || images.describe 已配),
+   * 不满足不装并 warn 留痕)。默认渲染 = 内置 html-to-image;宿主 CSP 限制 SVG data URL 或需特殊裁剪时传 renderer 覆盖
+   */
+  screenshot?: { renderer?: (el: Element, opts: { width?: number; height?: number }) => Promise<string> };
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
   capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; automation?: boolean; workingMemory?: boolean; focus?: boolean; contextInspector?: boolean; agentCompression?: boolean; pageContext?: boolean };/** tracing/skillHostScript/preferences/bulkGuard 已于 4.1.0 移除;残键静默忽略 */
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number; /** 单次委派总时长毫秒(默认 1800000=30min,2026-08-28 抬升;超时 abort 子流 + recoverable 回灌;0 = 不限制) */ timeoutMs?: number; thinkingMode?: 'simple' | 'deep' };
@@ -1676,7 +1683,7 @@ export declare function buildDataPrompt(data: DataConfig | undefined, schemaHint
  * 传 systemPrompt 默认追加 reliableWriteRules(设 appendReliableWriteRules:false 关闭);不传用 DEFAULT_SYSTEM_PROMPT(已内置)。纯函数。
  * locale:'en-US' 时默认 prompt 用 DEFAULT_SYSTEM_PROMPT_EN、追加规则段用 reliableWriteRulesEn(默认 prompt 与 UI 同语言)。
  */
-export declare function buildSystemPrompt(opts: { systemPrompt?: string; appendReliableWriteRules?: boolean; locale?: DialogLocale }): string;
+export declare function buildSystemPrompt(opts: { systemPrompt?: string; appendReliableWriteRules?: boolean; locale?: DialogLocale; /** 主数据操作能力(caps.dataOps && data 声明;createChatSdk 自动传,直调缺省 true = 历史行为;false 时默认身份不再是「JSON 操作助手」且不追加写入规则) */ dataOps?: boolean; /** 页面探查能力(caps.domInspect;dataOps:false 时默认身份切「页面内容助手」) */ domInspect?: boolean; /** take_screenshot 已装配(未装不教,页面身份截图行收起) */ screenshot?: boolean }): string;
 export declare function defineTool(opts: {
   name: string;
   description: string;

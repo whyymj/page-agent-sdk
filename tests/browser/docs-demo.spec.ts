@@ -198,3 +198,52 @@ test.describe('划词浮动菜单 selectionMenu(docs-demo)', () => {
     await expect(page.locator('[data-test="selection-menu"]')).toBeHidden()
   })
 })
+
+test.describe('take_screenshot 截图问答(docs-demo ?shot=1)', () => {
+  test('selector 截图 → 真渲染 + 合成图消息 + 步骤行缩略图', async ({ page }) => {
+    await page.goto('/examples/docs-demo/?shot=1')
+    await page.waitForSelector('.chat-dialog', { state: 'attached' })
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'take_screenshot', arguments: { selector: '.docs-table' } }] },
+      { text: '表格是四列(配置项/作用/默认值/调参建议),渲染正常。' },
+    ])
+    const bodies = await recordLlmBodies(page)
+
+    await openDrawer(page)
+    await fillInput(page, '截图看看配置表格')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    await expect(page.locator('.chat-dialog .message-row.assistant').last()).toContainText('表格是四列')
+
+    // 第一轮请求体:system hints 教截图(vision + domInspect 装配态)
+    const sys = String(JSON.parse(bodies[0] ?? '{}').messages?.[0]?.content ?? '')
+    expect(sys).toContain('take_screenshot')
+    expect(sys).toContain('page-analysis') // 页面内容分析策略 skill 索引(渐进披露一行)
+    // 第二轮请求体:ToolMessage = 文本元数据(无 base64);合成 human 消息带 image_url part(真渲染产物)
+    const second = JSON.parse(bodies[1] ?? '{}')
+    const toolMsg = (second.messages ?? []).find((m: { role: string }) => m.role === 'tool')
+    expect(String(toolMsg?.content)).toContain('截图完成(selector')
+    expect(String(toolMsg?.content)).not.toContain('base64,')
+    const partsHuman = (second.messages ?? []).filter((m: { role: string }) => m.role === 'user')
+      .find((m: { content: unknown }) => Array.isArray(m.content))
+    expect(partsHuman?.content?.[0]?.text).toContain('[截图 1] selector')
+    expect(String(partsHuman?.content?.[1]?.image_url?.url)).toMatch(/^data:image\/(jpeg|png);base64,/) // jpeg 常态;PNG 带透明通道时 keepPng 保真
+    expect(partsHuman.content[1].image_url.url.length).toBeGreaterThan(1000) // 真图非占位
+    // UI 观察面:步骤行缩略图(浏览器真跑 html-to-image → canvas 压缩)
+    await expect(page.locator('[data-test="step-shots"] .step-shot-img').first()).toBeVisible()
+    const src = await page.locator('[data-test="step-shots"] .step-shot-img').first().getAttribute('src')
+    expect(src).toMatch(/^data:image\/(jpeg|png);base64,/)
+  })
+
+  test('默认(非 shot)形态:截图工具不装 + hints 不教', async ({ page }) => {
+    await page.goto('/examples/docs-demo/')
+    await page.waitForSelector('.chat-dialog', { state: 'attached' })
+    await mockLlm(page, [{ text: '收到' }])
+    const bodies = await recordLlmBodies(page)
+    await openDrawer(page)
+    await fillInput(page, '你好')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    expect(String(JSON.parse(bodies[0] ?? '{}').messages?.[0]?.content ?? '')).not.toContain('take_screenshot')
+  })
+})

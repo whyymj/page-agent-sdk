@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-3519%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-3542%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -241,7 +241,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `ui` | `boolean \| 'default'` · default `true` | `false` = headless (build UI with `agent.messages`) |
 | | `llm` | `LLMConfig \| BaseChatModel` · **required** | `LLMConfig={provider?,apiKey,baseUrl?,model?,temperature?,maxTokens?}`; `provider` defaults to `'openai'` (OpenAI/DeepSeek-compatible, default DeepSeek); `'anthropic'` dynamic-loads `@langchain/anthropic` for Claude native protocol |
 | | `id` | `string` | Stable id (multi-agent isolation + persistence resume; random+warn if omitted) |
-| | `systemPrompt` | `string` | Agent identity (no hardcoded business; inject via this). Optional — built-in default (JSON operation assistant + `reliableWriteRules`) used if omitted; passing your own fully overrides it. `appendReliableWriteRules` defaults to `true`: auto-appends `reliableWriteRules` with a `---` separator; set `false` to disable |
+| | `systemPrompt` | `string` | Agent identity (no hardcoded business; inject via this). Optional — built-in default is capability-aware (4.16): with data declared = JSON operation assistant + `reliableWriteRules`; with dataOps:false + domInspect = "page content assistant" (write rules not appended); passing your own fully overrides it. `appendReliableWriteRules` defaults to `true`: auto-appends `reliableWriteRules` with a `---` separator (not appended when dataOps:false); set `false` to disable |
 | | `augmentSystem` | `(ctx:{state,data?}) => string \| undefined` | Dynamic system prompt injection hook: called each turn, returns a string injected as a segment based on runtime state/data; return undefined to skip; callback errors degrade to skip (no crash). `ctx.data` is taken from liveData() each turn (auto-syncs after setData), enabling dynamic component descriptions / partial schema hints. Not set = current behavior |
 | **Page data** | `data` | `{schema,bind,description?}` | Single main object: declare zod schema (validation + field descriptions auto-injected into prompt) + bind (reactive/plain object, tools read/write directly, no `window`) + description |
 | | `tools` / `skills` / `memory` | `Tool[]` / `SkillSpec[]` / `string` | Custom tools / skills / AGENTS.md-style directives |
@@ -249,6 +249,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `dialog.autoQuote` | `boolean` | **Selection quoting · silent capture (page-quote, default false)**: when true, opening the drawer or clicking the input area lazily captures the host page's current text selection (outside the dialog) into a removable quote chip, sent with the next message as question context. Privacy opt-in; `sdk.setQuote/clearQuote` work regardless of this toggle. See [usage-guide §6.20](doc/usage-guide.en.md#620-text-selection-quoting--page-qa-page-quote--read_page--pagecontext) |
 | | `dialog.selectionMenu` | `boolean` | **Selection floating menu (page-quote explicit confirm, default false)**: selecting text floats a "❝ Quote to chat" toolbar above the selection; click = attach the quote chip + open the dialog + focus the input; dismiss on outside click / scroll / Esc; composable with autoQuote. See [usage-guide §6.20](doc/usage-guide.en.md#620-text-selection-quoting--page-qa-page-quote--read_page--pagecontext) |
 | | `capabilities.pageContext` | `boolean` | **Page anchor (default false)**: injects the current page title + URL as a pinned system segment each round (pair with `domInspect`'s read_page for page QA). See [usage-guide §6.20](doc/usage-guide.en.md#620-text-selection-quoting--page-qa-page-quote--read_page--pagecontext) |
+| | `screenshot` | `{renderer?}` | **Screenshot config (take_screenshot)**: assembled when domInspect is on AND (multimodal main model \|\| images.describe); default renderer is html-to-image, pass `renderer` when CSP restricts. See [usage-guide §6.21](doc/usage-guide.en.md#621-screenshot-viewing--page-content-analysis-take_screenshot--page-analysis) |
 | **Capability toggles** | `capabilities` | `{planning?,dataOps?,fetch?,skills?,vfs?,summarization?,memory?,subagent?,verify?,focus?}` | Default all on (`verify` default off, opt-in; `focus` = context focus for refining one component, default on); `false` to turn off |
 | | `permissions` | `PermissionRule[]` | Scope whitelist (first-match-wins, default off) |
 | | `humanConfirm` | `boolean` · default `true` | Proactive inquiry (AI asks when uncertain/multi-plan) |
@@ -474,7 +475,7 @@ After `npm run dev`, visit the corresponding page:
 | multi-agent-demo | `/examples/multi-agent-demo/` | Multi-agent parallel + exclusive switch (3 independent agents, drawer hide/show keeps each history) |
 | proxy-demo | `/examples/proxy-demo/` | LLM connection config: proxy to prevent apiKey leakage (browser holds only userToken, proxy injects real key; auto-refresh on expired token; needs `npm run proxy:mock`) + Provider switch (`provider:'anthropic'` for Claude native protocol, streaming + extended thinking) |
 | images-demo | `/examples/images-demo/` | Image input: text-only main model + `images.describe` captioning bypass (captions injected, image never sent; auto direct-send when the main model is multimodal) |
-| docs-demo | `/examples/docs-demo/` | Docs-site integration template: selection-quote questioning (autoQuote dual lazy capture + quote chip) + paginated `read_page` page QA + `pageContext` page anchor; copy into your own docs site |
+| docs-demo | `/examples/docs-demo/` | Docs-site integration template: selection-quote questioning (floating menu + autoQuote lazy capture) + paginated `read_page` page QA + `pageContext` page anchor + `?shot=1` screenshot visual verification; copy into your own docs site |
 
 Framework-agnostic integration: `demo/plain.html` (importmap + esm.sh).
 

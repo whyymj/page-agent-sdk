@@ -685,3 +685,22 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 ### [2026-09-09] Batch A 勘误留痕(已修,非暂缓)
 
 A3 曾写「116 个模块」,实测 sec-*.ts = **115**(runner import 同数)——当场勘误,且模块数已纳入 `scripts/check-test-counts.mjs` 机械对账(声明 vs 实际文件数,漂移即红),同类腐化不再靠人眼。
+## 2026-09-17 take-screenshot 立项登记(「不立项项」收敛)
+
+> 来源:2026-09-17 用户需求「配置多模态/识图能力即注入截图工具,支持部分 DOM 与全页」→ 立项 `2026-09-17-take-screenshot`(见 `changes/README.md` 索引),以下为裁出的否决/暂缓项集中登记。
+
+### [2026-09-17] html-page-demo sandbox iframe 内截图 — ⏸ 暂缓(跨 origin 硬约束)
+
+**现状基础**:html-page-demo 预览 iframe 为 `sandbox="allow-scripts"`(无 allow-same-origin,examples/html-page-demo/App.vue:259),父页拿不到 contentDocument,任何 DOM 截图库(html-to-image/html2canvas)对其失效 —— take_screenshot 对该 iframe 返回降级文案。**暂缓理由**:改 iframe sandbox 会放开隔离面(安全权衡),宿主页面(非 iframe 预览)截图已全覆盖。**重启触发**:html-page-demo 场景需要「子 agent 生成后视觉自检」且 validate_code 结构校验不够。**候选形态**:iframe 内注入截图脚本经既有 postMessage 量高通道回传 dataURI(79-99 行通道复用)。
+
+### [2026-09-17] Anthropic tool_result 原生带图(ToolMessage parts 直发)— ⏸ 暂缓(需加固两处字符串化点)
+
+**现状基础**:`@langchain/anthropic@1.5.4` message_inputs.js:34-52 已完整透传 tool_result 内 image block;`@langchain/openai@1.5.5` completions.js:571-601 tool 角色非 string content 亦透传(网关接受度未证)。**暂缓理由**:需同时加固 `trimContextIfNeededImpl`(createAgent.ts:302 会把 parts 换字符串切片)与 `offloadLargeResult`(:794 字符串收口)双豁免 + `ToolExecResult.content` 类型扩宽,而 D1 合成 user 消息方案零方差已覆盖需求。**重启触发**:合成消息方案在真 LLM 回归出现跨网关兼容问题,或 tool 语义贴真度成为质量瓶颈。
+
+### [2026-09-17] vfs 截图重注入工具(跨轮重看历史截图)— ⏸ 暂缓(无真实调用模式)
+
+**现状基础**:截图原图已 stow vfs userImages 池(vfsRef 随 ToolMessage 元数据留存),但 vfs_read 只回文本,无「按 vfsRef 重注入 image parts」机制;跨轮想再看只能重截。**暂缓理由**:重截图成本远低于建重注入通道(压缩闸后单次截图几十 KB,真 LLM 未出现反复重截同区域的调用模式)。**重启触发**:真 LLM 基线出现同区域多次重截(≥3 次/任务)的浪费模式。
+
+### [2026-09-17] html2canvas vendor / 动态 import 分块 — ❌ 否决(体积与构建形态)
+
+**评估结论**:html2canvas ~148KB raw 会把 ESM(~110KB 余量)与 headless(~51.6KB 余量)爆 3×,重校幅度与 designSkill(+160~230K)同量级而 CSS 重实现路线自有盲区,不如 html-to-image(~47KB,foreignObject 原生渲染);动态 import 分块在 4 份单文件 lib 配置下不成立(vite.iife.config.ts:43 / vite.headless.config.ts:8-10 注释钉死:inlineDynamicImports 下动态 import 只换时序不省体积)。**重启触发**:宿主 CSP 普遍禁 SVG data URL 致 foreignObject 路线不可用(届时评估 renderer 钩子文档化优先于换库)。

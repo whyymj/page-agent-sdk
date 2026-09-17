@@ -10,6 +10,8 @@ export interface ToolStep {
   status: 'running' | 'done' | 'error'
   /** 工具执行耗时(毫秒,tool_result 时回填;供步骤行展示) */
   durationMs?: number
+  /** 截图产出(page-screenshot;tool_result 事件富化,MessageSteps 渲染缩略图观察面) */
+  image?: { dataUri: string; thumb?: string; vfsRef?: string }
   /** 子 agent 的工具步骤(spawn_agent/spawn_agents 委派时,展示子 agent 工作进度) */
   children?: ToolStep[]
   /** 子 agent(spawn)思考过程增量累积(reasoning 转发;展示子 agent "在想什么",默认折叠);超 REASON_TAIL_CAP 截尾(仅留尾部) */
@@ -124,7 +126,7 @@ export type StreamEvent =
   | { type: 'reasoning'; delta: string }
   | { type: 'text'; delta: string }
   | { type: 'tool_call'; name: string; args: any; id?: string }
-  | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error'; durationMs?: number; id?: string }
+  | { type: 'tool_result'; name: string; result: string; status: 'done' | 'error'; durationMs?: number; id?: string; /** 截图产出(page-screenshot;vision 通道合成消息之外的可观察面,UI 缩略图消费) */ image?: { dataUri: string; thumb?: string; vfsRef?: string } }
   | { type: 'subagent'; taskId: string; label: string; kind: 'tool_call' | 'tool_result' | 'reasoning'; name: string; args?: any; result?: string; status?: 'done' | 'error'; delta?: string; /** 关联的主循环工具调用 id(并行双委派各归各的 UI step) */ toolCallId?: string }
   | { type: 'approval_request'; toolName: string; args: any; resolve: (approved: boolean | string) => void; /** 响应方应答接管:调用的瞬间取消无响应自动拒计时(内置 UI 收到即调;无人调 → 超时自动拒;无计时器时缺省) */ hold?: () => void; /** write 审批 diff 预览(ui-quick-wins Q3;approval.preview 开且 previewWrite 命中时附带;dryRun 纯函数只读计算不落盘) */ preview?: import('../harness/approval').ApprovalWritePreview }
   | { type: 'done'; content: string }

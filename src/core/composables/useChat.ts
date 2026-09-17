@@ -170,6 +170,7 @@ export function useChat(opts: UseChatOptions = {}) {
                 step.result = event.result
                 step.status = event.status
                 step.durationMs = event.durationMs
+                if (event.image) step.image = event.image // page-screenshot 观察面:步骤行缩略图
                 // 子 agent 思考细节:步骤完成后丢弃细节(只留短预览)—— 生成期间可展开看全文,
                 // 收口后不再堆积长 reasoning(省 UI 内存;细节已无回看价值,结论在 result)
                 const sr = step.subReason

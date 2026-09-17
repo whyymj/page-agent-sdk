@@ -19,6 +19,9 @@ import DevNav from '../_shared/DevNav.vue'
 
 const root = ref<HTMLElement>()
 let agent: ChatSdk | null = null
+/** 截图演示形态(?shot=1):声明多模态(vision)触发 take_screenshot 装配 —— 注:纯文本模型(deepseek)勿开,
+ *  真实使用换多模态模型名(gpt-4o/claude/qwen-vl)或走 images.describe 旁路(images-demo 有完整参照) */
+const shotMode = typeof location !== 'undefined' && location.search.includes('shot=1')
 
 onMounted(() => {
   agent = createChatSdk({
@@ -29,6 +32,7 @@ onMounted(() => {
       baseUrl: import.meta.env.VITE_AI_BASE_URL,
       model: import.meta.env.VITE_AI_MODEL,
       temperature: 0.3,
+      ...(shotMode ? { vision: true } : {}),
     },
     storage: 'memory',
     debug: true,
@@ -45,6 +49,7 @@ onMounted(() => {
         { label: '这页讲了什么', prompt: '这个页面讲了什么?请用 read_page 读取正文后概括', icon: '📖' },
         { label: '总结要点', prompt: '总结本页内容的要点,按小节组织', icon: '🧾' },
         { label: '本页配置项', prompt: '本页提到的配置项有哪些?各自的作用和默认值是什么?', icon: '⚙️' },
+        ...(shotMode ? [{ label: '📸 截图看表格', prompt: '用 take_screenshot 截取 .docs-table 区域,看看表格渲染效果' }] : []),
       ],
     },
   })
@@ -63,7 +68,8 @@ const openAsk = (): void => agent?.show()
       <h1>Transformer 学习笔记</h1>
       <p class="docs-meta">自建学习文档 · 集成 page-agent-sdk 划词引用 + 页面问答</p>
       <div class="docs-tip">
-        💡 选中正文任意文字 → 浮出「❝ 引用到对话」点击即挂引用并打开对话框;或选中后点右下角「问 AI」/输入框(自动捕获)→ 引用 chip 挂上 → 输入问题发送
+        💡 选中正文任意文字 → 浮出「❝ 引用到对话」点击即挂引用并打开对话框;或选中后点右下角「问 AI」/输入框(自动捕获)→ 引用 chip 挂上 → 输入问题发送。
+        📸 截图演示:URL 加 ?shot=1 声明多模态,agent 获得 take_screenshot 视觉验证能力(纯文本模型走识图转述)
       </div>
     </header>
 

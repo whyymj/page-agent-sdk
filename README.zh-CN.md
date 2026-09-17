@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-3519%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-3542%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -175,6 +175,7 @@ CDN 零配置：`<script src="https://unpkg.com/page-agent-sdk"></script>` → `
 | 🖼 图片输入 | 对话框内置三入口(📎 选择/拖拽/粘贴截图)→ 压缩闸(长边 ≤1568px/单轮 ≤4 张/超 20MB 拒);主模型多模态(gpt-4o/claude/qwen-vl 查表,或 `llm.vision:true`)→ 图片直发 content parts 零配置;纯文本主模型(deepseek 等)→ 配 `images.describe` 逐图识图转述注入(图不直发);都不配则诚实拒绝不静默丢图;`images.upload` 原图换 https URL(集成方 OSS);持久化只存缩略图 + vfs 引用 | `images: { upload?, describe? }` + `llm.vision` |
 | ❝ 划词引用 | 用户选中页面文字 → 引用 chip 自动挂上(打开抽屉/点输入框双懒捕获)→ 随下一条消息作为提问上下文;`AgentMessage.quote` 消息级字段(content 干净,气泡结构化引用块,LLM 前缀注入,随消息持久化);`sdk.setQuote/clearQuote` 宿主 API(headless 同享);来源自动推导 = 页面 title + 最近在前标题;排队/快捷指令不消费(与图片同口径);隐私 opt-in 默认关;另有 `dialog.selectionMenu` 显式确认形态(划选浮出「❝ 引用到对话」工具条,点击挂引用并打开对话框) | `dialog.autoQuote` / `dialog.selectionMenu` + `sdk.setQuote` |
 | 📖 页面问答 | `read_page` 读当前页正文纯文本(智能定位 article/main/[role=main]/.content,排除 SDK 自身 DOM 与 script/style,`hasMore` 分页续读,大结果自动外存 vfs);`pageContext` 每轮注入当前页 title+URL 锚点 pin 段(跨压缩;子 agent 不继承) | `capabilities: { domInspect: true, pageContext: true }` |
+| 📸 截图查看 | `take_screenshot` 三模式(selector 局部 / fullPage 整页 / 视口);条件注入(domInspect 开 && vision 主模型 \|\| images.describe,不满足 warn 留痕);分层图通道(vision → 工具结果后合成 user 消息 image parts,免疫 trim/offload;纯文本 → describe 转述);压缩闸 ≤1568 + 原图收 vfs;工具步骤行缩略图观察面;`page-analysis` skill(问题分型/探索纪律/回答纪律) | `capabilities: { domInspect: true }` + `llm.vision` 或 `images.describe` + `screenshot.renderer`(可选) |
 
 能力默认开（`verify`/`approval`/`checkpoint` 默认关；**主动征询 `humanConfirm` 默认开**——AI 遇不确定/多方案主动问你、不猜测），可经 `capabilities` 关掉无用的省 token。
 
@@ -237,7 +238,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `ui` | `boolean \| 'default'` · 默认 `true` | `false` = headless（用 `agent.messages` 自建 UI） |
 | | `llm` | `LLMConfig \| BaseChatModel` · **必传** | `LLMConfig={provider?,apiKey,baseUrl?,model?,temperature?,maxTokens?}`；`provider` 缺省 `'openai'`（兼容 OpenAI/DeepSeek 协议，默认接 DeepSeek）；`'anthropic'` 动态加载 `@langchain/anthropic` 走 Claude 原生协议 |
 | | `id` | `string` | 稳定 id（多 agent 隔离 + 持久化恢复；不传随机+warn） |
-| | `systemPrompt` | `string` | Agent 身份(不硬编码业务,靠这注入)。可选——不传用内置默认(JSON 操作助手 + `reliableWriteRules`);传了则完全覆盖。`appendReliableWriteRules` 默认 `true`:自动用 `---` 分隔线追加 reliableWriteRules;设 `false` 关闭 |
+| | `systemPrompt` | `string` | Agent 身份(不硬编码业务,靠这注入)。可选——不传用内置默认(**4.16 能力感知**:有 data 声明 = JSON 操作助手 + `reliableWriteRules`;dataOps:false + domInspect = 「页面内容助手」,不追加写入规则);传了则完全覆盖。`appendReliableWriteRules` 默认 `true`:自动用 `---` 分隔线追加 reliableWriteRules(**dataOps:false 时不追加**);设 `false` 关闭 |
 | | `augmentSystem` | `(ctx:{state,data?}) => string \| undefined` | 动态 system prompt 注入钩子:每轮调,按运行时 state/data 返回字符串作为一段注入;返回 undefined 跳过;回调抛错降级跳过(不崩)。`ctx.data` 每轮从 liveData() 取最新(setData 后自动同步),可据此动态算当前组件说明 / 部分 schema 描述。不配 = 现状行为 |
 | **页面数据** | `data` | `{schema,bind,description?}` | 单主对象:声明 zod schema(校验 + 字段描述自动注入提示词)+ bind(reactive/普通对象,工具直接读写,不挂 window)+ description |
 | | `tools` / `skills` / `memory` | `Tool[]` / `SkillSpec[]` / `string` | 自定义工具 / 技能 / AGENTS.md 风格持久指令 |
@@ -248,6 +249,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `dialog.autoQuote` | `boolean` | **划词引用·静默捕获(page-quote,默认 false)**:true 时打开抽屉/点输入区瞬间懒捕获宿主页面(对话框外)当前选中文本挂「引用 chip」(可删),随下一条消息发给 LLM。隐私 opt-in;`sdk.setQuote/clearQuote` 不受此开关影响。见 [usage-guide §6.20](doc/usage-guide.md#620-划词引用与页面问答page-quote--read_page--pagecontext) |
 | | `dialog.selectionMenu` | `boolean` | **划词浮动菜单(page-quote 显式确认,默认 false)**:划选文字浮出「❝ 引用到对话」工具条,点击 = 挂引用 chip + 打开对话框 + 聚焦输入;点别处/滚动/Esc 消失;与 autoQuote 独立可组合。见 [usage-guide §6.20](doc/usage-guide.md#620-划词引用与页面问答page-quote--read_page--pagecontext) |
 | | `capabilities.pageContext` | `boolean` | **页面锚点(默认 false)**:每轮 system 注入当前页 title+URL(pin 段跨压缩;配合 `domInspect` 的 read_page 读正文答问)。见 [usage-guide §6.20](doc/usage-guide.md#620-划词引用与页面问答page-quote--read_page--pagecontext) |
+| | `screenshot` | `{renderer?}` | **截图配置组(take_screenshot)**:装配条件 = domInspect 开 &&(多模态主模型 \|\| images.describe);默认渲染 html-to-image,CSP 限制时传 `renderer` 自定义。见 [usage-guide §6.21](doc/usage-guide.md#621-截图查看与页面内容分析take_screenshot--page-analysis) |
 | | `permissions` | `PermissionRule[]` | scope 白名单（first-match-wins，默认不启用） |
 | | `humanConfirm` | `boolean` · 默认 `true` | 主动征询（AI 不确定/多方案主动问你，不猜测） |
 | | `approval` | `{tools?,confirm?,timeoutMs?,humanConfirmTool?}` · 默认关 | 被动确认白名单（写操作前弹允许/拒绝） |
@@ -515,7 +517,7 @@ function switchTo(i: number) {
 
 ```bash
 npm test            # 3283 项断言（tsx 源码级，不依赖 LLM）
-npm run test:e2e    # 1048 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
+npm run test:e2e    # 1151 项集成断言（node 跑构建产物 dist；覆盖各 API/配置项/功能模块/简单与复杂场景：默认 systemPrompt(含能力概述) / 动态注册与 inspect 同步 / inspect(tools/middleware/subagent/verify/mcp/todos/lastCompression/checkpoints 反映配置) / 自定义 tools/middleware/skills/memory 注入 / 运行时动态重配置(setTools/addTool/removeTool/setLlm/setMemory/setSubagents 反映) / switchSession(开/未开) / shareContext 开/关共享独立 / storage 后端+对象配置 / presets 三预设 / checkpoint / 导出项完整(39+ 函数/组件) / 工具函数可用(isQuotaError/estimateTokens/jpEval/searchJson) / source=builtin / mount 边界 / hook 多监听器 / llm 配置 / 错误场景）
 ```
 
 ## 本地 npm 包测试

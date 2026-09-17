@@ -2,6 +2,25 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.16.0] - 2026-09-17
+
+> 截图查看能力(take-screenshot change,openspec/changes/2026-09-17-take-screenshot)+ page-analysis 内容分析 skill + 默认 systemPrompt 能力感知身份。
+> 新依赖 html-to-image@1.11.13(仓库首个 runtime dependency,+21~26KB/产物)。
+
+### Changed
+
+- **默认 systemPrompt 能力感知身份**(buildSystemPrompt 增可选 `dataOps`/`domInspect`/`screenshot` 参数,createChatSdk 自动传;直调缺省 true = 历史行为零回归):此前默认身份恒为「JSON 操作助手」并追加 reliableWriteRules —— 对 `dataOps:false + domInspect:true` 的文档站形态是**双重失实**(谎称主数据对象 + 教池里不存在的 read/write 工具,违反「勿教不存在的工具」纪律)。现按能力分支:dataOps(有 data 声明)→ JSON 身份不变;dataOps:false + domInspect → 「页面内容助手」(read_page/get_dom/dom_search/dom_info 一句话能力面 + 引用块轻量引导 + 回答纪律「页面实料优先/页面≠训练数据/找不到如实说」;截图行仅 take_screenshot 实际装配时出现);双无 → 通用兜底(与 createAgent 兜底同文案)。**自定义 systemPrompt + dataOps:false 不再自动追加 reliableWriteRules**(修前教幻影写入工具;确需可自行拼 systemPromptHelpers.reliableWriteRules)。中英双份镜像。
+
+### Added
+
+- **take_screenshot 工具**(domInspect 族,条件注入):`caps.domInspect && (modelCaps.vision || images.describe)` 才装配,不满足 warn 留痕(verify 先例);setLlm 降级运行时诚实拒绝。三模式:selector 局部 / fullPage 整页(显式 scrollHeight + 32768 高度守卫)/ 默认视口;渲染默认 html-to-image,`screenshot.renderer` 钩子逃生(CSP 限制/自定义裁剪);压缩闸复用 canvas 管线(≤1568 jpeg,PNG 透明保真);**base64 绝不进工具结果 content**(offload 必毁)。
+- **分层图通道**:vision 主模型 → screenshotChannel 中间件(wrapModelCall)drain 截图队列,在工具结果后追加**合成 user 消息 image parts**(复用 buildImageContentParts 双协议;req.messages 即循环 currentMessages 同引用 → 本轮 invoke 内存活;免疫 trimContextIfNeeded 只裁 ToolMessage 与 offload 字符串化 —— 两处会把 ToolMessage 内图毁掉是本设计的关键动因);非 vision → images.describe 转述回灌纯文本。原图恒 stow vfs userImages 池(LRU+持久化),工具结果带 vfsRef。
+- **UI 观察面**:StreamEvent `tool_result` 增可选 `image` 字段(双路富化:makeStreamWatch + core.stream)+ ToolStep.image;MessageSteps 工具步骤行内渲染截图缩略图(点击放大)——用户能看到 agent「看到了什么」。
+- **page-analysis skill**(domInspect 开即挂载,用户点名):页面内容分析策略 —— 问题分型(引用原文/整页理解/定位/结构/视觉 → 工具映射)+ 探索纪律(先窄后宽/翻页不重复/定位失败换路/大结果外存)+ 回答纪律(基于页面实料/页面≠训练数据/不确定就说不确定);与 dom-inspect 分工(用法 vs 策略);makeDomInspectSkill 变体工厂同批(截图段随装配态,勿教不存在的工具)。
+- **修复级发现**:subagents 中间件 wrapToolCall 对主循环所有工具注入 `__pgSubagentCall`(per-call 透传通道,非子栈标记)—— 曾据其判定「子代理上下文」的分支全部不可靠;take_screenshot 放弃该维度,子 agent 截图回流主上下文(与委派结论回流同理)。
+- **examples/docs-demo?shot=1**:截图演示形态(llm.vision 声明 + 📸 quickAction);browser spec 真渲染链(html-to-image → canvas 压缩 → 合成消息 parts → 步骤缩略图)。
+- **测试增量**:selftest sec-127 ×14(路由/node 守卫/hints/skill 变体/分析 skill)+ sec-31 ×9(能力感知身份分支矩阵)→ **3542**;e2e screenshot.mjs ×20(fake globals 驱动全链:条件矩阵/合成 parts/describe 旁路/事件富化/fullPage 高度守卫)+ systemprompt.mjs ×4(页面身份/不教幻影工具)→ **1151**;browser docs-demo spec +2 → **162**。size:JS 六产物阈内(+21~26KB 被余量吸收),CSS 阈值 85→87.5KB 重校(缩略图样式 +~300B)。
+
 ## [4.15.0] - 2026-09-17
 
 > 学习文档站场景三件套:划词引用(page-quote)+ 页面正文阅读(read_page)+ 页面锚点(pageContext)。

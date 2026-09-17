@@ -24,6 +24,7 @@ import { type ActionMap } from './actions'
 import { type StorageConfig, type StorageBackendType } from '../backends/storage'
 import { type SkillStoreConfig } from '../backends/skillStore'
 import type { AgentMessage, StreamHandler, AgentInfo, SdkEventHandler, BatchResult, BatchProgress, AgentImage, ImagesConfig, ToolStepViewFn, MessageQuote } from '../types'
+import type { ScreenshotRenderer } from '../tools/screenshot'
 
 export interface LLMConfig {
   apiKey: string
@@ -203,6 +204,11 @@ export interface ChatSdkOptions {
   maxOutputTokens?: number
   /** 图片输入配置组(image-input-vision):images.upload 上传换 URL(集成方 OSS)/ images.describe 绑定识图转述(集成方识图子 agent / 自有 vision API,非多模态主模型时转述注入) */
   images?: ImagesConfig
+  /**
+   * 截图配置组(take_screenshot;装配条件 = capabilities.domInspect 开 && (主模型多模态 vision || images.describe 已配),
+   * 不满足不装并 warn 留痕)。默认渲染 = 内置 html-to-image;宿主 CSP 限制 SVG data URL 或需特殊裁剪时传 renderer 覆盖。
+   */
+  screenshot?: { renderer?: ScreenshotRenderer }
   /** 内置能力开关(默认全开;关掉某能力则对应中间件/工具不装载) */
   capabilities?: {
     dataOps?: boolean          // 数据操作工具集(默认 true;关 → 不装数据工具,省 token/上下文)

@@ -14,7 +14,7 @@ const limits = [
   { file: 'dist/page-agent-sdk.umd.cjs', max: 1.08 * MB, label: 'UMD(require;含 design-skill,实测 ~974KB)' },
   { file: 'dist/page-agent-sdk.headless.js', max: 760 * KB, label: 'headless ESM(/headless 子路径;纯核心不含 UI/不含 overlayscrollbars,含 design-skill,实测 ~673KB)' },
   { file: 'dist/page-agent-sdk.legacy.js', max: 3.55 * MB, label: 'legacy ESM(/legacy 子路径;es2017 全量打包含 anthropic + design-skill,实测 ~3189KB)' },
-  { file: 'dist/style.css', max: 85 * KB, label: 'CSS(含 overlayscrollbars 样式 + 3.27 顶部按钮标签,实测 ~79KB)' },
+  { file: 'dist/style.css', max: 87.5 * KB, label: 'CSS(含 overlayscrollbars 样式 + 3.27 顶部按钮标签 + 4.16 截图缩略图样式,实测 ~85.3KB)' },
 ]
 
 let pass = 0, fail = 0

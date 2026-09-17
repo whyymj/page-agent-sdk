@@ -6,7 +6,7 @@
 
 | 文档 | 内容 |
 |---|---|
-| [**使用手册**](./usage-guide.md) / [EN](./usage-guide.en.md) | **入门首选** · 安装 / 快速开始 / 配置项 / 能力详解 / **UI 定制与国际化(6.15:图标/主题 + 顶层 `i18n` 配置组切语言/键级覆盖文案,富文本位支持 HTML)** / **图片输入(6.17:多模态直发 / 纯文本模型识图转述旁路 `images.describe`)** / **快捷指令与会话转移(6.18:`dialog.quickActions` 一键高频操作 / 会话导出导入 / 元素拖入聚焦 + `approval.preview` 审批 diff)** / **划词引用与页面问答(6.20:`dialog.autoQuote` 划词 chip 提问 + `read_page` 分页读正文 + `pageContext` 页面锚点,文档站集成模板 `examples/docs-demo`)** / **诊断报告导出(6.13c:`exportDiagnostics` 一键完整日志交排查)** / 自定义中间件 / FAQ |
+| [**使用手册**](./usage-guide.md) / [EN](./usage-guide.en.md) | **入门首选** · 安装 / 快速开始 / 配置项 / 能力详解 / **UI 定制与国际化(6.15:图标/主题 + 顶层 `i18n` 配置组切语言/键级覆盖文案,富文本位支持 HTML)** / **图片输入(6.17:多模态直发 / 纯文本模型识图转述旁路 `images.describe`)** / **快捷指令与会话转移(6.18:`dialog.quickActions` 一键高频操作 / 会话导出导入 / 元素拖入聚焦 + `approval.preview` 审批 diff)** / **划词引用与页面问答(6.20:`dialog.autoQuote`/`selectionMenu` 划词提问 + `read_page` 分页读正文 + `pageContext` 页面锚点)** / **截图查看与页面分析(6.21:`take_screenshot` 三模式 + 分层图通道 + `page-analysis` skill,`?shot=1` 演示)** / **诊断报告导出(6.13c:`exportDiagnostics` 一键完整日志交排查)** / 自定义中间件 / FAQ |
 | [功能架构](./architecture.md) | ①-⑮ 全景:分层结构 / 组装挂载 / ReAct 主循环(格式自纠+verify自纠) / 数据操作与乐观锁 / 冲突人工介入(状态机+abort联动) / 上下文压缩持久化 / 事件流 / 会话恢复 / 子 agent 编排 / MCP / Approval / 模块抽离 / 体验平面 / **数据槽深潜(白名单/读写链/受保护资源/vfs)** / **能力全景与鲁棒性契约**(多张 mermaid 图) |
 | [上下文组成与压缩策略](./context-management.md) / [EN](./context-management.en.md) | 上下文 3 部分组成 / 外存 + 3 层压缩(每层原理/流程/参数/边界)/ 压缩后结构 / 3 张流程图 / 预设档位 / 与 Deep Agents 差异 |
 | [真 LLM 回归方法论](./real-llm-regression.md) | 统一入口套件用法 / idle 双条件判定 / 超时 dump 与 reload 诊断 / 基线对比(--baseline-diff/--baseline-update)/ 环境性失败即停原则 |

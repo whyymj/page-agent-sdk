@@ -15,12 +15,15 @@ SystemMessage = buildSystemPrompt()   ← createAgent.ts:196,每轮 toLC/replace
 │
 ├─【块 A · base = baseSystemPrompt】← createChatSdk 创建时定,运行期固定(仅身份+规则,不含数据段)
 │  │
-│  ├─ A1 身份 + 能力概述
-│  │     · 不传 systemPrompt → DEFAULT_SYSTEM_PROMPT(身份 / 范围控制·schema 校验·快照 / 增量 patch)
+│  ├─ A1 身份 + 能力概述(4.16 能力感知)
+│  │     · 不传 systemPrompt → 有 data 声明:DEFAULT_SYSTEM_PROMPT(JSON 操作助手 / 范围控制·schema 校验·快照 / 增量 patch)
+│  │                          → dataOps:false + domInspect:页面内容助手(read_page/get_dom 等能力面 + 引用块引导 + 回答纪律)
+│  │                          → 双无:通用兜底(「你是一个智能助手。」)
 │  │     · 传 systemPrompt   → 用户业务 systemPrompt(身份/知识/流程)
 │  │
 │  ├─ A2 --- (分隔线)
-│  └─ A3 reliableWriteRules(5 条写入元规则;appendReliableWriteRules 默认 true 追加,false 关闭)
+│  └─ A3 reliableWriteRules(5 条写入元规则;appendReliableWriteRules 默认 true 追加,false 关闭;
+│        dataOps:false 时不追加 —— 写入工具不在池,勿教不存在的工具)
 │
 └─【块 B · augmentPrompt 段】← createAgent 每轮动态,按中间件装载序,有内容才注入
    │
@@ -47,12 +50,17 @@ SystemMessage = buildSystemPrompt()   ← createAgent.ts:196,每轮 toLC/replace
 flowchart TD
   A["createChatSdk(options)"] --> B{"传了 systemPrompt?"}
 
-  B -- "否(用默认)" --> C["DEFAULT_SYSTEM_PROMPT<br/>身份 + 能力概述 + '---' + reliableWriteRules"]
+  B -- "否(用默认)" --> C{"能力感知(4.16)"}
+  C -- "dataOps(有 data)" --> C1["DEFAULT_SYSTEM_PROMPT<br/>身份 + 能力概述 + '---' + reliableWriteRules"]
+  C -- "dataOps:false + domInspect" --> C2["页面内容助手身份<br/>(无写入规则;截图行随装配态)"]
+  C -- "双无" --> C3["通用兜底「智能助手」"]
   B -- "是" --> D{"appendReliableWriteRules?"}
   D -- "默认 true" --> E["用户 systemPrompt + '\n\n---\n\n' + reliableWriteRules"]
   D -- "false" --> F["仅用户 systemPrompt"]
 
-  C --> G["basePrompt"]
+  C1 --> G["basePrompt"]
+  C2 --> G
+  C3 --> G
   E --> G
   F --> G
 

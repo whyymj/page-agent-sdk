@@ -494,8 +494,13 @@ export const domInfoTool = tool(
  * load_skill 前仅占索引一行(schema 不进每轮上下文),加载后进工具池反复调用。
  * get_dom 保持常驻装配(向后兼容 + 最常用最小 schema)。
  */
-export const domInspectSkill: import('../harness/skills').SkillSpec = {
-  name: 'dom-inspect',
+/** skill 名常量(装配侧判重用;变体工厂保持同名) */
+export const domInspectSkillName = 'dom-inspect'
+
+/** dom-inspect skill 变体工厂:withScreenshot = take_screenshot 已装配(视觉条件满足)才在文档里教它(勿教不存在的工具) */
+export function makeDomInspectSkill(opts: { withScreenshot?: boolean } = {}): import('../harness/skills').SkillSpec {
+  return {
+  name: domInspectSkillName,
   description: '页面 DOM 深度检视工具(dom_search 搜索元素 / dom_info 读内容·计算样式·事件绑定·几何)。定位元素、验证样式落地、排查交互绑定时加载',
   getContent: () => [
     '# DOM 检视工具用法',
@@ -512,8 +517,55 @@ export const domInspectSkill: import('../harness/skills').SkillSpec = {
     '- includeHtml: true 附 outerHTML 片段(默认省);pseudo: true 附 ::before/::after 摘要',
     '- events 三源:inline on* 属性 / Vue vnode props(onXxx)/ addEventListener 记录器(⚠ 仅记录本 SDK 加载之后注册的监听,更早的挂载捕不到)',
     '- rect:视口坐标 + 宽高(验证可见性/布局)',
+    ...(opts.withScreenshot ? [
+      '## take_screenshot({ selector?, fullPage? })—— 视觉验证',
+      '- 截图「看」页面:selector 截指定元素区域 / fullPage 截整页 / 都不传截当前视口;截图经压缩投递(多模态直看图,纯文本模型自动走识图转述)',
+      '- 布局/样式/渲染效果类问题优先截图(视觉真值),结构/属性类用 dom_info;截图失败(CSP/跨域图)会回灌原因与替代建议',
+    ] : []),
     '## 排障套路',
-    '1. dom_search(mode:"text", query:按钮文案) 定位 → 2. dom_info(styles:["display","background-color","pointer-events"]) 验证样式/点击性 → 3. 不符则改数据(get_dom 看结构对照)',
+    ...(opts.withScreenshot
+      ? ['1. dom_search(mode:"text", query:按钮文案) 定位 → 2. 视觉验证 take_screenshot / 结构验证 dom_info(styles) → 3. 不符则改数据(get_dom 看结构对照)']
+      : ['1. dom_search(mode:"text", query:按钮文案) 定位 → 2. dom_info(styles:["display","background-color","pointer-events"]) 验证样式/点击性 → 3. 不符则改数据(get_dom 看结构对照)']),
   ].join('\n'),
   tools: [() => [domSearchTool, domInfoTool]],
+  }
 }
+
+
+// ===== page-analysis skill(page-quote 场景族:页面内容分析策略)=====
+// 与 dom-inspect 分工:dom-inspect 教「工具怎么用」(参数/返回形态),page-analysis 教「场景怎么打」
+// (问题分型 → 工具选择 → 探索策略 → 回答纪律)。装配态条件化:截图段只在 take_screenshot 已装配时教。
+
+/** 页面内容分析 skill 名常量 */
+export const pageAnalysisSkillName = 'page-analysis'
+
+/** page-analysis skill 变体工厂(withScreenshot = take_screenshot 已装配才教视觉验证路线) */
+export function makePageAnalysisSkill(opts: { withScreenshot?: boolean } = {}): import('../harness/skills').SkillSpec {
+  return {
+    name: pageAnalysisSkillName,
+    description: '页面内容分析策略:按问题类型选工具(引用原文/整页理解/定位/结构/视觉),含分页探索纪律与基于页面实料的回答纪律。回答用户关于当前页面的问题时加载',
+    getContent: () => [
+      '# 页面内容分析策略',
+      '## 第一步:问题分型(按类型选主力工具,不要一上来读整页)',
+      '- **引用原文类**(用户消息带引用块):优先围绕引用原文作答;需要上下文再向外探索(所在小节 → 整页)',
+      '- **整页理解类**(「这页讲了什么/总结要点」):read_page 读正文,长文按 hasMore 翻页,边读边归纳不要一次读爆',
+      '- **定位类**(「某概念在本页哪里/那个按钮在哪」):dom_search mode:"text" 按关键词定位 → 需要细节再 read_page 带 selector 读该区域',
+      '- **结构/属性类**(「这个区块是什么组件/有哪些属性」):dom_info(selector) 读单元素;层级关系用 get_dom',
+      ...(opts.withScreenshot ? [
+        '- **视觉类**(「看起来对不对/布局乱不乱/渲染效果」):take_screenshot 截图看视觉真值;selector 截局部、fullPage 截整页;截图是唯一能看到实际渲染效果的手段,结构推断不能代替',
+      ] : []),
+      '## 探索纪律',
+      '1. **先窄后宽**:引用/焦点 → 所在小节 → 整页;每一步只取够回答当前问题的量',
+      '2. **翻页不重复**:read_page 续读传 offset = 上次 offset + 返回 text 长度;不要回头重读已读区',
+      '3. **定位失败换路**:selector 不命中 → dom_search text 模式换关键词;还不中 → read_page 扫小节标题再回来',
+      '4. **大结果在外存**:超大结果被移入 vfs 后用 vfs_read/vfs_grep 按需取,不要盲目重调',
+      '## 回答纪律(页面问答的底线)',
+      '- **基于页面实料**:答案须来自你读到的页面内容(引用原文/read_page/dom 工具结果),并在回答中点明出处小节/位置',
+      '- **页面 ≠ 训练数据**:页面内容可能与你的先验知识不同,冲突时以页面为准;页面没写的不要编造',
+      '- **不确定就说不确定**:找不到的内容如实说「本页未找到」,给出已探索的范围,勿凭印象补全',
+    ].join('\n'),
+  }
+}
+
+/** 兼容导出(无截图段的基础变体;装配侧已改用 makeDomInspectSkill 按装配态生成) */
+export const domInspectSkill = makeDomInspectSkill()
