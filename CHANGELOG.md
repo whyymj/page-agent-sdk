@@ -2,6 +2,17 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.17.1] - 2026-09-17
+
+> 4.17.0 dom-edit 兼容性审查修复(用户要求「检查新增功能与原有功能冲突/兼容」驱动):dom_edit 标 writeCapable 后与既有守卫的两处误判 + 一并修掉同构潜伏 bug。
+
+### Fixed
+
+- **zero-tool 门禁误判 dom_edit「零等效写」**(P1,真 LLM 场景必触发):dom_edit 改宿主页面 DOM 但未标 `writeCapable` → `isZeroEffectiveWrite` 不认它为「等效写」→「把配置表格高亮」「修改页面标题」「删除这个广告」类**操作祈使句 + dom_edit + 纯文本收口**被 imperative-zero-tool-gate 误判「你没干任何事」回灌(烧 ≤2 轮预算)+ 误报 `ZERO_TOOL_GATE_EXHAUSTED`「疑似谎报完成」。修:dom_edit/dom_restore 标 `writeCapable:true`(对齐 dataOps markWrite 单一真相源;同时令子 agent 授权面正确剥离页面写工具)。
+- **componentWriteGuard 误拒 dom_edit**(P2,codeAsset+domEdit 混合场景 + 委派在途):dom_edit 的「路径」是 CSS selector,`extractWriteScopes` 恒空 → 落入「整体 set 触碰锁定组件」分支被误拒 `COMPONENT_LOCKED`。修:componentWriteGuard 跳过 `EXCLUDED_WRITE_TOOLS`(写面但路径非数据 jsonPath 的工具,不受组件锁约束)。**一并修掉同构潜伏 bug**:`resource_update`/`resource_delete`(writeCapable + path 非 jsonPath)此前同样会被误拒(资源池写不该受组件锁,本次同源修复)。
+- **stale-read 误失效防御**(随 writeCapable 标注):dom_edit 标 writeCapable 后若不排除,`effectiveWritePaths` 会因 selector 非 jsonPath 落 else 分支 = ROOT → 误失效全部数据读 + 污染 evidence 审计基线(`auditWritePaths.add(ROOT)` = 全覆盖,混合场景 dataOps+domEdit 同开时灾难)。修:dom_edit/dom_restore 加入 `EXCLUDED_WRITE_TOOLS`(与 resource_* 同构:writeCapable + EXCLUDED 双标,隔离 stale-read/audit 面)。
+- selftest sec-128 +9 兼容性回归(writeCapable 标注 / EXCLUDED 归属 / effectiveWritePaths→null / isZeroEffectiveWrite 计等效写 + 无标记对照 / isSuccessfulWriteResult / 事实清单不谎报数据路径 / componentWriteGuard 锁定期间放行 dom_edit)→ **3582**;e2e dom-edit.mjs 既有 ReAct 用例(消息含「改写」触发 detectActionImperative)为本修复的端到端回归(修前会被门禁打断)。
+
 ## [4.17.0] - 2026-09-17
 
 > DOM 编辑能力族(dom-edit):agent 对宿主页面的受控标注/内容/结构操作(用户点名「修改 DOM 样式/内容/增删改查/层级嵌套 + 集成进 skill」)。

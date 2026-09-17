@@ -9,6 +9,10 @@ import { validateDomPatches, createDomEditTools, type DomPatch } from '../../too
 import { makeDomInspectSkill, makePageAnalysisSkill } from '../../tools/domTool'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
 import { resolveCapabilities, CAPABILITIES } from '../../capabilities'
+import { isZeroEffectiveWrite, buildTurnFactSheet, type TurnToolUsage } from '../../harness/actionGate'
+import { effectiveWritePaths, EXCLUDED_WRITE_TOOLS } from '../../harness/readInvalidation'
+import { isSuccessfulWriteResult } from '../../harness/writeGate'
+import { createComponentWriteGuardMiddleware } from '../../sdk/componentLock'
 
 // ===== Mini DOM 假树(serialize/parse 回环支撑快照 restore 断言) =====
 class MiniEl {
@@ -282,5 +286,49 @@ export async function run(ctx: { assert: (cond: boolean, msg: string) => void })
     assert((withEdit.augmentPrompt?.(undefined as never) ?? '').includes('dom_edit'), '✓ usageHints domEdit flag 开 → 教批量编辑')
     const noEdit = createUsageHintsMiddleware({ domInspect: true } as never, false)
     assert(!(noEdit.augmentPrompt?.(undefined as never) ?? '').includes('dom_edit'), '✓ usageHints 未开 domEdit → 不教')
+  }
+
+  // ---- 兼容性回归(2026-09-17 审查驱动:dom_edit 标 writeCapable 后与既有守卫的交互)----
+  {
+    const [domEditTool, domRestoreTool] = createDomEditTools({ getDocument: () => null })
+    // ① writeCapable 标注(单一真相源:zero-tool 门禁计等效写 / 子 agent 授权剥离 / isSuccessfulWriteResult)
+    assert((domEditTool as { writeCapable?: unknown }).writeCapable === true, '✓ dom_edit 标 writeCapable(zero-tool 门禁认它为「真干了活」)')
+    assert((domRestoreTool as { writeCapable?: unknown }).writeCapable === true, '✓ dom_restore 标 writeCapable(同口径)')
+
+    // ② stale-read 排除:selector 非数据 jsonPath,不排除会落 ROOT 误失效全部数据读
+    assert(EXCLUDED_WRITE_TOOLS.has('dom_edit') && EXCLUDED_WRITE_TOOLS.has('dom_restore'), '✓ dom_edit/dom_restore 在 EXCLUDED_WRITE_TOOLS(与 resource_* 同构)')
+    const eff = effectiveWritePaths({ name: 'dom_edit', args: { patches: [{ op: 'highlight', selector: '.docs-table' }] } })
+    assert(eff === null, '✓ effectiveWritePaths(dom_edit) → null(不落 ROOT,不污染 stale-read 失效面 / evidence 审计基线)')
+
+    // ③ zero-tool 门禁:dom_edit 计「等效写」→ 不误判「零等效写」回灌(修前「把配置表格高亮」类指令被误判谎报)
+    const tools = [domEditTool, domRestoreTool] as Array<{ name: string; writeCapable?: unknown }>
+    const isWriteTool = (name: string): boolean => {
+      const t = tools.find((x) => x.name === name)
+      if (t && 'writeCapable' in t) return typeof t.writeCapable === 'function' ? true : t.writeCapable === true
+      return false
+    }
+    const usage: TurnToolUsage = { counts: { dom_edit: 1 }, writePaths: [], failures: 0 }
+    assert(isZeroEffectiveWrite(usage, isWriteTool) === false, '✓ dom_edit×1 → 非零等效写(zero-tool 门禁不误触发)')
+    // 回归对照:若 dom_edit 未被认作写(标记缺失),同 usage 会被判零等效写 → 门禁误触发
+    assert(isZeroEffectiveWrite(usage, () => false) === true, '✓ 对照:无 writeCapable 标记则误判零等效写(证明标记是修复关键)')
+    // 成功写判定(writeGate):dom_edit 成功 → 计为成功写(供 turnUsage)
+    assert(isSuccessfulWriteResult(domEditTool as never, { patches: [{ op: 'highlight', selector: '.x' }] }, { content: '已应用 1 个操作', status: 'done' }) === true, '✓ isSuccessfulWriteResult(dom_edit 成功) → true')
+    // 事实清单不谎报「成功写入路径」(dom_edit 无数据路径,writePaths 空 → 显示「无」)
+    assert(buildTurnFactSheet({ counts: { dom_edit: 1 }, writePaths: [], failures: 0 }, [], isWriteTool).includes('成功写入路径:无'), '✓ 事实清单:dom_edit 不产生数据写路径(显示「无」,不谎报)')
+
+    // ④ componentWriteGuard:dom_edit 改宿主 DOM 非数据组件路径,委派在途锁定期间不应被误拒 COMPONENT_LOCKED
+    const guard = createComponentWriteGuardMiddleware({
+      getBind: () => ({ components: [{ name: '英雄区', code: '<div/>' }] }),
+      writablePaths: ['components'],
+      getLocked: () => ({ '英雄区': 'task-1' }),  // 委派在途,组件被锁
+      getCodeFieldPaths: () => ['components.0.code'],
+      tools: [domEditTool, domRestoreTool] as never,
+    })
+    let nextCalled = false
+    const guardResult = await guard.wrapToolCall!(
+      { name: 'dom_edit', args: { patches: [{ op: 'highlight', selector: '.docs-table' }] } } as never,
+      (async () => { nextCalled = true; return { content: 'PASSED', status: 'done' as const } }) as never,
+    )
+    assert(nextCalled && (guardResult as { content?: string })?.content === 'PASSED', '✓ 委派在途锁定期间 dom_edit 放行(不受组件锁约束;修前误拒 COMPONENT_LOCKED「整体 set」)')
   }
 }

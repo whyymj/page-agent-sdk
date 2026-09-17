@@ -13,6 +13,7 @@
  * 纯内存会话级状态,不持久化;全部纯函数可白盒自测。
  */
 import type { Middleware } from '../harness/middleware'
+import { EXCLUDED_WRITE_TOOLS } from '../harness/readInvalidation'
 import type { StructuredToolInterface } from '@langchain/core/tools'
 
 /** 组件锁接口(acquire 多组件原子:任一被占全失败且已取得的释放) */
@@ -220,6 +221,12 @@ export function createComponentWriteGuardMiddleware(opts: ComponentWriteGuardOpt
           : (tool as any).writeCapable === true
       ) : false
       if (!isWrite) return next(ctx)
+
+      // 写面但「路径非数据 jsonPath」的工具(资源池 resource_update/delete、宿主页面 DOM dom_edit/dom_restore)
+      // 不受组件锁约束 —— 它们不写 data.components 子树,extractWriteScopes 恒空,若继续走下面「整体 set」
+      // 分支会被误判 COMPONENT_LOCKED 拒掉(修前:codeAsset+domEdit 混合场景委派在途时每次 dom_edit 被误拒;
+      // resource_* 同构潜伏)。与 readInvalidation EXCLUDED_WRITE_TOOLS 单源对齐。
+      if (EXCLUDED_WRITE_TOOLS.has(ctx.name)) return next(ctx)
 
       const args = (ctx.args ?? {}) as Record<string, unknown>
       if (args.dryRun === true) return next(ctx)  // 试运行无写入,不拦

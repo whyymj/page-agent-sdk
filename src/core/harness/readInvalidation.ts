@@ -31,8 +31,12 @@ const READ_TOOLS = new Set(['read', 'query_data', 'search_data'])
  * 写面但显式排除在「写度量」外的工具:resource_update/delete 的 args({path,value})会被
  * whole-set 分支误判为整体 set 单次刷新(delegateNudge P0,团队评估 2026-08-29)—— 本处(stale-read)
  * 与 delegateNudge 共用单源。
+ * dom_edit/dom_restore(4.17):改宿主页面 DOM,「路径」是 CSS selector 非数据 jsonPath —— 若不排除,
+ * effectiveWritePaths 落 else 分支 = ROOT → 误失效全部数据读 + 污染 evidence 审计基线(auditWritePaths.add(ROOT)
+ * = 全覆盖,混合场景 dataOps+domEdit 同开时灾难)。它们标了 writeCapable(供 zero-tool 门禁计等效写),
+ * 故必须在此排除以隔离 stale-read/audit 面(与 resource_* 同构:writeCapable + EXCLUDED 双标)。
  */
-export const EXCLUDED_WRITE_TOOLS = new Set(['resource_update', 'resource_delete'])
+export const EXCLUDED_WRITE_TOOLS = new Set(['resource_update', 'resource_delete', 'dom_edit', 'dom_restore'])
 /** 会引起数组位移的 op(remove 删元素/move 搬元素):兄弟索引位移必须失效 */
 const SHIFT_OPS = new Set(['remove', 'move'])
 

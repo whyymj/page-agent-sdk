@@ -317,5 +317,14 @@ export function createDomEditTools(deps: { getDocument?: () => Document | null |
     },
   )
 
+  // 写能力标注(对齐 dataOps markWrite 单一真相源):dom_edit/dom_restore 改宿主页面 DOM = 写面工具。
+  // 三处消费按此判定 —— ① zero-tool 门禁 isZeroEffectiveWrite 计「等效写」(修前 dom_edit 不被认作写 →
+  //    「把配置表格高亮」类页面编辑指令收口被误判「零等效写」回灌「你没干任何事」+ 误报 ZERO_TOOL_GATE_EXHAUSTED);
+  //    ② 子 agent 授权面剥离(spawn 自授不默认带页面写,需显式 allowedTools);③ isSuccessfulWriteResult。
+  // 但 dom_edit 的「路径」是 CSS selector 非数据 jsonPath —— 已加入 readInvalidation EXCLUDED_WRITE_TOOLS
+  //    (resource_update/delete 同构先例),防 effectiveWritePaths 落 ROOT 误失效全部数据读 / 污染 evidence 审计基线。
+  ;(domEditTool as { writeCapable?: unknown }).writeCapable = true
+  ;(domRestoreTool as { writeCapable?: unknown }).writeCapable = true
+
   return [domEditTool, domRestoreTool] as const
 }
