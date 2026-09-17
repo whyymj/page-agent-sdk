@@ -66,6 +66,11 @@ const showCursor = computed(() => isAssistant.value && props.loading && props.is
           :title="ctx.messages.historyFocusChipTitlePrefix + f.path"
         ><IconGlyph :icon="ctx.icons.focus" /> {{ f.path }}</span>
       </div>
+      <!-- user 消息附带引用(page-quote 划词引用):气泡上方引用块(❝ 标签 + 原文 + 来源;content 保持干净故结构化渲染) -->
+      <div v-if="message.role === 'user' && message.quote" class="msg-quote" data-test="msg-quote">
+        <blockquote class="msg-quote-text">{{ message.quote.text }}</blockquote>
+        <span v-if="message.quote.source" class="msg-quote-source">❝ {{ message.quote.source }}</span>
+      </div>
       <!-- user 消息附带图片(image-input-vision):气泡上方缩略图行(thumb 优先,恢复后轻形态仍有;LRU 淘汰且无 thumb 显示占位框) -->
       <div v-if="message.role === 'user' && message.images?.length" class="msg-images" :data-img-count="message.images.length">
         <a
@@ -111,6 +116,10 @@ const showCursor = computed(() => isAssistant.value && props.loading && props.is
 /* user 消息发送时焦点快照 chip(背景组件限制标注) */
 .msg-focuses { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; margin-bottom: 4px; }
 .msg-focus-chip { display: inline-flex; align-items: center; gap: 2px; padding: 1px 4px 1px 6px; border-radius: 10px; background: rgba(var(--cs-primary-rgb, 31, 77, 58), 0.12); color: var(--cs-primary, #1f4d3a); font-size: 11px; line-height: 1.6; white-space: nowrap; }
+/* 划词引用块(page-quote):左竖线 + muted 正文体,引用原文可能多行(blockquote 天然换行) */
+.msg-quote { margin-bottom: 4px; max-width: 100%; }
+.msg-quote-text { margin: 0; padding: 2px 8px; border-left: 2px solid rgba(var(--cs-primary-rgb, 31, 77, 58), 0.5); font-size: 12px; line-height: 1.5; color: var(--cs-bg-muted, #9ca3af); white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg-quote-source { display: block; font-size: 10px; color: var(--cs-bg-muted, #9ca3af); opacity: 0.85; margin-top: 2px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .message-row.user .message-content { display: flex; flex-direction: column; align-items: flex-end; }
 /* user 消息图片缩略图行(image-input-vision):右对齐(user 侧),点开原图新窗(rel=noopener) */
 .msg-images { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; margin-bottom: 4px; max-width: 100%; }

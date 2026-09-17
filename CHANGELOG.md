@@ -2,6 +2,25 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.15.0] - 2026-09-17
+
+> 学习文档站场景三件套:划词引用(page-quote)+ 页面正文阅读(read_page)+ 页面锚点(pageContext)。
+> 纯新增(新字段/新配置全 optional),零破坏。示例 `examples/docs-demo` 为自建文档网站的集成模板。
+
+### Added
+
+- **划词引用(page-quote)**:用户在宿主页面选中文字 → 「引用 chip」自动挂上(可删)→ 随下一条消息作为提问上下文。`AgentMessage.quote?: { text, source? }` 消息级侧字段(content 保持干净,气泡渲染结构化引用块,快照自动持久化);LLM 注入在 toLC 层前缀拼 `[引用原文(来源:…)]` 块(vision content parts / describe 旁路 / 纯文本三分支共用,图+引用同消息共存)。**双懒捕获**(`dialog.autoQuote: true`,隐私 opt-in 默认关):`DialogController.show()` 打开抽屉瞬间 + ChatInput 输入区 `pointerdown` 捕获阶段(焦点塌缩选区之前同步执行);无效选区静默跳过;排除 SDK 对话框自身 DOM(`SDK_UI_SELECTOR` 含 Teleport 浮层)。宿主 API `sdk.setQuote(text, source?)` / `sdk.clearQuote()`(headless 同享;`AgentCore.pendingQuote` 共享状态);`SendOptions.quote` 显式传入(优先且不消费待发);headless 划词捕获导出 `captureSelectionQuote`。来源自动推导 = 页面 title + 选区上方最近 h1-h6 标题(compareDocumentPosition);归一 + 截 2000 字符。**语义**:消息级上下文不进 system 段;排队路径与快捷指令不消费待发引用(与图片同口径);纯引用不可发送;切/重置会话不清(输入区态)。
+- **read_page 工具**(`capabilities.domInspect` 常驻,与 get_dom 同池):读当前页正文纯文本 —— `pickContentRoot` 智能定位容器(article → main → [role=main] → .content 族 → body,逐选择器按优先级);`extractPageText` 逐层子元素提取(子树无排除目标整枝 innerText 一次取全,含排除目标〔如 SDK 对话框嵌 #app〕下钻一层;SKIP_TAGS script/style/noscript/template/svg/iframe/canvas 整枝跳过;CRLF 归一 + 空行折叠);`{ selector?, offset?, limit≤20000 默认 4000 }` 分页续读(hasMore);大结果走既有 vfs offload。dom-inspect skill 文档 + usageHints 提示行同步「读正文首选 read_page」。
+- **pageContext 能力**(`capabilities.pageContext`,opt-in 默认关):每轮 system pin 段注入当前页 title+URL(`PIN_SEGMENT_NAMES` 登记保跨压缩;canReadPage 条件化 read_page 指引,domInspect 关时不引导不存在的工具;node/headless 无 document 降级不注入;子 agent 不继承)。capabilities 注册表 18→19。
+- **划词浮动菜单(`dialog.selectionMenu: true`,opt-in 默认关)**:page-quote 的显式确认形态 —— 划选宿主文字 → 选区上方浮出「❝ 引用到对话」工具条(`SelectionMenu.vue`,Teleport body,fixed 定位 `computeSelectionMenuPosition` 纯函数:上方优先不够翻下方、视口钳制)→ 点击 = `sdk.setQuote` + 打开对话框(drawerHidden 隐藏态也唤起;聚焦输入延后 400ms 避 cs-hidden visibility 过渡期 focus 静默失效)+ 聚焦输入框;点别处/滚动/Esc/选区失效即隐(浮条自身 pointerup 不触发重定位,防「点按钮→菜单复活」);根 class `.chat-selection-menu` 进 `SDK_UI_SELECTOR` 排除清单(read_page 不当正文、捕获判定视为 SDK 内部)。与 autoQuote 独立可组合(显式 vs 静默)。i18n `selectionMenuLabel/Title` 中英。
+- **examples/docs-demo**:静态学习文章(Transformer 笔记,含 read_page 才能答的配置表格)+ 划词引用(autoQuote 静默 + selectionMenu 浮条双形态)+ read_page 翻页答问 + 页面锚点;宿主「问 AI」按钮演示 `@mousedown.prevent` 保选区关键手法(浏览器点按默认动作塌缩选区)。
+- selftest 3473 → **3519**(+46:sec-126 quote 纯函数族/read_page 提取面/pageContext 中间件/菜单定位纯函数/caps 注册,duck-typing 假 DOM;sec-19 capabilities 计数 19/6);e2e 1106 → **1127**(+21:quote.mjs —— setQuote 消费即清/显式优先/归一截断/read_page 工具面分页与排除/pageContext 开关对照);browser 153 → **160**(+7:docs-demo.spec.ts —— 双懒捕获流/chip 删除重挂/请求体引用前缀/read_page 两轮 ReAct 工具结果排除 SDK 文案/pageContext 默认关对照/selectionMenu 浮条全链路与 Esc 消隐)
+
+### Fixed
+
+- **S10 idle-hang 根因(真 LLM 套件判定盲区)**:approval/humanConfirm 的 `ctx.logSink` 留痕字面量缺 `timestamp` 字段,`pushLog` 透传 spread 原样入库 → 真 LLM 套件 idle 双条件判定(静默 90s + 零在途子 agent)`quietMs = Date.now() - undefined = NaN` 永不成立 → S10 场景 960s 超时**假败**(4.12 前旧代码同形态,非回归;审批流场景必触发故长期被误读为环境问题)。三处修:① 4 处字面量补 `timestamp: Date.now()`;② `pushLog` chokepoint 归一(缺/坏 timestamp 补当前时间,防未来写入点漏写再成盲区);③ `_real-llm-lib.mjs` quietMs 改反向扫最后一个数值 timestamp(双保险)。e2e hang-feedback 增 S10 回归块 ×3 断言(留痕双阶段在/全条目有限 timestamp/阶段条目真实落值),负向验证敏感(回退修复即 2 红)。
+
+
 ## [4.14.0] - 2026-09-10
 
 > 六路审计整改 Batch F(createChatSdk 三阶段拆分)。**纯内部重构,运行时行为零变化**(全门禁绿为证);

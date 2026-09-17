@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-3473%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-3519%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -29,6 +29,7 @@ Starting point for both humans and AI agents (Claude Code / Cursor): find the fe
 | HTML/code components (AI writes page blocks) | [Capability packs](#createchatsdk-options-cheat-sheet) (`createHtmlSubagent`, auto-registered 3.9+) · `examples/html-page-demo`, `examples/complex-demo` |
 | RAG / MCP tools | [Capability packs](#createchatsdk-options-cheat-sheet) (`createRagSubagent`, `mcp`) · `examples/rag-demo` |
 | Let the AI see images (paste/drop/pick) | [options cheat sheet](#createchatsdk-options-cheat-sheet) (`images` / `llm.vision`) · [usage-guide §6.17](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md#617-image-input-multimodal-direct--captioning-bypass) · `examples/images-demo` |
+| Docs-site QA (quote a selection + read the current page) | [options cheat sheet](#createchatsdk-options-cheat-sheet) (`dialog.autoQuote` / `capabilities.domInspect` + `pageContext`) · [usage-guide §6.20](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md#620-text-selection-quoting--page-qa-page-quote--read_page--pagecontext) · `examples/docs-demo` |
 | Customize UI (theme / icons / i18n / button labels) | [`DialogConfig` fields](#dialogconfig-fields) · [usage-guide §6.15](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md#615-ui-customization--i18n-icons--theme--language--message-overrides-317321) · `examples/i18n-demo` |
 | Sessions / persistence (IndexedDB) | [options cheat sheet](#createchatsdk-options-cheat-sheet) (`storage`/`session`) · `examples/page-demo` (`storage:'indexed'` + built-in history dropdown) |
 | Long conversations / big JSON (context & compression) | [usage-guide §6.8](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md) · [context-management doc](https://github.com/whyymj/page-agent-sdk/blob/master/doc/context-management.md) |
@@ -245,6 +246,9 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | **Page data** | `data` | `{schema,bind,description?}` | Single main object: declare zod schema (validation + field descriptions auto-injected into prompt) + bind (reactive/plain object, tools read/write directly, no `window`) + description |
 | | `tools` / `skills` / `memory` | `Tool[]` / `SkillSpec[]` / `string` | Custom tools / skills / AGENTS.md-style directives |
 | | `images` | `{upload?,describe?,describeTimeoutMs?}` | **Image input (image-input-vision)**: built-in three entry points (📎 pick / drag / paste) → compression gate (long edge ≤1568px, ≤4 per round, >20MB rejected). Multimodal main model (table hit or `llm.vision:true`) → images sent directly as content parts, zero config; text-only main model → configure `describe` to caption each image into the context (image never sent); neither → honest rejection, never silently dropped; `upload` swaps the original for an https URL (integrator OSS). See [usage-guide §6.17](doc/usage-guide.en.md#617-image-input-multimodal-direct--captioning-bypass) |
+| | `dialog.autoQuote` | `boolean` | **Selection quoting · silent capture (page-quote, default false)**: when true, opening the drawer or clicking the input area lazily captures the host page's current text selection (outside the dialog) into a removable quote chip, sent with the next message as question context. Privacy opt-in; `sdk.setQuote/clearQuote` work regardless of this toggle. See [usage-guide §6.20](doc/usage-guide.en.md#620-text-selection-quoting--page-qa-page-quote--read_page--pagecontext) |
+| | `dialog.selectionMenu` | `boolean` | **Selection floating menu (page-quote explicit confirm, default false)**: selecting text floats a "❝ Quote to chat" toolbar above the selection; click = attach the quote chip + open the dialog + focus the input; dismiss on outside click / scroll / Esc; composable with autoQuote. See [usage-guide §6.20](doc/usage-guide.en.md#620-text-selection-quoting--page-qa-page-quote--read_page--pagecontext) |
+| | `capabilities.pageContext` | `boolean` | **Page anchor (default false)**: injects the current page title + URL as a pinned system segment each round (pair with `domInspect`'s read_page for page QA). See [usage-guide §6.20](doc/usage-guide.en.md#620-text-selection-quoting--page-qa-page-quote--read_page--pagecontext) |
 | **Capability toggles** | `capabilities` | `{planning?,dataOps?,fetch?,skills?,vfs?,summarization?,memory?,subagent?,verify?,focus?}` | Default all on (`verify` default off, opt-in; `focus` = context focus for refining one component, default on); `false` to turn off |
 | | `permissions` | `PermissionRule[]` | Scope whitelist (first-match-wins, default off) |
 | | `humanConfirm` | `boolean` · default `true` | Proactive inquiry (AI asks when uncertain/multi-plan) |
@@ -470,6 +474,7 @@ After `npm run dev`, visit the corresponding page:
 | multi-agent-demo | `/examples/multi-agent-demo/` | Multi-agent parallel + exclusive switch (3 independent agents, drawer hide/show keeps each history) |
 | proxy-demo | `/examples/proxy-demo/` | LLM connection config: proxy to prevent apiKey leakage (browser holds only userToken, proxy injects real key; auto-refresh on expired token; needs `npm run proxy:mock`) + Provider switch (`provider:'anthropic'` for Claude native protocol, streaming + extended thinking) |
 | images-demo | `/examples/images-demo/` | Image input: text-only main model + `images.describe` captioning bypass (captions injected, image never sent; auto direct-send when the main model is multimodal) |
+| docs-demo | `/examples/docs-demo/` | Docs-site integration template: selection-quote questioning (autoQuote dual lazy capture + quote chip) + paginated `read_page` page QA + `pageContext` page anchor; copy into your own docs site |
 
 Framework-agnostic integration: `demo/plain.html` (importmap + esm.sh).
 

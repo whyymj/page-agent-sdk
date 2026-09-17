@@ -168,7 +168,10 @@ export async function waitIdle(page, prevMsgCount, { timeoutMs = 900_000, onSamp
       const msgs = sdk?.messages?.length ?? 0
       // 注:window.__sdk.messages 字段名与 UI 数组不同源(mountChatDialog initialMessages);只作「有新消息」粗判
       const logs = sdk?.debugLogs?.value ?? []
-      const lastTs = logs.length ? logs[logs.length - 1].timestamp : 0
+      // S10 兜底(2026-09-10):反向扫最后一个数值 timestamp(缺/坏 timestamp 条目跳过而非 NaN 传染 ——
+      // SDK 侧 pushLog 已归一,此处双保险防任何写入点漏写再成 idle 判定盲区)
+      let lastTs = 0
+      for (let i = logs.length - 1; i >= 0; i--) { const t = logs[i].timestamp; if (typeof t === 'number') { lastTs = t; break } }
       const lastResp = [...logs].reverse().find((l) => l.type === 'llm_response')
       const active = sdk?.getActiveSubagents?.().length ?? 0
       return { msgs, quietMs: Date.now() - lastTs, hasResp: !!lastResp, active, logN: logs.length }

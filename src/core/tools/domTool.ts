@@ -13,6 +13,7 @@
  */
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
+import { isInsideSdkUi, SDK_UI_SELECTOR } from '../utils/sdkDom'
 
 /** 默认暴露的 attribute 白名单(不传 attrs 时);data-* 始终包含(业务标记常挂此)。
  * 注意:`value` 不进默认白名单 —— 表单 <input value>/<textarea> 可能含敏感数据(密码/token/PII),
@@ -124,8 +125,110 @@ export const getDomTool = tool(
   },
 )
 
-/** DOM 读取工具集(静态数组,随 capabilities.domInspect 装配) */
-export const domTools = [getDomTool]
+// ===== read_page:页面正文纯文本提取(page-quote 配套主力读工具)=====
+// get_dom 按深度返回结构树(读整篇文章要么 depth 开大爆 token、要么多次调用),dom_info 的 textAll
+// 截 1000 字 —— 文档站「这个页面讲了什么/某段在哪」缺一个高效读正文的通道。read_page 定位:
+// innerText 提取 + 智能定位正文容器 + 分页续读;排除 SDK 自身 UI(light DOM 挂进宿主页,不排除会把
+// 「输入消息,Enter 发送」当页面正文)与 script/style 等非内容子树。
+
+/** 正文容器候选(按优先级逐个 querySelector;article 优先于通名 .content —— 逗号并写会按文档序取首命中,失去优先级) */
+const CONTENT_ROOT_SELECTORS = ['article', 'main', '[role="main"]', '.content', '.article-content', '.post-content', '.markdown-body', '#content']
+/** 提取时整体跳过的标签(非内容子树;SVG/canvas 图形无文本价值) */
+const SKIP_TAGS = new Set(['script', 'style', 'noscript', 'template', 'svg', 'iframe', 'canvas'])
+const SKIP_TAG_SELECTOR = 'script,style,noscript,template,svg,iframe,canvas'
+
+/**
+ * 纯函数:智能定位正文容器(article → main → [role=main] → 常用 content 类名 → body)。
+ * duck-typing(只需 querySelector/body),node selftest 可测。
+ */
+export function pickContentRoot(doc: ParentNode & { body?: Element | null }): Element | null {
+  for (const sel of CONTENT_ROOT_SELECTORS) {
+    try {
+      const hit = doc.querySelector?.(sel)
+      if (hit) return hit
+    } catch { /* 选择器常量无非法形态;防御 duck 桩抛错 */ }
+  }
+  return (doc as { body?: Element | null }).body ?? null
+}
+
+/**
+ * 纯函数:子树 → 归一化正文文本。逐层遍历直接子元素:
+ * - skipEl 命中 / SKIP_TAGS 标签 → 整个子树跳过
+ * - 子树不含排除目标(containsSkip=false)→ 整枝 innerText 一次取全(结构换行保留,文本不重不漏)
+ * - 含排除目标(如 SDK 对话框嵌在 #app 里)→ 下钻一层继续拆(保排除语义)
+ * 归一:CRLF→LF、3+ 空行折叠 2、首尾 trim;块间以空行连接。
+ */
+export function extractPageText(
+  root: ParentNode | null,
+  skipEl: (el: Element) => boolean,
+  containsSkip: (el: Element) => boolean,
+): string {
+  if (!root) return ''
+  const parts: string[] = []
+  const emit = (el: Element): void => {
+    const raw = (el as HTMLElement).innerText ?? el.textContent ?? ''
+    const norm = raw.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+    if (norm) parts.push(norm)
+  }
+  const walk = (parent: ParentNode): void => {
+    for (const child of Array.from(parent.children ?? [])) {
+      const el = child as Element
+      const tag = String(el.tagName ?? '').toLowerCase()
+      if (skipEl(el) || SKIP_TAGS.has(tag)) continue
+      if (!containsSkip(el)) { emit(el); continue }
+      walk(el)
+    }
+  }
+  walk(root)
+  return parts.join('\n\n').trim()
+}
+
+/** 工具侧排除判定闭包:子树是否含需排除目标(SKIP 标签或 SDK UI,嵌套任意深) */
+function subtreeNeedsDescend(el: Element): boolean {
+  try {
+    return el.querySelector?.(SKIP_TAG_SELECTOR) != null || el.querySelector?.(SDK_UI_SELECTOR) != null
+  } catch {
+    return true // 查不动(duck 桩)宁可下钻也不误含
+  }
+}
+
+export const readPageTool = tool(
+  ({ selector, offset, limit }) => {
+    // node/服务端守卫(get_dom 同款):误开在 node 跑时给 LLM 可读出路
+    if (typeof document === 'undefined') {
+      return 'ERROR: read_page 仅在浏览器环境可用(当前运行在 node/服务端,无 DOM)。请基于用户消息中的引用原文回答。'
+    }
+    let root: Element | null
+    let container: string
+    if (selector) {
+      root = document.querySelector(selector)
+      if (!root) return `未找到匹配元素:selector="${selector}"`
+      container = selector
+    } else {
+      root = pickContentRoot(document)
+      container = root ? root.tagName.toLowerCase() : 'body'
+    }
+    const full = extractPageText(root, isInsideSdkUi, subtreeNeedsDescend)
+    const off = offset ?? 0
+    const lim = limit ?? 4000
+    if (off > full.length) return `offset=${off} 超出正文长度 ${full.length}(先从 offset=0 读,按 hasMore 续读)`
+    const page = full.slice(off, off + lim)
+    return JSON.stringify({ text: page, totalChars: full.length, offset: off, limit: lim, hasMore: off + page.length < full.length, container })
+  },
+  {
+    name: 'read_page',
+    description:
+      '读当前页面正文纯文本(自动定位 article/main 等文章容器;排除 SDK 对话框自身与脚本样式)。回答「这个页面讲了什么/某段内容在哪」类问题用;长文按 hasMore=true 时 offset+=本次返回长度 续读。只读,大结果自动外存 vfs。',
+    schema: z.object({
+      selector: z.string().optional().describe('CSS 选择器(默认智能定位 article/main/[role=main]/.content,兜底 body)'),
+      offset: z.number().int().min(0).optional().describe('起始字符偏移(默认 0;续读传上次 offset + 返回 text 长度)'),
+      limit: z.number().int().min(200).max(20000).optional().describe('本次返回字符上限(默认 4000,上限 20000)'),
+    }),
+  },
+)
+
+/** DOM 读取工具集(静态数组,随 capabilities.domInspect 装配;read_page 与 get_dom 同为常驻) */
+export const domTools = [getDomTool, readPageTool]
 
 // ===== DOM 检视工具族(dom_search / dom_info;经 domInspectSkill 按需 load_skill 注入,不占常驻 schema)=====
 
@@ -396,6 +499,10 @@ export const domInspectSkill: import('../harness/skills').SkillSpec = {
   description: '页面 DOM 深度检视工具(dom_search 搜索元素 / dom_info 读内容·计算样式·事件绑定·几何)。定位元素、验证样式落地、排查交互绑定时加载',
   getContent: () => [
     '# DOM 检视工具用法',
+    '## read_page({ selector?, offset?, limit? })—— 读正文首选',
+    '- 返回页面正文纯文本(JSON:text/totalChars/offset/hasMore/container),自动定位 article/main/[role=main]/.content 容器并排除本对话框自身与 script/style',
+    '- 长文分页:默认每次 4000 字符;hasMore=true 时下一次调用传 offset=上次 offset+本次 text 长度 续读',
+    '- 回答「这个页面讲了什么/某段在哪」类问题用 read_page,不要用 get_dom 逐层翻结构(爆 token)',
     '## dom_search({ query, mode?, limit?, root? })',
     '- mode="selector"(默认):query 为 CSS 选择器;mode="text":文本关键词包含匹配(跳过 script/style)',
     '- 返回命中列表:CSS 路径(selector)+ 文本片段;超 limit 标注总数',

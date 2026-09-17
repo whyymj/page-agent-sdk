@@ -16,6 +16,7 @@ import type { Focus } from '../harness/state'
 import type { DialogMountContext, DialogController } from './createChatSdk'
 import type { SkillSpec } from '../harness/skills'
 import { normalizeQuickActions } from './optionsResolver'
+import { captureSelectionQuote } from '../tools/quoteInput'
 
 /**
  * 渲染 ChatDialog 到 ctx.el,返回 UI 生命周期控制器。
@@ -25,6 +26,14 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
   const { core, dialogCfg } = ctx
   let vueApp: VueApp | null = null
   const mountEl: HTMLElement = ctx.el
+
+  /** 抽屉显形:移除 cs-hidden class(show() 与划词浮动菜单「引用到对话」共用) */
+  const revealDialog = (): void => {
+    const dialogEl = mountEl.querySelector?.('.chat-dialog') as HTMLElement | null
+    const maskEl = mountEl.querySelector?.('.chat-mask') as HTMLElement | null
+    if (dialogEl) dialogEl.classList.remove('cs-hidden')
+    if (maskEl) maskEl.classList.remove('cs-hidden')
+  }
 
   const debugLogsRef = core.agent!.debugLogs
   const Wrapper = defineComponent({
@@ -87,6 +96,21 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
           toolStepView: dialogCfg.toolStepView,  // 工具步骤展示映射(纯展示层;MessageSteps 步骤行自定义名称/内容)
           quickActions: normalizeQuickActions(dialogCfg.quickActions),  // 快捷指令(ui-quick-wins Q1):装配期归一化(过滤/截断),组件零防御
           onDropElement: dialogCfg.onDropElement,  // 拖拽宿主元素聚焦入口(ui-quick-wins Q4):事件出口,映射归宿主
+          // 划词引用(page-quote):pendingQuote Ref 投射(内置 chip 与宿主 sdk.setQuote 共用)+ autoQuote 开关
+          pendingQuote: core.pendingQuote,
+          onSetQuote: (q: import('../types').MessageQuote) => core.setQuote(q.text, q.source),
+          onClearQuote: () => core.clearQuote(),
+          autoQuote: dialogCfg.autoQuote === true,
+          selectionMenu: dialogCfg.selectionMenu === true,
+          // 浮动菜单「引用到对话」:挂引用 + 打开对话框(抽屉隐藏态也唤起)+ 聚焦输入(完成「加入对话框」闭环)。
+          // 聚焦延后:cs-hidden 的 visibility 走 transition(0.3s),过渡期内元素不可聚焦(focus 静默失效)
+          onSelectionQuote: (q: import('../types').MessageQuote) => {
+            core.setQuote(q.text, q.source)
+            revealDialog()
+            setTimeout(() => {
+              ;(mountEl.querySelector?.('.chat-input') as HTMLElement | null)?.focus()
+            }, 400)
+          },
           i18n: ctx.i18n,
           // 上下文聚焦(指定组件精修;core.getFocus 返 undefined 时 chip 不显示;capabilities.focus:false → no-op chip 隐藏)
           getFocus: () => core.getFocus(),
@@ -182,10 +206,13 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
     },
     /** 抽屉模式显示:移除 cs-hidden class,恢复可见(配合 hide;首次挂载用 mount) */
     show(): void {
-      const dialogEl = mountEl.querySelector?.('.chat-dialog') as HTMLElement | null
-      const maskEl = mountEl.querySelector?.('.chat-mask') as HTMLElement | null
-      if (dialogEl) dialogEl.classList.remove('cs-hidden')
-      if (maskEl) maskEl.classList.remove('cs-hidden')
+      revealDialog()
+      // 划词自动捕获(page-quote):打开抽屉瞬间懒捕获宿主选区 —— 覆盖「宿主页选中文字 → 点宿主按钮
+      // 开抽屉」流(按钮 @mousedown.prevent 保选区);「选中 → 点输入框」流由 ChatInput pointerdown 捕获
+      if (dialogCfg.autoQuote === true && typeof document !== 'undefined') {
+        const q = captureSelectionQuote(document)
+        if (q) core.setQuote(q.text, q.source)
+      }
     },
   }
 }

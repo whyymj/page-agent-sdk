@@ -92,6 +92,8 @@ export interface AgentMessage {
   focuses?: Focus[];
   /** user 消息附带图片(image-input-vision;多模态主模型 toLC 组装 content parts 直发,非多模态走 images.describe 转述注入) */
   images?: AgentImage[];
+  /** user 消息附带引用(page-quote;content 保持干净,toLC 组装时前缀注入引用块;随消息持久化) */
+  quote?: MessageQuote;
 }
 
 /** user 消息附带图片(image-input-vision);详见主包 types/index.d.ts AgentImage */
@@ -123,6 +125,14 @@ export declare class ImageInputError extends Error {
 
 /** 压缩闸(image-input-vision):原图 >20MB 拒;等比缩放长边 ≤1568;浏览器域 API(依赖 canvas),headless 自建 UI 制备 AgentImage 用 */
 export declare function compressImage(source: Blob, opts?: { name?: string }): Promise<AgentImage>;
+/** user 消息附带引用(page-quote 划词提问):宿主页面选中文本作为提问上下文(引用回复形态) */
+export interface MessageQuote {
+  /** 引用原文(宿主页面选中文本;捕获与 setQuote 统一截断上限 2000 字符) */
+  text: string
+  /** 来源描述(自动捕获 = 页面 title + 最近的在前标题;宿主 setQuote 可自定义) */
+  source?: string
+}
+export declare function captureSelectionQuote(doc: { getSelection?(): { isCollapsed?: boolean; anchorNode?: Node | null; toString(): string } | null; title?: string; querySelectorAll?: (selector: string) => ArrayLike<Element> }): MessageQuote | null;
 
 export interface AgentConfig {
   model: string;
@@ -535,7 +545,7 @@ export interface UseChatReturn {
   /** 排队待发的任务内容(生成中再发 → 入队显示在排队区) */
   queuedTasks: Ref<string[]>;
   /** 发送(生成中再发 → 入排队区;images 需主模型多模态或 images.describe 配置,否则拒绝并 emit 结构化错误不静默丢图) */
-  sendMessage(content: string, focuses?: Focus[], images?: AgentImage[]): Promise<void>;
+  sendMessage(content: string, focuses?: Focus[], images?: AgentImage[], quote?: MessageQuote): Promise<void>;
   /** 手动撤销排队任务 */
   removeQueuedTask(idx: number): void;
   /** 清空对话(onClear 回调) */
@@ -967,7 +977,7 @@ export interface ChatSdkOptions {
   /** 模型最大输出(token);顶层声明对 llm 实例场景也生效,缺省按 model 名查表 */
   maxOutputTokens?: number;
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
-  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; automation?: boolean; workingMemory?: boolean; focus?: boolean; contextInspector?: boolean; agentCompression?: boolean };/** tracing/skillHostScript/preferences/bulkGuard 已于 4.1.0 移除;残键静默忽略 */
+  capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; automation?: boolean; workingMemory?: boolean; focus?: boolean; contextInspector?: boolean; agentCompression?: boolean; pageContext?: boolean };/** tracing/skillHostScript/preferences/bulkGuard 已于 4.1.0 移除;残键静默忽略 */
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number; /** 单次委派总时长毫秒(默认 1800000=30min,2026-08-28 抬升;超时 abort 子流 + recoverable 回灌;0 = 不限制) */ timeoutMs?: number; thinkingMode?: 'simple' | 'deep' };
   /** 预声明子 agent 列表:每个用同主配置方式声明,自动生成 use_<id> 委派工具(与 spawn_agent 共存) */
   subagents?: SubagentConfig[];
@@ -1065,7 +1075,7 @@ export interface ChatSdk {
   hide(): void;
   /** 抽屉模式显示:移除 cs-hidden class 恢复可见(配合 hide 使用;首次挂载用 mount) */
   show(): void;
-  send(message: string, options?: { mission?: Partial<Mission>; maxAutoRetries?: number; /** 中断信号(fix-hang-and-feedback P1-4) */ signal?: AbortSignal; /** 附带图片(image-input-vision;需主模型多模态 vision 或 images.describe,否则拒绝 —— 不静默丢图) */ images?: AgentImage[] }): Promise<string>;
+  send(message: string, options?: { mission?: Partial<Mission>; maxAutoRetries?: number; /** 中断信号(fix-hang-and-feedback P1-4) */ signal?: AbortSignal; /** 附带图片(image-input-vision;需主模型多模态 vision 或 images.describe,否则拒绝 —— 不静默丢图) */ images?: AgentImage[]; /** 附带引用(page-quote;显式传入优先于待发引用(pendingQuote)且不消费它;文本超 2000 截断) */ quote?: MessageQuote }): Promise<string>;
   switchSession(sessionId?: string): Promise<string>;
   /** 导出会话快照(ui-quick-wins Q2):{ formatVersion, exportedAt, sessionId, snapshot } 可复全 JSON;跨会话导出传 sessionId;storage 未开启抛错 */
   exportSession(sessionId?: string): Promise<Record<string, unknown>>;
@@ -1116,6 +1126,10 @@ export interface ChatSdk {
   removeFocus(path: string): void;
   /** 清除全部聚焦焦点(退出精修模式,恢复全量可操作范围) */
   clearFocus(): void;
+  /** 挂「待发引用」(page-quote):下一条 send 附带并消费(空文本=清除;文本归一+截2000;与内置 UI autoQuote 划词捕获共用状态) */
+  setQuote(text: string, source?: string): void;
+  /** 清除待发引用 */
+  clearQuote(): void;
   /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 主数据 + vfs + todos);需开启 checkpoint,无可用返回 false */
   restoreLastCheckpoint(): boolean;
   /** 列出可用 checkpoint(回退点);需开启 checkpoint,未开启返回空数组 */

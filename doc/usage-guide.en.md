@@ -1540,6 +1540,45 @@ createChatSdk({
 }).mount()
 ```
 
+### 6.20 Text-selection quoting & page QA (page-quote / read_page / pageContext)
+
+For docs/content sites: the user **selects text on the page** and asks about it (quote-reply style); the agent reads the current page body on demand and always knows which page it is on. Three independent toggles:
+
+| Capability | Toggle | Behavior |
+|---|---|---|
+| Selection quoting (silent capture) | `dialog.autoQuote: true` (default off) | Select text → open the drawer / click the input → a quote chip is attached (removable) → sent with the next message as `AgentMessage.quote` (content stays clean; bubble renders a structured quote block; LLM receives a `[Quoted source]` prefix block at toLC time; persisted with the message) |
+| Selection floating menu (explicit confirm) | `dialog.selectionMenu: true` (default off) | Select text → a "❝ Quote to chat" toolbar floats above the selection → click = attach the quote chip + **open the dialog** + focus the input; dismiss on outside click / scroll / Esc |
+| Body reading | `capabilities.domInspect: true` (default off; includes get_dom) | `read_page({ selector?, offset?, limit? })` returns plain-text page content: smart article/main/[role=main]/.content container detection, excludes the SDK's own dialog and script/style, paginates via `hasMore` |
+| Page anchor | `capabilities.pageContext: true` (default off) | Injects current page title + URL as a pinned system segment each round (survives compression; adds a read_page hint when domInspect is also on; not inherited by subagents) |
+
+```ts
+createChatSdk({
+  container: '#chat-root',
+  llm,
+  systemPrompt: 'You are a docs tutor. Answer around the quoted text and the current page…',
+  capabilities: { dataOps: false, domInspect: true, pageContext: true },
+  dialog: {
+    drawer: true, drawerHidden: true,   // "click a button to open" form
+    autoQuote: true,                     // selection auto-capture (privacy opt-in, default off)
+    quickActions: [{ label: 'What is this page', prompt: 'What is this page about? Read it with read_page, then summarize' }],
+  },
+}).mount()
+
+// Host button: @mousedown.prevent is critical — the browser's default click action collapses
+// the document selection (show() would capture nothing). Prevent mousedown, keep the selection.
+// <button @mousedown.prevent @click="() => sdk.show()">Ask AI</button>
+```
+
+**Capture timing (autoQuote, two lazy points, no persistent listener)**: ① `DialogController.show()` — the moment the drawer opens (covers select → click host button); ② ChatInput's `pointerdown` capture phase — synchronously *before* focus transfer collapses the selection (covers drawer open → select → click input). Invalid selections (collapsed / blank / anchored inside the SDK dialog) are skipped silently; selections inside input/textarea are invisible to `getSelection` — hosts can fall back to `sdk.setQuote`.
+
+**Floating menu (`dialog.selectionMenu: true`, explicit-confirm form)**: prefer "ask first, then attach"? Use this — after a selection, a "❝ Quote to chat" toolbar floats above the selection (fixed position, flips below when there is no room above); clicking it calls `sdk.setQuote` + opens the dialog + focuses the input (wakes a `drawerHidden` drawer too); it dismisses on outside click / scroll / Esc / selection collapse. Independent of and composable with `autoQuote` (explicit vs. silent); the toolbar itself is in the `SDK_UI_SELECTOR` exclusion list (read_page never treats it as page content).
+
+**Host API (headless custom UI included)**: `sdk.setQuote(text, source?)` attaches a pending quote (consumed by the next send; blank text clears; normalized + capped at 2000 chars) / `sdk.clearQuote()`; `send(msg, { quote })` passes one explicitly (takes precedence and does not consume the pending quote); headless selection capture uses the exported `captureSelectionQuote(document)`. **Semantics**: the quote is *message-level* context (never a system segment, never leaks across messages); queued messages and quick actions do not consume the pending quote (same policy as images); a bare quote cannot be sent; switching/resetting the session keeps it (input-area state, like a draft). Source is derived as page title + nearest preceding h1-h6 heading.
+
+**read_page details**: default `limit: 4000` (max 20000); when `hasMore: true`, continue with `offset += returned text length`; returns `{ text, totalChars, offset, hasMore, container }`; oversized results offload to vfs automatically. The smart container probe order is article → main → [role=main] → .content/.article-content/.post-content/.markdown-body/#content → body; an explicit `selector` overrides.
+
+**Full example**: `examples/docs-demo` (static learning article + selection quoting + paginated read_page QA + page anchor) — a ready-made integration template. Privacy note: `autoQuote` defaults to off — automatically sending page selections to an LLM is privacy-sensitive; integrators enable it explicitly and inform their users.
+
 ### 6.19 Regression toolkit eval-toolkit (run scenario regressions before upgrading)
 
 The SDK's own real-LLM regression methodology, exposed as three pure functions — **integrators run their own pre-upgrade regressions for their own scenarios** (SDK tests green ≠ your scenario unbroken; red line: judging/waiting/comparing only — no assertion library, no runner, no Playwright coupling):

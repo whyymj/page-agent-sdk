@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-3473%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-3519%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -29,6 +29,7 @@
 | HTML/代码组件(AI 生成页面块) | [能力包](#createchatsdk-配置项速查)(`createHtmlSubagent`,3.9+ 自动装配)· `examples/html-page-demo`、`examples/complex-demo` |
 | RAG / MCP 工具 | [能力包](#createchatsdk-配置项速查)(`createRagSubagent`、`mcp`)· `examples/rag-demo` |
 | 让 AI 看图(贴图/截图) | [配置项速查](#createchatsdk-配置项速查)(`images`/`llm.vision`)· [usage-guide §6.17](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.md#617-图片输入多模态直发--识图转述旁路) · `examples/images-demo` |
+| 文档站划词问答(选中提问 + 读当前页) | [配置项速查](#createchatsdk-配置项速查)(`dialog.autoQuote`/`capabilities.domInspect`+`pageContext`)· [usage-guide §6.20](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.md#620-划词引用与页面问答page-quote--read_page--pagecontext) · `examples/docs-demo` |
 | 定制 UI(主题 / 图标 / 国际化 / 按钮文字标签) | [`DialogConfig` 字段表](#dialogconfig-字段) · [usage-guide §6.15](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.md#615-ui-定制与国际化图标--主题--语言--文案覆盖317321) · `examples/i18n-demo` |
 | 会话 / 持久化(IndexedDB) | [配置项速查](#createchatsdk-配置项速查)(`storage`/`session`)· `examples/page-demo`(`storage:'indexed'` + 内置历史记录下拉) |
 | 长对话 / 大 JSON(上下文与压缩) | [usage-guide §6.8](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.md) · [context-management 文档](https://github.com/whyymj/page-agent-sdk/blob/master/doc/context-management.md) |
@@ -172,6 +173,8 @@ CDN 零配置：`<script src="https://unpkg.com/page-agent-sdk"></script>` → `
 | 🧭 指令执行力增强 (3.35+) | **完结门禁**:todos 有未完成项却欲纯文本收尾 → 回灌「双出口」反馈续跑(≤2 次),防「拆 3 项做 1 项就收口」的莫名中断;**问句意图守卫**:正则三档启发式逐消息定性问句,命中注入「先答勿做」pin 段(跨压缩存活),防长对话提问被历史拖着误路由成操作(如问「这是啥组件」却去生成代码)。均默认开、零配置、宁漏勿误 | 内置 |
 | 🎨 子 agent 模型/思考分层 | `createHtmlSubagent({ llm, thinkingMode })`:代码生成子 agent 独立强模型(主保持轻量编排)+ 思考深度锁定(`'deep'` 注入思考参数质量优先 / `'simple'` 剥除省 token;顶层 `subagent.thinkingMode` 全局缺省)。仅 LLMConfig 构造路径生效(预构造实例 warn+no-op);需模型支持思考(deepseek thinking 版/claude);`inspect().subagent.subagents` 反射生效状态 | `createHtmlSubagent({ llm, thinkingMode })` |
 | 🖼 图片输入 | 对话框内置三入口(📎 选择/拖拽/粘贴截图)→ 压缩闸(长边 ≤1568px/单轮 ≤4 张/超 20MB 拒);主模型多模态(gpt-4o/claude/qwen-vl 查表,或 `llm.vision:true`)→ 图片直发 content parts 零配置;纯文本主模型(deepseek 等)→ 配 `images.describe` 逐图识图转述注入(图不直发);都不配则诚实拒绝不静默丢图;`images.upload` 原图换 https URL(集成方 OSS);持久化只存缩略图 + vfs 引用 | `images: { upload?, describe? }` + `llm.vision` |
+| ❝ 划词引用 | 用户选中页面文字 → 引用 chip 自动挂上(打开抽屉/点输入框双懒捕获)→ 随下一条消息作为提问上下文;`AgentMessage.quote` 消息级字段(content 干净,气泡结构化引用块,LLM 前缀注入,随消息持久化);`sdk.setQuote/clearQuote` 宿主 API(headless 同享);来源自动推导 = 页面 title + 最近在前标题;排队/快捷指令不消费(与图片同口径);隐私 opt-in 默认关;另有 `dialog.selectionMenu` 显式确认形态(划选浮出「❝ 引用到对话」工具条,点击挂引用并打开对话框) | `dialog.autoQuote` / `dialog.selectionMenu` + `sdk.setQuote` |
+| 📖 页面问答 | `read_page` 读当前页正文纯文本(智能定位 article/main/[role=main]/.content,排除 SDK 自身 DOM 与 script/style,`hasMore` 分页续读,大结果自动外存 vfs);`pageContext` 每轮注入当前页 title+URL 锚点 pin 段(跨压缩;子 agent 不继承) | `capabilities: { domInspect: true, pageContext: true }` |
 
 能力默认开（`verify`/`approval`/`checkpoint` 默认关；**主动征询 `humanConfirm` 默认开**——AI 遇不确定/多方案主动问你、不猜测），可经 `capabilities` 关掉无用的省 token。
 
@@ -242,6 +245,9 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `actions` | `Record<string,{description,run,params?}>` | **(2.18+) 宿主动作**：注册 save_draft/publish 等页面操作 → SDK 自动生成命名 tool 供 agent 触发 |
 | | `schemaHint` | `{maxKeys?,maxChars?}` · 默认 `{15,4000}` | **(2.18+) 大 schema 分层披露阈值**：超则 systemPrompt 只注入顶层概览（不带约束/不递归）,深层约束按需 `schema_data` 查;小 schema 无感（全量） |
 | | `images` | `{upload?,describe?,describeTimeoutMs?}` | **图片输入(image-input-vision)**：对话框内置三入口(📎/拖拽/粘贴)→ 压缩闸(长边≤1568/≤4 张/超 20MB 拒)。主模型多模态(查表或 `llm.vision:true`)→ 图片直发 content parts,零配置;纯文本主模型 → 配 `describe` 逐图识图转述注入(图不直发),都不配则诚实拒绝不静默丢图;`upload` 原图换 https URL(集成方 OSS)。见 [usage-guide §6.17](doc/usage-guide.md#617-图片输入多模态直发--识图转述旁路) |
+| | `dialog.autoQuote` | `boolean` | **划词引用·静默捕获(page-quote,默认 false)**:true 时打开抽屉/点输入区瞬间懒捕获宿主页面(对话框外)当前选中文本挂「引用 chip」(可删),随下一条消息发给 LLM。隐私 opt-in;`sdk.setQuote/clearQuote` 不受此开关影响。见 [usage-guide §6.20](doc/usage-guide.md#620-划词引用与页面问答page-quote--read_page--pagecontext) |
+| | `dialog.selectionMenu` | `boolean` | **划词浮动菜单(page-quote 显式确认,默认 false)**:划选文字浮出「❝ 引用到对话」工具条,点击 = 挂引用 chip + 打开对话框 + 聚焦输入;点别处/滚动/Esc 消失;与 autoQuote 独立可组合。见 [usage-guide §6.20](doc/usage-guide.md#620-划词引用与页面问答page-quote--read_page--pagecontext) |
+| | `capabilities.pageContext` | `boolean` | **页面锚点(默认 false)**:每轮 system 注入当前页 title+URL(pin 段跨压缩;配合 `domInspect` 的 read_page 读正文答问)。见 [usage-guide §6.20](doc/usage-guide.md#620-划词引用与页面问答page-quote--read_page--pagecontext) |
 | | `permissions` | `PermissionRule[]` | scope 白名单（first-match-wins，默认不启用） |
 | | `humanConfirm` | `boolean` · 默认 `true` | 主动征询（AI 不确定/多方案主动问你，不猜测） |
 | | `approval` | `{tools?,confirm?,timeoutMs?,humanConfirmTool?}` · 默认关 | 被动确认白名单（写操作前弹允许/拒绝） |
@@ -473,6 +479,7 @@ createChatSdk({
 | multi-agent-demo | `/examples/multi-agent-demo/` | 多 Agent 并行 + 互斥切换（三独立 agent，drawer hide/show 保留各自历史） |
 | proxy-demo | `/examples/proxy-demo/` | LLM 连接配置：代理防 apiKey 泄露（浏览器只持 userToken，代理注入真实 key；含 token 过期自动刷新；需 `npm run proxy:mock`）+ Provider 切换（`provider:'anthropic'` 走 Claude 原生协议，流式 + extended thinking） |
 | images-demo | `/examples/images-demo/` | 图片输入：纯文本主模型 + `images.describe` 识图转述旁路（转述注入、图不直发；主模型多模态时自动直发） |
+| docs-demo | `/examples/docs-demo/` | 学习文档站集成模板：划词引用提问（autoQuote 双懒捕获 + 引用 chip）+ `read_page` 分页读正文答问 + `pageContext` 页面锚点；照抄进自建文档网站 |
 
 框架无关集成：`demo/plain.html`（importmap + esm.sh）。
 

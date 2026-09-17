@@ -23,6 +23,7 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { AgentMessage, StreamHandler } from '../types'
 import { asAgentError } from '../tools/toolError'
 import { buildImageContentParts, appendImageDescriptions } from '../tools/imageInput'
+import { appendQuoteContext } from '../tools/quoteInput'
 import { offloadLargeResult } from '../utils/offload'
 import { runPool } from '../utils/pool'
 import { DEFAULT_TOOL_TIMEOUT_MS, ToolTimeoutError, isWatchdogTool, withToolWatchdog } from './toolWatchdog'
@@ -447,7 +448,10 @@ export function createAgent(options: CreateAgentOptions) {
   }
   /** push 一条外部 debugLog 到主日志(供子 agent 经 ctx.logSink 转发) */
   const pushLog = (entry: DebugLog) => {
-    debugLogs.value.push({ ...entry, data: sanitizeDebugData(entry.data) })
+    // S10 根因修(2026-09-10):透传 spread 曾把缺 timestamp 的上游字面量(approval/humanConfirm logSink)
+    // 原样入库 → 真 LLM 套件 idle 判定 quietMs=NaN 永不成立(S10 960s 假败)。chokepoint 归一兜底:
+    // 缺/坏 timestamp 补当前时间(键存在但 undefined 也覆盖),data 仍走 B7 单条体积守卫
+    debugLogs.value.push({ ...entry, timestamp: typeof entry.timestamp === 'number' ? entry.timestamp : Date.now(), data: sanitizeDebugData(entry.data) })
     if (debugLogs.value.length > MAX_DEBUG_LOGS) debugLogs.value.splice(0, debugLogs.value.length - MAX_DEBUG_LOGS)
     triggerRef(debugLogs)
   }
@@ -500,7 +504,7 @@ export function createAgent(options: CreateAgentOptions) {
   /** 系统段 token 预算占比(harden-context-resilience Phase 5):system 段最多占窗口 25%,余 75% 留对话+工具结果+输出 */
   const SYSTEM_BUDGET_RATIO = 0.25
   /** 跨压缩锚定段:系统段超预算时永不 drop(目标/工作记忆丢了 agent 跑偏) */
-  const PIN_SEGMENT_NAMES = new Set(['mission', 'workingMemory', 'intentGuard', 'resumeNotice'])
+  const PIN_SEGMENT_NAMES = new Set(['mission', 'workingMemory', 'intentGuard', 'resumeNotice', 'pageContext'])
 
   /** 组装 system prompt:base + 各中间件 augmentPrompt 段。
    *  超系统段预算时按「非 pin 段从大到小 drop」收敛(丢最大段优先 = 丢最少段数;dataHint 巨型 schema 常最大先丢),
@@ -537,13 +541,16 @@ export function createAgent(options: CreateAgentOptions) {
     const lc: BaseMessage[] = [new SystemMessage(buildSystemPrompt())]
     for (const msg of messages) {
       if (msg.role === 'user') {
+        // page-quote:引用块前缀(引用是问题指向的语境,故前缀;images description 是补充说明故后缀,互见);
+        // content 保持干净(消息侧字段持久化/UI 气泡结构化渲染),拼装只发生在发给 LLM 的瞬间
+        const text = msg.quote ? appendQuoteContext(msg.content, msg.quote) : msg.content
         // image-input-vision:多模态主模型(caps.vision)把 images 组装成 content parts 直发;
         // 非 vision 主模型走 describe 旁路的转述文本(有 description 拼附加段,不改原消息);
         // 无 parts 且无 description(旁路未配/失败且入口闸未拦住)兜底纯文本 —— 不误发 parts 吃 400
-        const parts = caps.vision && msg.images?.length ? buildImageContentParts(msg.content, msg.images, imageContentFormat) : null
+        const parts = caps.vision && msg.images?.length ? buildImageContentParts(text, msg.images, imageContentFormat) : null
         if (parts) lc.push(new HumanMessage({ content: parts as any })) // content parts(LangChain 多模态标准形态;Record 结构跨 provider 收敛,类型层宽松)
-        else if (msg.images?.some((im) => im.description)) lc.push(new HumanMessage(appendImageDescriptions(msg.content, msg.images)))
-        else lc.push(new HumanMessage(msg.content))
+        else if (msg.images?.some((im) => im.description)) lc.push(new HumanMessage(appendImageDescriptions(text, msg.images)))
+        else lc.push(new HumanMessage(text))
       } else if (msg.role === 'assistant') lc.push(new AIMessage(msg.content))
       else if (msg.role === 'system') lc.push(new SystemMessage(msg.content))
     }

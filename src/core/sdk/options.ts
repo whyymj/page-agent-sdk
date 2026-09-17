@@ -23,7 +23,7 @@ import { type DataConfig, type ConflictResolution } from '../tools/dataOps'
 import { type ActionMap } from './actions'
 import { type StorageConfig, type StorageBackendType } from '../backends/storage'
 import { type SkillStoreConfig } from '../backends/skillStore'
-import type { AgentMessage, StreamHandler, AgentInfo, SdkEventHandler, BatchResult, BatchProgress, AgentImage, ImagesConfig, ToolStepViewFn } from '../types'
+import type { AgentMessage, StreamHandler, AgentInfo, SdkEventHandler, BatchResult, BatchProgress, AgentImage, ImagesConfig, ToolStepViewFn, MessageQuote } from '../types'
 
 export interface LLMConfig {
   apiKey: string
@@ -217,7 +217,8 @@ export interface ChatSdkOptions {
     memory?: boolean         // AGENTS.md 持久指令
     subagent?: boolean       // 子 agent 委派(与 subagent.enabled:false 等效)
     verify?: boolean         // 自检中间件(默认 false;开启后 agent 返回前跑 check 自纠。传 verify.check/maxAttempts/adversarial 时自动开,无需重复声明 true;显式 false 阻止自动开)
-    domInspect?: boolean     // DOM 读取工具 get_dom(默认 false;agent 读渲染后 DOM 结构,opt-in;有 token 成本,集成方按需开启)
+    domInspect?: boolean     // DOM 读取工具 get_dom/read_page(默认 false;agent 读渲染后 DOM 结构与页面正文,opt-in;有 token 成本,集成方按需开启)
+    pageContext?: boolean    // 页面锚点(默认 false;每轮 system 注入当前页 title+URL,agent 知道用户在哪页;文档站/页面问答场景配合 domInspect)
     inspectEnv?: boolean     // 环境探查工具 inspect_env(默认 true;读 window 环境/location/调试变量,轻量只读,排查调试用)
     draftWrite?: boolean     // 分块写工具 draft_write/draft_commit(默认 false;几百 K JSON 分块构建再原子提交,opt-in;需 dataOps + vfs,advanced 暴露)
     automation?: boolean     // 无人值守自动化(默认 false;预算闸 token/time + 错误恢复;automation-layer Phase 4,opt-in 最远)
@@ -345,6 +346,10 @@ export interface DialogConfig {
   quickActions?: QuickActionItem[]
   /** 拖拽宿主元素入输入框回调(ui-quick-wins Q4 元素聚焦入口):window 捕获 dragstart 记源元素(drop 的 event.target 是输入框自身拿不到源),drop 无文件且源元素仍连文档时回调。映射 el→jsonPath→setFocus 归宿主(如复用画布选中联动)。未声明零开销 */
   onDropElement?: (el: Element) => void
+  /** 划词自动捕获(page-quote,默认 false):true 时打开抽屉 / 点击输入区瞬间懒捕获宿主页面(对话框外)的当前选中文本挂「引用 chip」(可删),随下一条消息作为提问上下文发给 LLM。opt-in 理由:自动把页面划词发给 LLM 属隐私敏感;宿主 API sdk.setQuote/clearQuote 不受此开关影响(headless 自建 UI 用 captureSelectionQuote 导出) */
+  autoQuote?: boolean
+  /** 划词浮动菜单(page-quote 显式确认形态,默认 false):划选宿主文字浮出「❝ 引用到对话」工具条(选区上方,fixed),点击 = 挂引用 chip + 打开对话框 + 聚焦输入;点别处/滚动/Esc 消失。与 autoQuote 独立可组合(本开关是显式确认,autoQuote 是静默捕获) */
+  selectionMenu?: boolean
   /** 会话导出/导入 UI 入口(ui-quick-wins Q2):历史面板底部显示「导出会话/导入会话…」(下载 .json / 选文件导入并切换)。默认 false 不显示;sdk.exportSession/importSession API 恒可用(与 UI 开关无关) */
   sessionTransfer?: boolean
   /** 抽屉模式:ChatDialog 从右侧滑入 + 遮罩 + 关闭按钮(替代收起下箭头);点击遮罩/关闭按钮触发 unmount(带退出动画)。默认 false(inline 占满 container) */
@@ -443,6 +448,10 @@ export interface ChatSdk {
   removeFocus(path: string): void
   /** 清除全部聚焦焦点(退出精修模式,恢复全量可操作范围) */
   clearFocus(): void
+  /** 挂「待发引用」(page-quote):下一条 send 附带并消费(空文本=清除;文本归一+截2000;内置 UI autoQuote 划词捕获与此共用状态) */
+  setQuote(text: string, source?: string): void
+  /** 清除待发引用 */
+  clearQuote(): void
   /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 主数据 + vfs + todos);需开启 checkpoint 选项,无可用 checkpoint 返回 false */
   restoreLastCheckpoint(): boolean
   /** 列出可用 checkpoint(回退点);需开启 checkpoint 选项,未开启返回空数组 */
@@ -566,6 +575,8 @@ export interface SendOptions {
   signal?: AbortSignal
   /** 附带图片(image-input-vision;≤4 张,压缩后 AgentImage;需主模型多模态 vision,否则 send 拒绝并 emit 结构化错误 —— 不静默丢图) */
   images?: AgentImage[]
+  /** 附带引用(page-quote;显式传入优先于待发引用(pendingQuote)且不消费它;文本超 2000 截断) */
+  quote?: MessageQuote
 }
 
 /** 乐观锁冲突挂起(等用户决定保留外部/强制覆盖/回退);resolve 由 resolveConflict 调用,清空后工具继续 */

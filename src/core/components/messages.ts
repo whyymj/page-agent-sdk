@@ -76,6 +76,10 @@ export interface DialogMessages {
   // ===== ChatInput 图片输入(image-input-vision)=====
   attachImageTitle: string     // 添加图片(可拖拽 / 粘贴)
   imageDropHint: string        // 松开添加图片
+  quoteChipTitle: string       // 引用 chip title(将随下一条消息作为引用发送)
+  quoteRemove: string          // 移除引用
+  selectionMenuLabel: string   // 划词浮动菜单按钮文案(引用到对话)
+  selectionMenuTitle: string   // 划词浮动菜单按钮 title
   imageCountLimitPrefix: string // 单轮最多 / Up to
   imageCountLimitSuffix: string // 张图片 / images per message
   imageInvalid: string         // 图片读取失败,已忽略 / Failed to read image, skipped
@@ -313,6 +317,10 @@ export const MESSAGES_ZH_CN: DialogMessages = {
   inputGateHint: '⏸ 有确认/冲突等待处理:请先点选上方确认条,或停止生成后再发送(挂起期间消息不会进入队列)',
   attachImageTitle: '添加图片(可拖拽 / 粘贴)',
   imageDropHint: '松开添加图片',
+  quoteChipTitle: '将随下一条消息作为引用发送(❝ 划词引用)',
+  quoteRemove: '移除引用',
+  selectionMenuLabel: '引用到对话',
+  selectionMenuTitle: '把选中文本作为引用加入对话框,随下一条消息发给 AI',
   imageCountLimitPrefix: '单轮最多 ',
   imageCountLimitSuffix: ' 张图片',
   imageInvalid: '图片读取失败,已忽略',
@@ -545,6 +553,10 @@ export const MESSAGES_EN_US: DialogMessages = {
   inputGateHint: '⏸ A confirmation/conflict is waiting: resolve the bar above, or stop generating, before sending (messages are not queued while pending)',
   attachImageTitle: 'Add image (drag & drop / paste)',
   imageDropHint: 'Drop to attach image',
+  quoteChipTitle: 'Will be quoted with your next message',
+  quoteRemove: 'Remove quote',
+  selectionMenuLabel: 'Quote to chat',
+  selectionMenuTitle: 'Add the selected text to the dialog as a quote, sent with your next message',
   imageCountLimitPrefix: 'Up to ',
   imageCountLimitSuffix: ' images per message',
   imageInvalid: 'Failed to read image, skipped',

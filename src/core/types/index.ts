@@ -81,6 +81,14 @@ export interface ImagesConfig {
   describeTimeoutMs?: number
 }
 
+/** user 消息附带引用(page-quote 划词提问):宿主页面选中文本作为提问上下文(引用回复形态) */
+export interface MessageQuote {
+  /** 引用原文(宿主页面选中文本;两捕获入口统一截断上限 QUOTE_MAX_CHARS) */
+  text: string
+  /** 来源描述(自动捕获 = 页面 title + 最近的在前标题;宿主 setQuote 可自定义;纯展示 + LLM 注入标注) */
+  source?: string
+}
+
 export interface AgentMessage {
   role: 'user' | 'assistant' | 'system'
   content: string
@@ -93,6 +101,8 @@ export interface AgentMessage {
   focuses?: import('../harness/state').Focus[]
   /** user 消息附带图片(image-input-vision;仅多模态主模型(visionCapable)在 toLC 组装 content parts,旁路配置见 Phase 2) */
   images?: AgentImage[]
+  /** user 消息附带引用(page-quote;content 保持干净,toLC 组装时前缀注入引用块;随消息持久化,MessageRow 渲染引用块) */
+  quote?: MessageQuote
 }
 
 export interface AgentConfig {

@@ -133,7 +133,7 @@ export const _optFields: Pick<ChatSdkOptions,
 export const _capKeys: Pick<NonNullable<ChatSdkOptions['capabilities']>,
   'dataOps' | 'fetch' | 'planning' | 'missionAnchor' | 'workingMemory' | 'focus' | 'skills' | 'vfs'
   | 'summarization' | 'memory' | 'subagent' | 'inspectEnv' | 'contextInspector' | 'verify' | 'domInspect'
-  | 'draftWrite' | 'automation' | 'agentCompression'
+  | 'draftWrite' | 'automation' | 'agentCompression' | 'pageContext'
 > = null as any
 
 // 5b. DialogIcons / DialogConfig 键集完整性(2026-09-09 审计 Batch A8;deferred 2026-08-18 登记的「4.0 大版本补断言」兑现 ——

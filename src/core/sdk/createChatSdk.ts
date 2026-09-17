@@ -78,6 +78,7 @@ import { createBudgetMiddleware } from '../harness/budget'
 import { actionsToTools, actionsToInspectInfo } from './actions'
 import { selectBuiltinTools } from '../toolsets'
 import { createUsageHintsMiddleware } from '../harness/usageHints'
+import { createPageContextMiddleware } from '../harness/pageContext'
 import { createResourcesPinMiddleware } from '../harness/resourcesPin'
 import { type SessionStore, type SessionSnapshot, type SessionMeta } from '../backends/storage'
 import { createSkillStore, type SkillStore, type PersistedSkill } from '../backends/skillStore'
@@ -89,7 +90,8 @@ import { extractVfsRefs, gcVfsLargeResults } from '../utils/vfsGc'
 import { DEFAULT_STREAM_STALL_MS, DEFAULT_STREAM_MAX_DURATION_MS } from '../utils/stallTimeout'
 import { createSerialRunner } from '../utils/serialRunner'
 import { normalizeUsage } from '../utils/contentParts'
-import type { AgentMessage, StreamHandler, AgentInfo, SdkEvent, SdkEventHandler, TokenUsage, BatchResult, BatchProgress } from '../types'
+import type { AgentMessage, StreamHandler, AgentInfo, SdkEvent, SdkEventHandler, TokenUsage, BatchResult, BatchProgress, MessageQuote } from '../types'
+import { normalizeQuoteText } from '../tools/quoteInput'
 import { hydrateImages, MAX_IMAGES_PER_ROUND } from '../tools/imageInput'
 import type { ToolCallContext } from '../harness/middleware'
 import { rawRead } from '../utils/rawRead'
@@ -148,6 +150,8 @@ export interface AgentCore {
   infoTick: Ref<number>
   /** 乐观锁冲突挂起(等用户决定保留外部/强制覆盖/回退);UI 经此 ref 渲染冲突对话框,无冲突时为 null */
   pendingConflict: Ref<PendingConflict | null>
+  /** 待发引用(page-quote;划词捕获/宿主 API 挂起,下一条 send 消费即清;UI chip 与 setQuote/clearQuote 共享。输入区态,切/重置会话不清 —— 同 inputText) */
+  pendingQuote: Ref<MessageQuote | null>
   /** 历史会话列表(响应式;switchSession/deleteSession/onClear/init 后自动 refresh;storage 未开启 → []) */
   sessions: Ref<SessionMeta[]>
   /** 刷新历史会话列表到 sessions(内部 switchSession/deleteSession/onClear/init 调;集成方一般无需手动调,直接消费 sessions) */
@@ -206,6 +210,10 @@ export interface AgentCore {
   removeFocus(path: string): void
   /** 清除全部聚焦焦点(退出精修模式) */
   clearFocus(): void
+  /** 挂「待发引用」(page-quote):下一条 send 附带并消费;空文本 = 清除;文本归一 + 截 2000 */
+  setQuote(text: string, source?: string): void
+  /** 清除待发引用 */
+  clearQuote(): void
   /** 运行时替换用户工具集(内置不动);立即 rebind + infoTick 刷新 */
   setTools(tools: StructuredToolInterface[]): void
   /** 运行时追加用户工具(去重 by name) */
@@ -977,6 +985,17 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     // C1 自感知预算:softCap 解析结果(token 维度触发;装配期一次,阈值近似够用)
     { promptSoftCap: resolvePromptSoftCap(modelCaps.contextWindow, resolvedCtxOpts.promptSoftCapTokens) },
   )
+
+  // 页面锚点(page-quote 配套):每轮 system 注入当前页 title+URL(pin 段跨压缩);node/headless 无 document 降级不注入
+  const pageContextMw = caps.pageContext
+    ? createPageContextMiddleware({
+        getPageInfo: () =>
+          typeof document !== 'undefined' && typeof location !== 'undefined'
+            ? { title: document.title || '', url: location.href }
+            : null,
+        canReadPage: caps.domInspect === true,
+      })
+    : undefined
   // A4「可操作数据」段:每轮从 liveData() 动态重算(修 setData 不同步 Bug)
   // 插中间件栈最前(usageHints 之前),保证数据段紧跟 base —— LLM 看到的 system 结构与现状等价
   // 仅 finalDataConfig 存在时装载;无 data → buildDataPrompt 返 '' → augmentPrompt 返 undefined → 跳过
@@ -1108,6 +1127,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     // dataHint 插最前:数据段紧跟 base(与现状等价);每轮从 liveData() 动态重算
     ...(dataHintMw ? [dataHintMw] : []),
     usageHintsMw,
+    ...(pageContextMw ? [pageContextMw] : []), // 页面锚点紧随提示段(mission 前;read_page 指引随段内条件化)
     // 按 capabilities 条件装载内置中间件(默认全开;verify 默认关)
     ...(useMission ? [missionMw] : []), // mission 在 todos 前(pin 段在 todos 段前;revive-mission-anchor)
     intentGuardMw, // mission 后:问句意图守卫 pin 段(逐消息定性「先答勿做」;instruction-adherence B,默认开)
@@ -1205,6 +1225,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     activeControllers.clear()
   }
 
+  // 待发引用(page-quote):划词捕获(UI autoQuote)/宿主 sdk.setQuote 挂起,下一条 send 消费即清;
+  // UI chip(ChatInput)与宿主 API 共享同一状态,故 core 级(非 chatContext 私有,infoTick/pendingConflict 同款)
+  const pendingQuote = ref<MessageQuote | null>(null)
+
   const core: AgentCore = {
     agentId,
     store,
@@ -1228,6 +1252,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     skillsController: skillsMw ? skillsMw.controller : null,
     infoTick,
     pendingConflict: conflictMgr.pendingConflict,
+    pendingQuote,
     sessions: sessionsRef,
     refreshSessions: () => sl.refreshSessions(),
     liveData,
@@ -1395,8 +1420,15 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       const sidAtSend = core.sessionId  // 孤儿收口(rv-core F5):invoke 期间 resetSession/switch 换会话的比对锚
       while (true) {
         if (!pushed) {
-          messages.push({ role: 'user', content: msg, timestamp: Date.now(), ...(images.length ? { images } : {}) })
+          // page-quote:显式 SendOptions.quote 优先且不消费待发;否则消费 pendingQuote(划词/宿主挂起的引用 chip)。
+          // automation 重试不重 push(pushed 标记),quote 已随消息不丢;消费即清在此点
+          const explicitQ = options.quote && options.quote.text
+            ? { text: normalizeQuoteText(options.quote.text), ...(options.quote.source ? { source: options.quote.source } : {}) }
+            : undefined
+          const q = explicitQ ?? pendingQuote.value ?? undefined
+          messages.push({ role: 'user', content: msg, timestamp: Date.now(), ...(images.length ? { images } : {}), ...(q ? { quote: q } : {}) })
           pushed = true
+          if (!explicitQ && pendingQuote.value) pendingQuote.value = null
         }
         try {
           // P1-4(fix-hang-and-feedback):signal 穿透 —— 原 invoke 不带 signal,send 完全不可中断(headless 唯一出路=刷新)
@@ -1848,6 +1880,15 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       if (!useFocus) return
       focusMw.clearFocus()
       core.infoTick.value++
+    },
+    /** 挂「待发引用」(page-quote):下一条 send 附带并消费;空文本 = 清除;文本归一 + 截 2000 */
+    setQuote(text: string, source?: string): void {
+      const norm = normalizeQuoteText(text ?? '')
+      pendingQuote.value = norm ? { text: norm, ...(source ? { source } : {}) } : null
+    },
+    /** 清除待发引用 */
+    clearQuote(): void {
+      pendingQuote.value = null
     },
   }
 
@@ -2325,6 +2366,10 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
     removeFocus: core.removeFocus,
     /** 清除全部聚焦焦点(退出精修模式,恢复全量可操作范围) */
     clearFocus: core.clearFocus,
+    /** 挂「待发引用」(page-quote):下一条 send 附带并消费(空文本=清除;内置 UI autoQuote 划词捕获与宿主 API 共用) */
+    setQuote: core.setQuote,
+    /** 清除待发引用 */
+    clearQuote: core.clearQuote,
     messages: core.messages,
     /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 主数据 + vfs + todos);无可用 checkpoint 返回 false */
     restoreLastCheckpoint: () => core.checkpoint?.restore() ?? false,

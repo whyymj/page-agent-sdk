@@ -17,6 +17,7 @@ import { run as runAutomation } from './e2e/automation.mjs'
 import { run as runLlmProvider } from './e2e/llm-provider.mjs'
 import { run as runFocus } from './e2e/focus.mjs'
 import { run as runImages } from './e2e/images.mjs'
+import { run as runQuote } from './e2e/quote.mjs'
 import { run as runResources } from './e2e/resources.mjs'
 import { run as runAgentCompression } from './e2e/agent-compression.mjs'
 import { run as runHeadlessSubpath } from './e2e/headless-subpath.mjs'
@@ -53,6 +54,7 @@ const modules = [
   ['llm-provider', runLlmProvider],
   ['focus', runFocus],
   ['images', runImages],
+  ['quote', runQuote],
   ['resources', runResources],
   ['agent-compression', runAgentCompression],
   ['headless-subpath', runHeadlessSubpath],

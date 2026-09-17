@@ -54,6 +54,9 @@ export type { HtmlFormatIssue } from './tools/htmlValidate'
 // 图片输入(image-input-vision):compressImage 压缩闸(headless 自建 UI 的集成方制备 AgentImage 用)
 // + ImageInputError 结构化错误码;types(AgentImage/ImagesConfig)随下方 './types' 类型导出行整体导出
 export { compressImage, ImageInputError } from './tools/imageInput'
+// 划词引用(page-quote):captureSelectionQuote 懒捕获宿主页面选区(headless 自建 UI 的集成方捕获入口,
+// 也可用于宿主自建「选中即引用」交互;返回 null = 无有效选区不打扰)
+export { captureSelectionQuote } from './tools/quoteInput'
 export { createVerifyMiddleware, createWriteBackCheck } from './harness/verify'
 export type { VerifyCheck, VerifyCheckContext, VerifyCheckResult, VerifyMiddlewareOptions, WriteBackCheckOptions } from './harness/verify'
 export { createContextInspectorMiddleware } from './harness/contextInspector'
@@ -126,7 +129,7 @@ export type { StorageConfig, StorageBackendType, SessionStore, SessionMeta, Sess
 export { createSkillStore } from './backends/skillStore'
 export type { SkillStore, SkillStoreConfig, PersistedSkill } from './backends/skillStore'
 // 通用消息 / 上下文类型
-export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, SdkEvent, SdkEventHandler, TokenUsage, ToolStep, ToolStepView, ToolStepViewFn, BatchResult, BatchProgress, AgentImage, ImagesConfig } from './types'
+export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, SdkEvent, SdkEventHandler, TokenUsage, ToolStep, ToolStepView, ToolStepViewFn, BatchResult, BatchProgress, AgentImage, ImagesConfig, MessageQuote } from './types'
 export type { Focus, Mission, WorkingMemory, HarnessState, Todo, TodoStatus, VfsFile, SkillMeta, SummarizationEvent, LoopProgress } from './harness/state'
 export type { AgentInfo, ToolInfo, SkillInfo, DataInfo, SubagentInfo } from './types'
 export type { ContextManagerOptions, CompressionStats } from './composables/useContextManager'

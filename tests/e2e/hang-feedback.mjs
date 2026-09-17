@@ -434,6 +434,36 @@ export async function run() {
     assert(off.length >= 1 && off[0].preview === undefined, '✓ preview 默认关:载荷无 preview 字段(预览跑校验链有成本,显式开)')
   }
 
+  console.log('[e2e:hang-feedback] S10 回归:approval 留痕条目 timestamp 齐全(idle 判定 NaN 盲区修,2026-09-10)')
+  {
+    // 根因:approval/humanConfirm 的 ctx.logSink 字面量曾缺 timestamp → pushLog 透传入库 →
+    // 真 LLM 套件 idle 双条件判定 quietMs=NaN 永不成立(S10 960s 假败)。修:字面量补 + pushLog chokepoint 归一。
+    const llm = stubModel(
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'title', value: 'S10' } } }] },
+      { text: '(拒后收口)' },
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-s10-ts', storage: false, llm, autoTitle: false,
+      data: { schema: z.object({ title: z.string() }), bind: { title: '旧' }, description: 'd' },
+      approval: { tools: ['write'], timeoutMs: 80 },
+      capabilities: { ...CAPS, subagent: false },
+    })
+    await sdk.mount()
+    await sdk.stream([{ role: 'user', content: '改', timestamp: Date.now() }], (e) => {
+      if (e.type === 'approval_request') e.resolve?.(false)
+    }).catch(() => {})
+    const logs = sdk.debugLogs?.value ?? []
+    const stages = logs.map((l) => l.data?.stage).filter(Boolean)
+    assert(stages.includes('approval_pending') && stages.includes('approval_resolved'),
+      '✓ approval 留痕双阶段进 debugLogs(pending/resolved)')
+    assert(logs.length > 0 && logs.every((l) => typeof l.timestamp === 'number' && Number.isFinite(l.timestamp)),
+      '✓ 全条目 timestamp 为有限数(S10:缺 timestamp 条目曾致 idle 判定 quietMs=NaN 永不成立)')
+    const apprLogs = logs.filter((l) => l.data?.stage === 'approval_pending' || l.data?.stage === 'approval_resolved')
+    assert(apprLogs.length >= 2 && apprLogs.every((l) => l.timestamp > 0),
+      '✓ approval 阶段条目 timestamp 真实落值(非兜底 0)')
+    sdk.unmount()
+  }
+
   console.log('[e2e:hang-feedback] retry-visibility:模型重试/终败进 debugLogs + inspect 计数(2026-09-09)')
   {
     // 前两次 5xx 网关错(retryable)→ withRetry 自动重试 → 第三次文本收口;重试全程留痕

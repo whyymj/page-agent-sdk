@@ -32,6 +32,7 @@
   - [6.17 图片输入(多模态直发 / 识图转述旁路)](#617-图片输入多模态直发--识图转述旁路)
   - [6.18 快捷指令 / 会话导出导入 / 元素拖入聚焦](#618-快捷指令--会话导出导入--元素拖入聚焦410-ui-quick-wins)
   - [6.19 回归工具 eval-toolkit](#619-回归工具-eval-toolkit升级前自跑场景回归)
+  - [6.20 划词引用与页面问答(page-quote / read_page / pageContext)](#620-划词引用与页面问答page-quote--read_page--pagecontext)
 - [7. 高级:自定义中间件](#7-高级自定义中间件)
 - [8. 命令式 API](#8-命令式-api)
 - [9. 框架无关 / CDN 集成](#9-框架无关--cdn-集成)
@@ -1665,6 +1666,44 @@ containerEl.addEventListener('click', (e) => {
 完整可运行示例见 `examples/complex-demo`(`PageRenderer.vue` / `CompRenderer.vue` 绑 `data-path` + 点击拾取)。
 
 > **path 校验是「类型合法」非「数据存在」**:`setFocus` 用 `getSchemaAtPath` 校验路径的 schema 形状。数组索引 `components.5` 类型合法即可聚焦(即使数据不足 6 个);叶子字段下取子路径(如 `title.sub`)或顶层不存在字段(如 `nope`)被拒。**开放 schema**(`z.record(...)` / `z.any()` / `z.unknown()` 子树)任意路径均可聚焦(如编辑器页面树 `z.record(z.string(), z.unknown())` 绑整个组件树,点选任一组件即 `setFocus` 其路径)。`capabilities.focus` 默认开,`false` 关闭(中间件 + 工具 + chip 都不装)。
+
+### 6.20 划词引用与页面问答(page-quote / read_page / pageContext)
+
+学习文档站/内容型网站场景:用户**选中页面一段文字**后提问(引用回复形态),agent 自主读当前页正文作答,且始终知道用户在哪一页。三个能力独立开关,可任意组合:
+
+| 能力 | 开关 | 形态 |
+|---|---|---|
+| 划词引用(静默捕获) | `dialog.autoQuote: true`(默认关) | 选中文字 → 打开抽屉/点输入框 → 「引用 chip」自动挂上(可删)→ 随下一条消息发出;`AgentMessage.quote` 侧字段(content 保持干净,气泡渲染结构化引用块;LLM 侧 toLC 前缀注入 `[引用原文(来源:…)]` 块;随消息持久化) |
+| 划词浮动菜单(显式确认) | `dialog.selectionMenu: true`(默认关) | 划选文字 → 选区上方浮出「❝ 引用到对话」工具条 → 点击 = 挂引用 chip + **打开对话框** + 聚焦输入框;点别处/滚动/Esc 消失 |
+| 正文阅读 | `capabilities.domInspect: true`(默认关,含 get_dom) | `read_page({ selector?, offset?, limit? })` 读页面正文纯文本:智能定位 article/main/[role=main]/.content 容器、排除 SDK 对话框自身与 script/style、长文按 `hasMore` 分页续读 |
+| 页面锚点 | `capabilities.pageContext: true`(默认关) | 每轮 system pin 段注入当前页 title+URL(跨压缩存活;domInspect 同开时附 read_page 指引;子 agent 不继承) |
+
+```ts
+createChatSdk({
+  container: '#chat-root',
+  llm,
+  systemPrompt: '你是文档助教。优先围绕引用原文与当前页面内容作答…',
+  capabilities: { dataOps: false, domInspect: true, pageContext: true },
+  dialog: {
+    drawer: true, drawerHidden: true,   // 「点按钮才出现」形态
+    autoQuote: true,                     // 划词自动捕获(隐私 opt-in,默认关)
+    quickActions: [{ label: '这页讲了什么', prompt: '这个页面讲了什么?用 read_page 读取后概括' }],
+  },
+}).mount()
+
+// 宿主按钮:@mousedown.prevent 是关键 —— 浏览器点按默认动作会塌缩文档选区(选区没了 show() 捕获不到)
+// <button @mousedown.prevent @click="() => sdk.show()">问 AI</button>
+```
+
+**捕获时机(autoQuote 双懒捕获点,零常驻监听)**:① `DialogController.show()` 打开抽屉瞬间(覆盖「选中→点宿主按钮」流);② ChatInput 输入区 `pointerdown` 捕获阶段(焦点转移塌缩选区**之前**同步执行,覆盖「抽屉已开→选中→点输入框」流)。无效选区(塌缩/空白/锚在 SDK 对话框内)静默跳过不打扰;input/textarea 内的选区 `getSelection` 拿不到,宿主可 `sdk.setQuote` 兜底。
+
+**浮动菜单(`dialog.selectionMenu: true`,显式确认形态)**:偏好「先问再加」的交互用这个 —— 划选后选区上方浮出「❝ 引用到对话」工具条(fixed 定位,上方不够翻下方),点击 = `sdk.setQuote` + 打开对话框 + 聚焦输入(即使抽屉原是 `drawerHidden` 隐藏态也唤起);点别处/滚动/Esc/选区失效即隐。与 `autoQuote` 独立可组合(一个显式一个静默),浮条自身在 `SDK_UI_SELECTOR` 排除清单内(read_page 不会把它当正文)。
+
+**宿主 API(headless 自建 UI 同样可用)**:`sdk.setQuote(text, source?)` 挂待发引用(下一条 send 附带并消费;空文本=清除;归一+截 2000 字符)/ `sdk.clearQuote()`;`send(msg, { quote })` 显式传入(优先且不消费待发);headless 划词捕获用导出的 `captureSelectionQuote(document)`。**语义细节**:引用是**消息级**上下文(不进 system 段,不跨消息残留);排队路径(生成中再发)与快捷指令不消费待发引用(与图片同口径,chip 留给下一条手动消息);纯引用不可发送(引用是问题语境,须有问题本体);切/重置会话不清待发引用(输入区态,同输入框草稿)。来源自动推导 = 页面 title + 选区上方最近的 h1-h6 标题。
+
+**read_page 细节**:默认 `limit: 4000`(上限 20000);`hasMore: true` 时下次传 `offset += 本次 text 长度` 续读;返回 JSON `{ text, totalChars, offset, hasMore, container }`;大结果自动走 vfs 外存(超阈值不占上下文)。智能容器按优先级逐个探测(article → main → [role=main] → .content/.article-content/.post-content/.markdown-body/#content → body),显式 `selector` 覆盖。
+
+**完整示例**:`examples/docs-demo`(静态学习文章 + 划词引用 + read_page 翻页答问 + 页面锚点),可作你网站的集成模板。隐私注记:`autoQuote` 默认关 —— 自动把页面划词发给 LLM 属隐私敏感行为,由集成方显式开启并告知用户。
 
 ## 7. 高级:自定义中间件
 

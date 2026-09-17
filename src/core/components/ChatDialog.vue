@@ -17,11 +17,12 @@ import ApprovalBar from './ApprovalBar.vue'
 import ConflictBar from './ConflictBar.vue'
 import ChatInput from './ChatInput.vue'
 import DebugDrawer from './DebugDrawer.vue'
+import SelectionMenu from './SelectionMenu.vue'
 import SkillPanel from './SkillPanel.vue'
 import type { DebugLog } from '../harness/createAgent'
 import type { DialogIcons } from './icons'
 import type { DialogMessages, DialogLocale } from './messages'
-import type { AgentMessage, AgentInfo, StreamHandler, ToolStepViewFn } from '../types'
+import type { AgentMessage, AgentInfo, StreamHandler, ToolStepViewFn, MessageQuote } from '../types'
 import type { PendingConflict } from '../sdk/createChatSdk'
 import type { ConflictResolution } from '../tools/dataOps'
 import type { SessionMeta } from '../backends/storage'
@@ -86,6 +87,18 @@ const props = withDefaults(defineProps<{
   drawerWidth?: number | string
   /** 抽屉模式默认隐藏(sdk hide() 实现;此 prop 仅样式控制) */
   drawerHidden?: boolean
+  /** 待发引用(page-quote;core.pendingQuote 的 Ref 投射,内置 chip 渲染 + 宿主 sdk.setQuote 共用) */
+  pendingQuote?: Ref<MessageQuote | null>
+  /** 挂待发引用(内置 autoQuote 划词捕获写回 SDK 态 → core.setQuote) */
+  onSetQuote?: (q: MessageQuote) => void
+  /** 清除待发引用(chip ✕ → core.clearQuote) */
+  onClearQuote?: () => void
+  /** 划词自动捕获(page-quote;默认 false:自动把页面划词发给 LLM 属隐私敏感,opt-in;宿主 sdk.setQuote 不受此开关影响) */
+  autoQuote?: boolean
+  /** 划词浮动菜单(page-quote 显式确认形态;默认 false):划选宿主文字浮出「❝ 引用到对话」工具条,点击 = 挂引用 chip + 打开对话框;与 autoQuote 独立可组合 */
+  selectionMenu?: boolean
+  /** 浮动菜单「引用到对话」回调(mountChatDialog 接线:core.setQuote + reveal 对话框 + 聚焦输入) */
+  onSelectionQuote?: (q: MessageQuote) => void
   /** 输入框行数;默认 2 */
   inputRows?: number
   /** 历史会话列表(storage 开启注入;不传则隐藏新建/历史按钮) */
@@ -155,6 +168,9 @@ const ctx = createChatContext({
   onClearFocus: props.onClearFocus,
   onFocusChipClick: props.onFocusChipClick,
   infoTick: props.infoTick,
+  pendingQuote: props.pendingQuote,
+  onSetQuote: props.onSetQuote,
+  onClearQuote: props.onClearQuote,
   icons: props.icons,
   locale: props.i18n?.locale,
   dialogMessages: props.i18n?.messages,
@@ -286,7 +302,7 @@ const drawerWidthStyle = computed(() => {
     <template v-if="renderSection('footer')">
       <Transition name="cs-slide">
         <slot name="footer" :chat="ctx">
-          <ChatInput :placeholder="placeholder || ctx.messages.inputPlaceholder" :input-rows="inputRows" :gate-pending="gatePending" :quick-actions="quickActions" :on-drop-element="onDropElement" />
+          <ChatInput :placeholder="placeholder || ctx.messages.inputPlaceholder" :input-rows="inputRows" :gate-pending="gatePending" :quick-actions="quickActions" :on-drop-element="onDropElement" :auto-quote="autoQuote" />
         </slot>
       </Transition>
     </template>
@@ -312,6 +328,9 @@ const drawerWidthStyle = computed(() => {
         />
       </slot>
     </template>
+
+    <!-- 划词浮动菜单(selectionMenu):Teleport 到 body 的宿主页浮层;挂对话树取 ctx 文案,对话框收起/隐藏均存活 -->
+    <SelectionMenu v-if="selectionMenu" @quote="(q) => onSelectionQuote?.(q)" />
   </div>
 </template>
 

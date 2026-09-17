@@ -62,6 +62,8 @@ export { validateHtmlFormat, HTML_VOID_TAGS } from './tools/htmlValidate'
 export type { HtmlFormatIssue } from './tools/htmlValidate'
 // 图片输入(image-input-vision):headless 自建 UI 的集成方用 compressImage 制备 AgentImage(headless 无 ChatInput 组件)
 export { compressImage, ImageInputError } from './tools/imageInput'
+// 划词引用(page-quote):headless 自建 UI 无内置捕获面,集成方用 captureSelectionQuote 懒捕获宿主选区
+export { captureSelectionQuote } from './tools/quoteInput'
 export { createVerifyMiddleware, createWriteBackCheck } from './harness/verify'
 export type { VerifyCheck, VerifyCheckContext, VerifyCheckResult, VerifyMiddlewareOptions, WriteBackCheckOptions } from './harness/verify'
 export { createContextInspectorMiddleware } from './harness/contextInspector'
@@ -134,7 +136,7 @@ export type { StorageConfig, StorageBackendType, SessionStore, SessionMeta, Sess
 export { createSkillStore } from './backends/skillStore'
 export type { SkillStore, SkillStoreConfig, PersistedSkill } from './backends/skillStore'
 // 通用消息 / 上下文类型
-export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, SdkEvent, SdkEventHandler, TokenUsage, ToolStep, ToolStepView, ToolStepViewFn, BatchResult, BatchProgress, AgentImage, ImagesConfig } from './types'
+export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, SdkEvent, SdkEventHandler, TokenUsage, ToolStep, ToolStepView, ToolStepViewFn, BatchResult, BatchProgress, AgentImage, ImagesConfig, MessageQuote } from './types'
 export type { Focus, Mission, WorkingMemory, HarnessState, Todo, TodoStatus, VfsFile, SkillMeta, SummarizationEvent, LoopProgress } from './harness/state'
 export type { AgentInfo, ToolInfo, SkillInfo, DataInfo, SubagentInfo } from './types'
 export type { ContextManagerOptions, CompressionStats } from './composables/useContextManager'

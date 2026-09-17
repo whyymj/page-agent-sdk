@@ -10,6 +10,7 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import IconGlyph from './IconGlyph.vue'
 import { useChatContext } from '../composables/chatContext'
+import { captureSelectionQuote } from '../tools/quoteInput'
 import type { QuickActionItem } from '../sdk/createChatSdk'
 
 const props = defineProps<{
@@ -21,12 +22,26 @@ const props = defineProps<{
   quickActions?: QuickActionItem[]
   /** 拖拽宿主元素回调(与图片通道分流:files 优先;源元素经 window dragstart 捕获,须仍连文档) */
   onDropElement?: (el: Element) => void
+  /** 划词自动捕获(page-quote;dialog.autoQuote):输入区被点击时懒捕获宿主选区挂引用 chip。默认关(隐私 opt-in) */
+  autoQuote?: boolean
 }>()
 
 const ctx = useChatContext()
-const { inputText, send, keydown, canUndo, undo, focuses, removeFocus, focusChipClick, icons, messages: m } = ctx
+const { inputText, send, keydown, canUndo, undo, focuses, removeFocus, focusChipClick, icons, messages: m, quote, clearQuote, setQuote } = ctx
 const { state, stop, sendMessage } = ctx.chat
 const { pendingImages, addImageFiles, removePendingImage, imageInputError, compressingImages } = ctx
+
+/**
+ * 划词懒捕获(page-quote,dialog.autoQuote 开启时):pointerdown.capture 在焦点转移塌缩选区**之前**
+ * 同步执行(focus 事件里选区已没了);捕获不 preventDefault(不吞点击,onDropElement 同款)。
+ * 无有效选区(塌缩/空白/锚在 SDK UI 内)captureSelectionQuote 返 null 不打扰 —— 覆盖
+ * 「宿主页选中文字 → 点击输入框」流;「选中 → 开抽屉」流由 DialogController.show() 捕获。
+ */
+const maybeCaptureSelection = (): void => {
+  if (!props.autoQuote || typeof document === 'undefined') return
+  const q = captureSelectionQuote(document)
+  if (q) setQuote(q)
+}
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const dragOver = ref(false)
@@ -99,6 +114,7 @@ onBeforeUnmount(() => {
     <div
       class="chat-input-wrap"
       :class="{ 'drag-over': dragOver }"
+      @pointerdown.capture="maybeCaptureSelection"
       @dragover.prevent="dragOver = true"
       @dragleave="dragOver = false"
       @drop.prevent="onDrop"
@@ -121,8 +137,8 @@ onBeforeUnmount(() => {
           @click="runQuickAction(qa)"
         >{{ qa.icon ? `${qa.icon} ` : '' }}{{ qa.label }}</button>
       </div>
-      <!-- chip 区(流式布局,输入容器内顶部:聚焦标签 + 待发送图片 + 输入错误纵向堆叠,永不遮挡输入文字) -->
-      <div v-if="focuses.length || pendingImages.length || imageInputError" class="chip-stack">
+      <!-- chip 区(流式布局,输入容器内顶部:聚焦标签 + 待发送图片 + 待发引用 + 输入错误纵向堆叠,永不遮挡输入文字) -->
+      <div v-if="focuses.length || pendingImages.length || quote || imageInputError" class="chip-stack">
         <!-- 聚焦标签(inline chip):聚焦组件精修时显示多 chip(🎯 path,multi-focus)。
              chip 本体点击 → 回调(滚动/高亮组件);✕ 移除单个焦点(全移除=退出精修) -->
         <div v-if="focuses.length" class="focus-chips">
@@ -135,6 +151,13 @@ onBeforeUnmount(() => {
           >
             <span class="focus-chip-icon"><IconGlyph :icon="icons.focus" /></span><code class="focus-chip-path">{{ f.path }}</code>
             <button type="button" class="focus-chip-x" data-test="focus-clear" :title="m.removeFocus" @click.stop="removeFocus(f.path)">✕</button>
+          </span>
+        </div>
+        <!-- 待发引用 chip(page-quote 划词引用):❝ + 来源(或截断文本);✕ 移除;随下一条消息发出 -->
+        <div v-if="quote" class="quote-chips" data-test="quote-chips">
+          <span class="quote-chip" :title="m.quoteChipTitle">
+            <span class="quote-chip-icon">❝</span><span class="quote-chip-text">{{ quote.source || quote.text.slice(0, 40) }}</span>
+            <button type="button" class="focus-chip-x" data-test="quote-clear" :title="m.quoteRemove" @click.stop="clearQuote()">✕</button>
           </span>
         </div>
         <!-- 待发送图片 chip(image-input-vision):缩略图 + ✕;随下一条消息发出 -->
@@ -272,6 +295,18 @@ onBeforeUnmount(() => {
 }
 .img-chip-x:hover { opacity: 0.85; }
 .img-error { font-size: 11px; color: var(--cs-err, #dc2626); line-height: 1.4; }
+/* 待发送引用 chip(page-quote 划词引用):❝ + 来源文本(区别于聚焦 chip 的 mono path,用正文体) */
+.quote-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.quote-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 4px 1px 6px; border-radius: 10px;
+  background: rgba(var(--cs-primary-rgb, 31, 77, 58), 0.12);
+  color: var(--cs-primary, #1f4d3a);
+  font-size: 11px; line-height: 1.6;
+  max-width: 100%;
+}
+.quote-chip-icon { font-size: 11px; opacity: 0.8; }
+.quote-chip-text { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
 .chat-input {
   display: block; width: 100%; border: none; outline: none; background: transparent; resize: vertical;
   padding: 9px 12px 38px 12px; font-size: 13px; font-family: inherit; line-height: 1.5; color: var(--cs-bg-text, inherit);

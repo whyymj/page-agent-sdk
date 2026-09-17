@@ -614,7 +614,7 @@ P3×16 以代码卫生 / 文档漂移 / 测试覆盖为主,留归档 `audit-<DIM
 
 ### [2026-08-27] UI 挂起门禁期间的排队消息永不消费 — ✅ 已实施(2026-09-01,随 4.9.2,方案①)
 
-**来源**:tool-surface-economy 重立基线实测(uispec S3):flash 撞 components.0 冻结字段后调 `request_human_confirmation` 转人工确认,场景以挂起收口;S4 消息进 useChat `queuedTasks` 后 **永不消费**(RHC hold() 被响应方接管后不限时)→ `msgs` 不增 → runner idle 判定永假干等 900s(测试侧已修:`_real-llm-lib.mjs` 场景间 `resolvePendingGates` 点保守选项放行;旧 8-16 基线 RHC 只在末位 S10 出现过,缺口从未暴露)。**真实用户面同款**:RHC/approval/conflict 条挂起时用户不打断直接输入新指令 → 消息排队但确认条不点则永不处理,且无任何提示。**已实施(方案①,2026-09-01)**:任一门禁挂起(pendingApproval ∥ pendingConflict)时内置 ChatInput 禁发送面 + 琥珀提示行(`inputGateHint` 新 i18n 键);停止按钮逃生口不受影响(abort 收口恢复输入);sendMessage API 语义不动(自定义 UI 集成方可读同源状态自行禁用);正常在途流排队语义零变化。方案②③维持不做。
+**来源**:tool-surface-economy 重立基线实测(uispec S3):flash 撞 components.0 冻结字段后调 `request_human_confirmation` 转人工确认,场景以挂起收口;S4 消息进 useChat `queuedTasks` 后 **永不消费**(RHC hold() 被响应方接管后不限时)→ `msgs` 不增 → runner idle 判定永假干等 900s(测试侧已修:`_real-llm-lib.mjs` 场景间 `resolvePendingGates` 点保守选项放行;旧 8-16 基线 RHC 只在末位 S10 出现过,缺口从未暴露)。**真实用户面同款**:RHC/approval/conflict 条挂起时用户不打断直接输入新指令 → 消息排队但确认条不点则永不处理,且无任何提示。**已实施(方案①,2026-09-01)**:任一门禁挂起(pendingApproval ∥ pendingConflict)时内置 ChatInput 禁发送面 + 琥珀提示行(`inputGateHint` 新 i18n 键);停止按钮逃生口不受影响(abort 收口恢复输入);sendMessage API 语义不动(自定义 UI 集成方可读同源状态自行禁用);正常在途流排队语义零变化。方案②③维持不做。 —— **✅ 已修 2026-09-10(4.14.1 候选)**:根因 = approval/humanConfirm 的 ctx.logSink 字面量缺 timestamp,pushLog 透传入库致 idle 判定 quietMs=NaN;修 = 字面量补 + pushLog chokepoint 归一 + _real-llm-lib 反向扫数值 timestamp 双保险;e2e hang-feedback S10 回归块 ×3(负向验证敏感)
 
 ### [2026-08-27] 低频工具按需注入(restore/history/diff/resource_delete/schema_data 走 skill 按需)— ⏸ 暂缓(tool-surface-economy「不立项项」登记)
 

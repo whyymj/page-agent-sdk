@@ -13,7 +13,7 @@ import { useChat } from './useChat'
 import { copyText } from '../utils/clipboard'
 import { resolveDialogIcons, type DialogIcons } from '../components/icons'
 import { resolveDialogMessages, type DialogMessages, type DialogLocale } from '../components/messages'
-import type { AgentMessage, AgentInfo, StreamHandler, AgentImage, ToolStepViewFn } from '../types'
+import type { AgentMessage, AgentInfo, StreamHandler, AgentImage, ToolStepViewFn, MessageQuote } from '../types'
 import type { Focus } from '../harness/state'
 import type { PlanConfirmationRecord } from '../harness/humanConfirm'
 import { compressImage, MAX_IMAGES_PER_ROUND, ImageInputError } from '../tools/imageInput'
@@ -31,6 +31,13 @@ export interface ChatContextOptions {
   onPersist?: (messages: AgentMessage[]) => void | Promise<void>
   /** 清空对话回调(新建会话) */
   onClear?: () => void
+  // ===== 划词引用(page-quote):状态本体在 SDK core.pendingQuote,经 Ref 投射 + 回调写回 =====
+  /** 待发引用(挂 chip 随下一条消息发出,发送后清空;宿主 sdk.setQuote 与内置捕获共用) */
+  pendingQuote?: Ref<MessageQuote | null>
+  /** 挂待发引用(内置 autoQuote 划词捕获写回 SDK 态;宿主 API 走 sdk.setQuote 不经此) */
+  onSetQuote?: (q: MessageQuote) => void
+  /** 清除待发引用(chip ✕ 写回 SDK 态) */
+  onClearQuote?: () => void
   /** stop() 清空排队任务时回调(P1-5 可见性;→ DebugDrawer 日志) */
   onQueuedCleared?: (dropped: string[]) => void
   /** regenerate 前回调(清代码资产复用缓存,强制重新生成) */
@@ -110,6 +117,13 @@ export interface ChatContext {
   imageInputError: Ref<string>
   /** 是否正在压缩图片(禁用发送按钮防重复添加) */
   compressingImages: Ref<boolean>
+  // ===== 划词引用(page-quote)=====
+  /** 待发引用(UI chip 渲染;未接线 pendingQuote(独立用 createChatContext 的集成方)恒 null) */
+  quote: ComputedRef<MessageQuote | null>
+  /** 挂待发引用(UI 侧入口;透传 onSetQuote) */
+  setQuote: (q: MessageQuote) => void
+  /** 清除待发引用(chip ✕) */
+  clearQuote: () => void
   /** 修改排队任务:填回输入框(供编辑)+ 从队列移除 */
   editQueued: (idx: number) => void
   /** 是否为流式占位 assistant(末位 + loading + content/reasoning 均空 → 显示三点动画) */
@@ -218,10 +232,13 @@ export function createChatContext(opts: ChatContextOptions = {}): ChatContext {
   // 输入动作
   const send = (): void => {
     const images = pendingImages.value
+    const q = quote.value
+    // 纯引用不可发送(引用是问题的语境,须有问题本体);不消费,chip 留待补问题
     if (!inputText.value.trim() && !images.length) return
-    sendMessage(inputText.value, focuses.value, images.length ? [...images] : undefined) // 附发送时焦点快照 + 待发送图片
+    sendMessage(inputText.value, focuses.value, images.length ? [...images] : undefined, q ?? undefined) // 附发送时焦点快照 + 待发送图片 + 待发引用
     inputText.value = ''
     pendingImages.value = [] // 图片已随消息持有,清待发区
+    if (q) clearQuote() // 引用已随消息持有,清待发 chip(排队路径不至此:loading 时 sendMessage 入纯文本队列,chip 不消费)
   }
 
   // 图片输入(image-input-vision Phase 1):压缩闸 + 数量上限;错误走输入区提示条(4s 自动清),不弹窗
@@ -263,6 +280,12 @@ export function createChatContext(opts: ChatContextOptions = {}): ChatContext {
   const removePendingImage = (id: string): void => {
     pendingImages.value = pendingImages.value.filter((im) => im.id !== id)
   }
+
+  // 划词引用(page-quote):状态本体在 SDK core.pendingQuote(宿主 sdk.setQuote 与内置捕获共用),
+  // ctx 经 Ref 投射 + 回调写回;未接线的独立集成方 quote 恒 null、setQuote 为安全 no-op
+  const quote = computed<MessageQuote | null>(() => opts.pendingQuote?.value ?? null)
+  const setQuote = (q: MessageQuote): void => { opts.onSetQuote?.(q) }
+  const clearQuote = (): void => { opts.onClearQuote?.() }
   const keydown = (e: KeyboardEvent): void => {
     // IME 输入法合成期回车(确认候选词)不发送(isComposing / keyCode 229);否则中文输入必现误发
     if (e.isComposing || e.keyCode === 229) return
@@ -338,6 +361,9 @@ export function createChatContext(opts: ChatContextOptions = {}): ChatContext {
     removePendingImage,
     imageInputError,
     compressingImages,
+    quote,
+    setQuote,
+    clearQuote,
     editQueued,
     isPendingAssistant,
     focuses,
