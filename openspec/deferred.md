@@ -704,3 +704,10 @@ A3 曾写「116 个模块」,实测 sec-*.ts = **115**(runner import 同数)—�
 ### [2026-09-17] html2canvas vendor / 动态 import 分块 — ❌ 否决(体积与构建形态)
 
 **评估结论**:html2canvas ~148KB raw 会把 ESM(~110KB 余量)与 headless(~51.6KB 余量)爆 3×,重校幅度与 designSkill(+160~230K)同量级而 CSS 重实现路线自有盲区,不如 html-to-image(~47KB,foreignObject 原生渲染);动态 import 分块在 4 份单文件 lib 配置下不成立(vite.iife.config.ts:43 / vite.headless.config.ts:8-10 注释钉死:inlineDynamicImports 下动态 import 只换时序不省体积)。**重启触发**:宿主 CSP 普遍禁 SVG data URL 致 foreignObject 路线不可用(届时评估 renderer 钩子文档化优先于换库)。
+
+## 2026-09-17(dom-edit 暂缓项)
+
+- **划词原文范围高亮**(page-quote 引用块 → 原文 Range 高亮跳转):现状基础 = dom_edit highlight 已覆盖元素级(selector 定位);暂缓理由 = text Range 跨节点/拆分逻辑复杂且需 Selection API 与渲染层配合;重启触发 = 引用问答场景实际需要「点引用块跳原文」交互。
+- **dom_edit 改动持久化/会话恢复**:现状基础 = 快照栈内存态;暂缓理由 = 持久化 agent 对宿主页面的改动属侵入宿主(页面最终形态归集成方),需求未证实;重启触发 = 「标注跨刷新保留」真实场景(如学习批注)。
+- **框架管理区域冲突检测**(探测 Vue/React 管辖区并拒改/警告):现状基础 = 文档明示边界(Vue/React 重渲染会洗掉外部改动);暂缓理由 = 探测 vnode/`__vue__` 标记不可靠且框架面广;重启触发 = 框架宿主误改事故真实出现。
+- **dom_change 外发事件**(MutationObserver 观察面):现状基础 = debugLogs stage:'dom_edit' 留痕;暂缓理由 = 集成方观察需求未证实,常驻 observer 有成本;重启触发 = 集成方需要实时感知 agent 改动(如宿主做标注管理 UI)。

@@ -1606,6 +1606,28 @@ createChatSdk({
 
 Full example: `examples/docs-demo?shot=1` (screenshot quick action + real rendering; do not enable vision on text-only models — see images-demo for the describe bypass). Cost note: screenshots cost multimodal tokens (hundreds to thousands per image, re-billed each round); prefer selector-scoped shots for verification tasks.
 
+### 6.22 DOM editing (dom_edit / dom_restore)
+
+With `capabilities.domEdit: true` (opt-in, default off; **requires domInspect** — you must be able to locate the page before writing to it), the `dom_edit` + `dom_restore` tools are assembled — the agent gains controlled operations on the **host page** (highlighting, copy edits, style tweaks, insert/remove/move elements), targeting the "host-page companion" scenario family opened in 4.15 (docs sites and other pages with no data.bind, where the page itself is the object):
+
+```ts
+createChatSdk({
+  container: '#chat-root', llm,
+  systemPrompt: 'You are a docs tutor. Use dom_edit highlight to point things out on the page…',
+  capabilities: { dataOps: false, domInspect: true, pageContext: true, domEdit: true },
+}).mount()
+```
+
+**`dom_edit({ patches, dryRun? })`** — atomic batch (any failing selector rejects the **whole batch** with zero partial application; resolve-first-then-apply, mirroring the write patches design language). Ops: `set_text` / `set_html` (content), `set_attr` / `remove_attr`, `add_class` / `remove_class`, `set_style` (inline styles), `insert` (new element; position before/after/prepend/append/replace relative to an anchor), `remove`, `move` (reparent/reorder), `highlight` (background + outline + scroll into view — "show the user where it is").
+
+**Write discipline (enforced in the tool, not by prompting)**: ① selectors must match **exactly one** element (multi-match rejected with guidance to narrow — get_dom's first-match read semantics do not apply to writes); ② dangerous-content gate: `insert` rejects `script/iframe/object/embed/link/meta/base` tags; every attr-writing path rejects `on*` event attributes and `javascript:`/`vbscript:` URLs (not a security sandbox — it prevents accidental script execution and page-stability accidents); ③ the SDK's own dialog DOM is off-limits; ④ every batch is auto-snapshotted (affected roots get a `data-pg-snap` marker + outerHTML recorded, 256KB/root cap).
+
+**`dom_restore`** — rolls back the most recent batch (repeat calls unwind the stack, cap 20); honestly reports unrestorable spots when a snapshot point was overwritten by later structural changes.
+
+**Boundaries (read before enabling)**: ① edits are **session-ephemeral** (lost on reload, never persisted — the page's final form belongs to the integrator); ② Vue/React-managed regions re-render and will clobber/conflict with external DOM edits — use on static/content pages or regions you know aren't framework-managed; ③ **don't use this on data-driven pages** — edit the data (`write`) instead: rendering updates automatically and goes through the full schema/snapshot/optimistic-lock contract; ④ edits leave a `stage:'dom_edit'` trail in debugLogs.
+
+Skill integration: the dom-inspect skill teaches patches syntax and write discipline (read before write / dryRun preflight / restore rollback); the page-analysis skill's question triage gains an "operation" route — both sections only appear when domEdit is assembled (never teach tools that don't exist). Full example: `examples/docs-demo` (🖍 highlight quick action + browser e2e highlight/rollback chain).
+
 ### 6.19 Regression toolkit eval-toolkit (run scenario regressions before upgrading)
 
 The SDK's own real-LLM regression methodology, exposed as three pure functions — **integrators run their own pre-upgrade regressions for their own scenarios** (SDK tests green ≠ your scenario unbroken; red line: judging/waiting/comparing only — no assertion library, no runner, no Playwright coupling):

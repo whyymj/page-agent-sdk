@@ -37,7 +37,7 @@ onMounted(() => {
     storage: 'memory',
     debug: true,
     systemPrompt: '你是学习笔记网站的文档助教。用户可能在页面选中了一段文字后提问(引用块在问题前),优先围绕引用原文与当前页面内容作答;需要页面其他部分时用 read_page 读取正文再答。回答保持准确、简洁,不确定就说不确定。',
-    capabilities: { dataOps: false, domInspect: true, pageContext: true },
+    capabilities: { dataOps: false, domInspect: true, pageContext: true, domEdit: true },
     dialog: {
       drawer: true,
       drawerHidden: true,
@@ -49,6 +49,7 @@ onMounted(() => {
         { label: '这页讲了什么', prompt: '这个页面讲了什么?请用 read_page 读取正文后概括', icon: '📖' },
         { label: '总结要点', prompt: '总结本页内容的要点,按小节组织', icon: '🧾' },
         { label: '本页配置项', prompt: '本页提到的配置项有哪些?各自的作用和默认值是什么?', icon: '⚙️' },
+        { label: '🖍 高亮表格', prompt: '用 dom_edit 把 .docs-table 高亮出来(黄色背景),让我一眼看到配置表格在哪', icon: '🖍' },
         ...(shotMode ? [{ label: '📸 截图看表格', prompt: '用 take_screenshot 截取 .docs-table 区域,看看表格渲染效果' }] : []),
       ],
     },

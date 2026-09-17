@@ -27,9 +27,9 @@ export type CapabilityFlags = Partial<Record<string, boolean>>
 export type ResolvedCapabilities = Record<string, boolean>
 
 /**
- * 能力注册表(19 开关;以 CAPABILITIES.length 为准,增删时同步本注释与 types.test-d.ts _capKeys)。
+ * 能力注册表(20 开关;以 CAPABILITIES.length 为准,增删时同步本注释与 types.test-d.ts _capKeys)。
  * - opt-out 默认开(13 个):核心能力,关才需显式 false
- * - opt-in 默认关(6 个):有 token 成本/最远能力,需显式 true 开启
+ * - opt-in 默认关(7 个):有 token 成本/最远能力,需显式 true 开启
  */
 export const CAPABILITIES: readonly Capability[] = [
   // —— opt-out 默认开 ——
@@ -53,6 +53,7 @@ export const CAPABILITIES: readonly Capability[] = [
   { name: 'automation', defaultOn: false },
   { name: 'agentCompression', defaultOn: false, requires: ['summarization'] }, // 压缩 agent 自主决策(opt-in;开 + summaryLlm 可用 → decide 驱动压缩;失败降级静态)
   { name: 'pageContext', defaultOn: false }, // 页面锚点(opt-in;每轮 system 注入当前页 title+URL pin 段,文档站/页面问答场景;node/headless 无 document 自然降级)
+  { name: 'domEdit', defaultOn: false, requires: ['domInspect'] }, // DOM 编辑(opt-in;宿主页面伴随场景的标注/内容/结构操作 —— dom_edit 批量原子 + 自动快照 + dom_restore 回滚;数据驱动页面仍应改数据)
 ]
 
 /**

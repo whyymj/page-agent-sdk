@@ -497,8 +497,8 @@ export const domInfoTool = tool(
 /** skill 名常量(装配侧判重用;变体工厂保持同名) */
 export const domInspectSkillName = 'dom-inspect'
 
-/** dom-inspect skill 变体工厂:withScreenshot = take_screenshot 已装配(视觉条件满足)才在文档里教它(勿教不存在的工具) */
-export function makeDomInspectSkill(opts: { withScreenshot?: boolean } = {}): import('../harness/skills').SkillSpec {
+/** dom-inspect skill 变体工厂:withScreenshot/withDomEdit = 对应工具已装配才教(勿教不存在的工具) */
+export function makeDomInspectSkill(opts: { withScreenshot?: boolean; withDomEdit?: boolean } = {}): import('../harness/skills').SkillSpec {
   return {
   name: domInspectSkillName,
   description: '页面 DOM 深度检视工具(dom_search 搜索元素 / dom_info 读内容·计算样式·事件绑定·几何)。定位元素、验证样式落地、排查交互绑定时加载',
@@ -522,6 +522,12 @@ export function makeDomInspectSkill(opts: { withScreenshot?: boolean } = {}): im
       '- 截图「看」页面:selector 截指定元素区域 / fullPage 截整页 / 都不传截当前视口;截图经压缩投递(多模态直看图,纯文本模型自动走识图转述)',
       '- 布局/样式/渲染效果类问题优先截图(视觉真值),结构/属性类用 dom_info;截图失败(CSP/跨域图)会回灌原因与替代建议',
     ] : []),
+    ...(opts.withDomEdit ? [
+      '## dom_edit({ patches, dryRun? })—— 修改页面元素(宿主开启才有)',
+      '- patches 批量原子(任一失败整批拒绝):set_text/set_html(内容)、set_attr/remove_attr、add_class/remove_class、set_style、insert(新建元素 anchor+position: before/after/prepend/append/replace)、remove、move(层级调整)、highlight(高亮+滚动)',
+      '- 写纪律:selector 必须唯一命中(多匹配被拒,用 dom_search 拿精确路径);先读后写(get_dom/dom_info 看现状);拿不准先 dryRun 预检',
+      '- 改前自动快照:dom_restore 回滚最近一批(可连续回退);改动为会话临时态(刷新即失);数据驱动页面改数据(write)不要改 DOM',
+    ] : []),
     '## 排障套路',
     ...(opts.withScreenshot
       ? ['1. dom_search(mode:"text", query:按钮文案) 定位 → 2. 视觉验证 take_screenshot / 结构验证 dom_info(styles) → 3. 不符则改数据(get_dom 看结构对照)']
@@ -539,11 +545,11 @@ export function makeDomInspectSkill(opts: { withScreenshot?: boolean } = {}): im
 /** 页面内容分析 skill 名常量 */
 export const pageAnalysisSkillName = 'page-analysis'
 
-/** page-analysis skill 变体工厂(withScreenshot = take_screenshot 已装配才教视觉验证路线) */
-export function makePageAnalysisSkill(opts: { withScreenshot?: boolean } = {}): import('../harness/skills').SkillSpec {
+/** page-analysis skill 变体工厂(withScreenshot/withDomEdit = 对应工具已装配才教该路线) */
+export function makePageAnalysisSkill(opts: { withScreenshot?: boolean; withDomEdit?: boolean } = {}): import('../harness/skills').SkillSpec {
   return {
     name: pageAnalysisSkillName,
-    description: '页面内容分析策略:按问题类型选工具(引用原文/整页理解/定位/结构/视觉),含分页探索纪律与基于页面实料的回答纪律。回答用户关于当前页面的问题时加载',
+    description: '页面内容分析策略:按问题类型选工具(引用原文/整页理解/定位/结构/视觉/页面操作),含分页探索纪律与基于页面实料的回答纪律。回答用户关于当前页面的问题时加载',
     getContent: () => [
       '# 页面内容分析策略',
       '## 第一步:问题分型(按类型选主力工具,不要一上来读整页)',
@@ -553,6 +559,9 @@ export function makePageAnalysisSkill(opts: { withScreenshot?: boolean } = {}): 
       '- **结构/属性类**(「这个区块是什么组件/有哪些属性」):dom_info(selector) 读单元素;层级关系用 get_dom',
       ...(opts.withScreenshot ? [
         '- **视觉类**(「看起来对不对/布局乱不乱/渲染效果」):take_screenshot 截图看视觉真值;selector 截局部、fullPage 截整页;截图是唯一能看到实际渲染效果的手段,结构推断不能代替',
+      ] : []),
+      ...(opts.withDomEdit ? [
+        '- **操作类**(「把这段高亮/隐藏广告/调大字体/把这个块挪过去」):dom_edit patches 批量操作;纪律 = 先 get_dom/dom_search 定位唯一 selector → 拿不准先 dryRun → 改后 dom_info/截图验证 → 不满意 dom_restore 回滚;页面是临时态,持久修改要走宿主自己的机制',
       ] : []),
       '## 探索纪律',
       '1. **先窄后宽**:引用/焦点 → 所在小节 → 整页;每一步只取够回答当前问题的量',

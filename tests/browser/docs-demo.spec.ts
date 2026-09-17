@@ -246,4 +246,42 @@ test.describe('take_screenshot 截图问答(docs-demo ?shot=1)', () => {
     await waitForAgentIdle(page)
     expect(String(JSON.parse(bodies[0] ?? '{}').messages?.[0]?.content ?? '')).not.toContain('take_screenshot')
   })
+
+  test('dom_edit highlight → 宿主页面真落地 + hints 教批量编辑(domEdit)', async ({ page }) => {
+    await page.goto('/examples/docs-demo/')
+    await page.waitForSelector('.chat-dialog', { state: 'attached' })
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'dom_edit', arguments: { patches: [{ op: 'highlight', selector: '.docs-table', color: '#fef08a' }] } }] },
+      { text: '已把配置表格高亮出来了。' },
+    ])
+    const bodies = await recordLlmBodies(page)
+    await openDrawer(page)
+    await fillInput(page, '把配置表格高亮出来')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    // system hints:domEdit 开 → 教批量编辑(装了就教)
+    expect(String(JSON.parse(bodies[0] ?? '{}').messages?.[0]?.content ?? '')).toContain('dom_edit')
+    // 宿主页面真被改:表格拿到高亮背景(outline + backgroundColor)
+    const style = await page.locator('.docs-table').evaluate((el) => (el as HTMLElement).style.backgroundColor)
+    expect(style).toBe('rgb(254, 240, 138)')
+    await expect(page.locator('.chat-dialog .message-row.assistant').last()).toContainText('高亮')
+  })
+
+  test('dom_edit → dom_restore:回滚后宿主页面复原(快照栈)', async ({ page }) => {
+    await page.goto('/examples/docs-demo/')
+    await page.waitForSelector('.chat-dialog', { state: 'attached' })
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'dom_edit', arguments: { patches: [{ op: 'highlight', selector: '.docs-table', color: '#fef08a' }] } }] },
+      { tool_calls: [{ name: 'dom_restore', arguments: {} }] },
+      { text: '高亮后又撤销了,表格恢复原样。' }],
+    )
+    await openDrawer(page)
+    await fillInput(page, '高亮表格然后撤销')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    // 回滚走 outerHTML 回放:高亮样式被移除(元素身份不保留,取 style 值断言)
+    const style = await page.locator('.docs-table').evaluate((el) => (el as HTMLElement).style.backgroundColor)
+    expect(style).toBe('')
+    await expect(page.locator('.chat-dialog .message-row.assistant').last()).toContainText('撤销')
+  })
 })

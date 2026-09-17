@@ -2,6 +2,21 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.17.0] - 2026-09-17
+
+> DOM 编辑能力族(dom-edit):agent 对宿主页面的受控标注/内容/结构操作(用户点名「修改 DOM 样式/内容/增删改查/层级嵌套 + 集成进 skill」)。
+> 与数据写通道正交 —— 面向 4.15 起的「宿主页面伴随」场景族(文档站等无 data.bind 的页面);数据驱动页面仍走 write(明示边界)。
+
+### Added
+
+- **`capabilities.domEdit`**(opt-in 默认关,requires domInspect —— 写页面必须先能定位;注册表 19→20):装配 `dom_edit` + `dom_restore` 两工具。
+- **`dom_edit({ patches, dryRun? })`** 批量原子操作(任一 selector 失败**整批拒绝零部分应用**;先全部解析再应用,镜像 write patches 设计语言):op 集 `set_text`/`set_html`(内容)、`set_attr`/`remove_attr`、`add_class`/`remove_class`、`set_style`(行内样式)、`insert`(新建元素,position before/after/prepend/append/replace 相对锚)、`remove`、`move`(层级嵌套调整:换父/重排,自带「不能移进自己子孙」环守卫)、`highlight`(高亮+outline+滚动定位+浮注 —— 答问时「指给用户看」)。
+- **写纪律工具内建(不靠提示词)**:① selector **唯一命中**(`querySelectorAll` 恰 1;多匹配拒并引导收窄 —— get_dom「取首个」读语义不适用写);② 危险内容闸:insert 拒 `script/iframe/object/embed/link/meta/base` 标签、所有写 attr 路径拒 `on*` 事件属性与 `javascript:`/`vbscript:` URL(非安全沙箱,防无意脚本执行/页面稳定性事故);③ SDK 对话框自身 DOM 拒改(`SDK_UI_SELECTOR`);④ 每批自动快照(受影响根打 `data-pg-snap` 标记记 outerHTML,单根 256KB 上限防巨树爆内存)。
+- **`dom_restore`** 快照回滚:批粒度逆序回放(栈上限 20 批);快照点被后续结构变更覆盖时如实报告未复原数(outerHTML 回放元素身份不保留 —— 与既有 SNAPSHOT_STALE 语义同族,宁诚实不谎报)。
+- **skill/usageHints 集成(勿教不存在的工具)**:dom-inspect skill 增 patches 用法段 + 写纪律(先读后写/dryRun 预检/restore 回滚);page-analysis skill 问题分型增「**操作类**」路线(高亮/隐藏/调样式 → dom_edit → 验证 → 回滚;持久修改走宿主机制);usageHints 增批量编辑一行 —— 全部仅在 domEdit 装配后出现。
+- **观察面与边界**:onEdit 留痕进 debugLogs(`stage:'dom_edit'`,ops/applied/dryRun);边界明示:改动**会话临时态**(刷新即失不持久化)、Vue/React 管理区重渲染会洗掉、数据驱动页面仍走 write。
+- `examples/docs-demo` 增 `🖍 高亮表格` quickAction(domEdit:true);selftest sec-128 ×31(Mini DOM 假树含序列化/解析回环:危险闸矩阵/唯一匹配/原子批/dryRun/快照回滚 roundtrip[文本+class/remove/move 双端]/highlight/SDK UI 保护/快照超限/栈耗尽/requires 归一/skill·hints 变体)→ **3573**;e2e dom-edit.mjs ×11(条件注入三态/ReAct 全链改+撤[事件时点采样中途 DOM 态]/script 拒/多匹配拒/零变化)→ **1162**;browser docs-demo +2(高亮真落地 + restore 复原终态)→ **164**。
+
 ## [4.16.0] - 2026-09-17
 
 > 截图查看能力(take-screenshot change,openspec/changes/2026-09-17-take-screenshot)+ page-analysis 内容分析 skill + 默认 systemPrompt 能力感知身份。

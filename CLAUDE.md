@@ -30,9 +30,9 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,3542 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,1151 项;tests/e2e/<module>.mjs 按模块拆分)
-npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,162 项;tests/browser/<demo>.spec.ts)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,3573 项断言)
+npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,1162 项;tests/e2e/<module>.mjs 按模块拆分)
+npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,164 项;tests/browser/<demo>.spec.ts)
 npm run test:node-real  # node 真 LLM 冒烟(server-companion P0:headless dist 双协议 read→write→restore;无 key 自动 skip)
 ```
 
@@ -51,7 +51,7 @@ src/core/                       # 通用 SDK 核心(框架无关)
 │   └── (能力) todos/skills/memory/permissions/summarization/subagent/verify/usageHints/focus/mission/workingMemory/resourcesPin/contextInspector
 ├── sdk/                        # createChatSdk 入口(_createChatSdk 内部工厂 + mountChatDialog 可注入 UI,依赖反转)
 │   └── defineTool/promptBuilder/llmResolver/conflictManager/optionsResolver/events/contextPreset/ragSubagent/htmlSubagent/toolRegistry/options(类型段 F1)/sessionLifecycle(会话族 F2)/toolAssembly(装配岛 F3)
-├── tools/                      # 纯函数:dataOps/fetchDoc/dataSlotQuery/jsonUtils/schemaUtils/resources/sandbox/domTool/envTool/htmlValidate/toolError
+├── tools/                      # 纯函数:dataOps/fetchDoc/dataSlotQuery/jsonUtils/schemaUtils/resources/sandbox/domTool/domEdit/envTool/htmlValidate/toolError
 ├── toolsets.ts · backends/{vfs,storage,skillStore}.ts · mcp/{client,connectAll}.ts(MCP 全连接编排 F3) · llm/{proxyLlm,constructLlm}.ts
 ├── composables/                # useChat/useContextManager/useMarkdown/contextIndex/chatContext(provide/inject)
 ├── components/                 # ChatDialog(组合容器:provide ctx + 9 区块 slot)+ MessageContent/CodePreview/DebugDrawer/ChatHeader/ChatInput/QueuedBar/ApprovalBar/ConflictBar/FocusBar/SkillPanel/message/*
@@ -105,6 +105,7 @@ skills/                         # 分发给使用者的 Agent Skill(入 npm 包 
 - **组件锁 · 同组件单委派互斥(3.13 机制锁,`sdk/componentLock.ts`)**:① 委派互斥 —— 同组件并发第二个 `use_html` 立即回灌 `COMPONENT_BUSY`(零子 agent 消耗;**4.11.2 toolError 化**:ERROR: 前缀结构化,rejectedDelegations 真锁路径计数命中 —— 修前裸串无前缀且 status='done',4.9.1 被拒委派计数对真实锁路径失明;同参失败 streak 显式排除忙拒);锁目标 = `components` 显式声明(过滤编造名)/ 缺省 task 文本整词唯一命中才锁(0 或 ≥2 命中不锁,宁漏不误);acquire 多组件原子(任一被占全失败不留半套锁),release 幂等;**release 挂子流彻底 settle(4.5.0 team-audit P1#6)** —— 超时错误仍立即回灌,但锁等 wind-down commit 完成才放(180s 兜底防永挂),窗口内重委派撞 COMPONENT_BUSY(文案本就引导等结束再试)。② 主写守卫(`createComponentWriteGuardMiddleware` wrapToolCall)—— 委派在途时主写工具命中锁组件子树回灌 `COMPONENT_LOCKED`(整体 set 拒;dryRun 不拦);**codeField 恒守卫(3.24.1,M4 真 LLM 驱动)**:已存在代码组件的 code 路径恒拒回灌 `CUSTOM_CODE_DELEGATION` 引导委派(`codeFieldIndexPaths` 实时解析;新建元素/整体 set/dryRun 不拦;不配 `getCodeFieldPaths` 零变化)—— flash 实测 3 次无视提示词禁令直写,机制化;**时序注意:守卫检查在工具派发同步段,use_html 的 acquire 在数个 await 之后** —— 并发场景下须有宏任务间隙(真 LLM 流式天然满足;e2e 用 slow_probe 时序锚)。③ **per-组件委派世代号(4.5.0)**:共享 vfsStore 命名空间 `__pgTouchGen`,本轮 touch 代码文件/checkout 走 pendingRetry 复用即 bump + 快照进本轮 state(全量 checkout 不 bump,并行异组件零株连);afterAgent commit 前比对,旧代跳过不重放且不记 keep_external(世代过期 ≠ 人工修改)—— 掐断「超时旧委派 wind-down 读新委派中间态提前 commit → 新委派最终成果被 keep_external 静默丢弃」竞态。④ commit 人工并发检测(`hashString` 快照比对)—— 在途窗口同组件 code 被外部改 → keep_external 保留人工值 + warn + **组件名经 `state.__pgKeepExternal` → `runSubagent` 的 `decorateSubagentResult` 随委派返回值回流主上下文**(ask-first 文案;否则主 agent 读到人工 stub 误判「子 agent 占位符」后读后写覆盖 —— M4 实测修);组件被删 → 不复活 + vfs 副本清理;索引位移 → 按 `__pgId` commit 不写错位置。观察层 `inspect().subagent.lockedComponents` + DebugDrawer 锁视图。真 LLM 复验(modes 套件,M4 4/4):并行发生 ✓ / 人工并发 keep_external 终态保留 ✓ / 墙钟量化断言待环境(LLM 代理黑洞两杀,deferred 有登记)
 
 ### 其他能力(详见 architecture.md §⑩⑪⑮)
+- **DOM 编辑(4.17,`capabilities.domEdit` opt-in,requires domInspect)**:宿主页面伴随场景的受控写通道 —— `dom_edit({patches,dryRun?})` 批量原子(op:set_text/set_html/set_attr/remove_attr/add_class/remove_class/set_style/insert[position before/after/prepend/append/replace]/remove/move/highlight[高亮+滚动定位]);**唯一 selector 纪律**(querySelectorAll 恰 1,多匹配拒)/危险闸(script/iframe/link/meta 等标签拒、on* 属性拒、javascript: URL 拒)/SDK 自身 DOM 拒改/快照单根 256KB 上限;`dom_restore` 批快照逆序回滚(栈 20,data-pg-snap 标记 outerHTML 回放,元素身份不保留、STALE 如实报);**边界明示**:改动会话临时态(不持久化)、框架管理区重渲染会洗掉、数据驱动页面仍走 write(不替代数据通道);onEdit 留痕 debugLogs stage:'dom_edit';skill 集成(dom-inspect 用法段/page-analysis 操作类分型/usageHints 行,全随装配态勿教不存在工具)
 - MCP 远程工具(**逐 server 渐进注入**:各 server 连接落定即注入工具,坏 server 的 3 次连接重试不再拖累好 server;连接重试 3 次递增退避吸收上游瞬时 502/断连 + 握手 15s 降级 + **callTool 超时闸 60s**(`callTimeoutMs` 可调,3.6+;超时回灌自纠不断连))/ Verify 自检 opt-in(`createWriteBackCheck` + adversarial)/ `get_dom` opt-in / `inspect_env` 默认开 / actions 宿主动作 / SkillSpec.exec(一次性)vs tools(反复查询)勿双轨 / Approval(挂起/收口双留痕 `approval_pending`/`approval_resolved` 2026-09-02,exportDiagnostics 可诊断「卡在等确认」;无响应自动拒,4.1+ 中间件级默认 30s:approval_request 事件带 `hold()`,响应方收到即调则不限等人;headless/send/batch/streaming:false 等无响应方路径 30s 自动拒 + `APPROVAL_AUTO_REJECTED` observable;`approval.timeoutMs` 覆盖,Infinity=关;humanConfirm 同口径)/ Checkpoint 每轮存档 / Automation 预算 + `sdk.batch` / **图片输入 image-input-vision**(三入口 📎/拖/贴 + 压缩闸 ≤1568px/≤4 张/20MB;三分支:多模态主模型(modelCaps 查表或 `llm.vision:true`)直发 content parts / 纯文本 + `images.describe` 转述注入(图不直发)/ 都不配诚实拒绝;`images.upload` 原图换 URL;持久化 thumb+vfsRef 轻形态;详见 usage-guide §6.17)/ **方案确认留痕 `lastPlanConfirmation`**(RHC 带 options 的方案被点选 → `{at,summary,choice,viaOptions}` 记录;仅方案确认记录(允许/拒绝/无 options 不写);随 SessionSnapshot 持久化跨刷新存活;switch/reset 清除;ApprovalBar 上下文提示行不自动跳过;`inspect().planConfirmation` 反射;bulk-change-guard 豁免的公共接口)/ **bulk-change-guard 大批量门禁**(`capabilities.bulkGuard` 默认关 + 须配 approval 才装配(否则 no-op 留痕);量纲 = 现有组件节点数(同组件多 patch 不拦/新增不计/深路径截组件粒度);超阈(默认 4)挂 approval(自带 30s timeoutMs,ctx.emit 通道);拒绝回灌 BULK_CHANGE_REJECTED;`mode:'observe'` 无人值守;豁免:lastPlanConfirmation + 会话级同形态一次 + dryRun;componentWriteGuard 之内装载;`inspect().bulkGuard` 反射;缓解非根治明示)
 
 ### 对话鲁棒性(详见 architecture.md §⑮)
@@ -137,13 +138,13 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test    # tsx 跑 src/core/__tests__/selftest.ts,3542 项断言
+npm test    # tsx 跑 src/core/__tests__/selftest.ts,3573 项断言
 ```
-按模块拆分:`src/core/__tests__/modules/sec-NN.ts`(123 个模块)各导出 `run(ctx)`,runner 汇总;共享 `TestCtx` 在 `modules/_ctx.ts`。tsx 跑源码(不经构建),触不到 createChatSdk 顶层 API 作用域。**改任何核心模块后必跑**。
+按模块拆分:`src/core/__tests__/modules/sec-NN.ts`(124 个模块)各导出 `run(ctx)`,runner 汇总;共享 `TestCtx` 在 `modules/_ctx.ts`。tsx 跑源码(不经构建),触不到 createChatSdk 顶层 API 作用域。**改任何核心模块后必跑**。
 
 #### 2. 集成层 e2e(改 createChatSdk 顶层 API 后必跑)
 ```bash
-npm run build && npm run test:e2e    # node 跑 dist 产物,1151 项
+npm run build && npm run test:e2e    # node 跑 dist 产物,1162 项
 ```
 模块在 `tests/e2e/<module>.mjs`(34 个:systemprompt/dynamic-register/inspect/subagents/events/storage/exports/data-slots/presets/boundary/custom-injection/conflict/automation/llm-provider/focus/images/resources/agent-compression/headless-subpath/legacy-subpath/capability-packs/authorization-surface/hang-feedback/main-sub-isolation/session-integrity/context-economy/mcp/diagnostics/instruction-adherence/thinking-mode/eval-toolkit/evidence-audit/stale-read-invalidation/auto-title),共享 stub 在 `tests/e2e/_helpers.mjs`(StubChatModel 在 `_stub-model.mjs`,响应队列驱动真 ReAct)。覆盖顶层 return 对象作用域。**改 createChatSdk 返回对象、AgentCore 接口、动态注册 API、默认提示词、新增导出/配置项后必跑**。
 
@@ -182,7 +183,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(3542/1151/162)与 README 中英文;`node scripts/check-test-counts.mjs` 静态对账(各文件声明计数互相一致),发布前 `--run` 实跑取真值。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(3573/1162/164)与 README 中英文;`node scripts/check-test-counts.mjs` 静态对账(各文件声明计数互相一致),发布前 `--run` 实跑取真值。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判,含 E1 的 Same 互赋值签名断言)→ `npm run test:types-novue`(无 vue 项目解析探针:paths 哨兵阻断,E2)→ `npm run test:size` → `node scripts/check-test-counts.mjs`(三计数+README 徽章+CHANGELOG 对账;漂移即红)→ `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证
@@ -204,7 +205,7 @@ createChatSdk({
 }).mount()
 // 运行时动态重配置:setTools/addTool/removeTool · setLlm · setMemory · setSubagents
 ```
-- **capabilities**:默认开 `dataOps`/`fetch`/`planning`/`skills`/`vfs`/`summarization`/`memory`/`subagent`/`focus`/`workingMemory`/`missionAnchor`/`contextInspector`/`inspectEnv`;opt-in `verify`/`domInspect`(get_dom 常驻 + dom_search/dom_info 经 dom-inspect skill 按需注入)/`automation`/`agentCompression`/`draftWrite`。**`tracing`/`skillHostScript`/`preferences`/`bulkGuard` 已于 4.1.0 随 round2 移除**(残键静默忽略;skillHostScript 的 `exec.context:'host'` 残值落 sandbox 执行 = 宿主全权降级沙箱语义反转,CHANGELOG 明示;`todoDeps` 已撤除,残键静默忽略零影响)
+- **capabilities**:默认开 `dataOps`/`fetch`/`planning`/`skills`/`vfs`/`summarization`/`memory`/`subagent`/`focus`/`workingMemory`/`missionAnchor`/`contextInspector`/`inspectEnv`;opt-in `verify`/`domInspect`(get_dom/read_page 常驻 + dom_search/dom_info 经 dom-inspect skill 按需注入)/`domEdit`(dom_edit+dom_restore,requires domInspect)/`automation`/`agentCompression`/`draftWrite`。**`tracing`/`skillHostScript`/`preferences`/`bulkGuard` 已于 4.1.0 随 round2 移除**(残键静默忽略;skillHostScript 的 `exec.context:'host'` 残值落 sandbox 执行 = 宿主全权降级沙箱语义反转,CHANGELOG 明示;`todoDeps` 已撤除,残键静默忽略零影响)
 - **预设**(`presets`):`pageBuilder`(3.9+ 仅场景化身份 prompt;HTML 子 agent 由装配期自动装配,preset 不再自带)/ `researcher` / `minimal`,spread 进 `createChatSdk`
 - **headless**(`ui: false`):不渲染内置对话框,用 `sdk.messages` + `send`/`stream` 自建 UI。**精简子路径** `page-agent-sdk/headless`(纯核心,ESM ~446KB vs 主包 ~963KB)。headless 持久化:`sdk.stream` 不自动落盘,每轮后手动 `sdk.afterRound()`(`send` 自动)。headless 调试复用内置 `DebugDrawer`(纯 props:`logs=sdk.debugLogs`/`getInfo`/`infoTick`/`getSkillContent`,可选 `exportDiagnostics` 一键诊断报告,缺省降级本地聚合)。**debugLogs 单条体积守卫(4.11.2 B7)**:`log()`/`pushLog()` chokepoint 单条序列化 ≤8KB(字符串字段超 1200 保前缀 1000 + 截断标记;海量字段整体 `__truncated`;环安全)—— 修前 300 条 FIFO 但单条字节无界,大 read 结果/整页 HTML args 单条可数 MB。**诊断导出**(3.29):`sdk.exportDiagnostics()` 聚合 debugLogs/messages/inspect/usage/dataSummary 为 JSON(隐私收口:不 dump bind/剥 schema/url 凭据打码/6MB 总长闸;日志侧受单条守卫同源截断),DebugDrawer 💾 按钮一键下载 JSON 文件(3.36.1 起原复制改下载,大日志 clipboard 易截断)
 - **UI 模块可复用**:`ChatDialog` / `MessageContent` / `CodePreview` / `DebugDrawer` / `SkillPanel` + `useChat` 均从入口导出。`inspect()` 的 `AgentInfo` 含每工具 `source`/mcp/上下文构成等。框架无关集成见 `demo/plain.html`

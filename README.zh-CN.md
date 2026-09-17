@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-3542%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-3573%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -176,6 +176,7 @@ CDN 零配置：`<script src="https://unpkg.com/page-agent-sdk"></script>` → `
 | ❝ 划词引用 | 用户选中页面文字 → 引用 chip 自动挂上(打开抽屉/点输入框双懒捕获)→ 随下一条消息作为提问上下文;`AgentMessage.quote` 消息级字段(content 干净,气泡结构化引用块,LLM 前缀注入,随消息持久化);`sdk.setQuote/clearQuote` 宿主 API(headless 同享);来源自动推导 = 页面 title + 最近在前标题;排队/快捷指令不消费(与图片同口径);隐私 opt-in 默认关;另有 `dialog.selectionMenu` 显式确认形态(划选浮出「❝ 引用到对话」工具条,点击挂引用并打开对话框) | `dialog.autoQuote` / `dialog.selectionMenu` + `sdk.setQuote` |
 | 📖 页面问答 | `read_page` 读当前页正文纯文本(智能定位 article/main/[role=main]/.content,排除 SDK 自身 DOM 与 script/style,`hasMore` 分页续读,大结果自动外存 vfs);`pageContext` 每轮注入当前页 title+URL 锚点 pin 段(跨压缩;子 agent 不继承) | `capabilities: { domInspect: true, pageContext: true }` |
 | 📸 截图查看 | `take_screenshot` 三模式(selector 局部 / fullPage 整页 / 视口);条件注入(domInspect 开 && vision 主模型 \|\| images.describe,不满足 warn 留痕);分层图通道(vision → 工具结果后合成 user 消息 image parts,免疫 trim/offload;纯文本 → describe 转述);压缩闸 ≤1568 + 原图收 vfs;工具步骤行缩略图观察面;`page-analysis` skill(问题分型/探索纪律/回答纪律) | `capabilities: { domInspect: true }` + `llm.vision` 或 `images.describe` + `screenshot.renderer`(可选) |
+| 🖍 DOM 编辑 | `dom_edit` 批量原子操作(set_text/set_html/set_attr/add_class/set_style/insert/remove/move/highlight)+ `dom_restore` 快照回滚(栈 20 批);唯一 selector 纪律(多匹配拒)/危险闸(script·on*·javascript: 拒)/SDK 自身 DOM 保护/单根快照 256KB 上限;改动为会话临时态,数据驱动页面仍走 write | `capabilities: { domInspect: true, domEdit: true }` |
 
 能力默认开（`verify`/`approval`/`checkpoint` 默认关；**主动征询 `humanConfirm` 默认开**——AI 遇不确定/多方案主动问你、不猜测），可经 `capabilities` 关掉无用的省 token。
 
@@ -250,6 +251,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `dialog.selectionMenu` | `boolean` | **划词浮动菜单(page-quote 显式确认,默认 false)**:划选文字浮出「❝ 引用到对话」工具条,点击 = 挂引用 chip + 打开对话框 + 聚焦输入;点别处/滚动/Esc 消失;与 autoQuote 独立可组合。见 [usage-guide §6.20](doc/usage-guide.md#620-划词引用与页面问答page-quote--read_page--pagecontext) |
 | | `capabilities.pageContext` | `boolean` | **页面锚点(默认 false)**:每轮 system 注入当前页 title+URL(pin 段跨压缩;配合 `domInspect` 的 read_page 读正文答问)。见 [usage-guide §6.20](doc/usage-guide.md#620-划词引用与页面问答page-quote--read_page--pagecontext) |
 | | `screenshot` | `{renderer?}` | **截图配置组(take_screenshot)**:装配条件 = domInspect 开 &&(多模态主模型 \|\| images.describe);默认渲染 html-to-image,CSP 限制时传 `renderer` 自定义。见 [usage-guide §6.21](doc/usage-guide.md#621-截图查看与页面内容分析take_screenshot--page-analysis) |
+| | `capabilities.domEdit` | `boolean` | **DOM 编辑(默认 false;需 domInspect)**:装配 `dom_edit`(宿主页面批量原子操作:set_text/set_html/set_attr/add_class/set_style/insert/remove/move/highlight)+ `dom_restore`(快照回滚,栈 20 批)。唯一 selector 纪律/危险闸(script·on\*·javascript:)//SDK 自身 DOM 保护;改动为会话临时态 —— 数据驱动页面应改数据(`write`)。见 [usage-guide §6.22](doc/usage-guide.md#622-dom-编辑dom_edit--dom_restore) |
 | | `permissions` | `PermissionRule[]` | scope 白名单（first-match-wins，默认不启用） |
 | | `humanConfirm` | `boolean` · 默认 `true` | 主动征询（AI 不确定/多方案主动问你，不猜测） |
 | | `approval` | `{tools?,confirm?,timeoutMs?,humanConfirmTool?}` · 默认关 | 被动确认白名单（写操作前弹允许/拒绝） |
@@ -481,7 +483,7 @@ createChatSdk({
 | multi-agent-demo | `/examples/multi-agent-demo/` | 多 Agent 并行 + 互斥切换（三独立 agent，drawer hide/show 保留各自历史） |
 | proxy-demo | `/examples/proxy-demo/` | LLM 连接配置：代理防 apiKey 泄露（浏览器只持 userToken，代理注入真实 key；含 token 过期自动刷新；需 `npm run proxy:mock`）+ Provider 切换（`provider:'anthropic'` 走 Claude 原生协议，流式 + extended thinking） |
 | images-demo | `/examples/images-demo/` | 图片输入：纯文本主模型 + `images.describe` 识图转述旁路（转述注入、图不直发；主模型多模态时自动直发） |
-| docs-demo | `/examples/docs-demo/` | 学习文档站集成模板：划词引用提问（autoQuote 双懒捕获 + 引用 chip）+ `read_page` 分页读正文答问 + `pageContext` 页面锚点；照抄进自建文档网站 |
+| docs-demo | `/examples/docs-demo/` | 学习文档站集成模板：划词引用提问（autoQuote 双懒捕获 + 引用 chip）+ `read_page` 分页读正文答问 + `pageContext` 页面锚点 + `?shot=1` 截图视觉验证 + `dom_edit` 高亮/回滚；照抄进自建文档网站 |
 
 框架无关集成：`demo/plain.html`（importmap + esm.sh）。
 

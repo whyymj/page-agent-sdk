@@ -34,6 +34,7 @@
   - [6.19 回归工具 eval-toolkit](#619-回归工具-eval-toolkit升级前自跑场景回归)
   - [6.20 划词引用与页面问答(page-quote / read_page / pageContext)](#620-划词引用与页面问答page-quote--read_page--pagecontext)
   - [6.21 截图查看与页面内容分析(take_screenshot / page-analysis)](#621-截图查看与页面内容分析take_screenshot--page-analysis)
+  - [6.22 DOM 编辑(dom_edit / dom_restore)](#622-dom-编辑dom_edit--dom_restore)
 - [7. 高级:自定义中间件](#7-高级自定义中间件)
 - [8. 命令式 API](#8-命令式-api)
 - [9. 框架无关 / CDN 集成](#9-框架无关--cdn-集成)
@@ -1732,6 +1733,39 @@ createChatSdk({
 **page-analysis skill**(domInspect 开即随 skills 挂载):页面内容分析策略 —— 问题分型(引用原文/整页理解/定位/结构/视觉 → 各自的主力工具)、探索纪律(先窄后宽/翻页不重复/定位失败换路/大结果外存)、回答纪律(基于页面实料、页面≠训练数据、不确定就说不确定)。与 dom-inspect skill 分工:那边教工具用法,这边教场景怎么打。
 
 完整示例:`examples/docs-demo?shot=1`(截图 quickAction + 真渲染演示;纯文本模型勿开 vision,走 describe 旁路参照 images-demo)。成本注记:截图走多模态 token(每图数百~数千 token 随轮次重复计),验证型任务建议 selector 局部截图控制面积。
+
+### 6.22 DOM 编辑(dom_edit / dom_restore)
+
+`capabilities.domEdit: true`(opt-in 默认关,**requires domInspect** —— 写页面必须先能定位页面)时装配 `dom_edit` + `dom_restore` 两工具 —— agent 获得对**宿主页面**的受控操作能力(高亮标注/改文案/调样式/插删移元素),面向 4.15 起的「宿主页面伴随」场景族(文档站等无 data.bind 的页面,页面本身就是操作对象):
+
+```ts
+createChatSdk({
+  container: '#chat-root', llm,
+  systemPrompt: '你是文档助教。需要向用户指出页面位置时用 dom_edit highlight 高亮…',
+  capabilities: { dataOps: false, domInspect: true, pageContext: true, domEdit: true },
+}).mount()
+```
+
+**`dom_edit({ patches, dryRun? })`** —— 批量原子操作(任一 selector 失败**整批拒绝零部分应用**;先全部解析再应用,镜像 write patches 设计语言):
+
+| op | 形态 | 用途 |
+|---|---|---|
+| `set_text` / `set_html` | `{selector, text|html}` | 改元素内容 |
+| `set_attr` / `remove_attr` | `{selector, name, value?}` | 属性增删 |
+| `add_class` / `remove_class` | `{selector, classes}` | class 批量增删(空格分隔) |
+| `set_style` | `{selector, style: {prop: value}}` | 行内样式 |
+| `insert` | `{anchor, position: before/after/prepend/append/replace, tag, attrs?, text?|html?}` | 新建元素 |
+| `remove` | `{selector}` | 删除元素 |
+| `move` | `{selector, to, position}` | 层级调整(元素换父/重排) |
+| `highlight` | `{selector, color?, scroll?, note?}` | 高亮 + 滚动定位(答问时「指给用户看」) |
+
+**写纪律(工具内建,不靠提示词)**:① selector 必须**唯一命中**(`querySelectorAll` 恰 1;多匹配拒并引导收窄 —— get_dom「取首个」的读语义不适用于写);② 危险内容闸:`insert` 拒 `script/iframe/object/embed/link/meta/base` 标签、所有写 attr 路径拒 `on*` 事件属性与 `javascript:`/`vbscript:` URL(非安全沙箱,防无意脚本执行与页面稳定性事故);③ SDK 对话框自身 DOM 拒改(防 agent 改坏自己的 UI);④ 每批前自动快照(受影响根打 `data-pg-snap` 标记记 outerHTML,单根 256KB 上限防巨树爆内存)。
+
+**`dom_restore`** —— 回滚最近一批(可连续调用逐批回退,栈上限 20 批);快照点被后续结构变更覆盖时如实报告未复原数(宁诚实不谎报)。
+
+**边界(使用前必读)**:① 改动为**会话内临时态**(刷新即失,不持久化 —— 页面最终形态归集成方);② Vue/React 管理的区域重渲染会洗掉/冲突外部 DOM 改动,面向静态/内容页或确认目标区域非框架管理时使用;③ **数据驱动页面不要用** —— 改数据(`write`)渲染自动更新且过 schema/快照/乐观锁全套契约,直改 DOM 绕过一切;④ debugLogs 留痕 `stage:'dom_edit'`(集成方可观察页面被改了什么)。
+
+skill 集成:dom-inspect skill 教 patches 语法与写纪律(先读后写/dryRun 预检/restore 回滚),page-analysis skill 问题分型新增「操作类」路线 —— 两者的编辑段都在 domEdit 装配后才出现(勿教不存在的工具)。完整示例:`examples/docs-demo`(`🖍 高亮表格` quickAction + browser e2e 高亮/回滚全链)。
 
 ## 7. 高级:自定义中间件
 

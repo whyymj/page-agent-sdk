@@ -68,6 +68,7 @@ import { createSessionVars, createSessionLifecycle } from './sessionLifecycle'
 import { createToolRebuilder } from './toolAssembly'
 import { createImagePipeline, buildImageContentParts } from '../tools/imageInput'
 import { createScreenshotTool } from '../tools/screenshot'
+import { createDomEditTools } from '../tools/domEdit'
 import { HumanMessage } from '@langchain/core/messages'
 import { createVfs, createVfsMiddleware, VFS_TOOL_NAMES, normalize as normalizeVfsPath, type VfsStore } from '../backends/vfs'
 import type { VfsFile, Mission, Focus } from '../harness/state'
@@ -742,8 +743,18 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     : null
   // skills 关 + domInspect 开 → dom_search/dom_info 无法经 skill 注入,降级直接进工具池(功能可达优先,牺牲常驻 schema);
   // take_screenshot 常驻(装配态进池,与 get_dom/read_page 同级主力)
+  // ===== dom-edit(capabilities.domEdit,opt-in,requires domInspect)=====
+  // 宿主页面伴随场景的写通道:dom_edit 批量原子(唯一 selector/危险闸/SDK UI 保护/自动快照)+ dom_restore 回滚;
+  // onEdit 留痕进 debugLogs(集成方可观察「页面被 agent 改了什么」);与数据写通道正交(数据驱动页面仍走 write)
+  const domEditTools = caps.domEdit
+    ? createDomEditTools({
+        onEdit: (info) => {
+          core.agent?.debugLogs?.value?.push({ timestamp: Date.now(), type: 'middleware', data: { stage: 'dom_edit', ops: info.ops.join(','), applied: info.applied, dryRun: info.dryRun } })
+        },
+      })
+    : []
   const domToolsForPool = caps.domInspect
-    ? [...domTools, ...(screenshotTool ? [screenshotTool] : []), ...(caps.skills ? [] : [domSearchTool, domInfoTool])]
+    ? [...domTools, ...domEditTools, ...(screenshotTool ? [screenshotTool] : []), ...(caps.skills ? [] : [domSearchTool, domInfoTool])]
     : []
   const builtinTools = selectBuiltinTools(caps, dataOpsFiltered, fetchDocTools, domToolsForPool, inspectTools)
   builtinTools.forEach((t) => toolSources.set(t.name, 'builtin'))
@@ -1050,6 +1061,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       ...caps,
       humanConfirm: useHumanConfirm,
       screenshot: !!screenshotTool, // page-screenshot:非 capability(装配条件含 vision/describe,hints 直接访问)
+      domEdit: caps.domEdit, // dom-edit:capability 开关(requires domInspect 已由注册表归一)
       // 预声明子 agent(供"规划-反思-执行"路由提示;只取 id/description/temperature 轻量字段)
       subagents: effectiveSubagents?.map(reflectSubagentThinking),
     },
@@ -1171,9 +1183,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ? createSkillsMiddleware([
         // domInspect 开 → 并入 DOM 检视 skill(dom_search/dom_info 按需 load_skill 注入,不占常驻 tool schema;
         // 集成方同名 skill 显式声明优先,不重复)
-        ...(caps.domInspect && !(options.skills || []).some((s) => s.name === domInspectSkillName) ? [makeDomInspectSkill({ withScreenshot: !!screenshotTool })] : []),
-    // page-analysis(页面内容分析策略:问题分型/探索纪律/回答纪律;截图段随装配态)
-    ...(caps.domInspect && !(options.skills || []).some((s) => s.name === pageAnalysisSkillName) ? [makePageAnalysisSkill({ withScreenshot: !!screenshotTool })] : []),
+        ...(caps.domInspect && !(options.skills || []).some((s) => s.name === domInspectSkillName) ? [makeDomInspectSkill({ withScreenshot: !!screenshotTool, withDomEdit: caps.domEdit })] : []),
+    // page-analysis(页面内容分析策略:问题分型/探索纪律/回答纪律;截图/编辑段随装配态)
+    ...(caps.domInspect && !(options.skills || []).some((s) => s.name === pageAnalysisSkillName) ? [makePageAnalysisSkill({ withScreenshot: !!screenshotTool, withDomEdit: caps.domEdit })] : []),
         ...(options.skills || []),
       ], {
         // vfs 启用时注入 readVfs,让 skill 文档源(vfs://path)能读取 vfs 文件

@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-3542%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-3573%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -250,6 +250,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | | `dialog.selectionMenu` | `boolean` | **Selection floating menu (page-quote explicit confirm, default false)**: selecting text floats a "❝ Quote to chat" toolbar above the selection; click = attach the quote chip + open the dialog + focus the input; dismiss on outside click / scroll / Esc; composable with autoQuote. See [usage-guide §6.20](doc/usage-guide.en.md#620-text-selection-quoting--page-qa-page-quote--read_page--pagecontext) |
 | | `capabilities.pageContext` | `boolean` | **Page anchor (default false)**: injects the current page title + URL as a pinned system segment each round (pair with `domInspect`'s read_page for page QA). See [usage-guide §6.20](doc/usage-guide.en.md#620-text-selection-quoting--page-qa-page-quote--read_page--pagecontext) |
 | | `screenshot` | `{renderer?}` | **Screenshot config (take_screenshot)**: assembled when domInspect is on AND (multimodal main model \|\| images.describe); default renderer is html-to-image, pass `renderer` when CSP restricts. See [usage-guide §6.21](doc/usage-guide.en.md#621-screenshot-viewing--page-content-analysis-take_screenshot--page-analysis) |
+| | `capabilities.domEdit` | `boolean` | **DOM editing (default false; requires domInspect)**: assembles `dom_edit` (atomic batch ops on the host page — set_text/set_html/set_attr/add_class/set_style/insert/remove/move/highlight) + `dom_restore` (snapshot rollback, stack of 20). Unique-selector discipline, dangerous-content gate (script / on\* / javascript:), SDK-own-DOM protection; edits are session-ephemeral — data-driven pages should edit data (`write`) instead. See [usage-guide §6.22](doc/usage-guide.en.md#622-dom-editing-dom_edit--dom_restore) |
 | **Capability toggles** | `capabilities` | `{planning?,dataOps?,fetch?,skills?,vfs?,summarization?,memory?,subagent?,verify?,focus?}` | Default all on (`verify` default off, opt-in; `focus` = context focus for refining one component, default on); `false` to turn off |
 | | `permissions` | `PermissionRule[]` | Scope whitelist (first-match-wins, default off) |
 | | `humanConfirm` | `boolean` · default `true` | Proactive inquiry (AI asks when uncertain/multi-plan) |
@@ -475,7 +476,7 @@ After `npm run dev`, visit the corresponding page:
 | multi-agent-demo | `/examples/multi-agent-demo/` | Multi-agent parallel + exclusive switch (3 independent agents, drawer hide/show keeps each history) |
 | proxy-demo | `/examples/proxy-demo/` | LLM connection config: proxy to prevent apiKey leakage (browser holds only userToken, proxy injects real key; auto-refresh on expired token; needs `npm run proxy:mock`) + Provider switch (`provider:'anthropic'` for Claude native protocol, streaming + extended thinking) |
 | images-demo | `/examples/images-demo/` | Image input: text-only main model + `images.describe` captioning bypass (captions injected, image never sent; auto direct-send when the main model is multimodal) |
-| docs-demo | `/examples/docs-demo/` | Docs-site integration template: selection-quote questioning (floating menu + autoQuote lazy capture) + paginated `read_page` page QA + `pageContext` page anchor + `?shot=1` screenshot visual verification; copy into your own docs site |
+| docs-demo | `/examples/docs-demo/` | Docs-site integration template: selection-quote questioning (floating menu + autoQuote lazy capture) + paginated `read_page` page QA + `pageContext` page anchor + `?shot=1` screenshot visual verification + dom_edit highlight/rollback; copy into your own docs site |
 
 Framework-agnostic integration: `demo/plain.html` (importmap + esm.sh).
 

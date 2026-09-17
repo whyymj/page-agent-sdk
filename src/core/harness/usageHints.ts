@@ -26,6 +26,8 @@ type HintCapabilityFlags = {
   subagents?: { id: string; description: string; temperature?: number }[]
   /** take_screenshot 已装配(非 capability:装配条件含 vision/describe,装配侧传入;未装不教) */
   screenshot?: boolean
+  /** DOM 编辑已装配(capabilities.domEdit + requires domInspect 归一;未装不教) */
+  domEdit?: boolean
 }
 
 /** 高温阈值:≥0.7 视为创意/规划型子 agent */
@@ -78,6 +80,7 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
       if (rc.inspectEnv) hints.push('排查页面环境(当前 URL/浏览器/视口/集成方调试变量)用 inspect_env——不传参返回环境摘要(location/navigator/viewport/document),传 key 读特定 window 属性(如 inspect_env({key:"appConfig"}) 读 window.appConfig)。改完数据看渲染、定位"为何没生效"时用它(只读,不改数据)。')
       if (rc.domInspect) hints.push('回答用户关于当前页面/文档的问题时优先用 read_page({selector?,offset?,limit?}) 读页面正文纯文本(长文按 hasMore 分页续读;自动排除本对话框自身);需要页面结构(检查渲染是否生效/定位元素/辅助 UI 设计问答)再用 get_dom({selector?,depth?}) 读渲染后 DOM(结构化返回 tag/attrs/text/children,depth 控制深度防爆炸,只读)。配合宿主 actions(save_draft/publish 等)形成"改数据→截图/get_dom 看渲染→触发动作"闭环。')
       if ((caps as HintCapabilityFlags | undefined)?.screenshot) hints.push('视觉验证(看布局/样式/渲染效果像不像、对不对)用 take_screenshot({selector?, fullPage?}) 截图查看:selector 截指定元素、fullPage 截整页、默认当前视口;截图自动压缩投递(多模态直看图/纯文本模型走识图转述)。优先级:视觉问题先截图,结构/属性问题用 dom_info。')
+      if ((caps as HintCapabilityFlags | undefined)?.domEdit) hints.push('修改宿主页面元素(高亮/改文案/调样式/插删移元素)用 dom_edit({patches:[{op,selector,...}],dryRun?}) 批量原子操作(op:set_text/set_html/set_attr/add_class/remove_class/set_style/insert/remove/move/highlight);selector 必须唯一命中(先 get_dom/dom_search 定位);改前自动快照,dom_restore 回滚最近一批;改动为会话临时态(刷新即失)——数据驱动页面改数据(write)不要改 DOM。')
       if (rc.draftWrite) {
         hints.push('生成超大 JSON(如 50+ 组件页面,单次 write 受 max_tokens 限制装不下)用 draft_write 分块构建 → draft_commit 原子提交:draft_write({draftId, chunk, mode}) mode:"start" 新建/"append" 追加(拼 JSON 片段到 drafts 池);累积完 draft_commit({draftId}) 合并 + schema 校验 + 写主数据(失败草稿保留可修后重试,成功自动清草稿)。小改仍用 write patch,只在大 JSON 从零生成时用 draft。')
         hints.push('⚠️ 大 JSON 分块构建是典型多轮工具调用(draft_write×N + draft_commit + read 确认 + 调研 read/query),默认 maxToolRounds=30(3.43 起;轮次预算吃紧时 system 会注入预算提示段,按提示优先收口);目标组件数很大时集成方仍可在 createChatSdk 显式上调 maxToolRounds(按 N+10 估算)。draft_commit 提交同样走乐观锁(改前 read 拿 hash,bind 被改过会触发冲突介入,不静默覆盖)。')

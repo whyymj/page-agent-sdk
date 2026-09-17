@@ -225,6 +225,7 @@ export interface ChatSdkOptions {
     verify?: boolean         // 自检中间件(默认 false;开启后 agent 返回前跑 check 自纠。传 verify.check/maxAttempts/adversarial 时自动开,无需重复声明 true;显式 false 阻止自动开)
     domInspect?: boolean     // DOM 读取工具 get_dom/read_page(默认 false;agent 读渲染后 DOM 结构与页面正文,opt-in;有 token 成本,集成方按需开启)
     pageContext?: boolean    // 页面锚点(默认 false;每轮 system 注入当前页 title+URL,agent 知道用户在哪页;文档站/页面问答场景配合 domInspect)
+    domEdit?: boolean        // DOM 编辑(默认 false;需 domInspect。宿主页面伴随场景:dom_edit 批量原子操作 + 自动快照 + dom_restore 回滚;数据驱动页面仍应改数据)
     inspectEnv?: boolean     // 环境探查工具 inspect_env(默认 true;读 window 环境/location/调试变量,轻量只读,排查调试用)
     draftWrite?: boolean     // 分块写工具 draft_write/draft_commit(默认 false;几百 K JSON 分块构建再原子提交,opt-in;需 dataOps + vfs,advanced 暴露)
     automation?: boolean     // 无人值守自动化(默认 false;预算闸 token/time + 错误恢复;automation-layer Phase 4,opt-in 最远)
