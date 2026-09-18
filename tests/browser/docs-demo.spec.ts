@@ -34,10 +34,11 @@ async function recordLlmBodies(page: Page): Promise<string[]> {
   return bodies
 }
 
-/** 打开抽屉(drawerHidden 初始隐藏,点宿主按钮 show) */
-async function openDrawer(page: Page): Promise<void> {
+/** 打开抽屉(drawerHidden 初始隐藏,点宿主按钮 show);等滑入动画结束(0.3s)—— 期间几何在变,取坐标前必须稳 */
+async function openDrawer(page: Page, opts: { settled?: boolean } = {}): Promise<void> {
   await page.locator('[data-test="ask-btn"]').click()
   await expect(page.locator('.chat-dialog')).toBeVisible()
+  if (opts.settled) await page.waitForTimeout(450)
 }
 
 test.describe('划词引用 page-quote(docs-demo)', () => {
@@ -202,6 +203,58 @@ test.describe('划词浮动菜单 selectionMenu(docs-demo)', () => {
     await expect(page.locator('[data-test="msg-quote"] .msg-quote-text')).toContainText('多头注意力')
   })
 
+  test('滚动 → 浮条跟随重定位(不消失);选区滚出视口才隐藏', async ({ page }) => {
+    await page.goto('/examples/docs-demo/')
+    await page.waitForSelector('.chat-dialog', { state: 'attached' })
+    await mockLlm(page, [{ text: '好' }])
+
+    // 选靠后段落:先把它滚进视口(程序化选区不滚动页面),滚到顶后它会离开视口
+    await page.evaluate(() => {
+      const p = Array.from(document.querySelectorAll('.docs-article p')).find((el) => (el.textContent ?? '').includes('KV Cache'))
+      p?.scrollIntoView({ block: 'center', behavior: 'instant' as ScrollBehavior })
+    })
+    await page.waitForTimeout(250)
+    await selectWithPointerUp(page, 'KV Cache')
+    await expect(page.locator('[data-test="selection-menu"]')).toBeVisible()
+    const before = await page.locator('[data-test="selection-menu"]').boundingBox()
+
+    // 小幅滚动(选区仍在视口内)→ 菜单保持可见且位置跟随(修前:scroll 直接 hide → 宿主站
+    // scroll-behavior:smooth 的惯性尾巴会让菜单刚出现就消失,实测可点性 0/5)
+    await page.evaluate(() => window.scrollBy({ top: 60, behavior: 'instant' as ScrollBehavior }))
+    await page.waitForTimeout(200) // 等 rAF 重定位
+    await expect(page.locator('[data-test="selection-menu"]')).toBeVisible()
+    const after = await page.locator('[data-test="selection-menu"]').boundingBox()
+    expect(after!.y).not.toBe(before!.y) // 跟随选区位移
+
+    // 滚回顶部 → 选区(靠后段落)完全离开视口 → 菜单隐藏(看不见选区就不该有浮条)
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior }))
+    await page.waitForTimeout(250)
+    await expect(page.locator('[data-test="selection-menu"]')).toBeHidden()
+  })
+
+  test('超长选区(跨屏)→ 浮条钳制在视口内可见', async ({ page }) => {
+    await page.goto('/examples/docs-demo/')
+    await page.waitForSelector('.chat-dialog', { state: 'attached' })
+    await mockLlm(page, [{ text: '好' }])
+
+    // 从首段选到末段(rect 高达成千上万 px)—— 修前 above/below 分支不钳制,菜单可能落在视口外
+    await page.evaluate(() => {
+      const ps = Array.from(document.querySelectorAll('.docs-article p'))
+      const range = document.createRange()
+      range.setStartBefore(ps[0])
+      range.setEndAfter(ps[ps.length - 1])
+      const sel = window.getSelection()!
+      sel.removeAllRanges()
+      sel.addRange(range)
+      document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    })
+    const box = await page.locator('[data-test="selection-menu"]').boundingBox()
+    const vh = page.viewportSize()!.height
+    expect(box).not.toBeNull()
+    expect(box!.y).toBeGreaterThanOrEqual(0)
+    expect(box!.y + box!.height).toBeLessThanOrEqual(vh)
+  })
+
   test('Esc / 选区失效 → 浮条消失;点按钮不复活(pointerup 自身忽略)', async ({ page }) => {
     await page.goto('/examples/docs-demo/')
     await page.waitForSelector('.chat-dialog', { state: 'attached' })
@@ -308,5 +361,65 @@ test.describe('take_screenshot 截图问答(docs-demo ?shot=1)', () => {
     const style = await page.locator('.docs-table').evaluate((el) => (el as HTMLElement).style.backgroundColor)
     expect(style).toBe('')
     await expect(page.locator('.chat-dialog .message-row.assistant').last()).toContainText('撤销')
+  })
+})
+
+test.describe('抽屉拖拽调宽 drawerResizable(docs-demo)', () => {
+  test('手柄拖拽 → 宽度变化 + 刷新后保持(localStorage)', async ({ page }) => {
+    await page.goto('/examples/docs-demo/')
+    await page.waitForSelector('.chat-dialog', { state: 'attached' })
+    await mockLlm(page, [{ text: '好' }])
+    await openDrawer(page, { settled: true })
+
+    const handle = page.locator('[data-test="drawer-resize"]')
+    await expect(handle).toBeVisible() // 抽屉模式默认渲染(零配置)
+    const hb = (await handle.boundingBox())!
+    const before = (await page.locator('.chat-dialog').boundingBox())!.width
+
+    // 向左拖 = 加宽(抽屉贴右缘)
+    await page.mouse.move(hb.x + 3, hb.y + 120)
+    await page.mouse.down()
+    await page.mouse.move(hb.x + 3 - 160, hb.y + 120, { steps: 10 })
+    await page.mouse.up()
+    await page.waitForTimeout(200)
+    const after = (await page.locator('.chat-dialog').boundingBox())!.width
+    expect(after).toBeGreaterThan(before + 120)
+
+    // 持久化:刷新后宽度保持(读 localStorage 而非回到 420)
+    await page.reload()
+    await page.waitForSelector('.chat-dialog', { state: 'attached' })
+    await openDrawer(page, { settled: true })
+    const persisted = (await page.locator('.chat-dialog').boundingBox())!.width
+    expect(Math.abs(persisted - after)).toBeLessThan(2)
+  })
+
+  test('拖拽钳制 + 方向键微调;drawerResizable:false 不渲染手柄', async ({ page }) => {
+    await page.addInitScript(() => localStorage.removeItem('page-agent-sdk:drawerWidth'))
+    await page.goto('/examples/docs-demo/')
+    await page.waitForSelector('.chat-dialog', { state: 'attached' })
+    await mockLlm(page, [{ text: '好' }])
+    await openDrawer(page, { settled: true })
+
+    // 宽度断言读 inline style(逻辑输出真值)—— boundingBox 在 CSS 过渡期间是动画中间值
+    const inlineW = () => page.locator('.chat-dialog').evaluate((el) => (el as HTMLElement).style.width)
+
+    // 极端右拖(收窄)→ 钳到 MIN 320
+    const hb = (await page.locator('[data-test="drawer-resize"]').boundingBox())!
+    await page.mouse.move(hb.x + 3, hb.y + 120)
+    await page.mouse.down()
+    await page.mouse.move(hb.x + 900, hb.y + 120, { steps: 10 })
+    await page.mouse.up()
+    await page.waitForTimeout(200)
+    expect(await inlineW()).toBe('320px')
+
+    // 方向键微调(左 = 加宽 16px;Shift = 64px)
+    const handle = page.locator('[data-test="drawer-resize"]')
+    await handle.focus()
+    await page.keyboard.press('ArrowLeft')
+    await page.waitForTimeout(200)
+    expect(await inlineW()).toBe('336px')
+    await page.keyboard.press('Shift+ArrowLeft')
+    await page.waitForTimeout(200)
+    expect(await inlineW()).toBe('400px')
   })
 })

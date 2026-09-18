@@ -1777,6 +1777,7 @@ document.querySelector('#open-chat-btn')!.addEventListener('click', () => sdk.sh
 
 **Key points**:
 - `dialog.drawerWidth`: pure numbers treated as `px`; strings passed through as-is (supports `vw`/`%` etc. responsive units); only effective when `drawer: true`; inline mode width determined by `container`
+- `dialog.drawerResizable` (**default `true`**): renders a 6px drag handle on the drawer's left edge — drag to resize (clamped 320 ~ min(960, 90% viewport)); focus the handle and use arrow keys for fine-tuning (← widen / → narrow, `Shift` = 64px step, else 16px; `role="separator"` accessible). The user's width is remembered across reloads via `localStorage` (`page-agent-sdk:drawerWidth`) and takes precedence over `drawerWidth`. Set `false` to disable (fixed width only). Falls back to session-only when `localStorage` is unavailable (private mode)
 - `dialog.drawerHidden`: calls `hide()` immediately after `mount` (adds `cs-hidden` class, invisible but vueApp/agent ready); first `show()` removes the hidden class; subsequent `hide()`/`show()` toggles visibility
 - Close button/mask click defaults to `hide()` in drawer mode; pass `dialog.onClose` to customize close behavior
 

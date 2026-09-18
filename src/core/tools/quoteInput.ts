@@ -269,10 +269,15 @@ export function computeSelectionMenuPosition(
 ): { top: number; left: number; placement: 'above' | 'below' } {
   const GAP = 8
   const MARGIN = 8
-  const leftRaw = selRect.left + selRect.width / 2 - menu.w / 2
-  const left = Math.min(Math.max(leftRaw, MARGIN), Math.max(viewport.w - menu.w - MARGIN, MARGIN))
+  // 视口钳制(两轴):菜单必须完整落在视口内。
+  // 修前漏洞:above 分支不钳制 → 选区在视口**下方**外(超长选区/选区起点远下)时 top 落在视口外看不到;
+  // below 分支只钳上界 → 选区在视口**上方**外(sRect.bottom 为负)时 top 为负,同样看不到。
+  // 超长选区(跨屏多段)是常态触发源:rect 可能高达成千上万 px,两端都越界。
+  const clampLo = (v: number, max: number): number => Math.min(Math.max(v, MARGIN), Math.max(max, MARGIN))
+  const left = clampLo(selRect.left + selRect.width / 2 - menu.w / 2, viewport.w - menu.w - MARGIN)
+  const topOf = (raw: number): number => clampLo(raw, viewport.h - menu.h - MARGIN)
   if (selRect.top - menu.h - GAP >= MARGIN) {
-    return { top: selRect.top - menu.h - GAP, left, placement: 'above' }
+    return { top: topOf(selRect.top - menu.h - GAP), left, placement: 'above' }
   }
-  return { top: Math.min(selRect.bottom + GAP, viewport.h - menu.h - MARGIN), left, placement: 'below' }
+  return { top: topOf(selRect.bottom + GAP), left, placement: 'below' }
 }

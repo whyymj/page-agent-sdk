@@ -70,11 +70,11 @@ export async function run() {
     }
   }
 
-  console.log('[e2e:legacy-subpath] 体积:全量打包(es2017 + anthropic inline)≤ 3.3MB')
+  console.log('[e2e:legacy-subpath] 体积:全量打包(es2017 + anthropic inline)≤ 3.35MB')
   {
     const sizeKB = fs.statSync(LEGACY_DIST).size / 1024
     assert(sizeKB > 1000, `bundle 非空且量级正确(${sizeKB.toFixed(0)}KB,全量打包)`)
-    assert(sizeKB <= 3300, `bundle ≤ 3.3MB(实测 ${sizeKB.toFixed(0)}KB;超阈说明意外依赖被拉入)`)
+    assert(sizeKB <= 3350, `bundle ≤ 3.35MB(实测 ${sizeKB.toFixed(0)}KB;超阈说明意外依赖被拉入)`) // 3.35MB:drawer-resize 增量后重校(size-check 同口径 3.55MB 为 gzip 前上限)
   }
 
   return { pass: ctx.pass, fail: ctx.fail }

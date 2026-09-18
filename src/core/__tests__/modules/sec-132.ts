@@ -21,6 +21,16 @@ export async function run(ctx: TestCtx) {
     assert(off.includes('定位失败换路'), '✓ withVfs:false → 其余探索纪律不受影响')
   }
 
+  // ===== 1b. page-analysis:输出纪律段(直接说内容,不写过程)=====
+  {
+    const c = makePageAnalysisSkill({}).getContent()
+    assert(c.includes('## 输出纪律(直接说内容,不写过程)'), '✓ page-analysis → 含「输出纪律」段(默认对所有页面问答场景生效)')
+    assert(c.includes('过程叙述') && c.includes('元话术') && c.includes('方法论自述') && c.includes('预告与套话'),
+      '✓ page-analysis 输出纪律 → 四类禁项齐(过程叙述/元话术/方法论自述/预告套话)')
+    assert(/句末括注/.test(c), '✓ page-analysis 输出纪律 → 出处用最简形式(句末括注,不写引导句)')
+    assert(c.includes('## 回答纪律(页面问答的底线)'), '✓ 原有「回答纪律」(不猜测底线)不受影响')
+  }
+
   // ===== 2. dom-inspect:withDataOps 门控 =====
   {
     const on = makeDomInspectSkill({ withDataOps: true }).getContent()

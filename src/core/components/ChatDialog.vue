@@ -83,8 +83,10 @@ const props = withDefaults(defineProps<{
   onGetSkill?: (name: string) => { name: string; description: string; content: string } | undefined
   /** 抽屉模式:从右侧滑入 + 遮罩 + 关闭按钮 */
   drawer?: boolean
-  /** 抽屉模式宽度(像素或 CSS 字符串);默认 420px */
+  /** 抽屉模式宽度(像素或 CSS 字符串);默认 420px;用户拖拽过则以拖拽值为准(持久化) */
   drawerWidth?: number | string
+  /** 抽屉模式可拖拽调宽(默认 true):左边缘 6px 拖拽手柄,支持 Pointer 拖拽 + 方向键微调;用户调整值经 localStorage 记住。false 关闭(纯固定宽度) */
+  drawerResizable?: boolean
   /** 抽屉模式默认隐藏(sdk hide() 实现;此 prop 仅样式控制) */
   drawerHidden?: boolean
   /** 待发引用(page-quote;core.pendingQuote 的 Ref 投射,内置 chip 渲染 + 宿主 sdk.setQuote 共用) */
@@ -220,17 +222,122 @@ function renderSection(k: SectionKey): boolean {
 /** 是否支持 Skill 管理(onAddSkill 存在) */
 const skillAvailable = computed(() => !!props.onAddSkill)
 
-/** 抽屉模式宽度样式(像素或 CSS 字符串归一化) */
+// ===== 抽屉拖拽调宽(drawer-resize)=====
+/** 用户拖拽宽度持久化 key(同站同 key;隐私模式/无 localStorage 时静默降级为会话内有效) */
+const DRAWER_WIDTH_KEY = 'page-agent-sdk:drawerWidth'
+const MIN_DRAWER_W = 320
+const MAX_DRAWER_W = 960
+const DEFAULT_DRAWER_W = 420
+
+/** 读用户上次拖拽的宽度(非法/不可用 → null) */
+function readStoredDrawerWidth(): number | null {
+  if (typeof localStorage === 'undefined') return null
+  try {
+    const v = Number(localStorage.getItem(DRAWER_WIDTH_KEY))
+    return Number.isFinite(v) && v >= MIN_DRAWER_W ? v : null
+  } catch { return null }
+}
+
+/** 拖拽宽度状态(null = 未拖过,用 props.drawerWidth / 默认值) */
+const draggedWidth = ref<number | null>(readStoredDrawerWidth())
+const dragging = ref(false)
+
+/** 钳制:不小于 MIN;不大于「MAX 与视口 90% 的较小者」(窄屏不铺满) */
+function clampDrawerWidth(w: number): number {
+  const vw = typeof window !== 'undefined' ? window.innerWidth : MAX_DRAWER_W
+  const max = Math.max(Math.min(MAX_DRAWER_W, vw * 0.9), MIN_DRAWER_W)
+  return Math.min(Math.max(w, MIN_DRAWER_W), max)
+}
+
+/** 当前生效宽度(px;拖拽值优先于 props) */
+const effectiveDrawerWidth = computed<number | null>(() => {
+  if (draggedWidth.value != null) return draggedWidth.value
+  if (typeof props.drawerWidth === 'number') return props.drawerWidth
+  return null // 字符串写法或未配 → 交给 CSS 默认
+})
+
+/** 抽屉模式宽度样式(像素或 CSS 字符串归一化;拖拽值优先) */
 const drawerWidthStyle = computed(() => {
-  if (!props.drawer || props.drawerWidth == null) return null
-  const w = props.drawerWidth
+  if (!props.drawer || props.drawerWidth == null) {
+    // 未配 drawerWidth 但用户拖过 → 用拖拽值(否则 CSS 默认 420)
+    if (props.drawer && draggedWidth.value != null) return `${draggedWidth.value}px`
+    return null
+  }
+  const w = effectiveDrawerWidth.value ?? props.drawerWidth
   return typeof w === 'number' ? `${w}px` : w
 })
+
+/** 拖拽中直接落到内联 style(绕过 props 链,即时跟手) */
+const drawerStyle = computed(() => {
+  const base = drawerWidthStyle.value ? { width: drawerWidthStyle.value, maxWidth: drawerWidthStyle.value } : {}
+  return dragging.value ? { ...base, transition: 'none' } : base
+})
+
+const resizable = computed(() => props.drawer === true && props.drawerResizable !== false)
+
+/** 拖拽把手:window 级 move/up 监听(指针移出手柄 6px 命中带也持续生效;capture 在合成事件下不可靠) */
+function onResizeDown(e: PointerEvent): void {
+  if (!resizable.value || dragging.value) return
+  dragging.value = true
+  window.addEventListener('pointermove', onResizeMove)
+  window.addEventListener('pointerup', onResizeUp)
+  window.addEventListener('pointercancel', onResizeUp)
+  e.preventDefault() // 防拖拽选中文本
+}
+function applyDrag(clientX: number): void {
+  // 抽屉贴右边缘 → 宽度 = 视口右缘 - 指针 x
+  draggedWidth.value = clampDrawerWidth(window.innerWidth - clientX)
+}
+function onResizeMove(e: PointerEvent): void {
+  if (!dragging.value) return
+  applyDrag(e.clientX)
+}
+function onResizeUp(): void {
+  if (!dragging.value) return
+  dragging.value = false
+  window.removeEventListener('pointermove', onResizeMove)
+  window.removeEventListener('pointerup', onResizeUp)
+  window.removeEventListener('pointercancel', onResizeUp)
+  persistDrawerWidth()
+}
+
+/** 持久化当前宽度(隐私模式/配额异常静默忽略 —— 本次会话仍生效) */
+function persistDrawerWidth(): void {
+  if (draggedWidth.value == null || typeof localStorage === 'undefined') return
+  try { localStorage.setItem(DRAWER_WIDTH_KEY, String(draggedWidth.value)) } catch { /* 忽略 */ }
+}
+/** 键盘可达性:方向键微调(16px 步进;左=加宽,右=收窄 —— 对齐拖拽把手方向) */
+function onResizeKey(e: KeyboardEvent): void {
+  if (!resizable.value) return
+  const step = e.shiftKey ? 64 : 16
+  const cur = effectiveDrawerWidth.value ?? (typeof window !== 'undefined' ? Math.min(DEFAULT_DRAWER_W, window.innerWidth * 0.9) : DEFAULT_DRAWER_W)
+  if (e.key === 'ArrowLeft') draggedWidth.value = clampDrawerWidth(cur + step)
+  else if (e.key === 'ArrowRight') draggedWidth.value = clampDrawerWidth(cur - step)
+  else return
+  e.preventDefault()
+  persistDrawerWidth()
+}
 </script>
 
 <template>
   <div v-if="drawer" class="chat-mask" @click="emit('close')"></div>
-  <div class="chat-dialog" :class="{ collapsed: !isExpanded && !drawer, drawer, 'cs-theme-dark': csTheme === 'dark' }" :style="drawerWidthStyle ? { width: drawerWidthStyle, maxWidth: drawerWidthStyle } : null">
+  <div class="chat-dialog" :class="{ collapsed: !isExpanded && !drawer, drawer, 'cs-theme-dark': csTheme === 'dark', resizing: dragging }" :style="drawerStyle || null">
+    <!-- 抽屉调宽手柄(左边缘;drag/方向键;resizable=false 不渲染) -->
+    <div
+      v-if="resizable"
+      class="chat-drawer-resize"
+      data-test="drawer-resize"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="调整对话框宽度"
+      :aria-valuenow="effectiveDrawerWidth ?? undefined"
+      tabindex="0"
+      @pointerdown="onResizeDown"
+      @pointermove="onResizeMove"
+      @pointerup="onResizeUp"
+      @pointercancel="onResizeUp"
+      @keydown="onResizeKey"
+    />
     <!-- 头部 -->
     <template v-if="renderSection('header')">
       <slot name="header" :chat="ctx">
@@ -350,6 +457,14 @@ const drawerWidthStyle = computed(() => {
   animation: cs-drawer-slide-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 @keyframes cs-drawer-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+/* 抽屉调宽手柄:左边缘 6px 命中带(视觉隐形,hover/focus 显形);拖拽期间禁选中 */
+.chat-drawer-resize {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 6px;
+  cursor: col-resize; z-index: 2; background: transparent;
+  transition: background 0.15s ease;
+}
+.chat-drawer-resize:hover, .chat-drawer-resize:focus-visible { background: rgba(120, 120, 120, 0.35); outline: none; }
+.chat-dialog.resizing { user-select: none; }
 @media (prefers-reduced-motion: reduce) {
   .chat-mask { animation: none; }
   .chat-dialog.drawer { animation: none; }

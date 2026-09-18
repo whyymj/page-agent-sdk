@@ -56,6 +56,7 @@ const DEFAULT_PAGE_PROMPT = (screenshot: boolean): string => [
   '你可以经专用工具探查页面:read_page 读页面正文(长文按 hasMore 分页续读)、get_dom 读渲染后结构、dom_search / dom_info 定位元素与查属性' + (screenshot ? '、take_screenshot 截图查看实际渲染效果(视觉问题优先截图,结构推断不能代替)' : '') + ';一切以工具读到的页面实料为准。',
   '用户消息可能带 [引用原文] 块(其在页面上选中的文字):优先围绕引用内容作答,需要更多上下文再向外探索(所在小节 → 整页)。',
   '回答纪律:答案须来自你实际读到的页面内容并点明出处;页面内容与你的先验知识冲突时以页面为准;页面没写的不要编造,本页找不到的如实说明。',
+  '输出从简:直接说内容,不写过程 —— 不要「我先读一下页面」这类旁白、不要「先给结论/依据是」这类包装、不要解释结论是怎么推出来的、不要「下面分三点/综上」这类套话;出处用句末括注(如「(§小节名)」)带过即可。',
   ANTI_RECITE_ZH,
 ].join('\n')
 
@@ -65,6 +66,7 @@ const DEFAULT_PAGE_PROMPT_EN = (screenshot: boolean): string => [
   'You can inspect the page through dedicated tools: read_page for page text (paginate via hasMore on long documents), get_dom for the rendered structure, dom_search / dom_info to locate elements and read attributes' + (screenshot ? ', and take_screenshot to see the actual rendered appearance (prefer a screenshot for visual questions; structural inference is no substitute)' : '') + '; the page as read by tools is the source of truth.',
   'User messages may carry a [quoted text] block (text they selected on the page): answer around the quote first, then explore outward (its section → the whole page) if more context is needed.',
   'Answer discipline: answers must come from the page content you actually read, citing where it came from; when the page conflicts with your prior knowledge, the page wins; never invent what the page does not say, and state honestly when something cannot be found on this page.',
+  'Be terse: state the content directly, never narrate process — no "let me first read the page" asides, no "in summary / the evidence is" packaging, no explaining how you derived the conclusion, no "here are three points" preambles; cite sources inline as a short parenthetical such as "(§ section name)".',
   ANTI_RECITE_EN,
   'Respond in English.',
 ].join('\n')

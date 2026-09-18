@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-3698%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-3705%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -285,6 +285,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | `title` / `placeholder` | `string` | Dialog title / input placeholder (cosmetic) |
 | `drawer` | `boolean` · default `false` | Drawer mode: ChatDialog slides in from right + mask + close button (replaces collapse arrow); clicking mask/close defaults to `hide` (keeps agent/history/in-flight generation; `mount`/`show` resumes). Pass `onClose` to customize |
 | `drawerWidth` | `number \| string` · default `420` | Drawer mode width (pixels or CSS string, e.g. `500` / `'500px'` / `'40vw'`); only effective when `drawer: true`; inline mode width determined by `container` |
+| `drawerResizable` | `boolean` · default `true` | Drawer left-edge drag handle: drag / arrow keys to resize (clamped 320 ~ min(960, 90% viewport)); width remembered in `localStorage`; `false` = fixed width |
 | `drawerHidden` | `boolean` · default `false` | Drawer mode hidden by default (not shown after `mount`; requires `sdk.show()` to display): for "click button to show chatbox" scenarios; only effective when `drawer: true` |
 | `inputRows` | `number` · default `2` | Input box rows (visible height); `1` = single row; `2` = 2-row initial height, auto-expands up to max-height:100px; `>2` = taller initial height |
 | `onClose` | `() => void` | Drawer mode close callback (default `hide`; pass to override and sync external mount state) |

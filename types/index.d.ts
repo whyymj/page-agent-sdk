@@ -607,6 +607,8 @@ export interface ChatDialogProps {
   onGetSkill?: (name: string) => { name: string; description: string; content: string } | undefined;
   drawer?: boolean;
   drawerWidth?: number | string;
+  /** 抽屉模式可拖拽调宽(默认 true):左边缘手柄拖拽 / 方向键微调;用户调整值 localStorage 记住。false = 纯固定宽度 */
+  drawerResizable?: boolean;
   drawerHidden?: boolean;
   inputRows?: number;
   sessions?: SessionMeta[];

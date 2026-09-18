@@ -7,8 +7,11 @@
  * 细节:
  *  - window 捕获 pointerup → 微任务读选区(mouseup 后选区定格;captureSelectionQuote 无效选区返 null 不打扰);
  *    浮条自身的 pointerup 不触发重定位(防「点按钮 → 菜单复活」)
- *  - 消失:点别处 / 滚动 / Esc / 选区失效;按钮 @mousedown.prevent 保住选区(click 时若需重读仍有值)
- *  - 定位 computeSelectionMenuPosition 纯函数(上方优先,顶部不够翻下方,钳制视口内)
+ *  - 消失:点别处 / Esc / 选区失效 / **选区滚出视口**;按钮 @mousedown.prevent 保住选区(click 时若需重读仍有值)
+ *  - 滚动:**跟随重定位**(rAF 节流)而非一律隐藏 —— 修前「滚动即隐藏」在宿主站开启 CSS `scroll-behavior: smooth`
+ *    时是灾难:平滑滚动的惯性尾巴持续数百 ms 触发 scroll,划选后刚出现的菜单立刻被关掉(实测:
+ *    滚动静止时划选 5/5 可用,平滑滚动尾巴期 0/5)。现滚动只重算位置;选区与视口无交集才隐藏(滚走了=看不见了)
+ *  - 定位 computeSelectionMenuPosition 纯函数(上方优先,顶部不够翻下方,两轴钳制视口内 —— 超长选区也可见)
  *  - 根 class .chat-selection-menu 已进 SDK_UI_SELECTOR(read_page 排除 + 捕获判定视为 SDK 内部)
  */
 import { onBeforeUnmount, onMounted, ref } from 'vue'
@@ -31,6 +34,36 @@ const hide = (): void => {
   pendingQuote = null
 }
 
+/** 读当前选区矩形(无效/塌缩/零尺寸 → null) */
+const readSelectionRect = (): DOMRect | null => {
+  if (typeof document === 'undefined') return null
+  const sel = document.getSelection()
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null
+  const rect = sel.getRangeAt(0).getBoundingClientRect()
+  if (!rect || (!rect.width && !rect.height)) return null
+  return rect
+}
+
+/** 选区与视口是否有交集(滚出视口 = 用户看不见选区 → 菜单也该消失) */
+const intersectsViewport = (rect: DOMRect): boolean =>
+  rect.bottom > 0 && rect.top < window.innerHeight && rect.right > 0 && rect.left < window.innerWidth
+
+/**
+ * 按当前选区重算菜单位置(不改 pendingQuote —— 滚动只挪位置,引用内容不变)。
+ * requireVisible:滚动场景传 true —— 选区与视口无交集(滚走了)才隐藏;pointerup 场景不传(刚划完必可见,
+ * 保持原语义:程序化选区(测试/宿主脚本)即使落在视口外也照常显示)。
+ */
+const reposition = (opts: { requireVisible?: boolean } = {}): void => {
+  const rect = readSelectionRect()
+  if (!rect) { hide(); return }
+  if (opts.requireVisible && !intersectsViewport(rect)) { hide(); return }
+  pos.value = computeSelectionMenuPosition(
+    { top: rect.top, bottom: rect.bottom, left: rect.left, width: rect.width },
+    { w: window.innerWidth, h: window.innerHeight },
+    MENU_SIZE,
+  )
+}
+
 const onPointerUp = (e: PointerEvent): void => {
   // 浮条自身的 pointerup(点按钮)不触发重定位
   if ((e.target as Element | null)?.closest?.('.chat-selection-menu')) return
@@ -43,19 +76,23 @@ const onPointerUp = (e: PointerEvent): void => {
     const rect = sel.getRangeAt(0).getBoundingClientRect()
     if (!rect || (!rect.width && !rect.height)) { hide(); return }
     pendingQuote = q
-    pos.value = computeSelectionMenuPosition(
-      { top: rect.top, bottom: rect.bottom, left: rect.left, width: rect.width },
-      { w: window.innerWidth, h: window.innerHeight },
-      MENU_SIZE,
-    )
     visible.value = true
+    reposition()
   }, 0)
 }
 
 const onPointerDown = (e: PointerEvent): void => {
   if (visible.value && !(e.target as Element | null)?.closest?.('.chat-selection-menu')) hide()
 }
-const onScroll = (): void => { if (visible.value) hide() }
+/** 滚动:跟随重定位(rAF 节流;选区滚出视口才隐藏)—— 兼容宿主站 scroll-behavior: smooth 的滚动惯性尾巴 */
+let scrollRaf = 0
+const onScroll = (): void => {
+  if (!visible.value || scrollRaf) return
+  scrollRaf = window.requestAnimationFrame(() => {
+    scrollRaf = 0
+    if (visible.value) reposition({ requireVisible: true })
+  })
+}
 const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape' && visible.value) hide() }
 
 onMounted(() => {
@@ -65,6 +102,7 @@ onMounted(() => {
   window.addEventListener('keydown', onKey, true)
 })
 onBeforeUnmount(() => {
+  if (scrollRaf) window.cancelAnimationFrame(scrollRaf) // 挂起的 rAF 也要取消(卸载后回调里读 visible/窗口尺寸无意义)
   window.removeEventListener('pointerup', onPointerUp, true)
   window.removeEventListener('pointerdown', onPointerDown, true)
   window.removeEventListener('scroll', onScroll, { capture: true } as EventListenerOptions)

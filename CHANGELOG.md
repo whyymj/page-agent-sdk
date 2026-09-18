@@ -2,6 +2,27 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.19.0] - 2026-09-18
+
+> 真机集成驱动的三项体验收口:浮层菜单在宿主站平滑滚动下可用、抽屉宽度可拖拽、页面问答输出从简。
+
+### Fixed
+
+- **划词浮层菜单在宿主站开启 `scroll-behavior: smooth` 时「一闪即逝」**(真机实测驱动):`SelectionMenu` 原策略是「滚动即隐藏」,而平滑滚动的惯性尾巴会持续数百 ms 触发 `scroll` 事件 —— 划选后刚出现的菜单立刻被关掉(实测可点性:滚动静止时 5/5 可用,平滑滚动尾巴期 **0/5**)。修:滚动改为 **rAF 节流重定位**(选区仍在视口内则菜单跟随移动),仅当**选区与视口无交集**(滚走了)才隐藏。行为边界同时收窄:视口检查只用于滚动场景,`pointerup` 保持原语义(程序化选区即使落在视口外也照常显示)。修复后同一条件下 **4/5** 可点(剩余 1 次为选区真被滚出视口的合理隐藏)。
+- **`computeSelectionMenuPosition` 纵向未钳制**:修前 `above` 分支不钳制(选区在视口下方外 → 菜单落在视口外看不见)、`below` 分支只钳上界(选区在视口上方外 → `top` 为负)。超长选区(跨屏多段,rect 高达成千上万 px)是常态触发源。修:两分支都钳制进 `[MARGIN, 视口高 - 菜单高 - MARGIN]`。
+
+### Added
+
+- **`dialog.drawerResizable`(默认 `true`)**:抽屉左边缘 6px 拖拽手柄 —— 按住拖动调宽(钳制 320 ~ min(960, 视口 90%)),手柄聚焦后方向键微调(← 加宽 / → 收窄,`Shift` 步进 64px 否则 16px;`role="separator"` 可访问)。用户调整值经 `localStorage`(`page-agent-sdk:drawerWidth`)跨刷新记住,优先级高于 `dialog.drawerWidth`;无 `localStorage`(隐私模式)时静默降级为本次会话有效。`drawerResizable: false` 关闭(纯固定宽度)。**默认开的理由**:6px 命中带视觉隐形(hover/focus 才显形),对既有集成方是加法且无副作用。
+
+### Changed
+
+- **页面问答输出纪律收紧**(默认提示词 + `page-analysis` skill,所有集成方生效):此前 SDK 只管「不猜测」,不管「不啰嗦」——模型常输出**过程叙述**(「我先读一下页面」)、**元话术**(「先给结论」「依据是」)、**方法论自述**(「这些不是页面上写明的,而是从词反推出来的」)、**预告套话**(「下面分三点」「综上」)。现在默认「页面内容助手」身份(buildSystemPrompt 页面分支,中英双语)+ `page-analysis` skill 的「输出纪律」段明确禁止四类内容,并要求出处用**最简形式**(句末括注「(§小节名)」而非「依据是…小节,原文两行:」引导句)。集成方自定义 systemPrompt 时可参考同一口径。
+
+### 门槛
+
+- selftest → **3705**(sec-126 +3 菜单纵向钳制:超长选区/视口上方外/视口下方外;sec-132 +4 输出纪律段);e2e → **1202**(systemprompt +1 默认身份含输出从简);browser → **169**(docs-demo +2 滚动跟随与滚出隐藏、超长选区钳制;+2 抽屉拖拽调宽与钳制/键盘步进);legacy bundle 阈值 3.3→3.35MB 重校。
+
 ## [4.18.0] - 2026-09-18
 
 > host-integration-contract(openspec/changes/2026-09-17-host-integration-contract):宿主集成契约与页面问答可靠性 —— 真集成实践(学习门户,4.17.1)暴露的契约缺口与可靠性漏洞收口。定级 minor(新增公开 API `notifyHostChange` + `MessageQuote.anchor` + `inspect().gates/systemSegments`)。
@@ -21,7 +42,7 @@
 
 ### 门槛
 
-- selftest → **3698**(sec-129 页面读失效 ×30 / sec-130 页面断言门禁 ×37 / sec-131 引用锚点 ×29 / sec-132 门控漏网 ×9;sec-76 幂等语义翻转);e2e → **1201**(host-integration.mjs 新模块 ×32:流内失效/提示段一次性/scope 隔离/S3 回灌链与豁免/A4 双向不掩盖/锚点元信息行与逐字节回归锁/gates 反射);browser → 165(docs-demo +1:S4 锚点 UI 捕获链锁);headless size 阈值 760→780KB 重校(S2-S4 增量 ~7KB)。
+- selftest → **3701**(sec-129 页面读失效 ×30 / sec-130 页面断言门禁 ×37 / sec-131 引用锚点 ×29 / sec-132 门控漏网 ×9;sec-76 幂等语义翻转);e2e → **1201**(host-integration.mjs 新模块 ×32:流内失效/提示段一次性/scope 隔离/S3 回灌链与豁免/A4 双向不掩盖/锚点元信息行与逐字节回归锁/gates 反射);browser → 169(docs-demo +1:S4 锚点 UI 捕获链锁;+2:滚动跟随/超长选区钳制;+2:抽屉拖拽调宽);headless size 阈值 760→780KB 重校(S2-S4 增量 ~7KB)。
 
 ## [4.17.1] - 2026-09-17
 

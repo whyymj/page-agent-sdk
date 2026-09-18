@@ -88,6 +88,7 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
           drawer: dialogCfg.drawer === true,
           csTheme: dialogCfg.theme === 'light' ? 'light' : 'dark',  // 默认 dark(首页/方舟专题设计稿色板);显式 'light' 才用浅色
           drawerWidth: dialogCfg.drawerWidth,
+          drawerResizable: dialogCfg.drawerResizable,
           drawerHidden: dialogCfg.drawerHidden === true,
           inputRows: dialogCfg.inputRows,
           sections: dialogCfg.sections,

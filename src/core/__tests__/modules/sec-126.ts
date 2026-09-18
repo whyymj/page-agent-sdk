@@ -73,6 +73,14 @@ export async function run(ctx: { assert: (cond: boolean, msg: string) => void })
   assert(clamped.left === 8, '✓ 菜单定位:视口左缘钳制(MARGIN=8)')
   const clampedR = computeSelectionMenuPosition({ top: 300, bottom: 340, left: 180, width: 20 }, { w: 200, h: 800 }, { w: 128, h: 30 })
   assert(clampedR.left === 200 - 128 - 8, '✓ 菜单定位:视口右缘钳制')
+  // 纵向两轴钳制(滚动重定位修复):超长选区/选区在视口外时不落到看不见的位置
+  // 超长选区:起点贴视口顶(above 放不下 → 翻 below),bottom 巨大 → 必须钳到视口底缘(修前落 14063 视口外)
+  const longSel = computeSelectionMenuPosition({ top: 5, bottom: 14055, left: 400, width: 300 }, { w: 1000, h: 900 }, { w: 128, h: 30 })
+  assert(longSel.placement === 'below' && longSel.top === 900 - 30 - 8, `✓ 菜单定位:超长选区(跨屏)→ below 分支钳到视口底缘(实际 ${longSel.top})`)
+  const aboveViewport = computeSelectionMenuPosition({ top: -5000, bottom: -4900, left: 400, width: 300 }, { w: 1000, h: 900 }, { w: 128, h: 30 })
+  assert(aboveViewport.top === 8, `✓ 菜单定位:选区在视口上方外(bottom 为负)→ 钳到顶缘 MARGIN,不落负坐标(实际 ${aboveViewport.top})`)
+  const belowViewport = computeSelectionMenuPosition({ top: 2000, bottom: 2100, left: 400, width: 300 }, { w: 1000, h: 900 }, { w: 128, h: 30 })
+  assert(belowViewport.top === 900 - 30 - 8 && belowViewport.placement === 'above', `✓ 菜单定位:选区在视口下方外 → above 分支钳进视口(实际 top=${belowViewport.top})`)
 
   // ---- captureSelectionQuote(duck-typing 假 doc) ----
   const mkDoc = (sel: unknown, headingsArr?: Element[]) => ({

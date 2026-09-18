@@ -2566,6 +2566,7 @@ document.querySelector('#open-chat-btn')!.addEventListener('click', () => sdk.sh
 
 **要点**:
 - `dialog.drawerWidth`:纯数字按 `px` 处理;字符串原样透传(支持 `vw`/`%` 等响应式单位);仅 `drawer: true` 生效,inline 模式宽度由 `container` 决定
+- `dialog.drawerResizable`(**默认 `true`**):抽屉左边缘渲染 6px 拖拽手柄 —— 按住拖动改宽度(钳制 320 ~ min(960, 视口 90%)),手柄聚焦后方向键微调(← 加宽 / → 收窄,`Shift` 步进 64px 否则 16px,`role="separator"` 可访问);用户调整值经 `localStorage`(`page-agent-sdk:drawerWidth`)跨刷新记住,优先级高于 `drawerWidth`。设 `false` 关闭(纯固定宽度)。隐私模式等无 `localStorage` 时静默降级为本次会话有效
 - `dialog.drawerHidden`:`mount` 后立即调 `hide()`(加 `cs-hidden` class,不可见但 vueApp/agent 已就绪);首次 `show()` 移除隐藏 class,后续 `hide()`/`show()` 切换可见性
 - 关闭按钮/遮罩点击默认调 `hide()`(抽屉模式);传 `dialog.onClose` 可自定义关闭行为
 

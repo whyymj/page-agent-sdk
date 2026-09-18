@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-3698%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-3705%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -287,6 +287,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | `title` / `placeholder` | `string` | 对话框标题 / 输入框 placeholder(装饰性) |
 | `drawer` | `boolean` · 默认 `false` | 抽屉模式:ChatDialog 从右滑入 + 遮罩 + 关闭按钮(替代收起下箭头);点遮罩/关闭按钮默认 `hide`(保留 agent/历史/生成进程,再 `mount`/`show` 恢复),传 `onClose` 自定义 |
 | `drawerWidth` | `number \| string` · 默认 `420` | 抽屉模式宽度(像素或 CSS 字符串,如 `500` / `'500px'` / `'40vw'`);仅 `drawer:true` 生效;inline 模式宽度由 `container` 决定 |
+| `drawerResizable` | `boolean` · 默认 `true` | 抽屉左边缘拖拽手柄:拖动 / 方向键调宽(钳制 320 ~ min(960, 视口 90%));宽度经 `localStorage` 记住;`false` = 纯固定宽度 |
 | `drawerHidden` | `boolean` · 默认 `false` | 抽屉模式默认隐藏(`mount` 后不显示,需 `sdk.show()` 才出现):适合「点击按钮才出现聊天框」场景;仅 `drawer:true` 生效 |
 | `inputRows` | `number` · 默认 `2` | 输入框行数(可见高度);`1` = 单行;`2` = 2 行初始高度,自动扩展至 max-height:100px;`>2` = 更高初始高度 |
 | `onClose` | `() => void` | 抽屉模式关闭回调(默认 `hide`;传此选项覆盖默认,便于同步外部挂载状态) |

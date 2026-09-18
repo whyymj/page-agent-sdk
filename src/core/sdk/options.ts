@@ -363,6 +363,8 @@ export interface DialogConfig {
   drawer?: boolean
   /** 抽屉模式宽度(像素或 CSS 字符串,如 500 / '500px' / '40vw');默认 420px。仅 drawer:true 生效。inline 模式宽度由 container 决定 */
   drawerWidth?: number | string
+  /** 抽屉模式可拖拽调宽(默认 true):左边缘手柄拖拽 / 方向键微调;用户调整值 localStorage 记住。false = 纯固定宽度 */
+  drawerResizable?: boolean
   /** 抽屉模式默认隐藏(mount 后不显示,需 sdk.show() 才显示):适合「点击按钮才出现聊天框」场景。默认 false(mount 立即显示)。仅 drawer:true 生效 */
   drawerHidden?: boolean
   /** 输入框行数(可见高度);默认 2(2 行初始高度,自动扩展至 max-height:100px)。设 1 则单行;设 >2 则更高 */

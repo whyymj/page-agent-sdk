@@ -158,6 +158,7 @@ export async function run() {
     await sdk.mount()
     const sp = sdk.inspect().systemPrompt
     assert(/页面内容助手/.test(sp), 'dataOps:false+domInspect:true 未传 systemPrompt → 默认身份 = 页面内容助手')
+    assert(/输出从简/.test(sp) && /不写过程/.test(sp), '默认页面身份含「输出从简」纪律(禁过程叙述/元话术/方法论自述/套话)')
     assert(!/JSON 操作助手/.test(sp), '页面身份不残留「JSON 操作助手」身份(修前对无数据集成谎称主数据对象)')
     assert(!/可靠写入规则/.test(sp), '页面身份不追加 reliableWriteRules(写入工具不在池,勿教不存在的工具)')
     sdk.unmount()
