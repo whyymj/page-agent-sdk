@@ -159,6 +159,9 @@ flowchart TD
 - `ctx.data` 每轮从 `liveData()` 取最新(setData 后自动同步),可据此动态算「当前相关组件说明」「部分 schema 描述」。
 - 段排在内置段(base/dataHint/usageHints/.../subagents)之后、用户 middleware 之前 —— 可在内置数据段 / 能力提示基础上补充。
 - 本质是 createChatSdk 层把 `augmentPrompt` 中间件 + `liveData` 闭包预包装成便捷选项(类比 `memory`)。集成方要更灵活(多段 / 复杂逻辑)仍可写自定义 middleware。
+- **⚠️ 幂等契约(4.18,host-integration-contract S1;自定义 middleware 的 `augmentPrompt` 同款)**:同一轮内该回调/钩子**会被调用多次**(`toLC` 起始拼装 / `replaceSystem` 每轮重渲染 / 收口综合 / `inspect()` 内省),而**只有随请求发出的那次生效** —— 回调必须**幂等**(同轮多次调用返回同一结果),禁止在其中推进状态或消费一次性标志。跨轮状态(如「用户已切换文档」警示锚点)请在**整轮结束**推进:`sdk.hook` 监听 `done`/`message_update` 事件推进,回调内只读判断。
+  - 实测踩坑(学习门户,4.17.1):「检测到切文 → 一次性注入重读警示」写成消费式标志 —— 第一次调用(`toLC`,输出被丢弃)消费掉标志,真正发请求那次(`replaceSystem`)看到已消费返回空串,**警示从未进入任何请求**;改为幂等形态(锚点在轮末事件推进)后立刻生效。
+  - SDK 自身曾踩同族坑:usageHints 的 token 预算提示原为一次性 `budgetHinted` 标志,同样被丢弃调用消费,从未稳定送达 → 4.18 改纯函数持续注入(`tokenBudgetHintText`)。
 
 ### ⑤ 集成方该往哪写内容
 | 想加什么 | 放哪 |

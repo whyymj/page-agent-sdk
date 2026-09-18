@@ -81,6 +81,7 @@ import { createBudgetMiddleware } from '../harness/budget'
 import { actionsToTools, actionsToInspectInfo } from './actions'
 import { selectBuiltinTools } from '../toolsets'
 import { createUsageHintsMiddleware } from '../harness/usageHints'
+import { invalidatePageReads } from '../harness/readInvalidation'
 import { createPageContextMiddleware } from '../harness/pageContext'
 import { createResourcesPinMiddleware } from '../harness/resourcesPin'
 import { type SessionStore, type SessionSnapshot, type SessionMeta } from '../backends/storage'
@@ -94,7 +95,7 @@ import { DEFAULT_STREAM_STALL_MS, DEFAULT_STREAM_MAX_DURATION_MS } from '../util
 import { createSerialRunner } from '../utils/serialRunner'
 import { normalizeUsage } from '../utils/contentParts'
 import type { AgentMessage, StreamHandler, AgentInfo, SdkEvent, SdkEventHandler, TokenUsage, BatchResult, BatchProgress, MessageQuote, AgentImage } from '../types'
-import { normalizeQuoteText } from '../tools/quoteInput'
+import { normalizeQuoteText, normalizeQuoteAnchor } from '../tools/quoteInput'
 import { hydrateImages, MAX_IMAGES_PER_ROUND } from '../tools/imageInput'
 import type { ToolCallContext } from '../harness/middleware'
 import { rawRead } from '../utils/rawRead'
@@ -214,9 +215,11 @@ export interface AgentCore {
   /** 清除全部聚焦焦点(退出精修模式) */
   clearFocus(): void
   /** 挂「待发引用」(page-quote):下一条 send 附带并消费;空文本 = 清除;文本归一 + 截 2000 */
-  setQuote(text: string, source?: string): void
+  setQuote(text: string, source?: string, anchor?: MessageQuote['anchor']): void
   /** 清除待发引用 */
   clearQuote(): void
+  /** S2 宿主变更通知:SPA 换文/路由切换/tab 切换后调用 —— 流内页面读结果置过期占位 + 下一 invoke 注入一次性重读提示段 */
+  notifyHostChange(opts?: { reason?: string }): void
   /** 运行时替换用户工具集(内置不动);立即 rebind + infoTick 刷新 */
   setTools(tools: StructuredToolInterface[]): void
   /** 运行时追加用户工具(去重 by name) */
@@ -1062,6 +1065,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       humanConfirm: useHumanConfirm,
       screenshot: !!screenshotTool, // page-screenshot:非 capability(装配条件含 vision/describe,hints 直接访问)
       domEdit: caps.domEdit, // dom-edit:capability 开关(requires domInspect 已由注册表归一)
+      hasActions: !!options.actions && Object.keys(options.actions).length > 0, // A8:闭环末环(宿主动作)装配态
       // 预声明子 agent(供"规划-反思-执行"路由提示;只取 id/description/temperature 轻量字段)
       subagents: effectiveSubagents?.map(reflectSubagentThinking),
     },
@@ -1080,6 +1084,48 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         canReadPage: caps.domInspect === true,
       })
     : undefined
+
+  // S2 宿主变更通知(host-integration-contract):宿主导航/换文/路由切换后调用 sdk.notifyHostChange()
+  // → ① 流内:页面读类工具结果(read_page/dom_search/dom_info/get_dom/take_screenshot)替换为过期占位
+  //   (epoch 水位把守时序:通知后的新读不受影响);② 提示段:一次性注入「页面已变更须重读」(resumeNotice
+  //   同款:pin 段跨压缩 + afterAgent 清除 —— 状态推进在整轮结束,严守 S1 幂等契约,勿在 augmentPrompt 消费)。
+  // 数据槽读结果不受影响(scope 隔离);不叠加膨胀(占位是替换,notices 去重封顶)。
+  const hostChangeState = { epoch: 0, notices: [] as string[], readsInvalidated: 0 }
+  let hostEpochApplied = 0
+  const hostNoticeMw: Middleware = {
+    name: 'hostNotice',
+    // invoke 起点对齐水位:空闲期到达的通知不再做占位失效(跨 invoke 工具结果本就不随请求重发,
+    // 提示段已承担「凭旧答记忆作答」的防线);流内到达的(epoch 增长)在下一轮模型调用前生效
+    beforeAgent: () => { hostEpochApplied = hostChangeState.epoch },
+    wrapModelCall: async (req, next) => {
+      if (hostChangeState.epoch > hostEpochApplied) {
+        hostEpochApplied = hostChangeState.epoch
+        const lastReason = hostChangeState.notices[hostChangeState.notices.length - 1] ?? ''
+        const inv = invalidatePageReads(req.messages, lastReason || undefined)
+        if (inv.invalidatedCount > 0) {
+          // 原地拷回:req.messages 与主循环 currentMessages 同数组引用,重赋 req.messages 不回流
+          for (let i = 0; i < inv.messages.length; i++) (req.messages as unknown[])[i] = inv.messages[i]
+          hostChangeState.readsInvalidated += inv.invalidatedCount
+          core.agent?.debugLogs?.value?.push({
+            timestamp: Date.now(), type: 'middleware',
+            data: { stage: 'host_read_invalidated', count: inv.invalidatedCount, epoch: hostChangeState.epoch, reason: lastReason || undefined },
+          })
+        }
+      }
+      return next(req)
+    },
+    // 提示段幂等渲染(只读 notices);domInspect 未开时不点名 read_page 等不存在工具(A8「勿教」纪律)
+    augmentPrompt: () => (hostChangeState.notices.length
+      ? ['【宿主页面已变更】',
+        ...hostChangeState.notices.filter(Boolean).map((r) => `· ${r}`),
+        caps.domInspect === true
+          ? '此前的页面读取/截图结果已过期,回答任何关于当前页面的问题前必须重新 read_page / get_dom 读取当前页面;不要凭此前的读取结果或记忆作答。'
+          : '页面内容可能已变化,断言页面前先核实当前状态;不要凭此前的印象作答。',
+      ].join('\n')
+      : undefined),
+    // 一次性:整轮结束推进并清除(resumeNotice 同款;abort 路径 afterAgent 亦必跑,B5)
+    afterAgent: () => { hostChangeState.notices.length = 0 },
+  }
   // A4「可操作数据」段:每轮从 liveData() 动态重算(修 setData 不同步 Bug)
   // 插中间件栈最前(usageHints 之前),保证数据段紧跟 base —— LLM 看到的 system 结构与现状等价
   // 仅 finalDataConfig 存在时装载;无 data → buildDataPrompt 返 '' → augmentPrompt 返 undefined → 跳过
@@ -1182,10 +1228,10 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   const skillsMwBuilt = useSkills
     ? createSkillsMiddleware([
         // domInspect 开 → 并入 DOM 检视 skill(dom_search/dom_info 按需 load_skill 注入,不占常驻 tool schema;
-        // 集成方同名 skill 显式声明优先,不重复)
-        ...(caps.domInspect && !(options.skills || []).some((s) => s.name === domInspectSkillName) ? [makeDomInspectSkill({ withScreenshot: !!screenshotTool, withDomEdit: caps.domEdit })] : []),
+        // 集成方同名 skill 显式声明优先,不重复;A8:withDataOps/withVfs 按装配态门控「改数据」「vfs 外存」教学)
+        ...(caps.domInspect && !(options.skills || []).some((s) => s.name === domInspectSkillName) ? [makeDomInspectSkill({ withScreenshot: !!screenshotTool, withDomEdit: caps.domEdit, withDataOps: useDataOps && !!finalDataConfig })] : []),
     // page-analysis(页面内容分析策略:问题分型/探索纪律/回答纪律;截图/编辑段随装配态)
-    ...(caps.domInspect && !(options.skills || []).some((s) => s.name === pageAnalysisSkillName) ? [makePageAnalysisSkill({ withScreenshot: !!screenshotTool, withDomEdit: caps.domEdit })] : []),
+    ...(caps.domInspect && !(options.skills || []).some((s) => s.name === pageAnalysisSkillName) ? [makePageAnalysisSkill({ withScreenshot: !!screenshotTool, withDomEdit: caps.domEdit, withVfs: useVfs })] : []),
         ...(options.skills || []),
       ], {
         // vfs 启用时注入 readVfs,让 skill 文档源(vfs://path)能读取 vfs 文件
@@ -1214,6 +1260,7 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     ...(dataHintMw ? [dataHintMw] : []),
     usageHintsMw,
     ...(pageContextMw ? [pageContextMw] : []), // 页面锚点紧随提示段(mission 前;read_page 指引随段内条件化)
+    hostNoticeMw, // S2 宿主变更:pin 段(页面锚点后)+ 流内页面读失效(notifyHostChange 触发)
     // 按 capabilities 条件装载内置中间件(默认全开;verify 默认关)
     ...(useMission ? [missionMw] : []), // mission 在 todos 前(pin 段在 todos 段前;revive-mission-anchor)
     intentGuardMw, // mission 后:问句意图守卫 pin 段(逐消息定性「先答勿做」;instruction-adherence B,默认开)
@@ -1508,10 +1555,12 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       while (true) {
         if (!pushed) {
           // page-quote:显式 SendOptions.quote 优先且不消费待发;否则消费 pendingQuote(划词/宿主挂起的引用 chip)。
-          // automation 重试不重 push(pushed 标记),quote 已随消息不丢;消费即清在此点
-          const explicitQ = options.quote && options.quote.text
-            ? { text: normalizeQuoteText(options.quote.text), ...(options.quote.source ? { source: options.quote.source } : {}) }
-            : undefined
+          // automation 重试不重 push(pushed 标记),quote 已随消息不丢;消费即清在此点;S4:anchor 归一后透传
+          let explicitQ: MessageQuote | undefined
+          if (options.quote?.text) {
+            const anc = normalizeQuoteAnchor(options.quote.anchor)
+            explicitQ = { text: normalizeQuoteText(options.quote.text), ...(options.quote.source ? { source: options.quote.source } : {}), ...(anc ? { anchor: anc } : {}) }
+          }
           const q = explicitQ ?? pendingQuote.value ?? undefined
           messages.push({ role: 'user', content: msg, timestamp: Date.now(), ...(images.length ? { images } : {}), ...(q ? { quote: q } : {}) })
           pushed = true
@@ -1821,8 +1870,14 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         memory: memoryMw.get(),
         // stale-read-invalidation 会话累计(顶层字段,不寄生 inspect().context —— 那是 contextInspector 每轮覆盖快照且随其开关消失)
         staleReadsInvalidated: core.agent?.getStaleReadsInvalidated?.() ?? 0,
+        // S2 宿主变更失效会话累计(notifyHostChange 触发的页面读占位替换;与 staleReadsInvalidated 分列 —— 触发源不同)
+        hostReadsInvalidated: hostChangeState.readsInvalidated,
         llmRetries: core.agent?.getLlmRetries?.() ?? 0,
         llmCallFailures: core.agent?.getLlmCallFailures?.() ?? 0,
+        // A9 观测面:收口门禁会话累计(page_assertion_gate 键存在性 = S3 domInspect 装配反射) +
+        // 最近一次 system 段构成(dropped = 超预算被 drop,修前仅 console.warn 零可观察)
+        gates: core.agent?.getGateStats?.(),
+        systemSegments: core.agent?.getLastSystemSegments?.() ?? [],
         middleware: middlewares.map((m) => m.name),
         todos: (core.agent?.getState?.()?.todos ?? []).map((t) => ({
           id: t.id, content: t.content, status: t.status,
@@ -1968,10 +2023,25 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       focusMw.clearFocus()
       core.infoTick.value++
     },
-    /** 挂「待发引用」(page-quote):下一条 send 附带并消费;空文本 = 清除;文本归一 + 截 2000 */
-    setQuote(text: string, source?: string): void {
+    /** 挂「待发引用」(page-quote):下一条 send 附带并消费;空文本 = 清除;文本归一 + 截 2000;S4 第三参 DOM 锚点(归一后随引用注入元信息行) */
+    setQuote(text: string, source?: string, anchor?: MessageQuote['anchor']): void {
       const norm = normalizeQuoteText(text ?? '')
-      pendingQuote.value = norm ? { text: norm, ...(source ? { source } : {}) } : null
+      const anc = normalizeQuoteAnchor(anchor)
+      pendingQuote.value = norm ? { text: norm, ...(source ? { source } : {}), ...(anc ? { anchor: anc } : {}) } : null
+    },
+    /** S2 宿主变更通知(host-integration-contract):幂等可重复调 —— 流内触发页面读占位失效,跨轮注入一次性重读提示段 */
+    notifyHostChange(opts?: { reason?: string }): void {
+      const reason = typeof opts?.reason === 'string' ? opts.reason.trim().slice(0, 200) : ''
+      hostChangeState.epoch += 1
+      // notices 去重封顶(≤5,防滥用刷屏;占位本身是替换不涨 token)
+      if (reason && !hostChangeState.notices.includes(reason)) hostChangeState.notices.push(reason)
+      else if (!reason) hostChangeState.notices.push('')
+      if (hostChangeState.notices.length > 5) hostChangeState.notices.splice(0, hostChangeState.notices.length - 5)
+      core.agent?.debugLogs?.value?.push({
+        timestamp: Date.now(), type: 'middleware',
+        data: { stage: 'host_change_notified', epoch: hostChangeState.epoch, reason: reason || undefined },
+      })
+      core.infoTick.value++
     },
     /** 清除待发引用 */
     clearQuote(): void {
@@ -2209,6 +2279,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       // section-orchestrator 0a:轮次预算提醒的委派教学按能力感知(subagent:false 集成不点名不存在的工具;
       // 默认只读 spawn_agent 也算委派能力 —— subagents 未声明时 subagentsForAssemble 为 undefined 但工具在场)
       hasSubagent: useSubagent,
+      // S3 页面断言门禁装配范围(17b 用户拍板):仅 domInspect 开启装配 —— 页面问答形态专属,
+      // 数据槽场景「页面上已改成…」的误伤路径从结构上切断(不新增配置项)
+      pageAssertionGate: caps.domInspect === true,
       maxRetries: options.maxRetries,
       // P1-7(fix-hang-and-feedback):流停滞看门狗(默认 90s;0 关;chunk 间隔超时中断防 loading 永转)
       stallMs: options.streamStallMs ?? DEFAULT_STREAM_STALL_MS,
@@ -2457,6 +2530,8 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
     setQuote: core.setQuote,
     /** 清除待发引用 */
     clearQuote: core.clearQuote,
+    /** S2 宿主变更通知:SPA 换文/路由切换后调用 —— 流内页面读结果置过期占位,跨轮注入一次性「重读当前页面」提示段 */
+    notifyHostChange: core.notifyHostChange,
     messages: core.messages,
     /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 主数据 + vfs + todos);无可用 checkpoint 返回 false */
     restoreLastCheckpoint: () => core.checkpoint?.restore() ?? false,

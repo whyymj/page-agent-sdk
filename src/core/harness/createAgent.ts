@@ -210,6 +210,11 @@ export interface CreateAgentOptions {
   onLog?: (entry: DebugLog) => void
   /** 子 agent 标记(subagent.ts 建子循环时置 true):imperative-zero-tool-gate 等主栈门禁据此豁免(子纯文本收口是正常形态) */
   __pgIsSubagent?: boolean
+  /**
+   * S3 页面断言门禁装配开关(host-integration-contract 17b):createChatSdk 按 `capabilities.domInspect`
+   * 传入(仅页面问答形态装配 —— 数据槽场景「页面上已改成…」误伤路径从结构上切断);false/缺省 = 门禁层不进判定。
+   */
+  pageAssertionGate?: boolean
   /** LLM 运行时切换回调(setLlm 后触发,供 createChatSdk 重解析模型能力 contextWindow/maxOutputTokens) */
   onLlmChange?: (newLlm: BaseChatModel) => void
   /**
@@ -428,6 +433,29 @@ export function createAgent(options: CreateAgentOptions) {
   const debugLogs = shallowRef<DebugLog[]>([])
   // stale-read-invalidation 会话累计(跨 invoke;inspect().staleReadsInvalidated 反射,类比 debugLogs 闭包真相源)
   let staleReadsInvalidated = 0
+  /**
+   * A9 观测面(host-integration-contract):收口门禁会话累计(stage → { retries 回灌次数, exhausted 耗尽放行次数 })。
+   * 修前四层门禁的回灌/EXHAUSTED 只能从 debugLogs/onEvent 事后拼;`page_assertion_gate` 键仅在装配时存在
+   * (S3 17b「装了/没装」反射:键在 = domInspect 开启装配,键缺 = 未装配)。
+   */
+  const zeroGate = () => ({ retries: 0, exhausted: 0 })
+  const gateStats: Record<string, { retries: number; exhausted: number }> = {
+    transitional_retry: zeroGate(),
+    completion_gate: zeroGate(),
+    evidence_audit_gate: zeroGate(),
+    zero_tool_gate: zeroGate(),
+    status_query_gate: zeroGate(),
+    ...(options.pageAssertionGate === true ? { page_assertion_gate: zeroGate() } : {}),
+  }
+  /** EXHAUSTED observable code → 所属门禁 stage(计数归并) */
+  const EXHAUSTED_CODE_TO_GATE: Record<string, string> = {
+    ZERO_TOOL_GATE_EXHAUSTED: 'zero_tool_gate',
+    AUDIT_GATE_EXHAUSTED: 'evidence_audit_gate',
+    COMPLETION_GATE_EXHAUSTED: 'completion_gate',
+    PAGE_ASSERTION_GATE_EXHAUSTED: 'page_assertion_gate',
+  }
+  /** A9 观测面:最近一次拼装的 system 段构成(段名/字节/超预算 drop 标记;修前 drop 仅 console.warn 零可观察) */
+  let lastSystemSegments: Array<{ name: string; tokens: number; dropped: boolean }> = []
   // 模型调用重试/终败会话累计(跨 invoke;inspect().llmRetries/llmCallFailures 反射)。retry-visibility(2026-09-09):
   // 网关断流事故实测「msgs 恒定 + debugLogs 静默」的黑洞假象排障 1h —— 重试/失败可见性是「环境故障 vs SDK 回归」的第一判据
   let llmRetries = 0
@@ -504,11 +532,14 @@ export function createAgent(options: CreateAgentOptions) {
   /** 系统段 token 预算占比(harden-context-resilience Phase 5):system 段最多占窗口 25%,余 75% 留对话+工具结果+输出 */
   const SYSTEM_BUDGET_RATIO = 0.25
   /** 跨压缩锚定段:系统段超预算时永不 drop(目标/工作记忆丢了 agent 跑偏) */
-  const PIN_SEGMENT_NAMES = new Set(['mission', 'workingMemory', 'intentGuard', 'resumeNotice', 'pageContext'])
+  const PIN_SEGMENT_NAMES = new Set(['mission', 'workingMemory', 'intentGuard', 'resumeNotice', 'pageContext', 'hostNotice'])
 
   /** 组装 system prompt:base + 各中间件 augmentPrompt 段。
    *  超系统段预算时按「非 pin 段从大到小 drop」收敛(丢最大段优先 = 丢最少段数;dataHint 巨型 schema 常最大先丢),
-   *  保 base + pin 段(mission/workingMemory)。base 本身超预算由 stream 入口 fatal 拦截(此处截不掉 base)。 */
+   *  保 base + pin 段(mission/workingMemory)。base 本身超预算由 stream 入口 fatal 拦截(此处截不掉 base)。
+   *  ⚠️ 按轮 memoize 已考察并否决(host-integration-contract S1 实施注记):inspect().systemPrompt 是宿主侧
+   *  实时视图契约(setData/applySnapshot 后须反映新 state,既有 e2e 定义),跨轮缓存与其冲突;且请求路径
+   *  本就每轮单次拼装(toLC 每 invoke 一次 + replaceSystem 每轮一次),缓存命中率趋零 —— 见 change tasks #8 退回条款。 */
   function buildSystemPrompt(): string {
     const base = systemPrompt || '你是一个智能助手。'
     const segs: Array<{ name: string; text: string; tokens: number; pin: boolean }> = []
@@ -522,17 +553,21 @@ export function createAgent(options: CreateAgentOptions) {
     const baseTokens = estimateTokens(base)
     let total = baseTokens + segs.reduce((s, x) => s + x.tokens, 0)
     // 超预算:非 pin 段从大到小 drop(丢最大段优先 = 丢最少段数;dataHint 巨型 schema 常最大先丢)
+    const droppedNames = new Set<string>()
     if (total > budget) {
       const before = total
       const dropped: string[] = []
       for (const d of segs.filter((x) => !x.pin).sort((a, b) => b.tokens - a.tokens)) {
         if (total <= budget) break
         dropped.push(`${d.name}(${d.tokens})`)
+        droppedNames.add(d.name)
         total -= d.tokens
         d.text = ''
       }
       if (dropped.length) console.warn(`[page-agent-sdk] 系统段超预算(${before} > ${budget} tokens,窗口 ${caps.contextWindow} 的 ${SYSTEM_BUDGET_RATIO * 100}%),drop 非核心段:${dropped.join(', ')}(保 base/mission/workingMemory)`)
     }
+    // A9 观测面:段构成快照(含 dropped 标记)—— 集成方的 augmentSystem/pageContext 段被 drop 时零可观察的盲区
+    lastSystemSegments = segs.map((s) => ({ name: s.name, tokens: s.tokens, dropped: droppedNames.has(s.name) }))
     return [base, ...segs.filter((x) => x.text).map((x) => x.text)].join('\n\n')
   }
 
@@ -913,7 +948,7 @@ export function createAgent(options: CreateAgentOptions) {
         maxToolRounds,
         invokeUsage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
         writeFailures: {},
-        budgetHinted: false,
+        // budgetHinted 已废弃(A1):token 预算提示改纯函数 tokenBudgetHintText 持续注入,零状态
       }
       state.loopProgress = progress
 
@@ -1060,9 +1095,13 @@ export function createAgent(options: CreateAgentOptions) {
               todos: state.todos, isSubagent: !!state.__pgIsSubagent,
               turnUsage, isWriteToolByName, messages: currentMessages,
               sessionWritePaths: auditWritePaths, todosStatusAtStart,
+              pageGate: options.pageAssertionGate === true,
             })
             if (gateOutcome?.kind === 'feedback') {
               pendingFormatRetry = true
+              // A9:门禁回灌会话累计(inspect().gates 反射)
+              const gs = gateStats[gateOutcome.gate.stage]
+              if (gs) gs.retries += 1
               log('middleware', { stage: gateOutcome.gate.stage, attempt: gateOutcome.gate.attempt, ...(gateOutcome.gate.logData ?? {}), content: response.content.slice(0, 160) })
               currentMessages.push(new HumanMessage(gateOutcome.gate.feedback))
               continue
@@ -1070,6 +1109,9 @@ export function createAgent(options: CreateAgentOptions) {
             if (gateOutcome?.kind === 'observable') {
               // observable 统一落 debugLogs(B2,2026-09-09):修前只 onEvent 不进日志,
               // ZERO_TOOL/AUDIT/COMPLETION 三类 EXHAUSTED 在 debugLogs 侧零感知(排障时只看日志会漏)
+              // A9:耗尽放行同样计数(exhausted 口径;wrap-up 补跑路径在下方 auditEvidenceOffenders 段)
+              const exGate = EXHAUSTED_CODE_TO_GATE[gateOutcome.obs.code]
+              if (exGate && gateStats[exGate]) gateStats[exGate].exhausted += 1
               log('error', { stage: gateOutcome.obs.code, ...gateOutcome.obs.context, content: response.content.slice(0, 160) })
               onEvent({ type: 'error', message: gateOutcome.obs.message, severity: 'observable', code: gateOutcome.obs.code, context: gateOutcome.obs.context } as any)
             }
@@ -1253,6 +1295,8 @@ export function createAgent(options: CreateAgentOptions) {
       // 而预算压力下的收口恰是谎报高发区 —— 此处零 LLM 本地补跑审计,违例 observable 留痕(不回灌:循环已尽)
       const wrapOffenders = auditEvidenceOffenders(state.todos ?? [], todosStatusAtStart, auditWritePaths)
       if (wrapOffenders.length) {
+        // A9:wrap-up 补跑路径的 EXHAUSTED 同样计数(与主收口口径一致)
+        gateStats.evidence_audit_gate.exhausted += 1
         const offenders = wrapOffenders.map((t) => ({ id: t.id, evidence: t.evidence }))
         log('middleware', { stage: 'evidence_audit_flagged', offenders })
         onEvent({ type: 'error', message: `轮次耗尽收口:${wrapOffenders.length} 项已完成任务的 evidence 路径与写入记录不符,最终回复中的完成声明可能不实`, severity: 'observable', code: 'AUDIT_EVIDENCE_SUSPECT', context: { offenders } } as any)
@@ -1367,8 +1411,15 @@ export function createAgent(options: CreateAgentOptions) {
     /** 模型调用重试/终败会话累计(inspect().llmRetries/llmCallFailures 反射;环境故障 vs SDK 回归的第一判据) */
     getLlmRetries: () => llmRetries,
     getLlmCallFailures: () => llmCallFailures,
-    /** 会话切换/重置时清零(与 debugLogs 清空同点位调用,防旧会话计数带进新会话;含 stale-read + 重试/终败三计数;审查建议随本批 surface 变化改名自描述) */
-    resetSessionCounters: () => { staleReadsInvalidated = 0; llmRetries = 0; llmCallFailures = 0 },
+    /** A9 观测面:收口门禁会话累计(inspect().gates;page_assertion_gate 键存在性 = S3 装配反射) */
+    getGateStats: () => gateStats,
+    /** A9 观测面:最近一次拼装的 system 段构成(inspect().systemSegments;dropped = 超预算被 drop) */
+    getLastSystemSegments: () => lastSystemSegments,
+    /** 会话切换/重置时清零(与 debugLogs 清空同点位调用,防旧会话计数带进新会话;含 stale-read + 重试/终败 + 门禁计数) */
+    resetSessionCounters: () => {
+      staleReadsInvalidated = 0; llmRetries = 0; llmCallFailures = 0
+      for (const k of Object.keys(gateStats)) gateStats[k] = zeroGate()
+    },
     setTools,
     setLlm,
     setModelCaps,

@@ -1,5 +1,5 @@
 {
-  "recordedAt": "2026-08-28T09:01:09.058Z",
+  "recordedAt": "2026-09-18T04:21:39.216Z",
   "suites": {
     "uispec": {
       "S1": {
@@ -96,6 +96,35 @@
         "toolCount": 49,
         "elapsedSec": 674,
         "cacheRead": 35840
+      }
+    },
+    "docs-qa": {
+      "S1": {
+        "prompt": 17049,
+        "completion": 793,
+        "toolCount": 1,
+        "elapsedSec": 111,
+        "cacheRead": 13568
+      },
+      "S2": {
+        "prompt": 17977,
+        "completion": 872,
+        "toolCount": 1,
+        "elapsedSec": 113
+      },
+      "S3": {
+        "prompt": 28958,
+        "completion": 558,
+        "toolCount": 1,
+        "elapsedSec": 110,
+        "cacheRead": 23808
+      },
+      "S4": {
+        "prompt": 20251,
+        "completion": 901,
+        "toolCount": 1,
+        "elapsedSec": 108,
+        "cacheRead": 512
       }
     }
   }

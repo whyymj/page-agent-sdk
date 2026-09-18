@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-3582%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-3698%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -177,6 +177,9 @@ CDN 零配置：`<script src="https://unpkg.com/page-agent-sdk"></script>` → `
 | 📖 页面问答 | `read_page` 读当前页正文纯文本(智能定位 article/main/[role=main]/.content,排除 SDK 自身 DOM 与 script/style,`hasMore` 分页续读,大结果自动外存 vfs);`pageContext` 每轮注入当前页 title+URL 锚点 pin 段(跨压缩;子 agent 不继承) | `capabilities: { domInspect: true, pageContext: true }` |
 | 📸 截图查看 | `take_screenshot` 三模式(selector 局部 / fullPage 整页 / 视口);条件注入(domInspect 开 && vision 主模型 \|\| images.describe,不满足 warn 留痕);分层图通道(vision → 工具结果后合成 user 消息 image parts,免疫 trim/offload;纯文本 → describe 转述);压缩闸 ≤1568 + 原图收 vfs;工具步骤行缩略图观察面;`page-analysis` skill(问题分型/探索纪律/回答纪律) | `capabilities: { domInspect: true }` + `llm.vision` 或 `images.describe` + `screenshot.renderer`(可选) |
 | 🖍 DOM 编辑 | `dom_edit` 批量原子操作(set_text/set_html/set_attr/add_class/set_style/insert/remove/move/highlight)+ `dom_restore` 快照回滚(栈 20 批);唯一 selector 纪律(多匹配拒)/危险闸(script·on*·javascript: 拒)/SDK 自身 DOM 保护/单根快照 256KB 上限;改动为会话临时态,数据驱动页面仍走 write | `capabilities: { domInspect: true, domEdit: true }` |
+| 🔁 宿主变更通知(4.18) | `sdk.notifyHostChange({reason?})`:SPA 换文/路由切换后调 —— 流内页面读结果(read_page/dom_search/dom_info/get_dom/take_screenshot)置过期占位(通知后新读不受影响)+ 一次性「须重读当前页面」提示段;数据槽读不受影响;`inspect().hostReadsInvalidated` 累计 | 路由切换 handler 调一次 |
+| 🛡 页面断言门禁(4.18) | 「本页写了/原文提到…」× 本轮零页面依据(含截图)× 非诚实不存在声明 → 回灌「先读页面再断言 + 事实清单」(独立预算 ≤2,超限 EXHAUSTED observable);仅 domInspect 开启装配(数据槽误伤路径结构切断) | 随 `domInspect` 自动 |
+| 📍 引用 DOM 锚点(4.18) | 划词捕获一并记录选区位置(块级 selector/块内偏移/出现序号/最近标题/捕获时 URL),引用块附 `[位置: …]` 元信息行 → `read_page({selector})` 直达;捕获与发送 URL 不一致自动标「锚点属于另一文档」;锚点是提示不是保证(失效回退 dom_search) | 随划词捕获自动;`setQuote` 第三参可自定义 |
 
 能力默认开（`verify`/`approval`/`checkpoint` 默认关；**主动征询 `humanConfirm` 默认开**——AI 遇不确定/多方案主动问你、不猜测），可经 `capabilities` 关掉无用的省 token。
 

@@ -24,6 +24,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     // 不发会落 provider/网关缺省(常 4K)—— 大输出任务(代码生成/长思考)易截断;未知模型不兜(防超发 400)
     const mt = (llm: any) => llm.maxTokens ?? llm.lc_kwargs?.maxTokens
     assert(tableMaxOutputTokens('deepseek-v4-flash') === 393216, 'tableMaxOutputTokens(deepseek-v4) → 393216(表命中)')
+    assert(tableMaxOutputTokens('deepseek-flash') === 393216, 'tableMaxOutputTokens(deepseek-flash 官方档) → 393216(2026-09-18 实测加条;修前落泛匹配 128K 撞 200K 地板误拒)')
     assert(tableMaxOutputTokens('gpt-4') === undefined, 'tableMaxOutputTokens(未知模型 gpt-4 无条目) → undefined(不兜)')
     const v4 = constructOpenLlmSync({ apiKey: 'sk-test', model: 'deepseek-v4-flash' })
     assert(mt(v4) === 393216, '未设 maxTokens + deepseek-v4 → 请求 max_tokens=393216(表上限;修前不发落网关 4K)')

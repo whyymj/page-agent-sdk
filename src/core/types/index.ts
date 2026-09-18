@@ -89,6 +89,28 @@ export interface MessageQuote {
   text: string
   /** 来源描述(自动捕获 = 页面 title + 最近的在前标题;宿主 setQuote 可自定义;纯展示 + LLM 注入标注) */
   source?: string
+  /** DOM 锚点(S4,4.18):选区起始块级祖先的可定位描述 + 块内偏移;toLC 注入为元信息行(是提示不是保证,失效回退 dom_search) */
+  anchor?: QuoteAnchor
+}
+
+/** 引用 DOM 锚点(host-integration-contract S4):captureSelectionQuote 自动捕获 / 宿主 setQuote 第三参自定义 */
+export interface QuoteAnchor {
+  /** 选区起始块级祖先的 CSS selector(id 优先,否则 tag:nth-of-type 链 ≤4 层;宿主可覆盖生成) */
+  selector?: string
+  /** 块级祖先在其父容器元素中的序号(0 起) */
+  blockIndex?: number
+  /** 选中文本在块内字符偏移(0 起;Range 可得时精确,否则首块片段 indexOf) */
+  offset?: number
+  /** 选中文本首片段在块内的第几次出现(1 起;offset 对不齐时的消歧级) */
+  occurrence?: number
+  /** 最近的在前标题文本(≤60 字;元信息行展示「小节」) */
+  heading?: string
+  /** 最近的在前标题的 id 属性(存在时;宿主跳转锚点用) */
+  headingId?: string
+  /** 宿主文档标识(如门户 URL hash 的 doc 参数;宿主 setQuote 注入,元信息行展示) */
+  docId?: string
+  /** 捕获时页面 URL(SDK 侧自动记录;toLC 与当前 location.href 比对,不一致标「锚点属于另一文档」—— A3 防旧锚点) */
+  pageUrl?: string
 }
 
 export interface AgentMessage {
@@ -257,6 +279,12 @@ export interface AgentInfo {
   workingMemory?: { locatedPaths: string[]; lastHashes: Record<string, string> }
   /** 写驱动过期读失效会话累计(stale-read-invalidation;写后旧 read/query/search 结果被替换为占位的次数) */
   staleReadsInvalidated?: number
+  /** S2 宿主变更失效会话累计(host-integration-contract;notifyHostChange 触发的页面读占位替换次数,与写驱动分列) */
+  hostReadsInvalidated?: number
+  /** A9 收口门禁会话累计(stage → { retries 回灌, exhausted 耗尽放行 };page_assertion_gate 键存在性 = domInspect 装配反射) */
+  gates?: Record<string, { retries: number; exhausted: number }>
+  /** A9 最近一次 system 段构成(段名/字节/超预算 drop 标记;集成方 augmentSystem/pageContext 段被 drop 时可观察) */
+  systemSegments?: Array<{ name: string; tokens: number; dropped: boolean }>
   /** 模型调用重试会话累计(retry-visibility;启动/body 阶段自动重试次数 —— 环境故障 vs SDK 回归的第一判据) */
   llmRetries?: number
   /** 模型调用最终失败会话累计(retry-visibility;重试耗尽/不可重试类终败次数) */

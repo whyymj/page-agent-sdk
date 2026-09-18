@@ -15,7 +15,7 @@
 
 通用「JSON 操作助手」(dataOps 场景)。systemPrompt 由 `createChatSdk({ systemPrompt })` 注入,不硬编码业务身份。
 - **默认 systemPrompt(4.16 能力感知)**:用户不传时按能力选身份 —— dataOps(有 data 声明)→ `DEFAULT_SYSTEM_PROMPT`(JSON 操作助手:身份 + 能力概述 + `systemPromptHelpers.reliableWriteRules`,`---` 分隔);dataOps:false + domInspect → 「页面内容助手」(read_page/get_dom/dom_search/dom_info 能力面 + 引用块引导 + 回答纪律;take_screenshot 行仅实装配时出现);双无 → 通用兜底(与 createAgent 兜底同文案)。用户传了完全覆盖。`appendReliableWriteRules` 默认 `true`:自定义 systemPrompt 末尾自动追加写入规则(**dataOps:false 时不追加** —— 勿教池里不存在的写入工具,确需自行拼 reliableWriteRules);设 `false` 关闭(用默认 prompt 时无效,默认已含)。`createAgent` 层兜底 `'你是一个智能助手。'`
-- **职责分工(重要)**:内置工具用法(read/write/get/set/patch/snapshot/query/search/eval 等)由 `usageHints` 中间件按能力开关自动注入运行时 prompt,**集成方 systemPrompt 只写业务知识**(身份、字段含义、业务流程、技能引用),不要重复声明工具语法。**动态组件说明/按运行时状态注入**走 `augmentSystem({ state, data })` 钩子(每轮调,setData 后 data 自动同步),见 `doc/system-prompt.md` B6 段
+- **职责分工(重要)**:内置工具用法(read/write/get/set/patch/snapshot/query/search/eval 等)由 `usageHints` 中间件按能力开关自动注入运行时 prompt,**集成方 systemPrompt 只写业务知识**(身份、字段含义、业务流程、技能引用),不要重复声明工具语法。**动态组件说明/按运行时状态注入**走 `augmentSystem({ state, data })` 钩子(每轮调,setData 后 data 自动同步),见 `doc/system-prompt.md` B6 段。**⚠️ 幂等契约(4.18,S1)**:augmentSystem / 自定义 augmentPrompt 同一轮内会被调多次(toLC/replaceSystem/收口综合/inspect 内省),只有随请求那次生效 —— 回调必须幂等、禁推进状态/消费一次性标志(会被丢弃调用吞掉,内容永不送达),跨轮状态在整轮结束推进(`sdk.hook` done/message_update);SDK 自身 token 预算提示曾踩同族坑(4.18 修,`tokenBudgetHintText` 纯函数持续注入)
 
 ## 技术栈
 
@@ -30,9 +30,9 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,3582 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,1162 项;tests/e2e/<module>.mjs 按模块拆分)
-npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,164 项;tests/browser/<demo>.spec.ts)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,3698 项断言)
+npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,1201 项;tests/e2e/<module>.mjs 按模块拆分)
+npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,165 项;tests/browser/<demo>.spec.ts)
 npm run test:node-real  # node 真 LLM 冒烟(server-companion P0:headless dist 双协议 read→write→restore;无 key 自动 skip)
 ```
 
@@ -106,6 +106,7 @@ skills/                         # 分发给使用者的 Agent Skill(入 npm 包 
 
 ### 其他能力(详见 architecture.md §⑩⑪⑮)
 - **DOM 编辑(4.17,`capabilities.domEdit` opt-in,requires domInspect)**:宿主页面伴随场景的受控写通道 —— `dom_edit({patches,dryRun?})` 批量原子(op:set_text/set_html/set_attr/remove_attr/add_class/remove_class/set_style/insert[position before/after/prepend/append/replace]/remove/move/highlight[高亮+滚动定位]);**唯一 selector 纪律**(querySelectorAll 恰 1,多匹配拒)/危险闸(script/iframe/link/meta 等标签拒、on* 属性拒、javascript: URL 拒)/SDK 自身 DOM 拒改/快照单根 256KB 上限;`dom_restore` 批快照逆序回滚(栈 20,data-pg-snap 标记 outerHTML 回放,元素身份不保留、STALE 如实报);**边界明示**:改动会话临时态(不持久化)、框架管理区重渲染会洗掉、数据驱动页面仍走 write(不替代数据通道);onEdit 留痕 debugLogs stage:'dom_edit';skill 集成(dom-inspect 用法段/page-analysis 操作类分型/usageHints 行,全随装配态勿教不存在工具)
+- **宿主集成契约与页面问答可靠性(4.18,host-integration-contract)**:① **`sdk.notifyHostChange({reason?})`**(S2)SPA 换文/路由切换后调 —— 流内页面读五工具(read_page/dom_search/dom_info/get_dom/take_screenshot)结果置过期占位(epoch 水位把守时序,通知后新读不失效)+ 一次性「须重读」pin 段(afterAgent 清除;数据槽读不受影响;`inspect().hostReadsInvalidated` 累计);② **页面断言零依据门禁**(S3,gateChain 4.5 层)「本页写了/原文提到…」× 本轮零页面依据(含截图)× 非诚实不存在声明 → 回灌先读再断言(独立预算 ≤2 + `PAGE_ASSERTION_GATE_EXHAUSTED`;**仅 domInspect 开启装配** —— 数据槽「页面上已改成…」误伤路径结构切断,不新增配置项;`inspect().gates.page_assertion_gate` 键存在性 = 装配反射);③ **`MessageQuote.anchor`**(S4)划词捕获记录选区位置(块级 selector/块内偏移/出现序号/最近标题/捕获时 URL),引用块附 `[位置: …]` 元信息行供 `read_page({selector})` 直达;捕获与发送 URL 不一致标「锚点属于另一文档」;锚点是提示不是保证(失效回退 dom_search);④ **A8 三处门控补齐**(page-analysis withVfs / dom-inspect withDataOps / usageHints domInspect 行 dataOps×hasActions 三态,勿教不存在工具);⑤ **A9 可观测性** `inspect().gates`(各门禁 retries/exhausted)+ `inspect().systemSegments`(段名/字节/dropped 标记,修前超预算 drop 仅 console.warn 零可观察)
 - MCP 远程工具(**逐 server 渐进注入**:各 server 连接落定即注入工具,坏 server 的 3 次连接重试不再拖累好 server;连接重试 3 次递增退避吸收上游瞬时 502/断连 + 握手 15s 降级 + **callTool 超时闸 60s**(`callTimeoutMs` 可调,3.6+;超时回灌自纠不断连))/ Verify 自检 opt-in(`createWriteBackCheck` + adversarial)/ `get_dom` opt-in / `inspect_env` 默认开 / actions 宿主动作 / SkillSpec.exec(一次性)vs tools(反复查询)勿双轨 / Approval(挂起/收口双留痕 `approval_pending`/`approval_resolved` 2026-09-02,exportDiagnostics 可诊断「卡在等确认」;无响应自动拒,4.1+ 中间件级默认 30s:approval_request 事件带 `hold()`,响应方收到即调则不限等人;headless/send/batch/streaming:false 等无响应方路径 30s 自动拒 + `APPROVAL_AUTO_REJECTED` observable;`approval.timeoutMs` 覆盖,Infinity=关;humanConfirm 同口径)/ Checkpoint 每轮存档 / Automation 预算 + `sdk.batch` / **图片输入 image-input-vision**(三入口 📎/拖/贴 + 压缩闸 ≤1568px/≤4 张/20MB;三分支:多模态主模型(modelCaps 查表或 `llm.vision:true`)直发 content parts / 纯文本 + `images.describe` 转述注入(图不直发)/ 都不配诚实拒绝;`images.upload` 原图换 URL;持久化 thumb+vfsRef 轻形态;详见 usage-guide §6.17)/ **方案确认留痕 `lastPlanConfirmation`**(RHC 带 options 的方案被点选 → `{at,summary,choice,viaOptions}` 记录;仅方案确认记录(允许/拒绝/无 options 不写);随 SessionSnapshot 持久化跨刷新存活;switch/reset 清除;ApprovalBar 上下文提示行不自动跳过;`inspect().planConfirmation` 反射;bulk-change-guard 豁免的公共接口)/ **bulk-change-guard 大批量门禁**(`capabilities.bulkGuard` 默认关 + 须配 approval 才装配(否则 no-op 留痕);量纲 = 现有组件节点数(同组件多 patch 不拦/新增不计/深路径截组件粒度);超阈(默认 4)挂 approval(自带 30s timeoutMs,ctx.emit 通道);拒绝回灌 BULK_CHANGE_REJECTED;`mode:'observe'` 无人值守;豁免:lastPlanConfirmation + 会话级同形态一次 + dryRun;componentWriteGuard 之内装载;`inspect().bulkGuard` 反射;缓解非根治明示)
 
 ### 对话鲁棒性(详见 architecture.md §⑮)
@@ -138,15 +139,15 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test    # tsx 跑 src/core/__tests__/selftest.ts,3582 项断言
+npm test    # tsx 跑 src/core/__tests__/selftest.ts,3698 项断言
 ```
-按模块拆分:`src/core/__tests__/modules/sec-NN.ts`(124 个模块)各导出 `run(ctx)`,runner 汇总;共享 `TestCtx` 在 `modules/_ctx.ts`。tsx 跑源码(不经构建),触不到 createChatSdk 顶层 API 作用域。**改任何核心模块后必跑**。
+按模块拆分:`src/core/__tests__/modules/sec-NN.ts`(128 个模块)各导出 `run(ctx)`,runner 汇总;共享 `TestCtx` 在 `modules/_ctx.ts`。tsx 跑源码(不经构建),触不到 createChatSdk 顶层 API 作用域。**改任何核心模块后必跑**。
 
 #### 2. 集成层 e2e(改 createChatSdk 顶层 API 后必跑)
 ```bash
-npm run build && npm run test:e2e    # node 跑 dist 产物,1162 项
+npm run build && npm run test:e2e    # node 跑 dist 产物,1201 项
 ```
-模块在 `tests/e2e/<module>.mjs`(34 个:systemprompt/dynamic-register/inspect/subagents/events/storage/exports/data-slots/presets/boundary/custom-injection/conflict/automation/llm-provider/focus/images/resources/agent-compression/headless-subpath/legacy-subpath/capability-packs/authorization-surface/hang-feedback/main-sub-isolation/session-integrity/context-economy/mcp/diagnostics/instruction-adherence/thinking-mode/eval-toolkit/evidence-audit/stale-read-invalidation/auto-title),共享 stub 在 `tests/e2e/_helpers.mjs`(StubChatModel 在 `_stub-model.mjs`,响应队列驱动真 ReAct)。覆盖顶层 return 对象作用域。**改 createChatSdk 返回对象、AgentCore 接口、动态注册 API、默认提示词、新增导出/配置项后必跑**。
+模块在 `tests/e2e/<module>.mjs`(35 个:systemprompt/dynamic-register/inspect/subagents/events/storage/exports/data-slots/presets/boundary/custom-injection/conflict/automation/llm-provider/focus/images/resources/agent-compression/headless-subpath/legacy-subpath/capability-packs/authorization-surface/hang-feedback/main-sub-isolation/session-integrity/context-economy/host-integration/mcp/diagnostics/instruction-adherence/thinking-mode/eval-toolkit/evidence-audit/stale-read-invalidation/auto-title),共享 stub 在 `tests/e2e/_helpers.mjs`(StubChatModel 在 `_stub-model.mjs`,响应队列驱动真 ReAct)。覆盖顶层 return 对象作用域。**改 createChatSdk 返回对象、AgentCore 接口、动态注册 API、默认提示词、新增导出/配置项后必跑**。
 
 #### 2.5 浏览器 E2E(改 UI/ChatDialog/dataOps 后必跑)
 ```bash
@@ -158,7 +159,7 @@ npm run test:browser  # 162 项;也可 /browser-test 斜杠命令。**并行分�
 `npm run dev` 逐个 demo 验证(见目录结构 examples 清单;各 demo 侧重点见 `doc/usage-guide.md`)。
 
 #### 3.5 真 LLM 场景回归(`npm run test:real`,统一入口)
-**统一入口** `npm run test:real [套件] [场景号…]`(套件:`uispec` complex-demo 10 场景 / `rag` 四模式 / `parallel` 并行复验;共享基建 `tests/runtime/_real-llm-lib.mjs`,新套件只写场景+checks);另有两类独立套件直接 `node tests/runtime/<名>.mjs`:`subtree-real-llm.mjs`(subtree/守卫/nudge 5 场景,?huge=1)/ `complex-ops-real-llm.mjs`(complex-demo 升级后调整/修改操作 6 场景:新建含委派/调序/层级/属性/聚焦纯代码/RAG ?rag=1;LLM 走 `VITE_ANTHROPIC_*` 组)/ `render-check-real-llm.mjs`(html-page-demo 坏 script 自纠 5 场景,2026-08-26 补验归档)/ `section-orchestrator-real-llm.mjs`(双臂 fixture `tests/runtime/fixtures/section-fixture.html`,?arm=grind|nudge,2026-08-26 补验归档)/ `image-input-real-llm.mjs`(images-demo 识图旁路 3 场景,describe 走 modelverse vision 经 vite 代理 /llm—— 浏览器直调 /v1/messages 因 CORS 失败;2026-08-26 补验归档;**注意 `loadReport` 的 only 过滤会把未跑场景从报告剔除,单跑前先备份报告**);**基线对比已机械化**:`--baseline-diff`(读现有报告秒回 diff,▲疑似回归/▼改善,阈值 token ±15% 且 ±2000 / toolCount ±3)/ `--baseline-update`(确认预期后采集,`tests/runtime/real-llm-baseline.json` 随代码提交)。报告 `_real-llm-*.json` gitignore,断点续跑传场景号。**方法论详见 `doc/real-llm-regression.md`**(idle 双条件判定/超时 dump 诊断/reload 诊断)。要点:idle 判定 = debugLogs 静默 90s + `getActiveSubagents()===0`(reasoning 不打日志,只看日志会误判);**跑前必重启 dev server**(遗留旧 vite server 的 optimizeDeps 状态过期 → 页面强制 reload → memory 后端会话清空,msgs 归零假性失败,3.11 排查烧 1h);**跑中禁并发 test:browser**;`.env` 无 key 自动 skip。headless 族(draft/trace/maliang,`tests/runtime/*-real-llm.ts`)不经统一入口,各自 `npm run test:*-real`。3.10/3.11 系列修复全部由真 LLM 复测驱动发现。
+**统一入口** `npm run test:real [套件] [场景号…]`(套件:`uispec` complex-demo 10 场景 / `rag` 四模式 / `parallel` 并行复验 / `docs-qa` docs-demo 页面问答 4 场景〔A10,4.18:划词引用锚点/整页概括/诚实不猜测/notifyHostChange 重读〕;共享基建 `tests/runtime/_real-llm-lib.mjs`,新套件只写场景+checks);另有两类独立套件直接 `node tests/runtime/<名>.mjs`:`subtree-real-llm.mjs`(subtree/守卫/nudge 5 场景,?huge=1)/ `complex-ops-real-llm.mjs`(complex-demo 升级后调整/修改操作 6 场景:新建含委派/调序/层级/属性/聚焦纯代码/RAG ?rag=1;LLM 走 `VITE_ANTHROPIC_*` 组)/ `render-check-real-llm.mjs`(html-page-demo 坏 script 自纠 5 场景,2026-08-26 补验归档)/ `section-orchestrator-real-llm.mjs`(双臂 fixture `tests/runtime/fixtures/section-fixture.html`,?arm=grind|nudge,2026-08-26 补验归档)/ `image-input-real-llm.mjs`(images-demo 识图旁路 3 场景,describe 走 modelverse vision 经 vite 代理 /llm—— 浏览器直调 /v1/messages 因 CORS 失败;2026-08-26 补验归档;**注意 `loadReport` 的 only 过滤会把未跑场景从报告剔除,单跑前先备份报告**);**基线对比已机械化**:`--baseline-diff`(读现有报告秒回 diff,▲疑似回归/▼改善,阈值 token ±15% 且 ±2000 / toolCount ±3)/ `--baseline-update`(确认预期后采集,`tests/runtime/real-llm-baseline.json` 随代码提交)。报告 `_real-llm-*.json` gitignore,断点续跑传场景号。**方法论详见 `doc/real-llm-regression.md`**(idle 双条件判定/超时 dump 诊断/reload 诊断)。要点:idle 判定 = debugLogs 静默 90s + `getActiveSubagents()===0`(reasoning 不打日志,只看日志会误判);**跑前必重启 dev server**(遗留旧 vite server 的 optimizeDeps 状态过期 → 页面强制 reload → memory 后端会话清空,msgs 归零假性失败,3.11 排查烧 1h);**跑中禁并发 test:browser**;`.env` 无 key 自动 skip。headless 族(draft/trace/maliang,`tests/runtime/*-real-llm.ts`)不经统一入口,各自 `npm run test:*-real`。3.10/3.11 系列修复全部由真 LLM 复测驱动发现。
 
 #### 4. 运行时手动验证(依赖 LLM/server)
 子 agent 委派 / MCP / verify 自纠 / 真实 LLM 流式 / draft 真 LLM(`npm run test:draft-real`,无 key 自动 skip)。
@@ -183,7 +184,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(3582/1162/164)与 README 中英文;`node scripts/check-test-counts.mjs` 静态对账(各文件声明计数互相一致),发布前 `--run` 实跑取真值。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(3698/1201/165)与 README 中英文;`node scripts/check-test-counts.mjs` 静态对账(各文件声明计数互相一致),发布前 `--run` 实跑取真值。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判,含 E1 的 Same 互赋值签名断言)→ `npm run test:types-novue`(无 vue 项目解析探针:paths 哨兵阻断,E2)→ `npm run test:size` → `node scripts/check-test-counts.mjs`(三计数+README 徽章+CHANGELOG 对账;漂移即红)→ `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证

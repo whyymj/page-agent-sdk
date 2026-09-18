@@ -55,6 +55,8 @@ onMounted(() => {
     },
   })
   agent.mount()
+  // 调试/真 LLM 测试:暴露 sdk 供脚本读(docs-qa 套件 inspect 判 idle + setQuote 注入引用;同 complex-demo 约定)
+  ;(window as any).__sdk = agent
 })
 onUnmounted(() => agent?.unmount())
 

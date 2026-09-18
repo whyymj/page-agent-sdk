@@ -1,10 +1,10 @@
 /**
- * sec-76:agent 自感知预算(context-economy-phase2 阶段 C)
- * C1 消耗提示(轮次 70% / token softCap 半程触发,每任务一次)+ C2 写失败计数注入
- * + todos 计划版次计数前缀 + extractWriteTargetPath 纯函数。
+ * sec-76:agent 自感知预算(context-economy-phase2 阶段 C;A1 后 token 维度 = 纯函数持续注入)
+ * C1 消耗提示(轮次维度在 createAgent 核心 roundBudgetHintText;token softCap 半程起持续注入 + 轮内幂等)
+ * + C2 写失败计数注入 + todos 计划版次计数前缀 + extractWriteTargetPath/tokenBudgetHintText 纯函数。
  */
 import type { TestCtx } from './_ctx'
-import { createUsageHintsMiddleware } from '../../harness/usageHints'
+import { createUsageHintsMiddleware, tokenBudgetHintText } from '../../harness/usageHints'
 import { createTodosMiddleware } from '../../harness/todos'
 import { extractWriteTargetPath } from '../../harness/createAgent'
 import type { HarnessState, LoopProgress } from '../../harness/state'
@@ -17,7 +17,6 @@ function stateWith(progress: Partial<LoopProgress>): HarnessState {
       maxToolRounds: 10,
       invokeUsage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
       writeFailures: {},
-      budgetHinted: false,
       ...progress,
     },
   } as unknown as HarnessState
@@ -39,17 +38,32 @@ export async function run(ctx: TestCtx) {
     assert(!out2.includes('预算提示'), '✓ C1 轮次维度移交核心 → 重复渲染同样不注入')
   }
 
-  // ===== C1:token 维度(累计 ≥ softCap/2)触发 + 一次性;无 softCap 配置不触发 =====
+  // ===== C1:token 维度(累计 ≥ softCap/2)触发,持续注入 + 轮内幂等;无 softCap 配置不触发 =====
+  // host-integration-contract A1(2026-09-17):原一次性 budgetHinted 会被「输出被丢弃的 augmentPrompt
+  // 调用」(toLC/内省)消费,提示从未稳定送达 → 改纯函数持续注入(tokenBudgetHintText,两档升级)
   {
     const mwCap = createUsageHintsMiddleware(undefined, false, { promptSoftCap: 160_000 })
     const s = stateWith({ rounds: 1, maxToolRounds: 10, invokeUsage: { prompt_tokens: 90_000, completion_tokens: 0, total_tokens: 90_000 } })
     const out = (mwCap.augmentPrompt as (st: HarnessState) => string | undefined)(s) ?? ''
     assert(out.includes('预算提示') && out.includes('90K'), '✓ C1 预算提示 → 累计 ≥ softCap/2(90K/160K)注入(token 维度保留)')
+    // 轮内幂等:同一 state 多次调用逐字节一致(augmentPrompt 每模型调用被调多次,只有部分输出随请求发出)
     const outAgain = (mwCap.augmentPrompt as (st: HarnessState) => string | undefined)(s) ?? ''
-    assert(!outAgain.includes('预算提示'), '✓ C1 预算提示 → 每任务只注入一次(budgetHinted 置位后不重复)')
+    assert(outAgain === out, '✓ C1 预算提示 → 轮内幂等(同 state 重复调用逐字节一致,一次性标志消费缺陷已修)')
     const mwNoCap = createUsageHintsMiddleware(undefined, false)
     const out2 = (mwNoCap.augmentPrompt as (st: HarnessState) => string | undefined)(stateWith({ rounds: 1, maxToolRounds: 10, invokeUsage: { prompt_tokens: 90_000, completion_tokens: 0, total_tokens: 90_000 } })) ?? ''
     assert(!out2 || !out2.includes('预算提示'), '✓ C1 预算提示 → 未配 softCap 时 token 维度不触发')
+  }
+
+  // ===== C1 纯函数白盒:tokenBudgetHintText 边界与两档 =====
+  {
+    assert(tokenBudgetHintText(0, 160_000) === '', '✓ tokenBudgetHintText → 零 usage 不注入')
+    assert(tokenBudgetHintText(79_999, 160_000) === '', '✓ tokenBudgetHintText → <softCap/2 不注入')
+    assert(tokenBudgetHintText(80_000, 160_000).includes('预算提示') && !tokenBudgetHintText(80_000, 160_000).includes('告急'), '✓ tokenBudgetHintText → 半程(恰 50%)注入提醒档')
+    assert(tokenBudgetHintText(136_000, 160_000).includes('预算告急'), '✓ tokenBudgetHintText → ≥85% 升级告急档(两档升级)')
+    assert(tokenBudgetHintText(90_000, Number.POSITIVE_INFINITY) === '', '✓ tokenBudgetHintText → Infinity(未参与)返回空')
+    assert(tokenBudgetHintText(90_000, 0) === '', '✓ tokenBudgetHintText → softCap=0 非法返回空')
+    assert(tokenBudgetHintText(500, 1000).includes('1K'), '✓ tokenBudgetHintText → 小用量 K 值下限 1(不显示 0K)')
+    assert(tokenBudgetHintText(80_000, 160_000) === tokenBudgetHintText(80_000, 160_000), '✓ tokenBudgetHintText → 纯函数重复调用恒等(无状态)')
   }
 
   // ===== C2:写失败计数 ≥2 注入提醒;清零后不注入 =====

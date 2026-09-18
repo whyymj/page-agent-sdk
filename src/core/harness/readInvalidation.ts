@@ -193,6 +193,61 @@ function buildPlaceholder(readPaths: string[], readTool: string, writes: Effecti
 }
 
 /**
+ * 页面读类工具集(S2 宿主变更失效面,host-integration-contract)。
+ * take_screenshot 计入(A2 口径:看过截图也算看过页面 —— 但宿主变更后截图同样过期,一并失效);
+ * dataOps 的 read/query_data/search_data **不在内**(scope 隔离:宿主换页不影响数据槽读结果有效性)。
+ */
+export const PAGE_READ_TOOLS = new Set(['read_page', 'dom_search', 'dom_info', 'get_dom', 'take_screenshot'])
+
+/**
+ * S2 宿主变更驱动的页面读失效(纯函数):把页面读类工具的 ToolMessage 整体替换为失效占位。
+ *
+ * 与写驱动 invalidateStaleReads 的关系:**新增触发源,不改数据写判定**(数据读零涉及)。
+ * 差异:无路径重叠判定 —— 宿主换页/导航对页面全域生效,所有既有页面读结果一律过期(调用时点即分界,
+ * 调用后的新读不受影响 —— 时序由调用侧 epoch 把守);幂等同款(占位开头标记跳过,重复调用不叠加)。
+ * 文案族复用 STALE_PLACEHOLDER_MARK + 引导重读。
+ */
+export function invalidatePageReads(messages: BaseMessage[], reason?: string): InvalidationResult {
+  const typeOf = (m: BaseMessage): string => (m as unknown as { _getType?: () => string })._getType?.() ?? 'unknown'
+  let nextMessages: BaseMessage[] | null = null
+  let invalidatedCount = 0
+  if (!messages.length) return { messages, invalidatedCount: 0, invalidated: [] }
+  // 配对 walk(同 invalidateStaleReads 口径):AIMessage.tool_calls(name)→ 紧随的 ToolMessage;
+  // 主循环 push 的 ToolMessage 不带 name,靠 tool_call_id 精确匹配,失配按序兜底,再失配跳过(宁漏勿误)
+  let pending: Array<{ id?: string; name: string; used: boolean }> = []
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i]
+    if (typeOf(m) === 'ai') {
+      const tcs = (m as unknown as { tool_calls?: Array<{ id?: string; name: string }> }).tool_calls
+      pending = (Array.isArray(tcs) ? tcs : []).map((tc) => ({ id: tc.id, name: tc.name, used: false }))
+    } else if (m instanceof ToolMessage) {
+      const tcid = (m as unknown as { tool_call_id?: string }).tool_call_id
+      let hit = tcid !== undefined ? pending.find((p) => !p.used && p.id !== undefined && p.id === tcid) : undefined
+      if (!hit) {
+        const mname = (m as unknown as { name?: string }).name
+        hit = mname ? pending.find((p) => !p.used && p.name === mname) : pending.find((p) => !p.used)
+      }
+      if (!hit || !PAGE_READ_TOOLS.has(hit.name)) continue
+      hit.used = true
+      const content = String((m as unknown as { content?: unknown }).content ?? '')
+      if (content.startsWith(STALE_PLACEHOLDER_MARK)) continue // 幂等:已占位不再二次处理
+      const lines = [
+        `⏱[过期快照] 此前通过 ${hit.name} 获取的页面内容已失效(宿主页面已变更${reason ? `:${reason}` : ''})。`,
+        `页面内容可能已不同,不要基于此前的读取/截图结果作答;需引用页面内容时重新调用 ${hit.name} 读取当前页面。`,
+      ]
+      if (!nextMessages) nextMessages = messages.slice()
+      nextMessages[i] = new ToolMessage({
+        tool_call_id: tcid ?? '',
+        name: (m as unknown as { name?: string }).name,
+        content: lines.join('\n'),
+      })
+      invalidatedCount++
+    }
+  }
+  return { messages: nextMessages ?? messages, invalidatedCount, invalidated: [] }
+}
+
+/**
  * 对 messages 里已被「本批成功写」击中的过期读结果做占位替换。
  * 纯函数:不改原数组,替换处生成新 ToolMessage(保留 tool_call_id,结构完整)。
  * 宁漏勿误:配对失配跳过;已占位(幂等标记)跳过;无有效写原样返回。

@@ -711,3 +711,7 @@ A3 曾写「116 个模块」,实测 sec-*.ts = **115**(runner import 同数)—�
 - **dom_edit 改动持久化/会话恢复**:现状基础 = 快照栈内存态;暂缓理由 = 持久化 agent 对宿主页面的改动属侵入宿主(页面最终形态归集成方),需求未证实;重启触发 = 「标注跨刷新保留」真实场景(如学习批注)。
 - **框架管理区域冲突检测**(探测 Vue/React 管辖区并拒改/警告):现状基础 = 文档明示边界(Vue/React 重渲染会洗掉外部改动);暂缓理由 = 探测 vnode/`__vue__` 标记不可靠且框架面广;重启触发 = 框架宿主误改事故真实出现。
 - **dom_change 外发事件**(MutationObserver 观察面):现状基础 = debugLogs stage:'dom_edit' 留痕;暂缓理由 = 集成方观察需求未证实,常驻 observer 有成本;重启触发 = 集成方需要实时感知 agent 改动(如宿主做标注管理 UI)。
+
+## 2026-09-17(host-integration-contract 裁出)
+
+- **体积与 markdown 依赖去重**:现状基础 = 主包 1283KB / headless 750KB(raw),`marked`+`highlight.js`+`dompurify` 打包进主包,与宿主自带实例重复(静态站集成方实测痛点:其体积指标为「增量 <15KB gzip」);暂缓理由 = 涉及 UI 渲染链重构 + 破坏性(现有 import 面),且静态站可先用懒加载缓解(学习门户实测:首屏主 chunk 187KB 不变,SDK 走 643KB gzip 懒加载 chunk);重启触发 = **第二个静态站集成方提出体积硬指标**,或需要「无 markdown 依赖」的核心子路径。

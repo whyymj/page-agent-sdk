@@ -1,4 +1,4 @@
-import { pathsOverlap } from './readInvalidation'
+import { pathsOverlap, PAGE_READ_TOOLS } from './readInvalidation'
 
 /**
  * imperative-zero-tool-gate 纯函数 —— 操作指令零工具收尾门禁(防「谎报完成」)
@@ -261,4 +261,65 @@ export function isEvidenceCovered(evidencePaths: string[], sessionWritePaths: It
   const sess = Array.from(sessionWritePaths)
   if (!sess.length) return false
   return evidencePaths.some((ep) => sess.some((sp) => pathsOverlap(ep, sp)))
+}
+
+// ===== page-assertion-zero-basis-gate(S3 页面断言零依据门禁,host-integration-contract)=====
+// 「页面对答」场景的头号失效模式:回复声称「本页/原文/笔记里写了…」但本轮连 read_page 都没调 ——
+// 编造页面内容零机制覆盖(学习门户实测:强提示词管得住是模型自觉,非机制保证;项目哲学「纪律靠机制」)。
+// 三要素 AND(宁漏勿误);装配面 = 仅 capabilities.domInspect 开启(gateChain 输入 flag,17b 用户拍板:
+// 数据槽场景「页面上已改成…」会被误伤的路从结构上切断,不新增配置项)。
+
+/** 页面指称词(指向宿主页面/文档内容的名词) */
+const PAGE_REFERENCE_RE = /(本页|此页|当前页|该页|原文|文章里?|文章中|笔记里?|笔记中|文档里?|文档中|页面上|页面里|文中|正文里?|正文中|这一节|该节|上一节|下一节|前文|后文)/
+
+/** 页面内容断言句式(把内容归属于页面的动词:页面「写了/提到/说明」) */
+const PAGE_ASSERTION_VERB_RE = /(写到|写了|说[了到]|提[及到]|说明|介绍|讲解|讲[了到]|阐述|指出|强调|讨论|描述|定义|解释|总结|出现在|位于|列[出了]|给[出了])/
+
+
+/** 页面不存在声明(「本页没有提到」= 正确行为,豁免;与 declaresNoAction 的「未修改」族互补) */
+const PAGE_ABSENCE_DECL_RE = /(没有|未|无|不含|查无|找不到)[^。!?!?,,;;\n]{0,12}(提到|写|说明|介绍|讲解|涉及|出现|包含|涵盖|讨论|定义)|不在(本页|此页|文中|正文|这篇|该页)/
+
+
+/** agent 自述动作标记(子句含「已把/我来添加」类时,句中的「文档/说明」是操作对象非页面断言 —— 排除) */
+const AGENT_ACTION_CLAUSE_RE = /(已(把|将|经把)|(我|咱们)(来|已经?|先)?(把|将|添加|修改|删除|写入|创建|设置|生成)|write\(|read\(|set_focus)/
+
+/**
+ * 判定回复是否含「对页面内容的断言」(纯函数,精度优先):
+ * 子句级共现 —— 同一子句里页面指称词 × 断言句式,且该子句不是 agent 自述动作(「已把文档标题改成“说明”」
+ * 的「文档/说明」是操作对象,非「页面写了什么」的归属断言)。全文级 absence 声明豁免。
+ */
+export function detectPageAssertion(content: string): boolean {
+  const t = (content || '').trim()
+  if (!t) return false
+  if (PAGE_ABSENCE_DECL_RE.test(t)) return false
+  for (const clause of t.split(/[。!?!?;;\n]/)) {
+    if (!clause) continue
+    if (AGENT_ACTION_CLAUSE_RE.test(clause)) continue
+    if (PAGE_REFERENCE_RE.test(clause) && PAGE_ASSERTION_VERB_RE.test(clause)) return true
+  }
+  return false
+}
+
+/**
+ * 本轮是否零「页面依据」(纯函数):页面读类工具(read_page/dom_search/dom_info/get_dom/
+ * **take_screenshot** —— A2 口径:看过截图也算看过页面)任一被调即有依据。
+ * 与 S2 的交互(A4):占位替换不改变 counts → S3 判据不被 S2 掩盖/虚增。
+ */
+export function isZeroPageBasis(usage: TurnToolUsage): boolean {
+  for (const [name, n] of Object.entries(usage.counts)) {
+    if (n > 0 && PAGE_READ_TOOLS.has(name)) return false
+  }
+  return true
+}
+
+/** 页面断言零依据的回灌文案(先读再断言 + 事实清单 + 双出口) */
+export function buildPageAssertionFeedback(factSheet: string): string {
+  return [
+    '⚠️ 你的回复断言了页面/文档的内容(如「本页写了/原文提到…」),但本轮没有调用任何页面读取工具(read_page / dom_search / dom_info / get_dom / take_screenshot)。',
+    `${factSheet}`,
+    '页面内容可能与你的印象不同(宿主页面可能已变更),凭记忆断言页面内容不可靠。',
+    '请先 read_page 读取当前页面,基于读到的实际内容回答;',
+    '若页面确实没有相关内容:如实回答「本页没有提到」,不要编造;',
+    '若问题与页面内容无关:请去掉对页面内容的断言,按问题本身回答。',
+  ].join('\n')
 }

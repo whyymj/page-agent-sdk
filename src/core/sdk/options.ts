@@ -455,10 +455,12 @@ export interface ChatSdk {
   removeFocus(path: string): void
   /** 清除全部聚焦焦点(退出精修模式,恢复全量可操作范围) */
   clearFocus(): void
-  /** 挂「待发引用」(page-quote):下一条 send 附带并消费(空文本=清除;文本归一+截2000;内置 UI autoQuote 划词捕获与此共用状态) */
-  setQuote(text: string, source?: string): void
+  /** 挂「待发引用」(page-quote):下一条 send 附带并消费(空文本=清除;文本归一+截2000;内置 UI autoQuote 划词捕获与此共用状态);S4 第三参 DOM 锚点(归一后随引用注入 toLC 元信息行,docId/pageUrl 跨文档比对) */
+  setQuote(text: string, source?: string, anchor?: MessageQuote['anchor']): void
   /** 清除待发引用 */
   clearQuote(): void
+  /** S2 宿主变更通知:SPA 换文/路由切换/tab 切换后调用 —— 流内页面读结果置过期占位,跨轮注入一次性「重读当前页面」提示段(下一 invoke 的 system,轮末清除);幂等可重复调 */
+  notifyHostChange(opts?: { reason?: string }): void
   /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 主数据 + vfs + todos);需开启 checkpoint 选项,无可用 checkpoint 返回 false */
   restoreLastCheckpoint(): boolean
   /** 列出可用 checkpoint(回退点);需开启 checkpoint 选项,未开启返回空数组 */

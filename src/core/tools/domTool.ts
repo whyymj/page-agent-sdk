@@ -497,8 +497,8 @@ export const domInfoTool = tool(
 /** skill 名常量(装配侧判重用;变体工厂保持同名) */
 export const domInspectSkillName = 'dom-inspect'
 
-/** dom-inspect skill 变体工厂:withScreenshot/withDomEdit = 对应工具已装配才教(勿教不存在的工具) */
-export function makeDomInspectSkill(opts: { withScreenshot?: boolean; withDomEdit?: boolean } = {}): import('../harness/skills').SkillSpec {
+/** dom-inspect skill 变体工厂:withScreenshot/withDomEdit/withDataOps = 对应能力已装配才教(勿教不存在的工具/闭环) */
+export function makeDomInspectSkill(opts: { withScreenshot?: boolean; withDomEdit?: boolean; withDataOps?: boolean } = {}): import('../harness/skills').SkillSpec {
   return {
   name: domInspectSkillName,
   description: '页面 DOM 深度检视工具(dom_search 搜索元素 / dom_info 读内容·计算样式·事件绑定·几何)。定位元素、验证样式落地、排查交互绑定时加载',
@@ -530,8 +530,8 @@ export function makeDomInspectSkill(opts: { withScreenshot?: boolean; withDomEdi
     ] : []),
     '## 排障套路',
     ...(opts.withScreenshot
-      ? ['1. dom_search(mode:"text", query:按钮文案) 定位 → 2. 视觉验证 take_screenshot / 结构验证 dom_info(styles) → 3. 不符则改数据(get_dom 看结构对照)']
-      : ['1. dom_search(mode:"text", query:按钮文案) 定位 → 2. dom_info(styles:["display","background-color","pointer-events"]) 验证样式/点击性 → 3. 不符则改数据(get_dom 看结构对照)']),
+      ? ['1. dom_search(mode:"text", query:按钮文案) 定位 → 2. 视觉验证 take_screenshot / 结构验证 dom_info(styles) → 3. ' + (opts.withDataOps ? '不符则改数据(write 修正后再验证)' : '不符则如实报告差异(页面为真值;本页面无数据写通道,调整预期或告知用户)')]
+      : ['1. dom_search(mode:"text", query:按钮文案) 定位 → 2. dom_info(styles:["display","background-color","pointer-events"]) 验证样式/点击性 → 3. ' + (opts.withDataOps ? '不符则改数据(write 修正后再验证)' : '不符则如实报告差异(页面为真值;本页面无数据写通道,调整预期或告知用户)')]),
   ].join('\n'),
   tools: [() => [domSearchTool, domInfoTool]],
   }
@@ -545,8 +545,8 @@ export function makeDomInspectSkill(opts: { withScreenshot?: boolean; withDomEdi
 /** 页面内容分析 skill 名常量 */
 export const pageAnalysisSkillName = 'page-analysis'
 
-/** page-analysis skill 变体工厂(withScreenshot/withDomEdit = 对应工具已装配才教该路线) */
-export function makePageAnalysisSkill(opts: { withScreenshot?: boolean; withDomEdit?: boolean } = {}): import('../harness/skills').SkillSpec {
+/** page-analysis skill 变体工厂(withScreenshot/withDomEdit/withVfs = 对应工具已装配才教该路线/条目) */
+export function makePageAnalysisSkill(opts: { withScreenshot?: boolean; withDomEdit?: boolean; withVfs?: boolean } = {}): import('../harness/skills').SkillSpec {
   return {
     name: pageAnalysisSkillName,
     description: '页面内容分析策略:按问题类型选工具(引用原文/整页理解/定位/结构/视觉/页面操作),含分页探索纪律与基于页面实料的回答纪律。回答用户关于当前页面的问题时加载',
@@ -567,7 +567,7 @@ export function makePageAnalysisSkill(opts: { withScreenshot?: boolean; withDomE
       '1. **先窄后宽**:引用/焦点 → 所在小节 → 整页;每一步只取够回答当前问题的量',
       '2. **翻页不重复**:read_page 续读传 offset = 上次 offset + 返回 text 长度;不要回头重读已读区',
       '3. **定位失败换路**:selector 不命中 → dom_search text 模式换关键词;还不中 → read_page 扫小节标题再回来',
-      '4. **大结果在外存**:超大结果被移入 vfs 后用 vfs_read/vfs_grep 按需取,不要盲目重调',
+      ...(opts.withVfs ? ['4. **大结果在外存**:超大结果被移入 vfs 后用 vfs_read/vfs_grep 按需取,不要盲目重调'] : []),
       '## 回答纪律(页面问答的底线)',
       '- **基于页面实料**:答案须来自你读到的页面内容(引用原文/read_page/dom 工具结果),并在回答中点明出处小节/位置',
       '- **页面 ≠ 训练数据**:页面内容可能与你的先验知识不同,冲突时以页面为准;页面没写的不要编造',

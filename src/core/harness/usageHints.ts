@@ -28,6 +28,8 @@ type HintCapabilityFlags = {
   screenshot?: boolean
   /** DOM 编辑已装配(capabilities.domEdit + requires domInspect 归一;未装不教) */
   domEdit?: boolean
+  /** 宿主已注册 actions(A8:domInspect 行末「改数据→看渲染→触发动作」闭环只在两环都在时教) */
+  hasActions?: boolean
 }
 
 /** 高温阈值:≥0.7 视为创意/规划型子 agent */
@@ -37,6 +39,30 @@ const CREATIVE_TEMP = 0.7
 export interface BudgetHintOptions {
   /** 解析后的有效 prompt 软上限(resolvePromptSoftCap 产物;Infinity=不参与) */
   promptSoftCap?: number
+}
+
+/** token 预算提示:半程(≥50%)提醒档 */
+const TOKEN_HINT_TIER1 = 0.5
+/** token 预算提示:85% 告急档(两档升级,对齐轮次维度 3.43 设计) */
+const TOKEN_HINT_TIER2 = 0.85
+
+/**
+ * C1 token 预算提示文本(纯函数,host-integration-contract A1 修复形态)。
+ *
+ * 历史:原为一次性 `budgetHinted` 标志(每任务只注入一次)。但 augmentPrompt 每次模型调用会被调多次
+ * (toLC / replaceSystem / 轮次耗尽 wrap-up / inspect() 内省),只有部分调用的输出随请求发出 ——
+ * 一次性标志会被输出被丢弃的调用消费,提示从未稳定送达模型(2026-09-17 溯根,同族缺陷亦伤及集成方
+ * augmentSystem)。改纯函数:轮内幂等(usedTokens 轮内恒定,多次调用逐字节一致)、跨轮持续注入、
+ * 两档升级(半程提醒 / 85% 告急),零状态零消费。
+ */
+export function tokenBudgetHintText(usedTokens: number, softCap: number): string {
+  if (!Number.isFinite(softCap) || softCap <= 0 || usedTokens <= 0) return ''
+  if (usedTokens < softCap * TOKEN_HINT_TIER1) return ''
+  const k = Math.max(1, Math.round(usedTokens / 1000))
+  if (usedTokens >= softCap * TOKEN_HINT_TIER2) {
+    return `⏳ 预算告急:本任务累计约 ${k}K prompt tokens(已达 softCap 上限的 ${Math.round(TOKEN_HINT_TIER2 * 100)}%)。立即停止扩展性操作(新查询/重读/优化),完成手头最关键一步后基于已有工具结果给出结论,并如实汇报剩余未完成项。轮次预算吃紧时系统会另行注入轮次提示段。`
+  }
+  return `⏳ 预算提示:本任务累计约 ${k}K prompt tokens(已过 softCap 半程)。若已接近目标请收敛并给出总结;尚未接近请向用户汇报进度与剩余计划,勿默默继续。轮次预算吃紧时系统会另行注入轮次提示段。`
 }
 
 /**
@@ -78,7 +104,16 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
       }
       if (rc.subagent) hints.push('独立子任务可 spawn_agent 委派(过程隔离,不占主上下文):默认只读,需要子 agent 写数据时传 writablePaths(路径前缀白名单,越界 PATH_OUT_OF_SCOPE)。多个独立子任务可 spawn_agents 并行委派(各子互不通信,结论由你汇总;并行委派不可授写权限,写操作由你收尾执行)。')
       if (rc.inspectEnv) hints.push('排查页面环境(当前 URL/浏览器/视口/集成方调试变量)用 inspect_env——不传参返回环境摘要(location/navigator/viewport/document),传 key 读特定 window 属性(如 inspect_env({key:"appConfig"}) 读 window.appConfig)。改完数据看渲染、定位"为何没生效"时用它(只读,不改数据)。')
-      if (rc.domInspect) hints.push('回答用户关于当前页面/文档的问题时优先用 read_page({selector?,offset?,limit?}) 读页面正文纯文本(长文按 hasMore 分页续读;自动排除本对话框自身);需要页面结构(检查渲染是否生效/定位元素/辅助 UI 设计问答)再用 get_dom({selector?,depth?}) 读渲染后 DOM(结构化返回 tag/attrs/text/children,depth 控制深度防爆炸,只读)。配合宿主 actions(save_draft/publish 等)形成"改数据→截图/get_dom 看渲染→触发动作"闭环。')
+      if (rc.domInspect) {
+        // A8(host-integration-contract):行末「改数据→看渲染→触发动作」闭环按两环装配态门控 ——
+        // dataOps 关(文档站形态无 write 工具)或未配 actions 时,闭环的前两环/末环是幻影,勿教
+        const loopTail = hasDataOps && caps?.hasActions
+          ? '配合宿主 actions(save_draft/publish 等)形成"改数据→截图/get_dom 看渲染→触发动作"闭环。'
+          : hasDataOps
+            ? '改完数据可用截图/get_dom 查看渲染效果(本集成未注册宿主动作)。'
+            : ''
+        hints.push(`回答用户关于当前页面/文档的问题时优先用 read_page({selector?,offset?,limit?}) 读页面正文纯文本(长文按 hasMore 分页续读;自动排除本对话框自身);需要页面结构(检查渲染是否生效/定位元素/辅助 UI 设计问答)再用 get_dom({selector?,depth?}) 读渲染后 DOM(结构化返回 tag/attrs/text/children,depth 控制深度防爆炸,只读)。${loopTail}`)
+      }
       if ((caps as HintCapabilityFlags | undefined)?.screenshot) hints.push('视觉验证(看布局/样式/渲染效果像不像、对不对)用 take_screenshot({selector?, fullPage?}) 截图查看:selector 截指定元素、fullPage 截整页、默认当前视口;截图自动压缩投递(多模态直看图/纯文本模型走识图转述)。优先级:视觉问题先截图,结构/属性问题用 dom_info。')
       if ((caps as HintCapabilityFlags | undefined)?.domEdit) hints.push('修改宿主页面元素(高亮/改文案/调样式/插删移元素)用 dom_edit({patches:[{op,selector,...}],dryRun?}) 批量原子操作(op:set_text/set_html/set_attr/add_class/remove_class/set_style/insert/remove/move/highlight);selector 必须唯一命中(先 get_dom/dom_search 定位);改前自动快照,dom_restore 回滚最近一批;改动为会话临时态(刷新即失)——数据驱动页面改数据(write)不要改 DOM。')
       if (rc.draftWrite) {
@@ -120,19 +155,16 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
         hints.push('用户在选项里选了哪个,就按那个方案继续;选「拒绝」则停止并询问如何调整。')
       }
       // C1/C2 自感知预算提示(context-economy-phase2):数据源 state.loopProgress(createAgent 每轮更新);
-      // 3.43 起轮次维度移交 createAgent 核心(roundBudgetHintText:持续注入 + 两档升级,不受 budgetHinted
-      // 一次性约束 —— 2026-08-22 editor 诊断实证缺陷:token 触发(大上下文任务早触发)消耗掉唯一一次
-      // budgetHinted 机会,轮次维度(真正吃紧时)反被饿死从未注入);此处仅保留 token 维度 + 写失败提醒。
-      // token 提示每任务只注入一次(budgetHinted 闭包于 per-invoke progress 对象),写失败提醒随失败存续注入
+      // 3.43 起轮次维度移交 createAgent 核心(roundBudgetHintText:持续注入 + 两档升级)。
+      // token 维度 host-integration-contract A1(2026-09-17)同步改纯函数持续注入:原一次性 budgetHinted
+      // 会被「输出被丢弃的 augmentPrompt 调用」(toLC/内省)消费,提示从未稳定送达 —— 与集成方
+      // augmentSystem 一次性标志被吞是同族缺陷;写失败提醒随失败存续注入(不变)。
       const p = state?.loopProgress
       if (p) {
         const usedTokens = p.invokeUsage.prompt_tokens || p.invokeUsage.total_tokens
         const softCap = budget?.promptSoftCap ?? Number.POSITIVE_INFINITY
-        const nearTokens = softCap !== Number.POSITIVE_INFINITY && usedTokens >= softCap * 0.5
-        if (!p.budgetHinted && nearTokens && usedTokens > 0) {
-          p.budgetHinted = true
-          hints.push(`⏳ 预算提示:本任务累计约 ${Math.max(1, Math.round(usedTokens / 1000))}K prompt tokens(已过 softCap 半程)。若已接近目标请收敛并给出总结;尚未接近请向用户汇报进度与剩余计划,勿默默继续。轮次预算吃紧时系统会另行注入轮次提示段。`)
-        }
+        const tokenHint = tokenBudgetHintText(usedTokens, softCap)
+        if (tokenHint) hints.push(tokenHint)
         const failEntries = Object.entries(p.writeFailures).filter(([, n]) => n >= 2)
         if (failEntries.length) {
           const list = failEntries.map(([path, n]) => `${path || '(整体)'}×${n}`).join('、')

@@ -28,11 +28,13 @@ import { metricsOf, loadBaseline, saveBaseline, diffBaseline, BASELINE_PATH, ROO
 import { runSuite as runUispec } from './uispec-real-llm.mjs'
 import { runSuite as runRag } from './rag-demo-real-llm.mjs'
 import { runSuite as runParallel } from './parallel-delegation-real.mjs'
+import { runSuite as runDocsQa } from './docs-qa-real-llm.mjs'
 
 const REGISTRY = {
   uispec: { run: (only) => runUispec({ only }), out: '_real-llm-uispec.json' },
   rag: { run: (only) => runRag({ only }), out: '_real-llm-rag.json' },
   parallel: { run: () => runParallel(), out: '_real-llm-parallel.json' },
+  'docs-qa': { run: (only) => runDocsQa({ only }), out: '_real-llm-docs-qa.json' },
 }
 
 // ---- 参数解析:非数字 token = 套件名(缺省全部);数字 token = 场景过滤(对所选套件生效) ----

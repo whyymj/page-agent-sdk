@@ -141,8 +141,29 @@ export interface MessageQuote {
   text: string
   /** 来源描述(自动捕获 = 页面 title + 最近的在前标题;宿主 setQuote 可自定义) */
   source?: string
+  /** DOM 锚点(S4,4.18):选区起始块级祖先的可定位描述 + 块内偏移;toLC 注入为元信息行(是提示不是保证,失效回退 dom_search) */
+  anchor?: QuoteAnchor;
 }
-export declare function captureSelectionQuote(doc: { getSelection?(): { isCollapsed?: boolean; anchorNode?: Node | null; toString(): string } | null; title?: string; querySelectorAll?: (selector: string) => ArrayLike<Element> }): MessageQuote | null;
+/** 引用 DOM 锚点(host-integration-contract S4):captureSelectionQuote 自动捕获 / 宿主 setQuote 第三参自定义 */
+export interface QuoteAnchor {
+  /** 选区起始块级祖先的 CSS selector(id 优先,否则 tag:nth-of-type 链 ≤4 层;宿主可覆盖生成) */
+  selector?: string;
+  /** 块级祖先在其父容器元素中的序号(0 起) */
+  blockIndex?: number;
+  /** 选中文本在块内字符偏移(0 起;Range 可得时精确,否则首块片段 indexOf) */
+  offset?: number;
+  /** 选中文本首片段在块内的第几次出现(1 起;offset 对不齐时的消歧级) */
+  occurrence?: number;
+  /** 最近的在前标题文本(≤60 字;元信息行展示「小节」) */
+  heading?: string;
+  /** 最近的在前标题的 id 属性(存在时;宿主跳转锚点用) */
+  headingId?: string;
+  /** 宿主文档标识(如门户 URL hash 的 doc 参数;宿主 setQuote 注入,元信息行展示) */
+  docId?: string;
+  /** 捕获时页面 URL(SDK 侧自动记录;toLC 与当前 location.href 比对,不一致标「锚点属于另一文档」—— A3 防旧锚点) */
+  pageUrl?: string;
+}
+export declare function captureSelectionQuote(doc: { getSelection?(): { isCollapsed?: boolean; anchorNode?: Node | null; toString(): string } | null; title?: string; location?: { href?: string }; querySelectorAll?: (selector: string) => ArrayLike<Element> }): MessageQuote | null;
 
 export interface AgentMessage {
   role: 'user' | 'assistant' | 'system';
@@ -704,6 +725,12 @@ export interface AgentInfo {
   workingMemory?: WorkingMemory;
   /** 写驱动过期读失效会话累计(stale-read-invalidation;写后旧 read/query/search 结果被替换为占位的次数) */
   staleReadsInvalidated?: number;
+  /** S2 宿主变更失效会话累计(host-integration-contract;notifyHostChange 触发的页面读占位替换次数,与写驱动分列) */
+  hostReadsInvalidated?: number;
+  /** A9 收口门禁会话累计(stage → { retries 回灌, exhausted 耗尽放行 };page_assertion_gate 键存在性 = domInspect 装配反射) */
+  gates?: Record<string, { retries: number; exhausted: number }>;
+  /** A9 最近一次 system 段构成(段名/字节/超预算 drop 标记;集成方 augmentSystem/pageContext 段被 drop 时可观察) */
+  systemSegments?: Array<{ name: string; tokens: number; dropped: boolean }>;
   /** 模型调用重试会话累计(retry-visibility;启动/body 阶段自动重试次数 —— 环境故障 vs SDK 回归的第一判据) */
   llmRetries?: number;
   /** 模型调用最终失败会话累计(retry-visibility;重试耗尽/不可重试类终败次数) */
@@ -1282,6 +1309,11 @@ export interface ChatSdkOptions {
    * - ctx.data 每轮从 liveData() 取最新(setData 后自动同步),可据此动态算组件说明 / 部分 schema 描述
    * - 回调异常降级为跳过该段 + debug 日志(不崩 agent)
    * - 段排在内置段之后、用户 middleware 之前;不配 = 完全现状行为
+   * - ⚠️ 幂等契约(host-integration-contract S1):同一轮内该回调可能被调用多次(toLC / replaceSystem / 收口
+   *   综合 / inspect() 内省),只有随请求发出的那次生效 —— 回调必须**幂等**(同轮多次调用返回同一结果),
+   *   禁止在回调里推进状态/消费一次性标志(会被输出被丢弃的调用吞掉,警示永不送达模型)。跨轮状态(如
+   *   「用户已切换文档」锚点)请在整轮结束推进:`sdk.hook` 监听 `done`/`message_update` 事件推进,回调只读判断。
+   *   实测踩坑:一次性标志形态 → 警示逻辑正确执行但从未进入任何请求。
    */
   augmentSystem?: (ctx: SystemAugmentContext) => string | undefined;
   tools?: any[];
@@ -1550,9 +1582,11 @@ export interface ChatSdk {
   /** 清除全部聚焦焦点(退出精修模式,恢复全量可操作范围) */
   clearFocus(): void;
   /** 挂「待发引用」(page-quote):下一条 send 附带并消费(空文本=清除;文本归一+截2000;内置 UI autoQuote 划词捕获与此共用状态) */
-  setQuote(text: string, source?: string): void;
+  setQuote(text: string, source?: string, anchor?: MessageQuote['anchor']): void;
   /** 清除待发引用 */
   clearQuote(): void;
+  /** S2 宿主变更通知:SPA 换文/路由切换/tab 切换后调用 —— 流内页面读结果(read_page/dom_search/dom_info/get_dom/take_screenshot)置过期占位,并注入一次性「重读当前页面」提示段(下一 invoke 的 system,pin 段跨压缩,轮末清除);幂等可重复调 */
+  notifyHostChange(opts?: { reason?: string }): void;
   /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 主数据 + vfs + todos);需开启 checkpoint,无可用返回 false */
   restoreLastCheckpoint(): boolean;
   /** 列出可用 checkpoint(回退点);需开启 checkpoint,未开启返回空数组 */
@@ -1987,6 +2021,11 @@ export interface CreateAgentOptions {
   onLog?: (entry: DebugLog) => void;
   /** 子 agent 标记(子栈门禁据此豁免:子纯文本收口是正常形态) */
   __pgIsSubagent?: boolean;
+  /**
+   * S3 页面断言门禁装配开关(host-integration-contract 17b):createChatSdk 按 `capabilities.domInspect`
+   * 传入(仅页面问答形态装配 —— 数据槽场景「页面上已改成…」误伤路径从结构上切断);false/缺省 = 门禁层不进判定。
+   */
+  pageAssertionGate?: boolean;
   /** LLM 运行时切换回调(setLlm 后触发,供重解析模型能力 contextWindow/maxOutputTokens) */
   onLlmChange?: (newLlm: import('@langchain/core/language_models/chat_models').BaseChatModel) => void;
   /** 显式声明主模型是否多模态识图(声明 > 查表 > 缺省 false) */
@@ -2012,7 +2051,11 @@ export interface AgentInstance {
   /** 模型调用重试会话累计(环境故障 vs SDK 回归的第一判据) */
   getLlmRetries(): number;
   getLlmCallFailures(): number;
-  /** 会话切换/重置时清零(stale-read + 重试/终败三计数) */
+  /** A9 收口门禁会话累计(page_assertion_gate 键存在性 = S3 domInspect 装配反射) */
+  getGateStats(): Record<string, { retries: number; exhausted: number }>;
+  /** A9 最近一次 system 段构成(dropped = 超预算被 drop) */
+  getLastSystemSegments(): Array<{ name: string; tokens: number; dropped: boolean }>;
+  /** 会话切换/重置时清零(stale-read + 重试/终败 + 门禁计数) */
   resetSessionCounters(): void;
   /** 运行时重设用户工具(与中间件贡献工具合并) */
   setTools(userTools: import('@langchain/core/tools').StructuredToolInterface[]): void;
@@ -2306,8 +2349,11 @@ export interface LoopProgress {
   invokeUsage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
   /** 写工具同路径连续失败计数(path → 次数;写成功清零) */
   writeFailures: Record<string, number>;
-  /** 预算提示是否已注入(每任务一次,防每轮复读刷存在感) */
-  budgetHinted: boolean;
+  /**
+   * @deprecated 4.18 起恒不写入:token 预算提示已改纯函数持续注入(一次性标志会被输出被丢弃的
+   * augmentPrompt 调用消费,提示从未稳定送达)。保留至下个 major 物理移除,请勿读写。
+   */
+  budgetHinted?: boolean;
 }
 
 /** Harness 运行态(中间件维护 state 字段,last-writer 合并;Deep Agents 的 agent state 同位物) */
@@ -2403,7 +2449,11 @@ export interface Middleware {
   name: string;
   /** 该中间件贡献的工具,合并进工具集 */
   tools?: import('@langchain/core/tools').StructuredToolInterface[];
-  /** 追加到 system prompt 的段(每轮模型调用前收集渲染) */
+  /** 追加到 system prompt 的段(每轮模型调用前收集渲染)。
+   *  ⚠️ 幂等契约(host-integration-contract S1):同一轮内可能被调用多次(toLC / replaceSystem / 收口综合 /
+   *  inspect() 内省),只有随请求发出的那次生效 —— 必须**幂等**(同轮多次调用返回同一结果),禁止在其中
+   *  推进状态或消费一次性标志(会被输出被丢弃的调用吞掉,内容永不送达模型)。跨轮状态请在轮边界推进
+   *  (beforeModel / afterAgent / sdk.hook 事件)。 */
   augmentPrompt?: (state: HarnessState) => string | undefined;
   /** 构建上下文前压缩历史消息(summarization 中间件用,链式) */
   compressInput?: (messages: AgentMessage[]) => Promise<{ messages: AgentMessage[]; stats?: unknown }> | AgentMessage[];

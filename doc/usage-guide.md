@@ -1703,7 +1703,15 @@ createChatSdk({
 
 **宿主 API(headless 自建 UI 同样可用)**:`sdk.setQuote(text, source?)` 挂待发引用(下一条 send 附带并消费;空文本=清除;归一+截 2000 字符)/ `sdk.clearQuote()`;`send(msg, { quote })` 显式传入(优先且不消费待发);headless 划词捕获用导出的 `captureSelectionQuote(document)`。**语义细节**:引用是**消息级**上下文(不进 system 段,不跨消息残留);排队路径(生成中再发)与快捷指令不消费待发引用(与图片同口径,chip 留给下一条手动消息);纯引用不可发送(引用是问题语境,须有问题本体);切/重置会话不清待发引用(输入区态,同输入框草稿)。来源自动推导 = 页面 title + 选区上方最近的 h1-h6 标题。
 
+**引用 DOM 锚点(S4,4.18)**:划词捕获(`captureSelectionQuote` / UI autoQuote)会一并记录**选区位置锚点** —— 块级祖先 selector(`#content > p:nth-of-type(3)` 形态)/ 块内字符偏移 / 重复短语出现序号 / 最近在前标题 / 捕获时页面 URL。发给 LLM 的引用块后附元信息行:`[位置: #content > p:nth-of-type(3) · 小节「0.1 概述」](偏移 12, 第 2 次出现)` —— agent 可直接 `read_page({ selector })` 读该区域定位到句,不必 `dom_search` 盲搜。**锚点是提示不是保证**:换文重渲染后 selector 可能失效,agent 读失败会回退 dom_search 检索;捕获时与发送时页面 URL 不一致(SPA 切文)自动标「⚠ 锚点属于另一文档」引导按当前页面重检。宿主自定义:`sdk.setQuote(text, source, anchor)` 第三参(anchor 全字段可选,`docId` 可带宿主文档标识进元信息行)。
+
 **read_page 细节**:默认 `limit: 4000`(上限 20000);`hasMore: true` 时下次传 `offset += 本次 text 长度` 续读;返回 JSON `{ text, totalChars, offset, hasMore, container }`;大结果自动走 vfs 外存(超阈值不占上下文)。智能容器按优先级逐个探测(article → main → [role=main] → .content/.article-content/.post-content/.markdown-body/#content → body),显式 `selector` 覆盖。
+
+**宿主变更通知(`sdk.notifyHostChange()`,4.18)**:SPA 场景换文/路由切换/tab 切换**不刷新页面**,此前读到的页面内容对 agent 已过期 —— 宿主在变更发生时调用 `sdk.notifyHostChange({ reason?: string })`(reason 如 `'用户切换到《数据结构》'` 进占位与提示文案):
+- **流内生效**:正在运行的对话轮里,页面读类工具结果(`read_page`/`dom_search`/`dom_info`/`get_dom`/`take_screenshot`)在下一轮模型调用前被替换为过期占位(引导重读;通知后的新读不受影响);数据槽 `read`/`query_data`/`search_data` 结果**不受影响**(页面变更不波及数据槽)。
+- **跨轮生效**:注入一次性「宿主页面已变更,须重读当前页面」提示段(下一 invoke 的 system,pin 段跨压缩存活,整轮结束自动清除 —— 防模型凭上一轮答文的记忆作答)。
+- 幂等可重复调(占位是替换不叠加;reason 去重封顶 5 条);观察面 `inspect().hostReadsInvalidated` 会话累计 + debugLogs `host_change_notified`/`host_read_invalidated` 留痕。
+- 不调用则零行为(默认无任何开销);学习门户等单页文档站建议在路由切换 handler 里调一次。
 
 **完整示例**:`examples/docs-demo`(静态学习文章 + 划词引用 + read_page 翻页答问 + 页面锚点),可作你网站的集成模板。隐私注记:`autoQuote` 默认关 —— 自动把页面划词发给 LLM 属隐私敏感行为,由集成方显式开启并告知用户。
 
@@ -1818,6 +1826,8 @@ const injectCtx: Middleware = {
   augmentPrompt: () => `当前时间:${new Date().toLocaleString('zh-CN')}\n域名:${location.hostname}`,
 }
 ```
+
+> **⚠️ `augmentPrompt` / `augmentSystem` 幂等契约(4.18)**:同一轮内会被调用**多次**(起始拼装 / 每轮重渲染 / 收口综合 / `inspect()` 内省),只有随请求发出的那次生效 —— 回调必须**幂等**(同轮多次调用返回同一结果),禁止在其中推进状态或消费一次性标志。跨轮状态(如「用户已切换文档」警示锚点)请在整轮结束推进(`sdk.hook` 监听 `done`/`message_update` 推进,回调只读判断)。实测踩坑:一次性标志被输出丢弃的调用消费 → 警示逻辑正确执行但从未进入任何请求。详见 `doc/system-prompt.md` §5④。
 
 **例子 3:拦截写操作**
 

@@ -98,14 +98,14 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
           onDropElement: dialogCfg.onDropElement,  // 拖拽宿主元素聚焦入口(ui-quick-wins Q4):事件出口,映射归宿主
           // 划词引用(page-quote):pendingQuote Ref 投射(内置 chip 与宿主 sdk.setQuote 共用)+ autoQuote 开关
           pendingQuote: core.pendingQuote,
-          onSetQuote: (q: import('../types').MessageQuote) => core.setQuote(q.text, q.source),
+          onSetQuote: (q: import('../types').MessageQuote) => core.setQuote(q.text, q.source, q.anchor),
           onClearQuote: () => core.clearQuote(),
           autoQuote: dialogCfg.autoQuote === true,
           selectionMenu: dialogCfg.selectionMenu === true,
           // 浮动菜单「引用到对话」:挂引用 + 打开对话框(抽屉隐藏态也唤起)+ 聚焦输入(完成「加入对话框」闭环)。
           // 聚焦延后:cs-hidden 的 visibility 走 transition(0.3s),过渡期内元素不可聚焦(focus 静默失效)
           onSelectionQuote: (q: import('../types').MessageQuote) => {
-            core.setQuote(q.text, q.source)
+            core.setQuote(q.text, q.source, q.anchor)
             revealDialog()
             setTimeout(() => {
               ;(mountEl.querySelector?.('.chat-input') as HTMLElement | null)?.focus()
@@ -211,7 +211,7 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
       // 开抽屉」流(按钮 @mousedown.prevent 保选区);「选中 → 点输入框」流由 ChatInput pointerdown 捕获
       if (dialogCfg.autoQuote === true && typeof document !== 'undefined') {
         const q = captureSelectionQuote(document)
-        if (q) core.setQuote(q.text, q.source)
+        if (q) core.setQuote(q.text, q.source, q.anchor)
       }
     },
   }

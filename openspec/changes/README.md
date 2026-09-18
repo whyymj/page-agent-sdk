@@ -1,6 +1,8 @@
 # 活跃 Changes 优先级索引
 
-> **当前活跃 change:1(2026-09-17 更新;take-screenshot/dom-edit 已归档不计)**:
+> **当前活跃 change:2(2026-09-17 更新;take-screenshot/dom-edit 已归档不计)**:
+>
+> **[`2026-09-17-host-integration-contract`](./2026-09-17-host-integration-contract/)**(SDK,**P1 集成契约与页面问答可靠性**,🔨 **代码/文档/测试全落地(2026-09-18,33/35 任务勾;待收尾 = 真 LLM 误伤率校准 + 门户真机复验 + A10 基线)**;来源 = 用 4.17.1 给自建文档站(`Obsidian/learning`)加「选段提问 + agent 自查上下文 + 不猜测」助手的**真集成实践**):①`augmentPrompt` **幂等契约** + A1 真 bug 修复(token 预算提示从未稳定送达 → 纯函数持续注入;memoize 实施考察**否决留痕**:inspect 实时视图契约冲突 + 请求路径每轮单拼零收益)②**宿主变更驱动读失效** `sdk.notifyHostChange()`(流内页面读占位 + 一次性重读 pin 段;`inspect().hostReadsInvalidated`)③**页面断言门禁**(三要素 AND,仅 domInspect 装配;`PAGE_ASSERTION_GATE_EXHAUSTED`)④**引用 DOM 锚点** `MessageQuote.anchor`(selector/偏移/序号/标题/pageUrl 跨文档标警示;`setQuote` 第三参)⑤A8 三处「勿教不存在工具」门控补齐 + A9 `inspect().gates`/`systemSegments` 可观测性。不做:服务端代理/RAG 语料问答/标注持久化。体积与 markdown 依赖去重入 deferred。
 >
 > **[`2026-09-17-dom-edit`](./archive/2026-09-17-dom-edit/)**(SDK,**P2 宿主页面写通道**,✅ **全 10 任务完成随 4.17.0 发布归档 2026-09-17**(commit 4405df7);用户点名「DOM 属性/内容/增删改查/层级嵌套修改 + 集成进 skill」):`capabilities.domEdit`(opt-in,requires domInspect)装配 `dom_edit`(批量原子:set_text/set_html/set_attr/add_class/set_style/insert/remove/move/highlight;唯一 selector 纪律/危险闸/script·on*·javascript: 拒/SDK 自身 DOM 保护/快照 256KB 上限)+ `dom_restore`(批快照回滚栈 20);与数据写通道正交(数据驱动页面仍走 write);改动会话临时态;skill 集成 dom-inspect/page-analysis/usageHints 全随装配态。
 >

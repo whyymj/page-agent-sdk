@@ -128,8 +128,12 @@ export interface LoopProgress {
   invokeUsage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
   /** 写工具同路径连续失败计数(path → 次数;写成功清零) */
   writeFailures: Record<string, number>
-  /** 预算提示是否已注入(每任务一次,防每轮复读刷存在感) */
-  budgetHinted: boolean
+  /**
+   * @deprecated 4.18 起恒不写入:token 预算提示已改纯函数持续注入(tokenBudgetHintText,
+   * host-integration-contract A1 —— 一次性标志会被输出被丢弃的 augmentPrompt 调用消费,提示从未稳定送达)。
+   * 字段保留至下个 major 物理移除,请勿读写。
+   */
+  budgetHinted?: boolean
 }
 
 export function createInitialState(): HarnessState {

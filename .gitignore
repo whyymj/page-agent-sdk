@@ -50,3 +50,4 @@ local/
 test.txt
 test.json
 page-agent-diagnostics-*.json
+*.tgz

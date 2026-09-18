@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-3582%20asserts-brightgreen.svg)](#self-tests)
+[![tests](https://img.shields.io/badge/self%20tests-3698%20asserts-brightgreen.svg)](#self-tests)
 
 ---
 
@@ -30,6 +30,7 @@ Starting point for both humans and AI agents (Claude Code / Cursor): find the fe
 | RAG / MCP tools | [Capability packs](#createchatsdk-options-cheat-sheet) (`createRagSubagent`, `mcp`) · `examples/rag-demo` |
 | Let the AI see images (paste/drop/pick) | [options cheat sheet](#createchatsdk-options-cheat-sheet) (`images` / `llm.vision`) · [usage-guide §6.17](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md#617-image-input-multimodal-direct--captioning-bypass) · `examples/images-demo` |
 | Docs-site QA (quote a selection + read the current page) | [options cheat sheet](#createchatsdk-options-cheat-sheet) (`dialog.autoQuote` / `capabilities.domInspect` + `pageContext`) · [usage-guide §6.20](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md#620-text-selection-quoting--page-qa-page-quote--read_page--pagecontext) · `examples/docs-demo` |
+| Host-page QA reliability (SPA doc-switch invalidation / no-guessing gate / quote DOM anchor) | `sdk.notifyHostChange({reason})` on route change · page-assertion gate auto-mounted with `domInspect` · quote anchor captured with selections (`setQuote` 3rd arg) · [usage-guide §6.20](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md#620-text-selection-quoting--page-qa-page-quote--read_page--pagecontext) |
 | Customize UI (theme / icons / i18n / button labels) | [`DialogConfig` fields](#dialogconfig-fields) · [usage-guide §6.15](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md#615-ui-customization--i18n-icons--theme--language--message-overrides-317321) · `examples/i18n-demo` |
 | Sessions / persistence (IndexedDB) | [options cheat sheet](#createchatsdk-options-cheat-sheet) (`storage`/`session`) · `examples/page-demo` (`storage:'indexed'` + built-in history dropdown) |
 | Long conversations / big JSON (context & compression) | [usage-guide §6.8](https://github.com/whyymj/page-agent-sdk/blob/master/doc/usage-guide.en.md) · [context-management doc](https://github.com/whyymj/page-agent-sdk/blob/master/doc/context-management.md) |

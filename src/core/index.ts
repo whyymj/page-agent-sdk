@@ -129,7 +129,7 @@ export type { StorageConfig, StorageBackendType, SessionStore, SessionMeta, Sess
 export { createSkillStore } from './backends/skillStore'
 export type { SkillStore, SkillStoreConfig, PersistedSkill } from './backends/skillStore'
 // 通用消息 / 上下文类型
-export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, SdkEvent, SdkEventHandler, TokenUsage, ToolStep, ToolStepView, ToolStepViewFn, BatchResult, BatchProgress, AgentImage, ImagesConfig, MessageQuote } from './types'
+export type { AgentMessage, AgentConfig, AgentState, StreamEvent, StreamHandler, SdkEvent, SdkEventHandler, TokenUsage, ToolStep, ToolStepView, ToolStepViewFn, BatchResult, BatchProgress, AgentImage, ImagesConfig, MessageQuote, QuoteAnchor } from './types'
 export type { Focus, Mission, WorkingMemory, HarnessState, Todo, TodoStatus, VfsFile, SkillMeta, SummarizationEvent, LoopProgress } from './harness/state'
 export type { AgentInfo, ToolInfo, SkillInfo, DataInfo, SubagentInfo } from './types'
 export type { ContextManagerOptions, CompressionStats } from './composables/useContextManager'

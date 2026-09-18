@@ -152,6 +152,16 @@ Project-level docs (in the repo, not bundled in this skill):
 
 ## Common pitfalls
 
+- **`augmentSystem` / custom `augmentPrompt` must be idempotent within a round** (4.18, most likely to bite): the hook is called **multiple times per round** (initial assembly / per-round re-render / wrap-up synthesis / `inspect()` introspection) and only the invocation whose output ships with the request takes effect. A one-shot flag ("inject warning once") gets consumed by a discarded invocation → your content **never reaches the model** even though the callback ran. Correct pattern: advance cross-round state at round end and keep the callback read-only:
+  ```js
+  let answeredDocId = null           // anchor, advanced at round end only
+  sdk.hook((e) => { if (e.type === 'done' || e.type === 'message_update') answeredDocId = currentDocId() })
+  createChatSdk({ /*...*/ augmentSystem: () => {
+    const id = currentDocId()
+    if (answeredDocId === null || id === null || answeredDocId === id) return ''   // read-only check
+    return `⚠️ 用户已切换到《${currentTitle()}》,此前读取结果已失效,回答前必须重读当前文档。`
+  } })
+  ```
 - **DeepSeek/OpenAI 400 `missing field tool_call_id`**: `ToolMessage` must use snake_case `tool_call_id` (not camelCase). Already handled internally; only relevant if writing custom tool plumbing.
 - **ChatOpenAI params**: use `apiKey` (not `openAIApiKey`), `model` (not `modelName`); `baseUrl` goes via `configuration.baseURL`.
 - **MCP injects 0 tools on first cold visit**: `vite.config.ts` `optimizeDeps.include` pre-declares the SDK sub-paths; if you fork the config, keep those entries or the first MCP page load injects nothing (reload fixes it).

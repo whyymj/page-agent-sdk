@@ -108,5 +108,29 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:context-economy] token 预算提示持续注入(A1:host-integration-contract,修前一次性 budgetHinted 从未稳定送达)')
+  {
+    // promptSoftCapTokens=1000:半程 500 / 告急 850。
+    // 调用1(usage=0)无提示 → 调用1 usage 600 累计 → 调用2 注入「预算提示」(600≥500)→ usage 累计 1300
+    // → 调用3 升级「预算告急」(1300≥850)。修前(budgetHinted 一次性):调用3 提示被消费不再注入 → 本条必红
+    const model = new StubChatModel(
+      [{ toolCalls: [{ name: 'echo', args: { msg: 'x' } }], usage: { prompt_tokens: 600 } },
+       { toolCalls: [{ name: 'echo', args: { msg: 'x' } }], usage: { prompt_tokens: 700 } },
+       { text: '收口' }],
+    )
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-token-hint', storage: 'memory', llm: model,
+      capabilities: MIN_CAPS, tools: [echo], contextOptions: { promptSoftCapTokens: 1000 }, autoTitle: false,
+    })
+    await sdk.mount()
+    await sdk.send('跑任务')
+    const sys = model.systemPrompts
+    assert(!sys[0]?.includes('预算提示'), `首次调用(usage 尚为 0)无 token 提示段`)
+    assert(sys[1]?.includes('预算提示') && !sys[1].includes('告急'), `累计过半程(600≥500)→ system 注入「预算提示」提醒档,实际:${sys[1]?.slice(-100)}`)
+    assert(sys[2]?.includes('预算告急'), `累计 ≥85%(1300≥850)→ 升级「告急」档且持续注入(修前一次性标志被消费,此条必红),实际:${sys[2]?.slice(-100)}`)
+    assert(!sdk.messages.some((m) => (m.content || '').includes('预算提示')), 'token 提示段不进历史消息(只影响本轮请求 system 重渲染)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

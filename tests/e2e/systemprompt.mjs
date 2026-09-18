@@ -187,5 +187,48 @@ export async function run() {
     sdk.unmount()
   }
 
+  console.log('[e2e:systemprompt] augmentPrompt 契约(S1):每轮重渲染进请求 + 内省实时视图 + 内省零副作用')
+  {
+    // 探针中间件:轮计数在 beforeModel(轮边界)推进,augmentPrompt 纯渲染 —— S1 契约的合法形态。
+    // 锁三点:① 每轮 replaceSystem 重渲染(probe:N 随轮推进进实际请求);② 工具 handler 内 sdk.inspect()
+    // 是实时视图(反映当前轮状态,setData/快照后同理 —— memoize 否决的直接依据);③ 内省不污染已发出的请求形态。
+    let probe = 0
+    let midRoundInspects = []
+    const probeMw = {
+      name: 'sysProbe',
+      beforeModel: (s) => { probe += 1; return s },
+      augmentPrompt: () => `probe:${probe}`,
+    }
+    const { StubChatModel } = await import('./_stub-model.mjs')
+    const { defineTool: dt } = await import('./_helpers.mjs')
+    const model = new StubChatModel([
+      { toolCalls: [{ name: 'probe_inspect', args: {} }] },
+      { toolCalls: [{ name: 'probe_inspect', args: {} }] },
+      { text: 'done' },
+    ])
+    let sdkRef = null
+    const probeTool = dt({
+      name: 'probe_inspect',
+      description: '轮中触发内省(测试用)',
+      schema: z.object({}),
+      handler: async () => { midRoundInspects.push(sdkRef?.inspect()?.systemPrompt ?? ''); return 'ok' },
+    })
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-sys-contract', storage: 'memory', llm: model,
+      capabilities: MIN_CAPS, tools: [probeTool], middleware: [probeMw], autoTitle: false,
+    })
+    sdkRef = sdk
+    await sdk.mount()
+    await sdk.send('跑')
+    const sys = model.systemPrompts
+    assert(sys[0]?.includes('probe:1') && sys[1]?.includes('probe:2') && sys[2]?.includes('probe:3'),
+      `① 每轮重渲染:三轮实际请求分别含 probe:1/2/3,实际 ${sys.map((p) => (p.match(/probe:\d+/) || ['?'])[0]).join(',')}`)
+    assert(midRoundInspects.length === 2 && midRoundInspects[0]?.includes('probe:1') && midRoundInspects[1]?.includes('probe:2'),
+      `② 轮中内省实时视图:两轮工具期 inspect().systemPrompt 分别反映当轮 probe:1/2,实际 ${midRoundInspects.map((p) => (p.match(/probe:\d+/) || ['?'])[0]).join(',')}`)
+    const finalInspect = sdk.inspect().systemPrompt
+    assert(finalInspect.includes('probe:3'), `循环结束后 inspect() 反映末轮状态(实时,非陈旧缓存),实际 ${(finalInspect.match(/probe:\d+/) || ['?'])[0]}`)
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

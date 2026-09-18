@@ -34,6 +34,9 @@ import {
   buildStatusQueryFeedback,
   extractEvidencePaths,
   isEvidenceCovered,
+  detectPageAssertion,
+  isZeroPageBasis,
+  buildPageAssertionFeedback,
   type TurnToolUsage,
 } from './actionGate'
 import { detectIncompleteFinish, buildGateFeedback } from './todos'
@@ -49,15 +52,17 @@ export interface GateChainState {
   zeroToolRetries: number
   /** evidence 审计门禁预算(evidence-audit-gate A2;独立池 —— 失败域是记账,不与谎报域互饿) */
   auditRetries: number
+  /** 页面断言门禁预算(S3 host-integration-contract;独立池 —— 页面问答域与数据谎报域不互饿) */
+  pageAssertionRetries: number
 }
 
 export function createGateChainState(): GateChainState {
-  return { transitionalRetries: 0, completionRetries: 0, zeroToolRetries: 0, auditRetries: 0 }
+  return { transitionalRetries: 0, completionRetries: 0, zeroToolRetries: 0, auditRetries: 0, pageAssertionRetries: 0 }
 }
 
 /** 回灌型门禁结果(主循环:push HumanMessage(feedback) + pendingFormatRetry + continue) */
 export interface GateFeedback {
-  stage: 'transitional_retry' | 'completion_gate' | 'evidence_audit_gate' | 'zero_tool_gate' | 'status_query_gate'
+  stage: 'transitional_retry' | 'completion_gate' | 'evidence_audit_gate' | 'zero_tool_gate' | 'status_query_gate' | 'page_assertion_gate'
   attempt: number
   feedback: string
   /** debugLogs 附加字段(如 factSheet/pending/rounds;content 由主循环统一附) */
@@ -66,7 +71,7 @@ export interface GateFeedback {
 
 /** observable 型结果(主循环:onEvent 留痕,不 continue) */
 export interface GateObservable {
-  code: 'ZERO_TOOL_GATE_EXHAUSTED' | 'AUDIT_GATE_EXHAUSTED' | 'COMPLETION_GATE_EXHAUSTED'
+  code: 'ZERO_TOOL_GATE_EXHAUSTED' | 'AUDIT_GATE_EXHAUSTED' | 'COMPLETION_GATE_EXHAUSTED' | 'PAGE_ASSERTION_GATE_EXHAUSTED'
   message: string
   context: Record<string, unknown>
 }
@@ -92,6 +97,12 @@ export interface RunFinishGatesInput {
   sessionWritePaths?: Iterable<string>
   /** invoke 起点的 todos 快照(id → {status, content});审计面 = 本 invoke 内翻转为 completed 的项(含 content 比对防 id 复用误判);缺省 = 空集 */
   todosStatusAtStart?: Map<string, { status: string; content: string }>
+  /**
+   * S3 页面断言门禁装配开关(host-integration-contract 17b,用户拍板 2026-09-17):
+   * 仅 `capabilities.domInspect === true` 时 createChatSdk 传入 true —— 数据槽场景「页面上已改成…」的
+   * 误伤路径从结构上切断;false/缺省 = 该层完全不进判定(同未装配)。
+   */
+  pageGate?: boolean
 }
 
 /** 各层预算上限(原 createAgent 常量平移;≤2 = 一次回灌即收敛,两次仍异常则放行强收) */
@@ -99,6 +110,7 @@ const MAX_TRANSITIONAL_RETRIES = 2
 const MAX_COMPLETION_RETRIES = 2
 const MAX_ZERO_TOOL_RETRIES = 2
 const MAX_AUDIT_RETRIES = 2
+const MAX_PAGE_ASSERTION_RETRIES = 2
 
 /**
  * 收口门禁链主入口(纯判定 + 预算自增;不触碰 messages/日志 —— 副作用归主循环)。
@@ -210,6 +222,22 @@ export function runFinishGates(i: RunFinishGatesInput): GateOutcome {
     return { kind: 'feedback', gate: { stage: 'status_query_gate', attempt: g.zeroToolRetries, feedback: buildStatusQueryFeedback(factSheet), logData: { factSheet } } }
   }
 
+  // 4.5 page-assertion-zero-basis-gate(S3,host-integration-contract):回复断言页面内容 × 本轮零页面依据
+  //     (含 take_screenshot,A2)× 非诚实未做/不存在声明(「本页没有提到」是正确行为)→ 先读再断言。
+  //     三要素 AND 宁漏勿误;独立预算池(页面问答域);子栈不装(主栈专属段之下);问号收尾豁免(征询非断言)。
+  //     仅 pageGate=true(domInspect 装配范围)时进判定 —— 数据槽场景 structurally 不进这条判定(17b)。
+  //     与 S2 的交互(A4):S2 占位替换不改变 turnUsage.counts → 判据输入不被掩盖;S2 静默替换不占本池预算。
+  if (i.pageGate === true
+    && g.pageAssertionRetries < MAX_PAGE_ASSERTION_RETRIES
+    && isZeroPageBasis(i.turnUsage)
+    && detectPageAssertion(content)
+    && !declaresNoAction(content)
+    && !endsWithQuestion) {
+    g.pageAssertionRetries += 1
+    const factSheet = buildTurnFactSheet(i.turnUsage, i.todos, i.isWriteToolByName)
+    return { kind: 'feedback', gate: { stage: 'page_assertion_gate', attempt: g.pageAssertionRetries, feedback: buildPageAssertionFeedback(factSheet), logData: { factSheet } } }
+  }
+
   // 5. 预算耗尽仍零工具收尾:observable 留痕(谎报放行恰是最该让集成方知晓的时刻,不能零感知)。
   //    诚实未做声明同样豁免(与第 3 层同口径):拒绝后如实收口不该被误报 EXHAUSTED;
   //    句尾问号豁免(B2,flow 审计 #1,2026-09-09):回灌 ×2 后模型改为向用户征询(「要我继续修改吗?」)
@@ -223,6 +251,24 @@ export function runFinishGates(i: RunFinishGatesInput): GateOutcome {
       obs: {
         code: 'ZERO_TOOL_GATE_EXHAUSTED',
         message: '操作指令经 2 次回灌后仍以零工具纯文本收尾(疑似谎报完成),已放行;最终回复可能不实',
+        context: { factSheet: buildTurnFactSheet(i.turnUsage, i.todos, i.isWriteToolByName) },
+      },
+    }
+  }
+
+  // 5.5 页面断言门禁预算耗尽(S3):2 次回灌后仍零依据断言页面内容 → observable 留痕放行(谎报面与
+  //     zero_tool 同理:恰是集成方最该知晓的时刻)。诚实不存在声明豁免(「本页没有提到」反复出现是正确行为)
+  if (i.pageGate === true
+    && g.pageAssertionRetries >= MAX_PAGE_ASSERTION_RETRIES
+    && isZeroPageBasis(i.turnUsage)
+    && detectPageAssertion(content)
+    && !declaresNoAction(content)
+    && !endsWithQuestion) {
+    return {
+      kind: 'observable',
+      obs: {
+        code: 'PAGE_ASSERTION_GATE_EXHAUSTED',
+        message: '页面断言经 2 次回灌后仍以零页面读取收尾(疑似凭记忆编造页面内容),已放行;最终回复中的页面内容断言可能不实',
         context: { factSheet: buildTurnFactSheet(i.turnUsage, i.todos, i.isWriteToolByName) },
       },
     }

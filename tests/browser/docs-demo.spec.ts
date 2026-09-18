@@ -66,6 +66,31 @@ test.describe('划词引用 page-quote(docs-demo)', () => {
     await expect(page.locator('[data-test="quote-chips"] .quote-chip')).toHaveCount(0)
   })
 
+  test('S4 引用 DOM 锚点:UI 捕获链 → 请求体含 [位置: 元信息行(修前 mountChatDialog 三捕获点丢 anchor)', async ({ page }) => {
+    await page.goto('/examples/docs-demo/')
+    await page.waitForSelector('.chat-dialog', { state: 'attached' })
+    await mockLlm(page, [{ text: '这段在讲注意力' }])
+    const bodies = await recordLlmBodies(page)
+
+    await selectArticleText(page, '注意力机制的核心思想')
+    await openDrawer(page) // show() 捕获 → core.setQuote 第三参带 anchor(host-integration-contract S4)
+    await expect(page.locator('[data-test="quote-chips"] .quote-chip')).toHaveCount(1)
+    await fillInput(page, '这段什么意思')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+
+    const lastUser = JSON.parse(bodies.at(-1) ?? '{}').messages?.filter((m: { role: string }) => m.role === 'user').at(-1)
+    const content = String(lastUser?.content)
+    // 元信息行:selector + 最近标题 + Range 偏移(docs-demo 文章结构 .docs-article 下 p;selector 含容器链)
+    expect(content).toMatch(/\[位置: [^\]]*p[^\]]*· 小节「[^」]+」\]\(偏移 \d+(, 第 \d+ 次出现)?\)/)
+    // 引用块本体在前缀位置不变(元信息行是引用块后的追加,不改既有形态)
+    expect(content).toMatch(/^\[引用原文\(来源:[^\n]+\)\]\n"""\n注意力机制/)
+    // 消息侧 quote.anchor 持久化(结构化字段,非拼进 content)
+    const quote = await page.evaluate(() => (window as unknown as { __sdk?: { messages: Array<{ quote?: { anchor?: unknown } }> } }).__sdk?.messages.find((m) => m.quote)?.quote)
+    expect(quote?.anchor).toBeTruthy()
+    expect(String((quote?.anchor as { selector?: string })?.selector ?? '')).toContain('p')
+  })
+
   test('chip ✕ 删除 → 再选 → 点输入框(pointerdown 捕获)重挂', async ({ page }) => {
     await page.goto('/examples/docs-demo/')
     await page.waitForSelector('.chat-dialog', { state: 'attached' })

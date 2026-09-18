@@ -25,6 +25,7 @@ export interface ModelCaps {
  */
 const MODEL_TABLE: Array<{ pattern: RegExp; caps: ModelCaps }> = [
   { pattern: /deepseek-v4/i, caps: { contextWindow: 1048576, maxOutputTokens: 393216, thinking: true } }, // v4:1M 上下文 / 384K 输出;官方默认开思考(实测响应带 reasoning_content)
+  { pattern: /deepseek-flash/i, caps: { contextWindow: 1048576, maxOutputTokens: 393216, thinking: true } }, // 官方 V4 flash 档(2026-09-18 实测:270K token prompt 200 OK + API 自报输出上限 [1,393216];须在 generic /deepseek/i 之前 —— 其 128K 低估会撞 MIN_CONTEXT_WINDOW 200K 地板把可用模型误拒)
   { pattern: /deepseek-reasoner|deepseek-r1/i, caps: { contextWindow: 65536, maxOutputTokens: 8192, thinking: true } },
   { pattern: /deepseek/i, caps: { contextWindow: 131072, maxOutputTokens: 8192, thinking: true } }, // deepseek-chat 别名实测映射 v4-flash(思考默认开)
   { pattern: /gpt-5/i, caps: { contextWindow: 1048576, maxOutputTokens: 32768, vision: true } }, // GPT-5:1M 上下文 / 32K 输出(2026-08 网关实测模型面;缺条目会落 DEFAULT_CAPS 32K 撞 MIN_CONTEXT_WINDOW 闸)

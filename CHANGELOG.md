@@ -2,6 +2,27 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.18.0] - 2026-09-18
+
+> host-integration-contract(openspec/changes/2026-09-17-host-integration-contract):宿主集成契约与页面问答可靠性 —— 真集成实践(学习门户,4.17.1)暴露的契约缺口与可靠性漏洞收口。定级 minor(新增公开 API `notifyHostChange` + `MessageQuote.anchor` + `inspect().gates/systemSegments`)。
+
+### Fixed
+
+- **token 预算提示从未稳定送达模型**(A1,SDK 自身受害的同族 bug):`usageHints` 的 C1 提示原为一次性 `budgetHinted` 标志,而 `augmentPrompt` 每次模型调用被调多次(toLC / replaceSystem / 收口综合 / inspect 内省),只有部分调用的输出随请求发出 —— 一次性标志被输出被丢弃的调用消费,提示从未稳定进入请求。修:改纯函数 `tokenBudgetHintText`(轮内幂等 + 跨轮持续注入 + 半程/85% 两档升级,对齐轮次维度 3.43 设计);`LoopProgress.budgetHinted` 转 optional + `@deprecated`(恒不写入,下个 major 物理移除)。**注意:此修复使该提示首次真正生效** —— 长上下文任务会开始看到「⏳ 预算提示/预算告急」段(修前从未出现),属预期行为变化。
+- **`augmentPrompt`/`augmentSystem` 幂等契约缺口**(S1,实测踩坑:学习门户「切文警示」逻辑正确执行但从未进入任何请求):双 d.ts JSDoc + `doc/system-prompt.md` §5④ + usage-guide 中英 + `skills/page-agent-sdk-integrate` 坑位条目(含 `sdk.hook` 轮末推进锚点的正确示例)写明 —— 同一轮内会被调用多次、必须幂等、禁止消费一次性标志、跨轮状态在整轮结束推进。buildSystemPrompt 按轮 memoize 经实施考察**否决**(留痕):`inspect().systemPrompt` 实时视图契约与跨轮缓存冲突 + 请求路径本就每轮单拼零收益。
+
+### Added
+
+- **`sdk.notifyHostChange({ reason? })`**(S2,宿主变更驱动的页面读失效):SPA 换文/路由切换后调用 —— ① 流内:页面读类工具结果(`read_page`/`dom_search`/`dom_info`/`get_dom`/`take_screenshot`)在下一轮模型调用前替换为过期占位(引导重读;通知后的新读不受影响);② 跨轮:注入一次性「宿主页面已变更,须重读」提示段(pin 段跨压缩,整轮结束自动清除)。数据槽 read/query/search 不受影响(scope 隔离);幂等可重复调;`inspect().hostReadsInvalidated` 会话累计。
+- **页面断言零依据门禁**(S3,「不猜测」机制化):回复断言页面内容(「本页写了/原文提到…」,子句级共现判定)× 本轮零页面依据(含 `take_screenshot`)× 非诚实不存在声明 → 回灌「先读页面再断言 + 事实清单」(独立预算 ≤2,超限 `PAGE_ASSERTION_GATE_EXHAUSTED` observable)。**装配范围 = 仅 `capabilities.domInspect` 开启**(用户拍板:数据槽场景「页面上已改成…」误伤路径从结构上切断,不新增配置项)—— 对已开 domInspect 的页面问答集成方是行为面新增(此前此类回复静默放行)。
+- **`MessageQuote.anchor`**(S4,引用 DOM 锚点):划词捕获一并记录选区位置 —— 块级祖先 selector(id 优先/nth-of-type 链 ≤4 层)/ 块内偏移(Range 精确)/ 重复短语出现序号 / 最近在前标题 / 捕获时 URL;发给 LLM 的引用块附元信息行 `[位置: selector · 小节「…」 · 文档:docId](偏移 N, 第 M 次出现)` —— agent 可 `read_page({selector})` 直达区域。捕获与发送时 URL 不一致自动标「⚠ 锚点属于另一文档」。**锚点是提示不是保证**(失效回退 dom_search);宿主自定义走 `sdk.setQuote(text, source, anchor)` 第三参;无锚点与既有形态逐字节一致。
+- **能力门控漏网三处收口**(A8,「勿教不存在的工具」同族遗漏):page-analysis skill 的 vfs 外存条目按 `withVfs` 条件化;dom-inspect skill 排障套路第 3 步 dataOps 关时改「如实报告差异」;usageHints domInspect 行「改数据→看渲染→触发动作」闭环按 dataOps × hasActions 三态门控(文档站 dataOps:false 不再被教幻影 write 工具)。
+- **`inspect().gates` / `inspect().systemSegments`**(A9,可观测性):gates = 各收口门禁的 retries/exhausted 会话累计(`page_assertion_gate` 键存在性 = domInspect 装配反射);systemSegments = 最近一次 system 段构成(段名/字节/**dropped 标记** —— 修前超预算 drop 仅 console.warn,集成方 augmentSystem/pageContext 段被丢零可观察)。
+
+### 门槛
+
+- selftest → **3698**(sec-129 页面读失效 ×30 / sec-130 页面断言门禁 ×37 / sec-131 引用锚点 ×29 / sec-132 门控漏网 ×9;sec-76 幂等语义翻转);e2e → **1201**(host-integration.mjs 新模块 ×32:流内失效/提示段一次性/scope 隔离/S3 回灌链与豁免/A4 双向不掩盖/锚点元信息行与逐字节回归锁/gates 反射);browser → 165(docs-demo +1:S4 锚点 UI 捕获链锁);headless size 阈值 760→780KB 重校(S2-S4 增量 ~7KB)。
+
 ## [4.17.1] - 2026-09-17
 
 > 4.17.0 dom-edit 兼容性审查修复(用户要求「检查新增功能与原有功能冲突/兼容」驱动):dom_edit 标 writeCapable 后与既有守卫的两处误判 + 一并修掉同构潜伏 bug。
