@@ -2,6 +2,16 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.19.1] - 2026-09-18
+
+### Fixed
+
+- **引用 chip 看不出「选了什么」**(真机反馈驱动):待发引用 chip 原渲染 `quote.source || quote.text.slice(0, 40)` —— **优先显示来源**(页面标题 · 小节),而划词捕获几乎总会产出 source,于是 chip 永远只显示「某文档 · 某小节」,用户无法确认自己选中了哪句话。修:chip 可见文本改为**引用内容**(CSS 截断,`max-width` 220→280px),来源与完整原文移入 `title` tooltip(`来源\n\n全文\n\n提示语`)。chip 的职责是「确认选了什么」,来源是次要信息。
+
+### 门槛
+
+- browser docs-demo 断言同步(chip 断言从来源改为引用内容,并新增「不得含来源」的负向锁 + tooltip 含来源的正向锁);selftest 3705 / e2e 1202 / browser 169 全绿。
+
 ## [4.19.0] - 2026-09-18
 
 > 真机集成驱动的三项体验收口:浮层菜单在宿主站平滑滚动下可用、抽屉宽度可拖拽、页面问答输出从简。

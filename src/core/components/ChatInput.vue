@@ -37,6 +37,15 @@ const { pendingImages, addImageFiles, removePendingImage, imageInputError, compr
  * 无有效选区(塌缩/空白/锚在 SDK UI 内)captureSelectionQuote 返 null 不打扰 —— 覆盖
  * 「宿主页选中文字 → 点击输入框」流;「选中 → 开抽屉」流由 DialogController.show() 捕获。
  */
+/**
+ * 引用 chip 的 tooltip:来源(页面标题·小节)+ 完整引用原文。
+ * chip 内可见文本是**截断后的引用内容**(确认「选了什么」);来源与全文放这里补充。
+ */
+const quoteTitleText = (q: { text: string; source?: string }): string => {
+  const tip = m.quoteChipTitle // ctx.messages 已是解包对象(模板同款 m.xxx)
+  return q.source ? `${q.source}\n\n${q.text}\n\n${tip}` : `${q.text}\n\n${tip}`
+}
+
 const maybeCaptureSelection = (): void => {
   if (!props.autoQuote || typeof document === 'undefined') return
   const q = captureSelectionQuote(document)
@@ -153,10 +162,12 @@ onBeforeUnmount(() => {
             <button type="button" class="focus-chip-x" data-test="focus-clear" :title="m.removeFocus" @click.stop="removeFocus(f.path)">✕</button>
           </span>
         </div>
-        <!-- 待发引用 chip(page-quote 划词引用):❝ + 来源(或截断文本);✕ 移除;随下一条消息发出 -->
+        <!-- 待发引用 chip(page-quote 划词引用):❝ + **引用内容**(截断;来源进 tooltip);✕ 移除;随下一条消息发出。
+             修前优先显示 source(页面标题·小节)—— 划词捕获几乎总有 source,于是 chip 永远只显示「某文档 · 某小节」,
+             用户看不出到底选中了哪句话(反馈驱动修复:chip 的职责是「确认选了什么」,来源是次要信息)。 -->
         <div v-if="quote" class="quote-chips" data-test="quote-chips">
-          <span class="quote-chip" :title="m.quoteChipTitle">
-            <span class="quote-chip-icon">❝</span><span class="quote-chip-text">{{ quote.source || quote.text.slice(0, 40) }}</span>
+          <span class="quote-chip" :title="quoteTitleText(quote)">
+            <span class="quote-chip-icon">❝</span><span class="quote-chip-text">{{ quote.text }}</span>
             <button type="button" class="focus-chip-x" data-test="quote-clear" :title="m.quoteRemove" @click.stop="clearQuote()">✕</button>
           </span>
         </div>
@@ -306,7 +317,7 @@ onBeforeUnmount(() => {
   max-width: 100%;
 }
 .quote-chip-icon { font-size: 11px; opacity: 0.8; }
-.quote-chip-text { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+.quote-chip-text { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
 .chat-input {
   display: block; width: 100%; border: none; outline: none; background: transparent; resize: vertical;
   padding: 9px 12px 38px 12px; font-size: 13px; font-family: inherit; line-height: 1.5; color: var(--cs-bg-text, inherit);

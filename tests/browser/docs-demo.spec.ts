@@ -51,7 +51,11 @@ test.describe('划词引用 page-quote(docs-demo)', () => {
     await selectArticleText(page, '注意力机制的核心思想')
     await openDrawer(page) // show() 懒捕获(按钮 @mousedown.prevent 保住选区)
     await expect(page.locator('[data-test="quote-chips"] .quote-chip')).toHaveCount(1)
-    await expect(page.locator('[data-test="quote-chips"] .quote-chip-text')).toContainText('Transformer 学习笔记 ·')
+    // chip 显示**引用内容**(不是来源)—— 用户要能一眼看出「选了什么」;来源在 tooltip
+    await expect(page.locator('[data-test="quote-chips"] .quote-chip-text')).toContainText('注意力机制')
+    await expect(page.locator('[data-test="quote-chips"] .quote-chip-text')).not.toContainText('Transformer 学习笔记 ·')
+    const chipTitle = await page.locator('[data-test="quote-chips"] .quote-chip').getAttribute('title')
+    expect(chipTitle).toContain('Transformer 学习笔记 ·') // 来源仍在 tooltip 里
 
     await fillInput(page, '这段什么意思')
     await clickSend(page)
@@ -107,7 +111,7 @@ test.describe('划词引用 page-quote(docs-demo)', () => {
     await selectArticleText(page, 'KV Cache')
     await page.locator('.chat-dialog .chat-input-wrap').click()
     await expect(page.locator('[data-test="quote-chips"] .quote-chip')).toHaveCount(1)
-    await expect(page.locator('[data-test="quote-chips"] .quote-chip-text')).toContainText('KV Cache')
+    await expect(page.locator('[data-test="quote-chips"] .quote-chip-text')).toContainText('自回归生成时') // chip 显示引用内容(该段所在小节标题为 KV Cache)
   })
 
   test('quickActions 点击不消费待发引用(chip 保留)', async ({ page }) => {
