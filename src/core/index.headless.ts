@@ -28,7 +28,7 @@ import type { ChatSdkOptions, ChatSdk } from './sdk/createChatSdk'
 export function createChatSdk(options: ChatSdkOptions): ChatSdk {
   return _createChatSdk(options) // 无 mounter → headless(ui!=='false' 时 mount() warn 降级)
 }
-export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict, DialogConfig, SystemAugmentContext } from './sdk/createChatSdk'
+export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict, DialogConfig, HostWatchConfig, SystemAugmentContext } from './sdk/createChatSdk'
 // system prompt 构建
 export { buildSystemPrompt, buildDataPrompt, DEFAULT_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT_EN } from './sdk/promptBuilder'
 export { resolveContextOptions, type ContextPreset, type ContextOptionsInput, CONTEXT_PRESETS } from './sdk/contextPreset'

@@ -420,6 +420,8 @@ export interface AgentInfo {
   staleReadsInvalidated?: number;
   /** S2 宿主变更失效会话累计(host-integration-contract;notifyHostChange 触发的页面读占位替换次数,与写驱动分列) */
   hostReadsInvalidated?: number;
+  /** hostWatch 装配反射(4.21+;配置存在才出现):enabled=false = 服务端/headless 特性探测全缺(合法 no-op);autoNotified = 自动报案会话累计 */
+  hostWatch?: { enabled: boolean; url: boolean; pushState: boolean; title: boolean; autoNotified: number };
   /** A9 收口门禁会话累计(stage → { retries 回灌, exhausted 耗尽放行 };page_assertion_gate 键存在性 = domInspect 装配反射) */
   gates?: Record<string, { retries: number; exhausted: number }>;
   /** A9 最近一次 system 段构成(段名/字节/超预算 drop 标记;集成方 augmentSystem/pageContext 段被 drop 时可观察) */
@@ -1064,10 +1066,31 @@ export interface ChatSdkOptions {
   onEvent?: SdkEventHandler;
   /** 流式输出(默认 true);false 时等整段回复再显示 */
   streaming?: boolean;
+  /**
+   * 宿主导航自动报案(4.21+,配置即开关):监听 URL/title 变化自动触发 notifyHostChange 全链路
+   * (流内页面读占位失效 + 一次性重读提示段)—— 把「防线靠宿主记得调」变「防线自动」。
+   * `true` = { url: true };细配见 HostWatchConfig。服务端/headless(无 window)逐 API 特性探测
+   * 静默降级 no-op(合法形态,inspect().hostWatch.enabled=false 可确认)。
+   * 另:dom_edit/dom_restore 落地成功后既有页面读自动失效(默认开,与本选项无关)
+   */
+  hostWatch?: boolean | HostWatchConfig;
   /** Dialog UI config (title/placeholder/drawer/drawerWidth/drawerHidden/inputRows/onClose grouped) */
   dialog?: DialogConfig;
 }
 
+/** hostWatch 细配(4.21+):各项独立降级,缺失依赖只关该项不弃整个 watcher */
+export interface HostWatchConfig {
+  /** 原生 hashchange + popstate(默认项,零 patch;hash 路由文档站主场景) */
+  url?: boolean;
+  /** patch history.pushState/replaceState(hashless SPA 路由;链式保留 + unmount 还原;opt-in) */
+  pushState?: boolean;
+  /** 观察 document.title(不改 URL 的换文站;噪声较高故 opt-in;配 debounceMs 消化) */
+  title?: boolean;
+  /** 去抖窗口 ms(默认 300:路由切换常伴 hash+title 连发,窗口内合并为一次报案,url 类优先) */
+  debounceMs?: number;
+  /** 宿主自定义忽略(如自家 #section 纯锚点):返回 true 不报案 */
+  ignore?: (e: { kind: 'hash' | 'pop' | 'push' | 'title'; from: string; to: string }) => boolean;
+}
 /** Dialog UI config (grouped form, recommended) */
 export interface DialogConfig {
   title?: string;

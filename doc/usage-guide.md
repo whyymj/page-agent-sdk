@@ -1745,6 +1745,22 @@ myMenu.onPick(q => sdk.setQuote(q.text, q.source, q.anchor))   // 第三参可�
 - 幂等可重复调(占位是替换不叠加;reason 去重封顶 5 条);观察面 `inspect().hostReadsInvalidated` 会话累计 + debugLogs `host_change_notified`/`host_read_invalidated` 留痕。
 - 不调用则零行为(默认无任何开销);学习门户等单页文档站建议在路由切换 handler 里调一次。
 
+**自动报案(`hostWatch`,4.21+,推荐)**:上面那段「宿主在变更发生时调用」可以交给 SDK 自动做 —— 配置即开关:
+
+```ts
+createChatSdk({
+  hostWatch: true,   // = { url: true }:监听原生 hashchange + popstate,URL 一变自动触发 notifyHostChange 全链路
+  // 细配:hostWatch: { url: true, pushState: true, title: true, debounceMs: 300, ignore: (e) => e.kind === 'title' }
+})
+```
+
+- **`url`(默认项,零 patch)**:hash 路由文档站的主场景 —— hash 路由(`#/doc/x`)一站配齐,不必再在每个路由切换点手动调 `notifyHostChange`
+- **`pushState`(opt-in)**:hashless SPA 路由(react-router/browserRouter 形态)需要 patch `history.pushState/replaceState` 才听得到;多层 patch 安全(链式保留 + unmount 还原到链根)
+- **`title`(opt-in)**:观察 `document.title`(不改 URL 的换文站兜底);噪声较高(未读数/定时文案),配 `debounceMs`(默认 300,窗口内 hash+title 连发合并为一次报案,url 类优先)
+- **`ignore` 钩子**:自家纯锚点(`#section`)等不该触发的形态在这里过滤;默认宁多报(多报代价 = agent 多重读一次,方向安全)
+- **服务端/headless**:逐 API 特性探测,缺 window 时静默降级 no-op(同构配置合法);`inspect().hostWatch`(`{enabled,url,pushState,title,autoNotified}`)可确认装配态;debugLogs `stage:'host_watch'` 留痕每次自动报案
+- **另:agent 自己改页面也失效(默认开,无开关)** —— `dom_edit`/`dom_restore` 落地成功后,此前的页面读结果下一轮自动置过期占位(reason:「agent 已通过 dom_edit 修改页面」);不注重读提示段(agent 经手的写,工具结果已带改了什么)。`dryRun` 预检不触发(页面没被改)
+
 **完整示例**:`examples/docs-demo`(静态学习文章 + 划词引用 + read_page 翻页答问 + 页面锚点),可作你网站的集成模板。隐私注记:`autoQuote` 默认关 —— 自动把页面划词发给 LLM 属隐私敏感行为,由集成方显式开启并告知用户。
 
 ### 6.21 截图查看与页面内容分析(take_screenshot / page-analysis)

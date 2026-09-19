@@ -69,6 +69,7 @@ import { createToolRebuilder } from './toolAssembly'
 import { createImagePipeline, buildImageContentParts } from '../tools/imageInput'
 import { createScreenshotTool } from '../tools/screenshot'
 import { createDomEditTools } from '../tools/domEdit'
+import { createHostWatcher, buildHostWatchReason, type HostWatchEvent, type HostWatcherHandle, type HostWatcherTarget, type HostWatchHistory, type HostWatchDocument } from './hostWatcher'
 import { HumanMessage } from '@langchain/core/messages'
 import { createVfs, createVfsMiddleware, VFS_TOOL_NAMES, normalize as normalizeVfsPath, type VfsStore } from '../backends/vfs'
 import type { VfsFile, Mission, Focus } from '../harness/state'
@@ -101,7 +102,7 @@ import type { ToolCallContext } from '../harness/middleware'
 import { rawRead } from '../utils/rawRead'
 
 import type { LLMConfig, ChatSdkOptions, I18nOptions, DialogConfig, ChatSdk, SendOptions, PendingConflict } from './options'
-export type { LLMConfig, SessionOptions, SystemAugmentContext, ChatSdkOptions, I18nOptions, QuickActionItem, DialogConfig, ChatSdk, SendOptions, PendingConflict } from './options'
+export type { LLMConfig, SessionOptions, SystemAugmentContext, ChatSdkOptions, I18nOptions, HostWatchConfig, QuickActionItem, DialogConfig, ChatSdk, SendOptions, PendingConflict } from './options'
 
 /** 内存中保留的对话轮数上限(超限压缩为摘要,防 OOM);0 表示关闭 */
 const DEFAULT_MAX_MEMORY_ROUNDS = 30
@@ -397,7 +398,7 @@ function validateFocusInput(
 }
 
 /** 构建一个独立的核心上下文(含持久化恢复 + agent 构造 + 操作函数) */
-function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
+function buildCore(options: ChatSdkOptions, agentId: string, hostWatchState?: { enabled: boolean; url: boolean; pushState: boolean; title: boolean; autoNotified: number }): AgentCore {
   // ===== 累计 token 用量(每轮 LLM 调用经 sdk-events 中间件 afterModel 提取累加;供 sdk.usage 暴露 + onEvent('usage') 单轮外发) =====
   const usage: TokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
   // ===== 乐观锁冲突人工介入(dataOps 写入时检测到主数据已被外部改过 → 挂起等用户决定保留外部/强制覆盖/回退) =====
@@ -749,10 +750,17 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // ===== dom-edit(capabilities.domEdit,opt-in,requires domInspect)=====
   // 宿主页面伴随场景的写通道:dom_edit 批量原子(唯一 selector/危险闸/SDK UI 保护/自动快照)+ dom_restore 回滚;
   // onEdit 留痕进 debugLogs(集成方可观察「页面被 agent 改了什么」);与数据写通道正交(数据驱动页面仍走 write)
+  // auto-host-watch S2:落地成功(非 dryRun 且 applied>0 / restore restored>0)置待失效标记,
+  // hostNotice 中间件在下一轮模型调用前把既有页面读置过期占位(改前状态)
+  let selfPageEditPending = false
   const domEditTools = caps.domEdit
     ? createDomEditTools({
         onEdit: (info) => {
           core.agent?.debugLogs?.value?.push({ timestamp: Date.now(), type: 'middleware', data: { stage: 'dom_edit', ops: info.ops.join(','), applied: info.applied, dryRun: info.dryRun } })
+          if (!info.dryRun && info.applied > 0) selfPageEditPending = true
+        },
+        onRestore: (info) => {
+          if (info.restored > 0) selfPageEditPending = true
         },
       })
     : []
@@ -1107,6 +1115,20 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
     // 提示段已承担「凭旧答记忆作答」的防线);流内到达的(epoch 增长)在下一轮模型调用前生效
     beforeAgent: () => { hostEpochApplied = hostChangeState.epoch },
     wrapModelCall: async (req, next) => {
+      // auto-host-watch S2:agent 自己改了页面(dom_edit 落地 / dom_restore 回滚)→ 既有页面读置过期占位。
+      // 与 notifyHostChange 的差异:**不注 pin 段、不 bump epoch/notices**(agent 经手的写,工具结果已带改了什么,
+      // 再注「宿主页面已变更须重读」是噪声)—— 只做占位替换;失效面与 S2 同源(默认五工具 ∪ readsHostState 标记)
+      if (selfPageEditPending) {
+        selfPageEditPending = false
+        const inv = invalidatePageReads(req.messages, 'agent 已通过 dom_edit 修改页面,此前读取为改前状态', hostReadActionNames)
+        if (inv.invalidatedCount > 0) {
+          for (let i = 0; i < inv.messages.length; i++) (req.messages as unknown[])[i] = inv.messages[i]
+          core.agent?.debugLogs?.value?.push({
+            timestamp: Date.now(), type: 'middleware',
+            data: { stage: 'dom_edit_read_invalidated', count: inv.invalidatedCount },
+          })
+        }
+      }
       if (hostChangeState.epoch > hostEpochApplied) {
         hostEpochApplied = hostChangeState.epoch
         const lastReason = hostChangeState.notices[hostChangeState.notices.length - 1] ?? ''
@@ -1883,6 +1905,8 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
         staleReadsInvalidated: core.agent?.getStaleReadsInvalidated?.() ?? 0,
         // S2 宿主变更失效会话累计(notifyHostChange 触发的页面读占位替换;与 staleReadsInvalidated 分列 —— 触发源不同)
         hostReadsInvalidated: hostChangeState.readsInvalidated,
+        // auto-host-watch 反射:配置存在才出现(_createChatSdk 传入 state 载体);enabled=false = 服务端/headless 特性探测全缺(合法 no-op)
+        ...(hostWatchState ? { hostWatch: { ...hostWatchState } } : {}),
         llmRetries: core.agent?.getLlmRetries?.() ?? 0,
         llmCallFailures: core.agent?.getLlmCallFailures?.() ?? 0,
         // A9 观测面:收口门禁会话累计(page_assertion_gate 键存在性 = S3 domInspect 装配反射) +
@@ -2349,13 +2373,21 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
   const streaming = options.streaming ?? true
   const ui = options.ui ?? 'default'
 
+  // ===== auto-host-watch S1:hostWatch 声明式自动报案(配置即开关;mount 装配 / unmount dispose)=====
+  // state 载体穿透进 buildCore 供 inspect() 反射;同构配置在服务端(headless/无 window)合法 no-op(enabled=false)
+  const hostWatchCfg = options.hostWatch === true
+    ? { url: true }
+    : options.hostWatch && typeof options.hostWatch === 'object' ? options.hostWatch : null
+  const hostWatchState = { enabled: false, url: false, pushState: false, title: false, autoNotified: 0 }
+  let hostWatcherHandle: HostWatcherHandle | null = null
+
   // ===== 获取或创建 core(shareContext 时同 id 复用)=====
   let core: AgentCore
   const existing = options.shareContext ? sharedCores.get(agentId) : undefined
   if (existing) {
     core = existing
   } else {
-    core = buildCore(options, agentId)
+    core = buildCore(options, agentId, hostWatchCfg ? hostWatchState : undefined)
     if (options.shareContext) sharedCores.set(agentId, core)
   }
   core.refCount++ // 本实例持有一引用
@@ -2393,6 +2425,42 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
       if (typeof window !== 'undefined') window.addEventListener('pagehide', flushHandler)
       if (typeof document !== 'undefined') document.addEventListener('visibilitychange', visHandler)
     }
+
+    // auto-host-watch S1:hostWatch 自动报案装配(mount 起、unmount 止;重 mount 先 dispose 再装)。
+    // 逐 API 特性探测在工厂内做(deps 传入全局引用,缺失项静默降级);服务端/headless 全缺 → handle=null = no-op
+    const installHostWatcher = () => {
+      if (!hostWatchCfg) return
+      hostWatcherHandle?.dispose()
+      hostWatcherHandle = null
+      const gWindow = typeof window !== 'undefined' ? (window as unknown as HostWatcherTarget & { history?: HostWatchHistory }) : undefined
+      const gHistory = typeof history !== 'undefined'
+        ? (history as unknown as HostWatchHistory)
+        : (gWindow as { history?: HostWatchHistory } | undefined)?.history
+      const gDoc = typeof document !== 'undefined' ? (document as unknown as HostWatchDocument) : undefined
+      const gMO = typeof MutationObserver !== 'undefined' ? MutationObserver : undefined
+      hostWatcherHandle = createHostWatcher({
+        target: gWindow,
+        history: gHistory,
+        document: gDoc,
+        MutationObserver: gMO as never,
+        options: hostWatchCfg,
+        onReport: (e: HostWatchEvent) => {
+          hostWatchState.autoNotified += 1
+          core.agent?.debugLogs?.value?.push({
+            timestamp: Date.now(), type: 'middleware',
+            data: { stage: 'host_watch', kind: e.kind, from: e.from.slice(0, 120), to: e.to.slice(0, 120) },
+          })
+          core.notifyHostChange({ reason: buildHostWatchReason(e) })
+        },
+      })
+      if (hostWatcherHandle) {
+        hostWatchState.enabled = true
+        hostWatchState.url = hostWatcherHandle.info.url
+        hostWatchState.pushState = hostWatcherHandle.info.pushState
+        hostWatchState.title = hostWatcherHandle.info.title
+      }
+    }
+    installHostWatcher()
 
     // headless:不渲染 UI(ui 显式 false,或 headless 入口未注入 mounter —— 后者无 mounter 但 ui 非 false → warn 降级提示)
     if (ui === false || !mounter) {
@@ -2444,6 +2512,9 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
     if (visHandler && typeof document !== 'undefined') document.removeEventListener('visibilitychange', visHandler)
     flushHandler = null
     visHandler = null
+    // auto-host-watch:摘监听/还原 history patch/断 observer/取消在途去抖(handle 内全量卫生)
+    hostWatcherHandle?.dispose()
+    hostWatcherHandle = null
     if (dialogController) {
       // UI 模式:委托 controller 跑退出动画 → transitionend/320ms 后 vueApp.unmount + onDialogUnmounted(回调内 null controller + core.release)
       // 不在此 null dialogController —— 由 onDialogUnmounted 回调 null(保留动画期间 mount() 走 show() 的现状)

@@ -131,6 +131,7 @@ import { run as run_sec_129 } from './modules/sec-129'
 import { run as run_sec_130 } from './modules/sec-130'
 import { run as run_sec_131 } from './modules/sec-131'
 import { run as run_sec_132 } from './modules/sec-132'
+import { run as run_sec_134 } from './modules/sec-134'
 
 // tsx 运行时由 node 提供 process;tsc 静态检查无 @types/node,显式声明其类型
 declare const process: { exit(code?: number): never }
@@ -286,6 +287,7 @@ await run_sec_129(ctx)
 await run_sec_130(ctx)
 await run_sec_131(ctx)
 await run_sec_132(ctx)
+await run_sec_134(ctx)
   console.log(`\n==== ${passed}, ${failed} failed ====`)
   if (failed > 0) process.exit(1)
 })()

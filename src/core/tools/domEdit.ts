@@ -120,7 +120,7 @@ type DomLike = Document
  * deps.getDocument 可注入(node e2e fake DOM);缺省用 globalThis.document。
  * deps.onEdit 留痕回调(createChatSdk 侧 push debugLogs)。
  */
-export function createDomEditTools(deps: { getDocument?: () => Document | null | undefined; onEdit?: (info: { ops: string[]; applied: number; dryRun: boolean }) => void } = {}) {
+export function createDomEditTools(deps: { getDocument?: () => Document | null | undefined; onEdit?: (info: { ops: string[]; applied: number; dryRun: boolean }) => void; onRestore?: (info: { restored: number; stale: number }) => void } = {}) {
   const batches: SnapBatch[] = []
   let snapSeq = 0
 
@@ -307,6 +307,8 @@ export function createDomEditTools(deps: { getDocument?: () => Document | null |
         cur.replaceWith(parsed)
         restored++
       }
+      // auto-host-watch S2:回滚也改变页面(restored>0)→ 通知装配层置页面读失效标记;全 stale(页面没被本次回滚改变)不触发
+      if (restored > 0) deps.onRestore?.({ restored, stale: stale.length })
       if (stale.length) return `已回滚 ${restored}/${batch.snips.length} 处;${stale.length} 处快照点已被后续结构变更覆盖(元素被整体替换),未能复原 —— 刷新页面可回宿主初始态。`
       return `已回滚最近一批 ${batch.ops.join(', ')}(共 ${restored} 处)。`
     },

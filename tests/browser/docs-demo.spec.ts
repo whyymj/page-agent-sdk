@@ -433,3 +433,38 @@ test.describe('抽屉拖拽调宽 drawerResizable(docs-demo)', () => {
     expect(await inlineW()).toBe('400px')
   })
 })
+
+test.describe('hostWatch 自动报案(auto-host-watch,docs-demo)', () => {
+  test('真 hashchange → 自动报案(reflection + 留痕),无需手动 notifyHostChange', async ({ page }) => {
+    await page.goto('/examples/docs-demo/')
+    await page.waitForSelector('.chat-dialog', { state: 'attached' })
+    // debugLogs 挂在懒构造的 agent 上:先跑一轮 mock 对话让 agent 落地(与既有 idle 判定同款前置)
+    await mockLlm(page, [{ text: '好' }])
+    await page.evaluate(() => (window as any).__sdk.send('准备'))
+    // drawerHidden 形态消息行不可见,idle 判定不适用:改等 messages 落定(user+assistant ≥ 2,agent 已构造)
+    await page.waitForFunction(() => ((window as any).__sdk?.messages?.length ?? 0) >= 2, undefined, { timeout: 15000 })
+    // demo 配置 hostWatch: true → 监听已随 mount 装配;真浏览器原生 hashchange(去抖默认 300ms)
+    await page.evaluate(() => { location.hash = '#/hostwatch-check' })
+    await page.waitForTimeout(700)
+    const hw = await page.evaluate(() => (window as any).__sdk?.inspect?.().hostWatch)
+    expect(hw?.enabled).toBe(true)
+    expect(hw?.url).toBe(true)
+    expect(hw?.autoNotified).toBeGreaterThanOrEqual(1)
+    // kind 不断言:真浏览器 hash 导航连发 hashchange+popstate,去抖合并取最新(kind 信息性,可能为 'pop')
+    const logged = await page.evaluate(() =>
+      ((window as any).__sdk?.debugLogs?.value ?? []).some((l: any) => l.data?.stage === 'host_watch'),
+    )
+    expect(logged).toBe(true)
+    // unmount 摘监听(卸载后再切 hash 零新增)
+    await page.evaluate(() => (window as any).__sdk?.unmount?.())
+    const before = await page.evaluate(() => (window as any).__sdk?.inspect?.().hostWatch?.autoNotified)
+    await page.evaluate(() => { location.hash = '#/after-unmount' })
+    await page.waitForTimeout(500)
+    const after = await page.evaluate(() => {
+      // unmount 后 debugLogs 引用仍在实例上;hostWatch 计数不增长即证明监听已摘
+      const logs = ((window as any).__sdk?.debugLogs?.value ?? []).filter((l: any) => l.data?.stage === 'host_watch').length
+      return logs
+    })
+    expect(after).toBe(before as number)
+  })
+})

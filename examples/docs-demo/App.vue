@@ -40,6 +40,9 @@ onMounted(() => {
     debug: true,
     systemPrompt: '你是学习笔记网站的文档助教。用户可能在页面选中了一段文字后提问(引用块在问题前),优先围绕引用原文与当前页面内容作答;需要页面其他部分时用 read_page 读取正文再答。回答保持准确、简洁,不确定就说不确定。',
     capabilities: { dataOps: false, domInspect: true, pageContext: true, domEdit: true },
+    // auto-host-watch(4.21):URL 一变自动报案(S2 全链复用)—— hash 路由文档站的「防线自动」形态,
+    // 集成方从此不必在每个路由切换点手动调 sdk.notifyHostChange()
+    hostWatch: true,
     dialog: {
       drawer: true,
       drawerHidden: true,

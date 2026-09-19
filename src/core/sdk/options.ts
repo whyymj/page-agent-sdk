@@ -315,6 +315,28 @@ export interface ChatSdkOptions {
   dialog?: DialogConfig
   /** 国际化:locale 切语言 + messages 键级覆盖文案(3.22+;UI 文案包 + 默认 systemPrompt/autoTitle 语言) */
   i18n?: I18nOptions
+  /**
+   * 宿主导航自动报案(auto-host-watch,4.21+,配置即开关):监听 URL/title 变化自动触发 notifyHostChange
+   * 全链路(流内页面读占位失效 + 一次性重读提示段)—— 把「防线靠宿主记得调」变「防线自动」。
+   * `true` = { url: true };细配(url/pushState/title/debounceMs/ignore)见 HostWatchConfig。
+   * 服务端/headless(无 window)逐 API 特性探测静默降级为 no-op(合法形态,inspect().hostWatch 可确认)。
+   * 另:dom_edit/dom_restore 落地成功后既有页面读自动失效(默认开,与本选项无关)
+   */
+  hostWatch?: boolean | HostWatchConfig
+}
+
+/** hostWatch 细配(auto-host-watch):各项独立降级,缺失依赖只关该项不弃整个 watcher */
+export interface HostWatchConfig {
+  /** 原生 hashchange + popstate(默认项,零 patch;hash 路由文档站主场景) */
+  url?: boolean
+  /** patch history.pushState/replaceState(hashless SPA 路由;链式保留 + unmount 还原;opt-in) */
+  pushState?: boolean
+  /** 观察 document.title(不改 URL 的换文站;噪声较高故 opt-in;配 debounceMs 消化) */
+  title?: boolean
+  /** 去抖窗口 ms(默认 300:路由切换常伴 hash+title 连发,窗口内合并为一次报案,url 类优先) */
+  debounceMs?: number
+  /** 宿主自定义忽略(如自家 #section 纯锚点):返回 true 不报案(参数含 kind/hash|pop|push|title 与 from/to) */
+  ignore?: (e: { kind: 'hash' | 'pop' | 'push' | 'title'; from: string; to: string }) => boolean
 }
 
 /** 对话框 UI 配置(归组写法,推荐) */

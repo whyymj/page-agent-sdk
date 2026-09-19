@@ -1,6 +1,6 @@
 // dom-edit(capabilities.domEdit):条件注入 / requires 归一 / ReAct 全链(dom_edit 落地 + dom_restore 回滚)/ usageHints 引导
 // node e2e 以 Mini DOM 假树驱动工具全链(querySelector(All)/outerHTML 序列化/template 解析回放);浏览器行为在 browser e2e 真跑。
-import { setupEnv, createAssert, FAKE_LLM, MIN_CAPS, createChatSdk } from './_helpers.mjs'
+import { setupEnv, createAssert, FAKE_LLM, MIN_CAPS, createChatSdk, defineTool } from './_helpers.mjs'
 import { StubChatModel } from './_stub-model.mjs'
 
 // ===== Mini DOM 假树(与 selftest sec-128 同面;e2e 无法引 TS 模块,独立精简实现) =====
@@ -175,6 +175,64 @@ export async function run() {
       assert(globalThis.document.querySelector('.target').textContent === 'Q/K/V 三元组'
         && !globalThis.document.querySelector('.target').getAttribute('class').includes('ai-marked'), '回滚后 DOM 复原批前态(终态)')
       sdk.unmount()
+    } finally { fake.restore() }
+  }
+
+  console.log('[e2e:dom-edit] auto-host-watch S2:dom_edit 落地 → 既有页面读占位失效(无 pin 段);dryRun 不失效')
+  {
+    const fake = installFakeDom()
+    try {
+      const stub = new StubChatModel([])
+      const readPage = defineTool({ name: 'read_page', description: '读页面(桩)', schema: z.object({}), handler: async () => '改前正文' })
+      const sdk = createChatSdk({
+        ui: false, id: 'e2e-domedit-inval', storage: 'memory', llm: stub, autoTitle: false,
+        capabilities: { ...MIN_CAPS, dataOps: false, domInspect: true, domEdit: true },
+        tools: [readPage],
+      })
+      await sdk.mount()
+      stub.responses.push(
+        { toolCalls: [{ name: 'read_page', args: {} }] },
+        { toolCalls: [{ name: 'dom_edit', args: { patches: [{ op: 'add_class', selector: '.target', classes: 'hi' }] } }] },
+        { text: 'done' },
+      )
+      await sdk.send('读完再标注')
+      const last = stub.lastMessages
+      const reads = []
+      let pending = []
+      for (const m of last) {
+        const t = m?._getType?.() ?? 'unknown'
+        if (t === 'ai' && Array.isArray(m.tool_calls)) pending = m.tool_calls.map((c) => c.name)
+        else if (t === 'tool') { const n = pending.shift(); if (n === 'read_page') reads.push(String(m.content ?? '')) }
+      }
+      assert(reads.length === 1 && reads[0].startsWith('⏱[过期快照]') && reads[0].includes('dom_edit'),
+        `dom_edit 落地 → 末轮请求中此前 read_page 为占位(专用 reason),实际:${reads[0]?.slice(0, 50)}`)
+      assert(!stub.systemPrompts.some((p) => p?.includes('【宿主页面已变更】')),
+        'agent 自改页面不注「宿主页面已变更」pin 段(工具结果已带改了什么,不制造噪声)')
+      assert(!!sdk.debugLogs.value.find((l) => l.data?.stage === 'dom_edit_read_invalidated'), 'debugLogs 留痕 dom_edit_read_invalidated')
+      sdk.unmount()
+
+      // 对照:dryRun 不触发失效
+      const stub2 = new StubChatModel([
+        { toolCalls: [{ name: 'read_page', args: {} }] },
+        { toolCalls: [{ name: 'dom_edit', args: { patches: [{ op: 'add_class', selector: '.target', classes: 'hi' }], dryRun: true } }] },
+        { text: 'done' },
+      ])
+      const sdk2 = createChatSdk({
+        ui: false, id: 'e2e-domedit-dryrun', storage: 'memory', llm: stub2, autoTitle: false,
+        capabilities: { ...MIN_CAPS, dataOps: false, domInspect: true, domEdit: true },
+        tools: [readPage],
+      })
+      await sdk2.mount()
+      await sdk2.send('先预检再决定')
+      const reads2 = []
+      let pending2 = []
+      for (const m of stub2.lastMessages) {
+        const t = m?._getType?.() ?? 'unknown'
+        if (t === 'ai' && Array.isArray(m.tool_calls)) pending2 = m.tool_calls.map((c) => c.name)
+        else if (t === 'tool') { const n = pending2.shift(); if (n === 'read_page') reads2.push(String(m.content ?? '')) }
+      }
+      assert(reads2.length === 1 && reads2[0] === '改前正文', `dryRun 预检 → 页面读不失效(页面没被改),实际:${reads2[0]?.slice(0, 30)}`)
+      sdk2.unmount()
     } finally { fake.restore() }
   }
 

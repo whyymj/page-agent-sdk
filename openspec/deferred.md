@@ -722,3 +722,8 @@ A3 曾写「116 个模块」,实测 sec-*.ts = **115**(runner import 同数)—�
 - **read_content 分页与超长内容协议**(offset/limit + 分块 append 提案):现状基础 = dataOps 侧大 JSON 已有完整分页/裁剪/vfs 外存先例;暂缓理由 = 宿主内容典型 <100KB,首个真实超长内容场景未出现;重启触发 = 集成方内容源 >300KB 且提案 token 成本实测不可接受。
 - **DiffPreview 组件导出**(SDK 内置 diff 渲染 Vue 组件):现状基础 = `lineDiff` 纯函数已随 content-proposals 导出,宿主自行渲染门槛低(门户面板 ~60 行);暂缓理由 = UI 组件导出涉及样式主题联动/包体,单一消费者不值得;重启触发 = 第二个集成方需要评审面板且不愿自写渲染。
 - **`sdk.invokeTool(name, args)` 测试缝**(不经 LLM 直接驱动工具,替代宿主 window 钩子):现状基础 = browser E2E 用 mockLlm 脚本驱动,门户 DEV 钩子 `window.__editProposal` 同族;暂缓理由 = mockLlm 已覆盖 SDK 自身测试需求,宿主侧 e2e 各自实现钩子成本低;重启触发 = 多个宿主项目反馈测试驱动不便。
+
+## 2026-09-19(浮层菜单自定义走查残项,4.19.2 文档化时发现)
+
+- **SelectionMenu 定位尺寸硬编码**(`MENU_SIZE = {w:128,h:30}`,SelectionMenu.vue:28):视口钳制按组件内常量估算,**宿主通过 CSS 覆盖把按钮改大/改小后**,贴近视口边缘划词时菜单可能溢出几像素(无显示后实测 `getBoundingClientRect`)。暂缓理由 = 修法要动一次渲染时序(v-show → nextTick 实测 → 重定位),有首帧跳位风险,而溢出量小(几像素级)且仅边缘划词可触发;重启触发 = 宿主报告明显的边缘遮挡,或 selectionMenu 迎来第二次定位相关改动时顺手实测化。
+- **selectionMenu 三处扩展面**(菜单项/actions 配置面、`❝` 图标走 `dialog.icons` 通道、`onSelectionQuote` 对外回调):现状 = 菜单项固定一项、图标写死模板、回调仅 mountChatDialog 内部接线,已在 usage-guide §6.20「当前边界」明示;暂缓理由 = 单一集成方(learning 门户)已用「文案 i18n + 样式覆盖 + 自建路线」三层满足需求,扩配置面违背「不出让用户疑惑的配置项」;重启触发 = 第二个集成方需要多项菜单(如「翻译/解释/引用」),届时评估 `selectionMenu: { actions?: [...] }` 加法面。

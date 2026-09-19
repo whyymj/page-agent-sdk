@@ -1618,6 +1618,22 @@ myMenu.onPick(q => sdk.setQuote(q.text, q.source, q.anchor))   // 3rd arg accept
 - Idempotent, safe to call repeatedly (placeholder is a replacement, not an append; reasons deduped, capped at 5). Observability: `inspect().hostReadsInvalidated` session counter + debugLogs `host_change_notified`/`host_read_invalidated`.
 - Zero behavior if never called; recommended for single-page doc sites (call once in the route-change handler).
 
+**Auto-reporting (`hostWatch`, 4.21+, recommended)**: the "call it from your handler" part above can be handed to the SDK — presence of the option enables it:
+
+```ts
+createChatSdk({
+  hostWatch: true,   // = { url: true }: native hashchange + popstate listeners; URL change auto-fires the full notifyHostChange chain
+  // fine-grained: hostWatch: { url: true, pushState: true, title: true, debounceMs: 300, ignore: (e) => e.kind === 'title' }
+})
+```
+
+- **`url` (default item, zero patching)**: the main scenario for hash-routed doc sites — one config line replaces manual `notifyHostChange` calls at every route-switch point.
+- **`pushState` (opt-in)**: hashless SPA routing (react-router BrowserRouter style) needs a `history.pushState/replaceState` patch to be heard; multi-layer patching is safe (chain-preserving, unmount restores to the chain root).
+- **`title` (opt-in)**: watches `document.title` (fallback for sites that swap documents without changing the URL); noisier (unread badges/timers), pair with `debounceMs` (default 300 — hash+title bursts within the window merge into one report, url-kind wins).
+- **`ignore` hook**: filter shapes that shouldn't trigger (e.g. your own `#section` anchors); default errs toward over-reporting (the cost is one extra re-read — the safe direction).
+- **Server/headless**: per-API feature detection, silent no-op without `window` (legal for isomorphic configs); `inspect().hostWatch` (`{enabled,url,pushState,title,autoNotified}`) confirms assembly state; debugLogs `stage:'host_watch'` records every auto-report.
+- **Also: agent's own page edits now invalidate too (default-on, no switch)** — after `dom_edit`/`dom_restore` lands successfully, prior page-read results become expiry placeholders at the next model call (reason: "agent modified the page via dom_edit"); no re-read pin segment is injected (an agent-mediated write already carries what changed in its tool result). `dryRun` preflight does not trigger (the page wasn't changed).
+
 **Full example**: `examples/docs-demo` (static learning article + selection quoting + paginated read_page QA + page anchor) — a ready-made integration template. Privacy note: `autoQuote` defaults to off — automatically sending page selections to an LLM is privacy-sensitive; integrators enable it explicitly and inform their users.
 
 ### 6.21 Screenshot viewing & page content analysis (take_screenshot / page-analysis)

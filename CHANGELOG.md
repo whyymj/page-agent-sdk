@@ -2,6 +2,19 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.21.0] - 2026-09-19
+
+> auto-host-watch(openspec/changes/2026-09-19-auto-host-watch):宿主导航自动报案 + agent 自改页面的旧读失效。定级 minor(新选项 + 默认开行为联动)。
+
+### Added
+
+- **`hostWatch`(顶层选项,配置即开关)**:URL/title 一变**自动触发 `notifyHostChange` 全链路**(流内页面读占位失效 + 一次性重读提示段原样复用,零新失效逻辑)—— 把「防线靠宿主记得调」变「防线自动」,修 S2 落地后的最大真空:宿主加新入口忘了手动调,防线整体失效且无感知。`true` = `{ url: true }`(原生 hashchange + popstate,零 patch,hash 路由文档站一行配齐);细配 `pushState`(hashless SPA 路由的 history patch,**多层装卸安全**:patch 标记携带链根、还原回链根,多实例错序卸载不残留死层)/ `title`(document.title 观察,不改 URL 的换文站,噪声高故 opt-in)/ `debounceMs`(默认 300,hash+title 连发合并为一次,url 类优先)/ `ignore`(过滤自家纯锚点)。**服务端/headless 零冒犯是一等约束**:逐 API 特性探测静默降级 no-op(同构配置合法),`inspect().hostWatch`(`{enabled,url,pushState,title,autoNotified}`)反射装配态,demo/docs 示范;watcher 为依赖注入纯工厂(SSR import 安全)。观察面:debugLogs `stage:'host_watch'`(kind/from/to)。
+- **`dom_edit`/`dom_restore` 落地 → 旧页面读自动失效(默认开,无开关)**:agent 自己改了页面后,此前的 `read_page`/`get_dom` 等结果在下一轮模型调用前置过期占位(reason:「agent 已通过 dom_edit 修改页面,此前读取为改前状态」)—— 修前 `dom_edit` 在写驱动失效的排除清单里(CSS selector 不进 jsonPath 路径运算),agent 改完页面旧读不失效。与 notifyHostChange 的差异:**不注 pin 段**(agent 经手的写,工具结果已带改了什么);`dryRun` 预检不触发;`dom_restore` 全 stale(页面未被本次回滚改变)不触发。留痕 debugLogs `stage:'dom_edit_read_invalidated'`。
+
+### 门槛
+
+- selftest 3716 → **3738**(sec-134 新模块 22 项:hash 触发/去抖合并 url 优先/重复不报/ignore/pushState 链式+还原/**双实例错序卸载**/dispose 取消在途去抖/title/逐项降级全缺返 null/reason 截断);e2e 1214 → **1229**(host-watch 新模块 + dom-edit 增段:流内自动报案全链/手动自动双报幂等/unmount 摘监听/ignore/未配置零反射/dom_edit 失效与 dryRun 对照);browser 169 → **170**(docs-demo 真 hashchange + unmount 摘监听)。
+
 ## [4.20.0] - 2026-09-19
 
 > action-host-semantics(openspec/changes/2026-09-19-action-host-semantics):宿主 action 的两个语义标记 —— 学习门户「笔记编辑 + AI 提案修改」真集成审阅发现的缺口。定级 minor(公开面纯加法,未标记零行为差)。
