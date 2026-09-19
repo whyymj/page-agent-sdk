@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 划词浮动菜单(selectionMenu,page-quote 显式确认形态):用户划选宿主文字 → 选区上方浮出
- * 「❝ 引用到对话」工具条 → 点击 = 挂引用 chip + 打开对话框(经 ChatDialog onSelectionQuote 回调)。
+ * 「❝ 引用到 AI 助手」工具条 → 点击 = 挂引用 chip + 打开对话框(经 ChatDialog onSelectionQuote 回调)。
  *
  * 与 autoQuote(静默懒捕获)独立可组合:本组件是显式确认交互(划词翻译同款),宿主二选一或并用。
  * 细节:

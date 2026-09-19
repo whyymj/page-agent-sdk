@@ -27,7 +27,7 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
   let vueApp: VueApp | null = null
   const mountEl: HTMLElement = ctx.el
 
-  /** 抽屉显形:移除 cs-hidden class(show() 与划词浮动菜单「引用到对话」共用) */
+  /** 抽屉显形:移除 cs-hidden class(show() 与划词浮动菜单「引用到 AI 助手」共用) */
   const revealDialog = (): void => {
     const dialogEl = mountEl.querySelector?.('.chat-dialog') as HTMLElement | null
     const maskEl = mountEl.querySelector?.('.chat-mask') as HTMLElement | null
@@ -103,7 +103,7 @@ export function mountChatDialog(ctx: DialogMountContext): DialogController {
           onClearQuote: () => core.clearQuote(),
           autoQuote: dialogCfg.autoQuote === true,
           selectionMenu: dialogCfg.selectionMenu === true,
-          // 浮动菜单「引用到对话」:挂引用 + 打开对话框(抽屉隐藏态也唤起)+ 聚焦输入(完成「加入对话框」闭环)。
+          // 浮动菜单「引用到 AI 助手」:挂引用 + 打开对话框(抽屉隐藏态也唤起)+ 聚焦输入(完成「加入对话框」闭环)。
           // 聚焦延后:cs-hidden 的 visibility 走 transition(0.3s),过渡期内元素不可聚焦(focus 静默失效)
           onSelectionQuote: (q: import('../types').MessageQuote) => {
             core.setQuote(q.text, q.source, q.anchor)

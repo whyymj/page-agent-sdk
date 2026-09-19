@@ -1548,7 +1548,7 @@ For docs/content sites: the user **selects text on the page** and asks about it 
 | Capability | Toggle | Behavior |
 |---|---|---|
 | Selection quoting (silent capture) | `dialog.autoQuote: true` (default off) | Select text → open the drawer / click the input → a quote chip is attached (removable) → sent with the next message as `AgentMessage.quote` (content stays clean; bubble renders a structured quote block; LLM receives a `[Quoted source]` prefix block at toLC time; persisted with the message) |
-| Selection floating menu (explicit confirm) | `dialog.selectionMenu: true` (default off) | Select text → a "❝ Quote to chat" toolbar floats above the selection → click = attach the quote chip + **open the dialog** + focus the input; dismiss on outside click / scroll / Esc |
+| Selection floating menu (explicit confirm) | `dialog.selectionMenu: true` (default off) | Select text → a "❝ Quote to AI assistant" toolbar floats above the selection → click = attach the quote chip + **open the dialog** + focus the input; dismiss on outside click / scroll / Esc |
 | Body reading | `capabilities.domInspect: true` (default off; includes get_dom) | `read_page({ selector?, offset?, limit? })` returns plain-text page content: smart article/main/[role=main]/.content container detection, excludes the SDK's own dialog and script/style, paginates via `hasMore` |
 | Page anchor | `capabilities.pageContext: true` (default off) | Injects current page title + URL as a pinned system segment each round (survives compression; adds a read_page hint when domInspect is also on; not inherited by subagents) |
 
@@ -1572,9 +1572,38 @@ createChatSdk({
 
 **Capture timing (autoQuote, two lazy points, no persistent listener)**: ① `DialogController.show()` — the moment the drawer opens (covers select → click host button); ② ChatInput's `pointerdown` capture phase — synchronously *before* focus transfer collapses the selection (covers drawer open → select → click input). Invalid selections (collapsed / blank / anchored inside the SDK dialog) are skipped silently; selections inside input/textarea are invisible to `getSelection` — hosts can fall back to `sdk.setQuote`.
 
-**Floating menu (`dialog.selectionMenu: true`, explicit-confirm form)**: prefer "ask first, then attach"? Use this — after a selection, a "❝ Quote to chat" toolbar floats above the selection (fixed position, flips below when there is no room above); clicking it calls `sdk.setQuote` + opens the dialog + focuses the input (wakes a `drawerHidden` drawer too); it dismisses on outside click / scroll / Esc / selection collapse. Independent of and composable with `autoQuote` (explicit vs. silent); the toolbar itself is in the `SDK_UI_SELECTOR` exclusion list (read_page never treats it as page content).
+**Floating menu (`dialog.selectionMenu: true`, explicit-confirm form)**: prefer "ask first, then attach"? Use this — after a selection, a "❝ Quote to AI assistant" toolbar floats above the selection (fixed position, flips below when there is no room above); clicking it calls `sdk.setQuote` + opens the dialog + focuses the input (wakes a `drawerHidden` drawer too); it dismisses on outside click / scroll / Esc / selection collapse. Independent of and composable with `autoQuote` (explicit vs. silent); the toolbar itself is in the `SDK_UI_SELECTOR` exclusion list (read_page never treats it as page content).
 
-**Host API (headless custom UI included)**: `sdk.setQuote(text, source?)` attaches a pending quote (consumed by the next send; blank text clears; normalized + capped at 2000 chars) / `sdk.clearQuote()`; `send(msg, { quote })` passes one explicitly (takes precedence and does not consume the pending quote); headless selection capture uses the exported `captureSelectionQuote(document)`. **Semantics**: the quote is *message-level* context (never a system segment, never leaks across messages); queued messages and quick actions do not consume the pending quote (same policy as images); a bare quote cannot be sent; switching/resetting the session keeps it (input-area state, like a draft). Source is derived as page title + nearest preceding h1-h6 heading.
+**Customizing the floating menu (three levels, none of them require touching the SDK source)**: see `examples/docs-demo/App.vue` for a live demo (demo point ④, customized copy + colors).
+
+1. **Copy** — key-level override via `i18n.messages`; only those two keys change, the rest of the message pack is untouched. Note that since 3.22 UI copy lives in the **top-level `i18n`**, not `dialog.messages`:
+```ts
+i18n: { messages: { selectionMenuLabel: 'Ask about this', selectionMenuTitle: 'Quote the selected passage to the assistant' } }
+```
+2. **Styling** — the compiled rules carry the scoped attribute (`.chat-selection-menu-btn[data-v-xxx]`, specificity **0,2,0**), so a single-class host rule (0,1,0) **always loses**. Also, the toolbar is teleported to `body` and is therefore **not** inside your component's template subtree — scoped styles and `:deep()` cannot reach it; the override must live in a **non-scoped** stylesheet. Double the class to match specificity (0,2,0) and win on source order (host CSS after the SDK CSS); add `!important` if the order is not guaranteed:
+```css
+.chat-selection-menu .chat-selection-menu-btn { background: #1f4d3a; color: #fff; border-radius: 8px }
+.chat-selection-menu .chat-selection-menu-btn:hover { background: #2a6350 }
+.chat-selection-menu.chat-selection-menu { z-index: 9999 }   /* container rule: same trick */
+```
+   ⚠️ **Ordering trap (hit in practice)**: if the SDK is **lazy-loaded** (a doc site that `import()`s it after first paint), its `style.css` is injected *after* your stylesheet — equal-specificity rules then lose to it, and `!important` becomes mandatory rather than optional. Verify with `getComputedStyle` rather than the eye: on the learning portal, `box-shadow` and `z-index` silently kept the SDK values while every other property changed, which looks like a successful override.
+   ⚠️ The toolbar's palette is **self-contained** (it does not read `--cs-*` theme variables) — on a dark theme it stays a light pill floating over the host page (by design: it belongs to the host page, not the dialog). Linking it to the theme means overriding as above.
+   ⚠️ Viewport clamping uses a hard-coded size estimate (~128×30), so **a much larger button** can overflow a few pixels when you select text right at a viewport edge (no auto-measurement today).
+3. **Build your own** (extra menu items / custom actions such as "Translate", "Explain") — turn the built-in toolbar off and wire your own overlay to the exported capture helper:
+```ts
+import { captureSelectionQuote } from 'page-agent-sdk'   // package export
+dialog: { selectionMenu: false }
+document.addEventListener('pointerup', () => {
+  const q = captureSelectionQuote(document)   // { text, source, anchor } — anchor has selector/offset/heading
+  if (q) myMenu.show(q)
+})
+myMenu.onPick(q => sdk.setQuote(q.text, q.source, q.anchor))   // 3rd arg accepts your own anchor
+```
+   ⚠️ Your overlay's DOM is **not** in the `SDK_UI_SELECTOR` exclusion list, so `read_page`/`get_dom` will read it as page content — either remove it before asking or tell the model to ignore it via `augmentSystem`.
+
+   **Current hard limits**: the menu has exactly one item (no `actions` config surface); the `❝` icon is hard-coded in the template (it does not go through `dialog.icons`); `onSelectionQuote` is internal wiring inside `mountChatDialog`, with no public callback at the `createChatSdk` level. Need multiple items? Use route 3.
+
+**Host API (headless custom UI included)**: `sdk.setQuote(text, source?, anchor?)` attaches a pending quote (consumed by the next send; blank text clears; normalized + capped at 2000 chars) / `sdk.clearQuote()`; `send(msg, { quote })` passes one explicitly (takes precedence and does not consume the pending quote); headless selection capture uses the exported `captureSelectionQuote(document)`. **Semantics**: the quote is *message-level* context (never a system segment, never leaks across messages); queued messages and quick actions do not consume the pending quote (same policy as images); a bare quote cannot be sent; switching/resetting the session keeps it (input-area state, like a draft). Source is derived as page title + nearest preceding h1-h6 heading.
 
 **Quote DOM anchor (S4, 4.18)**: selection capture (`captureSelectionQuote` / UI autoQuote) also records a *position anchor* for the selection — block-level ancestor selector (e.g. `#content > p:nth-of-type(3)`), in-block character offset, occurrence index for repeated phrases, nearest preceding heading, and the page URL at capture time. The quote block sent to the LLM gains a metadata line: `[位置: #content > p:nth-of-type(3) · 小节「0.1 概述」](偏移 12, 第 2 次出现)` — the agent can `read_page({ selector })` straight to that region instead of blind `dom_search`. **The anchor is a hint, not a guarantee**: re-rendering after a route change may invalidate the selector, in which case the agent falls back to dom_search; if the capture-time URL differs from the current one (SPA doc switch), the quote is auto-tagged "⚠ anchor belongs to a different document" and the agent is guided to re-locate on the current page. Host override: `sdk.setQuote(text, source, anchor)` third argument (all anchor fields optional; `docId` carries a host document id into the metadata line).
 

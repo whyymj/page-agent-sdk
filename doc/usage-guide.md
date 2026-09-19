@@ -1676,7 +1676,7 @@ containerEl.addEventListener('click', (e) => {
 | 能力 | 开关 | 形态 |
 |---|---|---|
 | 划词引用(静默捕获) | `dialog.autoQuote: true`(默认关) | 选中文字 → 打开抽屉/点输入框 → 「引用 chip」自动挂上(可删)→ 随下一条消息发出;`AgentMessage.quote` 侧字段(content 保持干净,气泡渲染结构化引用块;LLM 侧 toLC 前缀注入 `[引用原文(来源:…)]` 块;随消息持久化) |
-| 划词浮动菜单(显式确认) | `dialog.selectionMenu: true`(默认关) | 划选文字 → 选区上方浮出「❝ 引用到对话」工具条 → 点击 = 挂引用 chip + **打开对话框** + 聚焦输入框;点别处/滚动/Esc 消失 |
+| 划词浮动菜单(显式确认) | `dialog.selectionMenu: true`(默认关) | 划选文字 → 选区上方浮出「❝ 引用到 AI 助手」工具条 → 点击 = 挂引用 chip + **打开对话框** + 聚焦输入框;点别处/滚动/Esc 消失 |
 | 正文阅读 | `capabilities.domInspect: true`(默认关,含 get_dom) | `read_page({ selector?, offset?, limit? })` 读页面正文纯文本:智能定位 article/main/[role=main]/.content 容器、排除 SDK 对话框自身与 script/style、长文按 `hasMore` 分页续读 |
 | 页面锚点 | `capabilities.pageContext: true`(默认关) | 每轮 system pin 段注入当前页 title+URL(跨压缩存活;domInspect 同开时附 read_page 指引;子 agent 不继承) |
 
@@ -1699,9 +1699,38 @@ createChatSdk({
 
 **捕获时机(autoQuote 双懒捕获点,零常驻监听)**:① `DialogController.show()` 打开抽屉瞬间(覆盖「选中→点宿主按钮」流);② ChatInput 输入区 `pointerdown` 捕获阶段(焦点转移塌缩选区**之前**同步执行,覆盖「抽屉已开→选中→点输入框」流)。无效选区(塌缩/空白/锚在 SDK 对话框内)静默跳过不打扰;input/textarea 内的选区 `getSelection` 拿不到,宿主可 `sdk.setQuote` 兜底。
 
-**浮动菜单(`dialog.selectionMenu: true`,显式确认形态)**:偏好「先问再加」的交互用这个 —— 划选后选区上方浮出「❝ 引用到对话」工具条(fixed 定位,上方不够翻下方),点击 = `sdk.setQuote` + 打开对话框 + 聚焦输入(即使抽屉原是 `drawerHidden` 隐藏态也唤起);点别处/滚动/Esc/选区失效即隐。与 `autoQuote` 独立可组合(一个显式一个静默),浮条自身在 `SDK_UI_SELECTOR` 排除清单内(read_page 不会把它当正文)。
+**浮动菜单(`dialog.selectionMenu: true`,显式确认形态)**:偏好「先问再加」的交互用这个 —— 划选后选区上方浮出「❝ 引用到 AI 助手」工具条(fixed 定位,上方不够翻下方),点击 = `sdk.setQuote` + 打开对话框 + 聚焦输入(即使抽屉原是 `drawerHidden` 隐藏态也唤起);点别处/滚动/Esc/选区失效即隐。与 `autoQuote` 独立可组合(一个显式一个静默),浮条自身在 `SDK_UI_SELECTOR` 排除清单内(read_page 不会把它当正文)。
 
-**宿主 API(headless 自建 UI 同样可用)**:`sdk.setQuote(text, source?)` 挂待发引用(下一条 send 附带并消费;空文本=清除;归一+截 2000 字符)/ `sdk.clearQuote()`;`send(msg, { quote })` 显式传入(优先且不消费待发);headless 划词捕获用导出的 `captureSelectionQuote(document)`。**语义细节**:引用是**消息级**上下文(不进 system 段,不跨消息残留);排队路径(生成中再发)与快捷指令不消费待发引用(与图片同口径,chip 留给下一条手动消息);纯引用不可发送(引用是问题语境,须有问题本体);切/重置会话不清待发引用(输入区态,同输入框草稿)。来源自动推导 = 页面 title + 选区上方最近的 h1-h6 标题。
+**浮层菜单自定义(三层,都不需要改 SDK 源码)**:demo 见 `examples/docs-demo/App.vue`(演示点 ④,文案 + 配色两处自定义)。
+
+1. **文案** —— `i18n.messages` 键级覆盖,只换这两个键、其余文案包不变(注意 3.22+ 起 UI 文案统一在**顶层 `i18n`**,不是 `dialog.messages`):
+```ts
+i18n: { messages: { selectionMenuLabel: '引用提问', selectionMenuTitle: '把选中的这段原文引用给助教' } }
+```
+2. **样式** —— 编译产物规则带 scoped 属性(`.chat-selection-menu-btn[data-v-xxx]`,特异性 **0,2,0**),宿主单写类名(0,1,0)**必输**;且浮条 Teleport 到 body,**不在**使用方组件模板子树里 —— 组件内的 scoped 样式与 `:deep()` 都选不中它,必须写在**非 scoped** 的样式表里。用「双类名」提到同分(0,2,0),再靠样式表顺序(SDK css 之后)取胜,顺序不稳时加 `!important`:
+```css
+.chat-selection-menu .chat-selection-menu-btn { background: #1f4d3a; color: #fff; border-radius: 8px }
+.chat-selection-menu .chat-selection-menu-btn:hover { background: #2a6350 }
+.chat-selection-menu.chat-selection-menu { z-index: 9999 }   /* 容器规则同理:双类名提权 */
+```
+   ⚠️ **顺序陷阱(实测踩过)**:若 SDK 是**懒加载**的(如文档站首屏后才 `import()`),它的 `style.css` 在宿主样式**之后**注入 —— 同特异性的规则会被它反压,`!important` 就成了必需而不是可选项。判定方法:改完看 `getComputedStyle` 是否真的变了(学习门户实测 `box-shadow`/`z-index` 两处漏了 `!important` 就没生效,其余键对了会给人「覆盖成功」的假象)。
+   ⚠️ 浮条配色**自包含**(不读 `--cs-*` 主题变量)—— 深色主题下它仍是白底浅色浮条(设计如此:浮在宿主页上,跟宿主页而不是对话框);要跟主题联动只能走上面这段覆盖。
+   ⚠️ 定位钳制按组件内的尺寸常量估算(约 128×30),**把按钮改大后**,在贴近视口边缘处划词可能溢出几像素(无自动测量)。
+3. **完全自建**(想加菜单项 / 自定义动作,如「翻译」「解释」)—— 关掉内置浮条,用导出的捕获函数接自己的浮层:
+```ts
+import { captureSelectionQuote } from 'page-agent-sdk'   // 包导出
+dialog: { selectionMenu: false }
+document.addEventListener('pointerup', () => {
+  const q = captureSelectionQuote(document)   // { text, source, anchor } —— anchor 含 selector/offset/heading
+  if (q) myMenu.show(q)
+})
+myMenu.onPick(q => sdk.setQuote(q.text, q.source, q.anchor))   // 第三参可换成你自建的锚点
+```
+   ⚠️ 自建菜单的 DOM **不在** `SDK_UI_SELECTOR` 排除清单内,`read_page`/`get_dom` 会把它当正文读进去 —— 要么在提问前移除,要么在 `augmentSystem` 里显式告诉模型忽略它。
+
+   **当前改不动的边界**:菜单项固定一项(没有 actions 配置面);图标 `❝` 写死在模板(不走 `dialog.icons`);`onSelectionQuote` 只是 `mountChatDialog` 的内部接线,`createChatSdk` 层没有对外回调。需要多项菜单请走路线 3。
+
+**宿主 API(headless 自建 UI 同样可用)**:`sdk.setQuote(text, source?, anchor?)` 挂待发引用(下一条 send 附带并消费;空文本=清除;归一+截 2000 字符)/ `sdk.clearQuote()`;`send(msg, { quote })` 显式传入(优先且不消费待发);headless 划词捕获用导出的 `captureSelectionQuote(document)`。**语义细节**:引用是**消息级**上下文(不进 system 段,不跨消息残留);排队路径(生成中再发)与快捷指令不消费待发引用(与图片同口径,chip 留给下一条手动消息);纯引用不可发送(引用是问题语境,须有问题本体);切/重置会话不清待发引用(输入区态,同输入框草稿)。来源自动推导 = 页面 title + 选区上方最近的 h1-h6 标题。
 
 **引用 DOM 锚点(S4,4.18)**:划词捕获(`captureSelectionQuote` / UI autoQuote)会一并记录**选区位置锚点** —— 块级祖先 selector(`#content > p:nth-of-type(3)` 形态)/ 块内字符偏移 / 重复短语出现序号 / 最近在前标题 / 捕获时页面 URL。发给 LLM 的引用块后附元信息行:`[位置: #content > p:nth-of-type(3) · 小节「0.1 概述」](偏移 12, 第 2 次出现)` —— agent 可直接 `read_page({ selector })` 读该区域定位到句,不必 `dom_search` 盲搜。**锚点是提示不是保证**:换文重渲染后 selector 可能失效,agent 读失败会回退 dom_search 检索;捕获时与发送时页面 URL 不一致(SPA 切文)自动标「⚠ 锚点属于另一文档」引导按当前页面重检。宿主自定义:`sdk.setQuote(text, source, anchor)` 第三参(anchor 全字段可选,`docId` 可带宿主文档标识进元信息行)。
 

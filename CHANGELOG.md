@@ -2,6 +2,20 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.19.2] - 2026-09-19
+
+### Changed
+
+- **划词浮层菜单默认文案**:`selectionMenuLabel` 默认值「引用到对话」→「**引用到 AI 助手**」(英文 `Quote to chat` → `Quote to AI assistant`)—— 对话外的宿主用户更直白地知道点了会发生什么;覆盖路径(`i18n.messages.selectionMenuLabel`)不变。
+
+### Added
+
+- **浮层菜单自定义三层文档 + demo**(学习门户真集成驱动):usage-guide §6.20 中英新增「浮层菜单自定义」整段 —— ①文案(`i18n.messages` 两键级覆盖;3.22 起在顶层 `i18n` 不在 `dialog.messages`)②样式(**必须写在非 scoped 样式表**:浮条 Teleport 到 body,组件 scoped/`:deep()` 选不中;产物规则带 `[data-v-*]` 特异性 0,2,0,单类名必输,双类名提权 + 顺序取胜;**懒加载站点的顺序陷阱**——SDK `style.css` 后注入会反压同特异性规则,`!important` 从可选变必需,判定方法 = `getComputedStyle` 实测而非肉眼;学习门户实测 `box-shadow`/`z-index` 漏 `!important` 即静默失效)③完全自建(`selectionMenu:false` + 导出的 `captureSelectionQuote` + `sdk.setQuote(text, source, anchor)`;自建 DOM 不在 `SDK_UI_SELECTOR` 排除清单的坑明示)。**当前边界明示**:菜单项固定一项(无 actions 配置面)/`❝` 图标写死不走 `dialog.icons`/`onSelectionQuote` 仅为内部接线。docs-demo 演示点 ④(文案「引用提问」+ 墨绿配色非 scoped style + 全套坑注释);usage-guide 同步修正 `sdk.setQuote` 签名(补 4.18 已有的第三参 `anchor`);`dialog.selectionMenu` JSDoc 三处补指引。
+
+### 门槛
+
+- browser docs-demo 浮层用例增强 3 断言(自定义文案 text/title、覆盖后背景色 rgb 值);selftest 3705 / e2e 1202 / browser 169 计数不变。
+
 ## [4.19.1] - 2026-09-18
 
 ### Fixed

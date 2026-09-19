@@ -97,9 +97,10 @@ const props = withDefaults(defineProps<{
   onClearQuote?: () => void
   /** 划词自动捕获(page-quote;默认 false:自动把页面划词发给 LLM 属隐私敏感,opt-in;宿主 sdk.setQuote 不受此开关影响) */
   autoQuote?: boolean
-  /** 划词浮动菜单(page-quote 显式确认形态;默认 false):划选宿主文字浮出「❝ 引用到对话」工具条,点击 = 挂引用 chip + 打开对话框;与 autoQuote 独立可组合 */
+  /** 划词浮动菜单(page-quote 显式确认形态;默认 false):划选宿主文字浮出「❝ 引用到 AI 助手」工具条,点击 = 挂引用 chip + 打开对话框;与 autoQuote 独立可组合。
+   *  文案走 i18n.messages 的 selectionMenuLabel/selectionMenuTitle;样式覆盖必须写在**非 scoped** 样式表(浮条 Teleport 到 body,不在本组件模板子树内,scoped/:deep() 选不中),且需双类名提权对抗产物里的 [data-v-*](见 usage-guide §6.20) */
   selectionMenu?: boolean
-  /** 浮动菜单「引用到对话」回调(mountChatDialog 接线:core.setQuote + reveal 对话框 + 聚焦输入) */
+  /** 浮动菜单「引用到 AI 助手」回调(mountChatDialog 接线:core.setQuote + reveal 对话框 + 聚焦输入) */
   onSelectionQuote?: (q: MessageQuote) => void
   /** 输入框行数;默认 2 */
   inputRows?: number

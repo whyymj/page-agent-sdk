@@ -184,14 +184,20 @@ test.describe('划词浮动菜单 selectionMenu(docs-demo)', () => {
     await page.evaluate(() => document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })))
   }
 
-  test('划选 → 浮条出现 → 「引用到对话」= 挂 chip + 打开抽屉 + 发送全链路', async ({ page }) => {
+  test('划选 → 浮条出现(自定义文案/配色)→ 挂 chip + 打开抽屉 + 发送全链路', async ({ page }) => {
     await page.goto('/examples/docs-demo/')
     await page.waitForSelector('.chat-dialog', { state: 'attached' })
     await mockLlm(page, [{ text: '围绕引用的解答' }])
 
     await selectWithPointerUp(page, '多头注意力')
     await expect(page.locator('[data-test="selection-menu"]')).toBeVisible()
-    // 对话框此前隐藏(drawerHidden);点「引用到对话」→ setQuote + reveal + 聚焦
+    // 浮层菜单自定义(演示点 ④,文档 §6.20 两层的活样例):
+    // ① 文案 —— i18n.messages.selectionMenuLabel 键级覆盖生效(默认包值是「引用到 AI 助手」)
+    await expect(page.locator('[data-test="selection-menu-quote"]')).toHaveText(/引用提问/)
+    await expect(page.locator('[data-test="selection-menu-quote"]')).toHaveAttribute('title', '把选中的这段原文引用给助教')
+    // ② 配色 —— 宿主非 scoped 样式表的双类名覆盖压过产物的 .chat-selection-menu-btn[data-v-*](默认白底 #fff)
+    await expect(page.locator('[data-test="selection-menu-quote"]')).toHaveCSS('background-color', 'rgb(31, 77, 58)')
+    // 对话框此前隐藏(drawerHidden);点「引用提问」(本 demo 覆盖的文案)→ setQuote + reveal + 聚焦
     await expect(page.locator('.chat-dialog')).toBeHidden() // 未点前抽屉仍隐藏
     await page.click('[data-test="selection-menu-quote"]')
     await expect(page.locator('.chat-dialog')).toBeVisible()

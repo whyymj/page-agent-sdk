@@ -79,7 +79,7 @@ export interface DialogMessages {
   quoteChipTitle: string       // 引用 chip title(将随下一条消息作为引用发送)
   quoteRemove: string          // 移除引用
   screenshotAlt: string        // 截图缩略图 alt/title(page-screenshot 观察面)
-  selectionMenuLabel: string   // 划词浮动菜单按钮文案(引用到对话)
+  selectionMenuLabel: string   // 划词浮动菜单按钮文案(引用到 AI 助手)
   selectionMenuTitle: string   // 划词浮动菜单按钮 title
   imageCountLimitPrefix: string // 单轮最多 / Up to
   imageCountLimitSuffix: string // 张图片 / images per message
@@ -321,7 +321,7 @@ export const MESSAGES_ZH_CN: DialogMessages = {
   quoteChipTitle: '将随下一条消息作为引用发送(❝ 划词引用)',
   quoteRemove: '移除引用',
   screenshotAlt: '截图查看(点击放大)',
-  selectionMenuLabel: '引用到对话',
+  selectionMenuLabel: '引用到 AI 助手',
   selectionMenuTitle: '把选中文本作为引用加入对话框,随下一条消息发给 AI',
   imageCountLimitPrefix: '单轮最多 ',
   imageCountLimitSuffix: ' 张图片',
@@ -558,7 +558,7 @@ export const MESSAGES_EN_US: DialogMessages = {
   quoteChipTitle: 'Will be quoted with your next message',
   quoteRemove: 'Remove quote',
   screenshotAlt: 'Screenshot (click to enlarge)',
-  selectionMenuLabel: 'Quote to chat',
+  selectionMenuLabel: 'Quote to AI assistant',
   selectionMenuTitle: 'Add the selected text to the dialog as a quote, sent with your next message',
   imageCountLimitPrefix: 'Up to ',
   imageCountLimitSuffix: ' images per message',

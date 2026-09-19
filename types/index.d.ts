@@ -1440,7 +1440,7 @@ export interface DialogConfig {
   onDropElement?: (el: Element) => void;
   /** 划词自动捕获(page-quote,默认 false):true 时打开抽屉 / 点击输入区瞬间懒捕获宿主页面(对话框外)当前选中文本挂「引用 chip」(可删),随下一条消息作为提问上下文发给 LLM。opt-in(隐私);宿主 API sdk.setQuote/clearQuote 不受此开关影响 */
   autoQuote?: boolean;
-  /** 划词浮动菜单(page-quote 显式确认形态,默认 false):划选宿主文字浮出「❝ 引用到对话」工具条(选区上方,fixed),点击 = 挂引用 chip + 打开对话框 + 聚焦输入;点别处/滚动/Esc 消失。与 autoQuote 独立可组合 */
+  /** 划词浮动菜单(page-quote 显式确认形态,默认 false):划选宿主文字浮出「❝ 引用到 AI 助手」工具条(选区上方,fixed),点击 = 挂引用 chip + 打开对话框 + 聚焦输入;点别处/滚动/Esc 消失。与 autoQuote 独立可组合。自定义三层(文案 i18n.messages / 样式覆盖须非 scoped 样式表 / 关掉本开关后 captureSelectionQuote+sdk.setQuote 自建)见 usage-guide §6.20;菜单项当前固定一项 */
   selectionMenu?: boolean;
   /** 会话导出/导入 UI 入口(ui-quick-wins Q2):历史面板底部显示「导出会话/导入会话…」(下载 .json / 选文件导入并切换)。默认 false 不显示;sdk.exportSession/importSession API 恒可用(与 UI 开关无关) */
   sessionTransfer?: boolean;

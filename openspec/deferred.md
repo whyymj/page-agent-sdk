@@ -715,3 +715,10 @@ A3 曾写「116 个模块」,实测 sec-*.ts = **115**(runner import 同数)—�
 ## 2026-09-17(host-integration-contract 裁出)
 
 - **体积与 markdown 依赖去重**:现状基础 = 主包 1283KB / headless 750KB(raw),`marked`+`highlight.js`+`dompurify` 打包进主包,与宿主自带实例重复(静态站集成方实测痛点:其体积指标为「增量 <15KB gzip」);暂缓理由 = 涉及 UI 渲染链重构 + 破坏性(现有 import 面),且静态站可先用懒加载缓解(学习门户实测:首屏主 chunk 187KB 不变,SDK 走 643KB gzip 懒加载 chunk);重启触发 = **第二个静态站集成方提出体积硬指标**,或需要「无 markdown 依赖」的核心子路径。
+
+## 2026-09-19(content-proposals 裁出)
+
+- **approval 宿主自定义预览渲染**(阻塞式 chat 内评审路线):现状基础 = approval 中间件 + ApprovalBar + previewWrite(write 工专享 dryRun old→new 摘要);暂缓理由 = 门户实测**非阻塞页面内面板**体验更优(content-proposals 主路线已覆盖),chat 内评审需求未证实;重启触发 = 集成方明确要「评审留在聊天内」(如 headless 无宿主页面可挂面板)。
+- **read_content 分页与超长内容协议**(offset/limit + 分块 append 提案):现状基础 = dataOps 侧大 JSON 已有完整分页/裁剪/vfs 外存先例;暂缓理由 = 宿主内容典型 <100KB,首个真实超长内容场景未出现;重启触发 = 集成方内容源 >300KB 且提案 token 成本实测不可接受。
+- **DiffPreview 组件导出**(SDK 内置 diff 渲染 Vue 组件):现状基础 = `lineDiff` 纯函数已随 content-proposals 导出,宿主自行渲染门槛低(门户面板 ~60 行);暂缓理由 = UI 组件导出涉及样式主题联动/包体,单一消费者不值得;重启触发 = 第二个集成方需要评审面板且不愿自写渲染。
+- **`sdk.invokeTool(name, args)` 测试缝**(不经 LLM 直接驱动工具,替代宿主 window 钩子):现状基础 = browser E2E 用 mockLlm 脚本驱动,门户 DEV 钩子 `window.__editProposal` 同族;暂缓理由 = mockLlm 已覆盖 SDK 自身测试需求,宿主侧 e2e 各自实现钩子成本低;重启触发 = 多个宿主项目反馈测试驱动不便。

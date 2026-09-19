@@ -2,10 +2,12 @@
 /**
  * 学习文档站集成模板(page-quote):自建文档网站 + AI 聊天框的参考实现。
  *
- * 三个演示点:
+ * 四个演示点:
  * ① 划词引用:选中正文任意文字 → 点「问 AI」打开抽屉或点击输入框 → 引用 chip 自动挂上 → 连问题发出;
  * ② 页面问答:agent 自主调 read_page 读当前页正文(智能定位 article 容器,长文分页)回答「这页讲了什么」;
- * ③ 页面锚点:capabilities.pageContext 每轮注入当前页 title+URL,agent 知道用户在哪篇文档。
+ * ③ 页面锚点:capabilities.pageContext 每轮注入当前页 title+URL,agent 知道用户在哪篇文档;
+ * ④ 浮层菜单自定义:文案走 i18n.messages 键级覆盖(见下方 i18n)+ 配色走宿主 CSS 覆盖(文件末尾非 scoped style,
+ *    浮条 Teleport 到 body,scoped 样式选不中它)—— 完整三层自定义(文案/样式/自建)见 doc/usage-guide §6.20。
  *
  * 集成要点(完整说明 doc/usage-guide.md §6.18):
  * - capabilities: { domInspect: true } 开 get_dom/read_page(默认关,opt-in);
@@ -42,7 +44,7 @@ onMounted(() => {
       drawer: true,
       drawerHidden: true,
       autoQuote: true,
-      selectionMenu: true, // 划词浮动菜单:显式确认形态(与 autoQuote 静默捕获组合演示)
+      selectionMenu: true, // 划词浮动菜单:显式确认形态(与 autoQuote 静默捕获组合演示);文案/样式自定义见 i18n 与文件末尾 style
       title: '文档助教',
       placeholder: '选中正文后提问,或直接问本页内容…',
       quickActions: [
@@ -52,6 +54,14 @@ onMounted(() => {
         { label: '高亮表格', prompt: '用 dom_edit 把 .docs-table 高亮出来(黄色背景),让我一眼看到配置表格在哪', icon: '🖍' },
         ...(shotMode ? [{ label: '截图看表格', prompt: '用 take_screenshot 截取 .docs-table 区域,看看表格渲染效果', icon: '📸' }] : []),
       ],
+    },
+    // 浮层菜单文案自定义(演示点 ④):i18n.messages 键级覆盖,只换这两个键、其余文案包不变。
+    // 注意 3.22+ 起 UI 文案统一在顶层 i18n(不是 dialog.messages);配色自定义见文件末尾的非 scoped style
+    i18n: {
+      messages: {
+        selectionMenuLabel: '引用提问',
+        selectionMenuTitle: '把选中的这段原文引用给助教',
+      },
     },
   })
   agent.mount()
@@ -71,7 +81,8 @@ const openAsk = (): void => agent?.show()
       <h1>Transformer 学习笔记</h1>
       <p class="docs-meta">自建学习文档 · 集成 page-agent-sdk 划词引用 + 页面问答</p>
       <div class="docs-tip">
-        💡 选中正文任意文字 → 浮出「❝ 引用到对话」点击即挂引用并打开对话框;或选中后点右下角「问 AI」/输入框(自动捕获)→ 引用 chip 挂上 → 输入问题发送。
+        💡 选中正文任意文字 → 浮出「❝ 引用提问」点击即挂引用并打开对话框;或选中后点右下角「问 AI」/输入框(自动捕获)→ 引用 chip 挂上 → 输入问题发送。
+        🎨 浮层菜单自定义:本 demo 把按钮文案换成了「引用提问」(i18n.messages 键级覆盖)、配色改成墨绿(宿主 CSS 覆盖,见 App.vue 末尾非 scoped style)。
         📸 截图演示:URL 加 ?shot=1 声明多模态,agent 获得 take_screenshot 视觉验证能力(纯文本模型走识图转述)
       </div>
     </header>
@@ -144,4 +155,17 @@ const openAsk = (): void => agent?.show()
   background: #1f4d3a; color: #fff; font-size: 14px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
 }
 .ask-btn:hover { background: #2a6350; }
+</style>
+
+<!-- 浮层菜单配色自定义(演示点 ④):必须独立一个**非 scoped** style —— 浮条 Teleport 到 body,不在本组件
+     模板子树里,scoped 的 `[data-v-xxx]` 属性和 :deep() 都选不中它。
+     另一个坑:SDK 产物规则是 `.chat-selection-menu-btn[data-v-yyy]`(特异性 0,2,0),单类名覆盖(0,1,0)必输;
+     这里用「双类名」提到同分(0,2,0),再靠样式表顺序(宿主 css 在 SDK css 之后)取胜 —— 顺序不稳时加 !important -->
+<style>
+.chat-selection-menu .chat-selection-menu-btn {
+  background: #1f4d3a; color: #fff; border-color: transparent; border-radius: 8px; font-weight: 600;
+}
+.chat-selection-menu .chat-selection-menu-btn:hover { background: #2a6350; }
+/* 容器同理:双类名提权,调 z-index 等 */
+.chat-selection-menu.chat-selection-menu { z-index: 2147483001; }
 </style>
