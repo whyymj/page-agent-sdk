@@ -157,6 +157,33 @@ export interface QuoteAnchor {
 }
 export declare function captureSelectionQuote(doc: { getSelection?(): { isCollapsed?: boolean; anchorNode?: Node | null; toString(): string } | null; title?: string; location?: { href?: string }; querySelectorAll?: (selector: string) => ArrayLike<Element> }): MessageQuote | null;
 
+/** 逐行 diff 行类型(content-proposals;lineDiff 产出;skip 行由宿主渲染折叠产生,本函数不产出) */
+export interface DiffRow {
+  type: 'same' | 'add' | 'del';
+  text: string;
+}
+/** 内容提案增量操作(判别联合;字面锚点纪律:find/anchor 须在当前内容唯一命中) */
+export type ProposalOp = { op: 'replace'; find: string; with: string } | { op: 'insertAfter'; anchor: string; text: string } | { op: 'insertBefore'; anchor: string; text: string } | { op: 'append'; text: string };
+/** 逐行 diff(公共前后缀修剪 + 中段 LCS;中段超 4e6 格回退整块替换)。宿主评审面板渲染/预演用 */
+export declare function lineDiff(oldText: string, newText: string): { rows: DiffRow[]; stats: { added: number; removed: number } };
+/** 顺序应用增量 ops(原子:任一失败整批拒,错误指名第几个 op 与命中数);测试缝/预演用 */
+export declare function applyProposalOps(base: string, ops: ProposalOp[]): { ok: true; content: string } | { ok: false; error: string };
+/** 内容指纹(FNV-1a → base36;提案基底锚定用;非密码学) */
+export declare function hashContent(text: string): string;
+/** 字面锚点命中数(锚为空串按 0 计) */
+export declare function countOccurrences(haystack: string, needle: string): number;
+/** 送达评审面板的提案(content-proposals;SDK 已校验基底/应用 ops/算 diff,宿主渲染面板 + 裁决) */
+export interface ReviewableProposal {
+  id: string;
+  summary: string;
+  label?: string;
+  baseHash: string;
+  baseContent: string;
+  content: string;
+  diff: { rows: DiffRow[]; stats: { added: number; removed: number } };
+  createdAt: number;
+}
+
 export interface AgentConfig {
   model: string;
   temperature?: number;
@@ -220,7 +247,9 @@ export type SdkEvent =
   | { type: 'error'; message: string; severity?: 'recoverable' | 'fatal' | 'observable'; code?: string; context?: unknown }
   | { type: 'context_trimmed'; dropped: { round: number; user: unknown; assistant: unknown[]; steps: unknown[] }[]; vfsResults: Record<string, string>; summary: string; reason: string }
   | { type: 'focus_chip_click'; path: string; label?: string }
-  | { type: 'focus_change'; focuses: Focus[] };
+  | { type: 'focus_change'; focuses: Focus[] }
+  | { type: 'proposal_pending'; id: string; summary: string; added: number; removed: number }
+  | { type: 'proposal_resolved'; id: string; outcome: 'applied' | 'discarded'; summary: string };
 
 /** token 用量(OpenAI 协议字段名) */
 export interface TokenUsage {
@@ -422,6 +451,8 @@ export interface AgentInfo {
   hostReadsInvalidated?: number;
   /** hostWatch 装配反射(4.21+;配置存在才出现):enabled=false = 服务端/headless 特性探测全缺(合法 no-op);autoNotified = 自动报案会话累计 */
   hostWatch?: { enabled: boolean; url: boolean; pushState: boolean; title: boolean; autoNotified: number };
+  /** content-proposals 反射(4.22+;配置存在才出现):pending 轻投影 + 会话累计 + 最近裁决 */
+  proposals?: { pending: Array<{ id: string; summary: string; createdAt: number; added: number; removed: number }>; applied: number; discarded: number; lastResolved: { id: string; outcome: 'applied' | 'discarded'; summary: string; detail?: string; at: number } | null };
   /** A9 收口门禁会话累计(stage → { retries 回灌, exhausted 耗尽放行 };page_assertion_gate 键存在性 = domInspect 装配反射) */
   gates?: Record<string, { retries: number; exhausted: number }>;
   /** A9 最近一次 system 段构成(段名/字节/超预算 drop 标记;集成方 augmentSystem/pageContext 段被 drop 时可观察) */
@@ -1074,6 +1105,12 @@ export interface ChatSdkOptions {
    * 另:dom_edit/dom_restore 落地成功后既有页面读自动失效(默认开,与本选项无关)
    */
   hostWatch?: boolean | HostWatchConfig;
+  /**
+   * 内容提案-评审-应用通道(4.22+,配置即开关;不配置 = 零注册零开销):数据槽之外内容的受控修改 ——
+   * 模型零写权限,propose_content 只送提案(非阻塞),diff 评审与写回在宿主侧由用户显式完成。
+   * sdk.resolveProposal(id, 'applied'|'discarded') 裁决回传 → 事件 + 下轮结局告知
+   */
+  proposals?: ProposalsConfig;
   /** Dialog UI config (title/placeholder/drawer/drawerWidth/drawerHidden/inputRows/onClose grouped) */
   dialog?: DialogConfig;
 }
@@ -1090,6 +1127,21 @@ export interface HostWatchConfig {
   debounceMs?: number;
   /** 宿主自定义忽略(如自家 #section 纯锚点):返回 true 不报案 */
   ignore?: (e: { kind: 'hash' | 'pop' | 'push' | 'title'; from: string; to: string }) => boolean;
+}
+/** 内容提案通道配置(content-proposals,4.22+) */
+export interface ProposalsConfig {
+  /** 读通道:返回当前内容(SDK 计算 hash;null = 当前无可编辑对象,工具内如实报) */
+  read: () => Promise<{ content: string; label?: string } | null> | { content: string; label?: string } | null;
+  /** 评审回调:SDK 已完成基底校验/ops 应用/diff 计算;宿主渲染面板。返回字符串回灌模型(非阻塞:勿等待用户裁决) */
+  onProposal: (p: ReviewableProposal) => string | Promise<string>;
+  /** 提案工具名(默认 'propose_content') */
+  toolName?: string;
+  /** 读工具名(默认 'read_content') */
+  readToolName?: string;
+  /** 内容是什么(进工具 description) */
+  contentKind?: string;
+  /** 在审提案上限(默认 1:新提案替换最旧在审,留痕) */
+  maxPending?: number;
 }
 /** Dialog UI config (grouped form, recommended) */
 export interface DialogConfig {
@@ -1200,6 +1252,10 @@ export interface ChatSdk {
   clearQuote(): void;
   /** S2 宿主变更通知:SPA 换文/路由切换/tab 切换后调用 —— 流内页面读结果(read_page/dom_search/dom_info/get_dom/take_screenshot)置过期占位,并注入一次性「重读当前页面」提示段(下一 invoke 的 system,pin 段跨压缩,轮末清除);幂等可重复调 */
   notifyHostChange(opts?: { reason?: string }): void;
+  /** content-proposals(4.22+):宿主裁决回传 → 出队 + proposal_resolved 事件 + 下轮结局注入;false = id 未知/已裁决 */
+  resolveProposal(id: string, outcome: 'applied' | 'discarded', detail?: string): boolean;
+  /** content-proposals:只读状态投射(未配置恒 null) */
+  readonly proposals: { pending: Array<{ id: string; summary: string; createdAt: number; added: number; removed: number }>; applied: number; discarded: number; lastResolved: { id: string; outcome: 'applied' | 'discarded'; summary: string; detail?: string; at: number } | null } | null;
   /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 主数据 + vfs + todos);需开启 checkpoint,无可用返回 false */
   restoreLastCheckpoint(): boolean;
   /** 列出可用 checkpoint(回退点);需开启 checkpoint,未开启返回空数组 */

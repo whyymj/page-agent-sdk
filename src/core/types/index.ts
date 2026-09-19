@@ -178,6 +178,8 @@ export type SdkEvent =
   | { type: 'context_trimmed'; dropped: { round: number; user: unknown; assistant: unknown[]; steps: unknown[] }[]; vfsResults: Record<string, string>; summary: string; reason: string }
   | { type: 'focus_chip_click'; path: string; label?: string }
   | { type: 'focus_change'; focuses: import('../harness/state').Focus[] }
+  | { type: 'proposal_pending'; id: string; summary: string; added: number; removed: number }
+  | { type: 'proposal_resolved'; id: string; outcome: 'applied' | 'discarded'; summary: string }
 
 /** token 用量(OpenAI 协议字段名) */
 export interface TokenUsage {

@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-3738%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-3759%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -179,6 +179,7 @@ CDN 零配置：`<script src="https://unpkg.com/page-agent-sdk"></script>` → `
 | 🖍 DOM 编辑 | `dom_edit` 批量原子操作(set_text/set_html/set_attr/add_class/set_style/insert/remove/move/highlight)+ `dom_restore` 快照回滚(栈 20 批);唯一 selector 纪律(多匹配拒)/危险闸(script·on*·javascript: 拒)/SDK 自身 DOM 保护/单根快照 256KB 上限;改动为会话临时态,数据驱动页面仍走 write | `capabilities: { domInspect: true, domEdit: true }` |
 | 🔁 宿主变更通知(4.18) | `sdk.notifyHostChange({reason?})`:SPA 换文/路由切换后调 —— 流内页面读结果(read_page/dom_search/dom_info/get_dom/take_screenshot)置过期占位(通知后新读不受影响)+ 一次性「须重读当前页面」提示段;数据槽读不受影响;`inspect().hostReadsInvalidated` 累计 | 路由切换 handler 调一次 |
 | 📡 宿主导航自动报案(4.21) | `hostWatch: true`:URL 一变(hashchange/popstate)自动触发 notifyHostChange 全链路 —— 把「防线靠宿主记得调」变「防线自动」;pushState patch/title 观察 opt-in;去抖合并 + `ignore` 钩子;服务端/headless 特性探测静默 no-op(`inspect().hostWatch` 反射)。另:dom_edit/dom_restore 落地后旧页面读自动失效(默认开) | `hostWatch` |
+| 📝 内容提案-评审-应用(4.22) | `proposals: { read, onProposal }`:数据槽外内容的受控修改 —— `read_content`(基底+hash)→ `propose_content`(**增量 ops**:字面锚唯一命中/原子,token 只花在改动上;baseHash 漂移显式拒)→ 宿主 diff 面板 → 用户点应用才写回;`sdk.resolveProposal` 裁决闭环(事件 + 下轮结局告知);模型零写权限、未配置零注册;`lineDiff/applyProposalOps/hashContent` 纯函数导出 | `proposals` + `sdk.resolveProposal` |
 | 🛡 页面断言门禁(4.18) | 「本页写了/原文提到…」× 本轮零页面依据(含截图)× 非诚实不存在声明 → 回灌「先读页面再断言 + 事实清单」(独立预算 ≤2,超限 EXHAUSTED observable);仅 domInspect 开启装配(数据槽误伤路径结构切断) | 随 `domInspect` 自动 |
 | 📍 引用 DOM 锚点(4.18) | 划词捕获一并记录选区位置(块级 selector/块内偏移/出现序号/最近标题/捕获时 URL),引用块附 `[位置: …]` 元信息行 → `read_page({selector})` 直达;捕获与发送 URL 不一致自动标「锚点属于另一文档」;锚点是提示不是保证(失效回退 dom_search) | 随划词捕获自动;`setQuote` 第三参可自定义 |
 
@@ -250,6 +251,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | **能力开关** | `capabilities` | `{planning?,missionAnchor?,dataOps?,fetch?,skills?,vfs?,summarization?,memory?,workingMemory?,subagent?,verify?,domInspect?,focus?}` | 核心默认开（`verify`/`domInspect` 默认关,opt-in;`focus` 上下文聚焦·指定组件精修,默认开）；`false` 关掉省 token |
 | | `actions` | `Record<string,{description,run,params?,readsHostState?,deferredWrite?}>` | **(2.18+) 宿主动作**：注册 save_draft/publish 等页面操作 → SDK 自动生成命名 tool 供 agent 触发；**(4.20+) 两语义标记**:`readsHostState`(action 读宿主态 → 旧结果随 `notifyHostChange` 置过期占位)/ `deferredWrite`(提案类,效果待用户确认 → 事实清单注记「待确认」防谎报完成) |
 | | `hostWatch` | `boolean \| { url?, pushState?, title?, debounceMs?, ignore? }` | **(4.21+) 宿主导航自动报案**:`true` = 监听 hashchange/popstate,URL 变化自动触发 notifyHostChange;`pushState` patch / `title` 观察 opt-in;`debounceMs` 默认 300(连发合并);`ignore` 过滤自家纯锚点;服务端 no-op(`inspect().hostWatch` 确认) |
+| | `proposals` | `{ read, onProposal, toolName?, readToolName?, contentKind?, maxPending? }` | **(4.22+) 内容提案通道**:`read` 返回当前内容、`onProposal` 收完整提案(含 diff)渲染面板;工具名/内容说明/在审上限可调;不配置零注册 |
 | | `schemaHint` | `{maxKeys?,maxChars?}` · 默认 `{15,4000}` | **(2.18+) 大 schema 分层披露阈值**：超则 systemPrompt 只注入顶层概览（不带约束/不递归）,深层约束按需 `schema_data` 查;小 schema 无感（全量） |
 | | `images` | `{upload?,describe?,describeTimeoutMs?}` | **图片输入(image-input-vision)**：对话框内置三入口(📎/拖拽/粘贴)→ 压缩闸(长边≤1568/≤4 张/超 20MB 拒)。主模型多模态(查表或 `llm.vision:true`)→ 图片直发 content parts,零配置;纯文本主模型 → 配 `describe` 逐图识图转述注入(图不直发),都不配则诚实拒绝不静默丢图;`upload` 原图换 https URL(集成方 OSS)。见 [usage-guide §6.17](doc/usage-guide.md#617-图片输入多模态直发--识图转述旁路) |
 | | `dialog.autoQuote` | `boolean` | **划词引用·静默捕获(page-quote,默认 false)**:true 时打开抽屉/点输入区瞬间懒捕获宿主页面(对话框外)当前选中文本挂「引用 chip」(可删),随下一条消息发给 LLM。隐私 opt-in;`sdk.setQuote/clearQuote` 不受此开关影响。见 [usage-guide §6.20](doc/usage-guide.md#620-划词引用与页面问答page-quote--read_page--pagecontext) |

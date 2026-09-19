@@ -70,6 +70,7 @@ import { createImagePipeline, buildImageContentParts } from '../tools/imageInput
 import { createScreenshotTool } from '../tools/screenshot'
 import { createDomEditTools } from '../tools/domEdit'
 import { createHostWatcher, buildHostWatchReason, type HostWatchEvent, type HostWatcherHandle, type HostWatcherTarget, type HostWatchHistory, type HostWatchDocument } from './hostWatcher'
+import { createProposalChannel } from './proposals'
 import { HumanMessage } from '@langchain/core/messages'
 import { createVfs, createVfsMiddleware, VFS_TOOL_NAMES, normalize as normalizeVfsPath, type VfsStore } from '../backends/vfs'
 import type { VfsFile, Mission, Focus } from '../harness/state'
@@ -102,7 +103,7 @@ import type { ToolCallContext } from '../harness/middleware'
 import { rawRead } from '../utils/rawRead'
 
 import type { LLMConfig, ChatSdkOptions, I18nOptions, DialogConfig, ChatSdk, SendOptions, PendingConflict } from './options'
-export type { LLMConfig, SessionOptions, SystemAugmentContext, ChatSdkOptions, I18nOptions, HostWatchConfig, QuickActionItem, DialogConfig, ChatSdk, SendOptions, PendingConflict } from './options'
+export type { LLMConfig, SessionOptions, SystemAugmentContext, ChatSdkOptions, I18nOptions, HostWatchConfig, ProposalsConfig, QuickActionItem, DialogConfig, ChatSdk, SendOptions, PendingConflict } from './options'
 
 /** 内存中保留的对话轮数上限(超限压缩为摘要,防 OOM);0 表示关闭 */
 const DEFAULT_MAX_MEMORY_ROUNDS = 30
@@ -221,6 +222,10 @@ export interface AgentCore {
   clearQuote(): void
   /** S2 宿主变更通知:SPA 换文/路由切换/tab 切换后调用 —— 流内页面读结果置过期占位 + 下一 invoke 注入一次性重读提示段 */
   notifyHostChange(opts?: { reason?: string }): void
+  /** content-proposals:宿主裁决回传(用户点「应用/放弃」后调)→ 出队 + proposal_resolved 事件 + 下轮结局注入;false = id 未知/已裁决 */
+  resolveProposal(id: string, outcome: 'applied' | 'discarded', detail?: string): boolean
+  /** content-proposals:只读状态投射(未配置 proposals 恒 null) */
+  getProposals(): { pending: Array<{ id: string; summary: string; createdAt: number; added: number; removed: number }>; applied: number; discarded: number; lastResolved: { id: string; outcome: 'applied' | 'discarded'; summary: string; detail?: string; at: number } | null } | null
   /** 运行时替换用户工具集(内置不动);立即 rebind + infoTick 刷新 */
   setTools(tools: StructuredToolInterface[]): void
   /** 运行时追加用户工具(去重 by name) */
@@ -770,8 +775,21 @@ function buildCore(options: ChatSdkOptions, agentId: string, hostWatchState?: { 
   const builtinTools = selectBuiltinTools(caps, dataOpsFiltered, fetchDocTools, domToolsForPool, inspectTools)
   builtinTools.forEach((t) => toolSources.set(t.name, 'builtin'))
   // userTools 可变:支持运行时 setTools/addTool/removeTool 动态增删用户工具
+  // content-proposals 通道工具并入 user 面(回调是集成方代码:read/onProposal —— 看门狗已在工厂内打标)
+  const proposalChannel = options.proposals
+    ? createProposalChannel(options.proposals, {
+        emit: (e) => { try { emit(e as unknown as import('../types').SdkEvent) } catch { /* 事件面异常不炸通道 */ } },
+        log: (kind, data) => {
+          core.agent?.debugLogs?.value?.push({
+            timestamp: Date.now(), type: 'middleware',
+            data: { stage: 'proposal', kind, ...data },
+          })
+        },
+      })
+    : null
   const userTools: StructuredToolInterface[] = [
     ...(options.tools || []),
+    ...(proposalChannel?.tools ?? []),
   ]
   userTools.forEach((t) => toolSources.set(t.name, 'user'))
   // 宿主动作(actions):集成方注册的页面操作 → 自动包成命名 tool;异常隔离(run 抛错回灌 LLM 不崩)
@@ -779,13 +797,19 @@ function buildCore(options: ChatSdkOptions, agentId: string, hostWatchState?: { 
   actionTools.forEach((t) => toolSources.set(t.name, 'action'))
   // action 语义标记收集(action-host-semantics):readsHostState → S2 宿主变更失效面(旧结果置占位,
   // 修前仅 reason 文案口头告知)+ 页面断言门禁依据计数;deferredWrite → 零工具门禁事实清单「待确认」口径。
-  // 静态装配期收集(actions 不支持运行时增删);未标记 = 两集为空 = 现行为零变化
-  const hostReadActionNames = new Set(
-    Object.entries(options.actions ?? {}).filter(([, def]) => def?.readsHostState === true).map(([name]) => name),
-  )
-  const deferredWriteActionNames = new Set(
-    Object.entries(options.actions ?? {}).filter(([, def]) => def?.deferredWrite === true).map(([name]) => name),
-  )
+  // 静态装配期收集(actions 不支持运行时增删);未标记 = 两集为空 = 现行为零变化。
+  // content-proposals 同口径并入:read_content 进失效面(读宿主内容,随 notifyHostChange 过期)、
+  // propose_content 进「待确认」口径(提案送达 ≠ 写入 —— 4.20 机制直接罩住新通道)
+  const proposalReadName = proposalChannel ? (options.proposals?.readToolName || 'read_content') : null
+  const proposalWriteName = proposalChannel ? (options.proposals?.toolName || 'propose_content') : null
+  const hostReadActionNames = new Set([
+    ...Object.entries(options.actions ?? {}).filter(([, def]) => def?.readsHostState === true).map(([name]) => name),
+    ...(proposalReadName ? [proposalReadName] : []),
+  ])
+  const deferredWriteActionNames = new Set([
+    ...Object.entries(options.actions ?? {}).filter(([, def]) => def?.deferredWrite === true).map(([name]) => name),
+    ...(proposalWriteName ? [proposalWriteName] : []),
+  ])
   // mcpTools 可变:后台握手完成后收集,setTools 重建 extraTools 时纳入
   const mcpTools: StructuredToolInterface[] = []
   // MCP 后台连接释放标记:release 先行(握手完成前 unmount)→ 后台握手完成后直接关连接,
@@ -1083,6 +1107,7 @@ function buildCore(options: ChatSdkOptions, agentId: string, hostWatchState?: { 
       screenshot: !!screenshotTool, // page-screenshot:非 capability(装配条件含 vision/describe,hints 直接访问)
       domEdit: caps.domEdit, // dom-edit:capability 开关(requires domInspect 已由注册表归一)
       hasActions: !!options.actions && Object.keys(options.actions).length > 0, // A8:闭环末环(宿主动作)装配态
+      hasProposals: !!options.proposals, // content-proposals:read/propose 纪律(未装不教)
       // 预声明子 agent(供"规划-反思-执行"路由提示;只取 id/description/temperature 轻量字段)
       subagents: effectiveSubagents?.map(reflectSubagentThinking),
     },
@@ -1159,6 +1184,17 @@ function buildCore(options: ChatSdkOptions, agentId: string, hostWatchState?: { 
     // 一次性:整轮结束推进并清除(resumeNotice 同款;abort 路径 afterAgent 亦必跑,B5)
     afterAgent: () => { hostChangeState.notices.length = 0 },
   }
+  // content-proposals 裁决闭环:用户 applied/discarded 后下一轮注入一次性结局段(hostNotice 同款模式 ——
+  // pin 段跨压缩 + afterAgent 清除;状态推进在 resolveProposal(轮外),严守 S1 幂等契约)
+  const proposalNoticeMw: Middleware | null = proposalChannel
+    ? {
+        name: 'proposalNotice',
+        augmentPrompt: () => (proposalChannel.state.notices.length
+          ? ['【内容提案裁决结果】(以此为准,不要凭提案前状态作答)', ...proposalChannel.state.notices].join('\n')
+          : undefined),
+        afterAgent: () => { proposalChannel.state.notices.length = 0 },
+      }
+    : null
   // A4「可操作数据」段:每轮从 liveData() 动态重算(修 setData 不同步 Bug)
   // 插中间件栈最前(usageHints 之前),保证数据段紧跟 base —— LLM 看到的 system 结构与现状等价
   // 仅 finalDataConfig 存在时装载;无 data → buildDataPrompt 返 '' → augmentPrompt 返 undefined → 跳过
@@ -1294,6 +1330,7 @@ function buildCore(options: ChatSdkOptions, agentId: string, hostWatchState?: { 
     usageHintsMw,
     ...(pageContextMw ? [pageContextMw] : []), // 页面锚点紧随提示段(mission 前;read_page 指引随段内条件化)
     hostNoticeMw, // S2 宿主变更:pin 段(页面锚点后)+ 流内页面读失效(notifyHostChange 触发)
+    ...(proposalNoticeMw ? [proposalNoticeMw] : []), // content-proposals:裁决结局一次性注入段
     // 按 capabilities 条件装载内置中间件(默认全开;verify 默认关)
     ...(useMission ? [missionMw] : []), // mission 在 todos 前(pin 段在 todos 段前;revive-mission-anchor)
     intentGuardMw, // mission 后:问句意图守卫 pin 段(逐消息定性「先答勿做」;instruction-adherence B,默认开)
@@ -1905,6 +1942,8 @@ function buildCore(options: ChatSdkOptions, agentId: string, hostWatchState?: { 
         staleReadsInvalidated: core.agent?.getStaleReadsInvalidated?.() ?? 0,
         // S2 宿主变更失效会话累计(notifyHostChange 触发的页面读占位替换;与 staleReadsInvalidated 分列 —— 触发源不同)
         hostReadsInvalidated: hostChangeState.readsInvalidated,
+        // content-proposals 反射(配置存在才出现):pending 轻投影 + 会话累计 + 最近裁决
+        ...(proposalChannel ? { proposals: proposalChannel.snapshot() } : {}),
         // auto-host-watch 反射:配置存在才出现(_createChatSdk 传入 state 载体);enabled=false = 服务端/headless 特性探测全缺(合法 no-op)
         ...(hostWatchState ? { hostWatch: { ...hostWatchState } } : {}),
         llmRetries: core.agent?.getLlmRetries?.() ?? 0,
@@ -2081,6 +2120,17 @@ function buildCore(options: ChatSdkOptions, agentId: string, hostWatchState?: { 
     /** 清除待发引用 */
     clearQuote(): void {
       pendingQuote.value = null
+    },
+    /** content-proposals:宿主裁决回传(applied/discarded)→ 提案出队 + 事件 + 下轮一次性结局注入段。
+     *  返回 false = id 未知或已裁决(幂等);detail 如写回失败的说明会进结局段 */
+    resolveProposal(id: string, outcome: 'applied' | 'discarded', detail?: string): boolean {
+      const ok = proposalChannel ? proposalChannel.resolve(id, outcome, detail) : false
+      if (ok) core.infoTick.value++
+      return ok
+    },
+    /** content-proposals:只读投射(pending 轻投影/累计/最近裁决;渲染与对账用) */
+    getProposals() {
+      return proposalChannel ? proposalChannel.snapshot() : null
     },
   }
 
@@ -2617,6 +2667,8 @@ export function _createChatSdk(options: ChatSdkOptions, mounter?: DialogMounter)
     clearQuote: core.clearQuote,
     /** S2 宿主变更通知:SPA 换文/路由切换后调用 —— 流内页面读结果置过期占位,跨轮注入一次性「重读当前页面」提示段 */
     notifyHostChange: core.notifyHostChange,
+    resolveProposal: core.resolveProposal,
+    get proposals() { return core.getProposals() },
     messages: core.messages,
     /** 回退到最近一次正常 checkpoint(整体还原对话历史 + 主数据 + vfs + todos);无可用 checkpoint 返回 false */
     restoreLastCheckpoint: () => core.checkpoint?.restore() ?? false,

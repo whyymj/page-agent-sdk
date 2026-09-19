@@ -19,7 +19,7 @@ import type { ChatSdkOptions, ChatSdk } from './sdk/createChatSdk'
 export function createChatSdk(options: ChatSdkOptions): ChatSdk {
   return _createChatSdk(options, mountChatDialog)
 }
-export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict, DialogConfig, QuickActionItem, I18nOptions, HostWatchConfig, SystemAugmentContext } from './sdk/createChatSdk'
+export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict, DialogConfig, QuickActionItem, I18nOptions, HostWatchConfig, ProposalsConfig, SystemAugmentContext } from './sdk/createChatSdk'
 // system prompt 构建(refactor-module-extraction 从 createChatSdk 抽离;buildSystemPrompt 为纯函数,供 fix-introspection-consistency 的 getEffectiveSystemPrompt 复用)
 export { buildSystemPrompt, buildDataPrompt, DEFAULT_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT_EN } from './sdk/promptBuilder'
 export { resolveContextOptions, type ContextPreset, type ContextOptionsInput, CONTEXT_PRESETS } from './sdk/contextPreset'
@@ -57,6 +57,11 @@ export { compressImage, ImageInputError } from './tools/imageInput'
 // 划词引用(page-quote):captureSelectionQuote 懒捕获宿主页面选区(headless 自建 UI 的集成方捕获入口,
 // 也可用于宿主自建「选中即引用」交互;返回 null = 无有效选区不打扰)
 export { captureSelectionQuote } from './tools/quoteInput'
+
+// content-proposals(proposals 通道纯函数 + 类型;宿主评审面板渲染/预演 + 测试缝用)
+export { lineDiff, applyProposalOps, hashContent, countOccurrences } from './tools/proposalOps'
+export type { DiffRow, ProposalOp } from './tools/proposalOps'
+export type { ReviewableProposal } from './sdk/proposals'
 export { createVerifyMiddleware, createWriteBackCheck } from './harness/verify'
 export type { VerifyCheck, VerifyCheckContext, VerifyCheckResult, VerifyMiddlewareOptions, WriteBackCheckOptions } from './harness/verify'
 export { createContextInspectorMiddleware } from './harness/contextInspector'

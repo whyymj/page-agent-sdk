@@ -28,7 +28,7 @@ import type { ChatSdkOptions, ChatSdk } from './sdk/createChatSdk'
 export function createChatSdk(options: ChatSdkOptions): ChatSdk {
   return _createChatSdk(options) // 无 mounter → headless(ui!=='false' 时 mount() warn 降级)
 }
-export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict, DialogConfig, HostWatchConfig, SystemAugmentContext } from './sdk/createChatSdk'
+export type { ChatSdkOptions, ChatSdk, LLMConfig, PendingConflict, DialogConfig, HostWatchConfig, ProposalsConfig, SystemAugmentContext } from './sdk/createChatSdk'
 // system prompt 构建
 export { buildSystemPrompt, buildDataPrompt, DEFAULT_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT_EN } from './sdk/promptBuilder'
 export { resolveContextOptions, type ContextPreset, type ContextOptionsInput, CONTEXT_PRESETS } from './sdk/contextPreset'
@@ -64,6 +64,11 @@ export type { HtmlFormatIssue } from './tools/htmlValidate'
 export { compressImage, ImageInputError } from './tools/imageInput'
 // 划词引用(page-quote):headless 自建 UI 无内置捕获面,集成方用 captureSelectionQuote 懒捕获宿主选区
 export { captureSelectionQuote } from './tools/quoteInput'
+
+// content-proposals 纯函数(非 UI,双侧导出纪律)
+export { lineDiff, applyProposalOps, hashContent, countOccurrences } from './tools/proposalOps'
+export type { DiffRow, ProposalOp } from './tools/proposalOps'
+export type { ReviewableProposal } from './sdk/proposals'
 export { createVerifyMiddleware, createWriteBackCheck } from './harness/verify'
 export type { VerifyCheck, VerifyCheckContext, VerifyCheckResult, VerifyMiddlewareOptions, WriteBackCheckOptions } from './harness/verify'
 export { createContextInspectorMiddleware } from './harness/contextInspector'

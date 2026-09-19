@@ -2,6 +2,25 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.22.0] - 2026-09-19
+
+> content-proposals(openspec/changes/2026-09-19-content-proposals):数据槽之外的内容「AI 提案 → 人评审 → 应用」通道 —— 学习门户笔记编辑真集成审阅驱动的最大缺口收口(此前此类场景集成方需手搓 ~200 行且全量重发提案有 token/截断双坑)。定级 minor(新选项/新事件/新导出,纯加法)。
+
+### Added
+
+- **`proposals` 顶层选项(配置即开关;不配置 = 零注册零开销,模型不知道能力存在)**:`{ read, onProposal, toolName?, readToolName?, contentKind?, maxPending? }` —— 宿主给读通道与评审回调,SDK 装配 `read_content`(返回 `hash=xxx` + 全文,hash 为提案基底锚)与 `propose_content({summary, baseHash, ops | content})` 两工具。**模型零写权限**:提案非阻塞送达(onProposal 返回即回灌,面板在宿主页;通道工具打看门狗标记),写回永远走宿主自己的链路。
+- **增量 ops 提案(token 成本与改动量成正比,非文档大小)**:`replace({find, with})` / `insertAfter·insertBefore({anchor, text})` / `append({text})` —— 字面锚**唯一命中纪律**(0 命中 = 锚写错或基底已变;≥2 命中 = 锚太短;错误指名第几个 op 与命中数),顺序应用且**原子**(任一失败整批拒,镜像 write patches);`content` 全量形态留给小改动(二选一,schema 层校验)。修学习门户实测双坑:23KB 笔记全量重发 ≈ 万 token/次且有 max_tokens 截断整轮白跑风险。
+- **`baseHash` 基底锚定**(dataOps 乐观锁哲学平移内容域):提案时 SDK 重读内容算 hash,与模型 read 时不匹配 → 显式拒「基底已变,请重读」,绝不把旧底稿上的改动打到新内容。
+- **裁决闭环 `sdk.resolveProposal(id, 'applied'|'discarded', detail?)`**:提案出队 + `proposal_pending`/`proposal_resolved` 事件(SdkEvent 加法面)+ **下一轮一次性结局注入段**(`proposalNotice` pin 段,afterAgent 清除 —— 模型被明确告知「已应用/已放弃」,闭环「改好了吗」);`sdk.proposals` 只读投射 + `inspect().proposals`(pending 轻投影/applied·discarded 累计/lastResolved)+ debugLogs `stage:'proposal'`(pending/rejected/replaced/resolved);幂等(未知/已裁决 id 返 false)。
+- **去重与替换**:相同基底+相同产物 → 拒且**不动在审面板**(修 4.19 门户实测「静默丢弃在审提案」教训,文案明示);`maxPending`(默认 1)溢出最旧出队替换留痕。
+- **与 4.20 语义标记自动联动**(零配置):`read_content` 自动进 `notifyHostChange` 失效面、`propose_content` 自动进零工具门禁「待确认」事实清单口径(提案后谎报「已修改完成」被戳穿回灌,e2e 实测)。
+- **纯函数导出(主包 + headless 双侧)**:`lineDiff`(前后缀修剪 + LCS + 超限回退)/ `applyProposalOps`(测试缝/预演)/ `hashContent` / `countOccurrences` + `DiffRow`/`ProposalOp`/`ReviewableProposal`/`ProposalsConfig` 类型;usageHints 随装配注入提案纪律(先读 hash/增量勿全量/提案仅送达待确认,未装不教)。
+- **demo `examples/proposals-demo`**(textarea 真相源 + 折叠 diff 面板 + 应用/放弃全链)+ browser e2e 2 项(动态 baseHash 从 wire 提取)+ 真 LLM 校准套件 `proposals`(tests/runtime/proposals-real-llm.mjs:增量 ops 形态 + 长文 token 经济性,注册进 real-llm REGISTRY;无 key 自动 skip)。
+
+### 门槛
+
+- selftest 3738 → **3759**(sec-135 新模块 21 项:diff 矩阵含修剪/空文本/超限回退、ops 唯一锚/原子/顺序应用、hash 确定性);e2e 1229 → **1256**(+27,proposals 新模块:装配反射/ReAct 全链/hash 拒/坏锚拒/去重不动在审/maxPending 替换留痕/裁决闭环一次性段/谎报回灌);browser 170 → **172**(proposals-demo 应用写回 + 放弃不动)。实施注记:裁决闭环 e2e 首版用户消息用祈使句触发零工具门禁回灌吃掉 stub 队列(机制本身正常,末次调用已含结局段)—— 改问句豁免;两断言随宿主文案实际形态校正。
+
 ## [4.21.0] - 2026-09-19
 
 > auto-host-watch(openspec/changes/2026-09-19-auto-host-watch):宿主导航自动报案 + agent 自改页面的旧读失效。定级 minor(新选项 + 默认开行为联动)。

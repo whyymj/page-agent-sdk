@@ -35,6 +35,7 @@
   - [6.20 划词引用与页面问答(page-quote / read_page / pageContext)](#620-划词引用与页面问答page-quote--read_page--pagecontext)
   - [6.21 截图查看与页面内容分析(take_screenshot / page-analysis)](#621-截图查看与页面内容分析take_screenshot--page-analysis)
   - [6.22 DOM 编辑(dom_edit / dom_restore)](#622-dom-编辑dom_edit--dom_restore)
+  - [6.23 内容提案-评审-应用(proposals)](#623-内容提案-评审-应用proposals-422)
 - [7. 高级:自定义中间件](#7-高级自定义中间件)
 - [8. 命令式 API](#8-命令式-api)
 - [9. 框架无关 / CDN 集成](#9-框架无关--cdn-集成)
@@ -1822,6 +1823,38 @@ createChatSdk({
 **边界(使用前必读)**:① 改动为**会话内临时态**(刷新即失,不持久化 —— 页面最终形态归集成方);② Vue/React 管理的区域重渲染会洗掉/冲突外部 DOM 改动,面向静态/内容页或确认目标区域非框架管理时使用;③ **数据驱动页面不要用** —— 改数据(`write`)渲染自动更新且过 schema/快照/乐观锁全套契约,直改 DOM 绕过一切;④ debugLogs 留痕 `stage:'dom_edit'`(集成方可观察页面被改了什么)。
 
 skill 集成:dom-inspect skill 教 patches 语法与写纪律(先读后写/dryRun 预检/restore 回滚),page-analysis skill 问题分型新增「操作类」路线 —— 两者的编辑段都在 domEdit 装配后才出现(勿教不存在的工具)。完整示例:`examples/docs-demo`(`🖍 高亮表格` quickAction + browser e2e 高亮/回滚全链)。
+
+### 6.23 内容提案-评审-应用(proposals,4.22+)
+
+数据槽之外的内容(笔记/CMS 文章/配置文件/代码片段,真相源在宿主或服务端)的受控修改通道 —— **模型零写权限**:AI 只能提案,diff 评审与写回在宿主侧由用户显式完成。配置即开关,不配置 = 零注册零开销(模型不知道能力存在)。
+
+```ts
+createChatSdk({
+  proposals: {
+    contentKind: 'wiki 笔记源 Markdown(含 frontmatter)',   // 进工具 description
+    read: () => ({ content: currentMarkdown, label: '当前笔记' }),   // 读通道(SDK 计算 hash)
+    onProposal: (p) => renderDiffPanel(p),   // 评审回调:渲染面板;返回字符串回灌模型(非阻塞)
+  },
+}).mount()
+
+// 宿主面板的「应用」按钮:自己写回(校验/审计/权限走你自己的链路)+ 裁决回传
+applyBtn.onclick = () => { save(p.content); sdk.resolveProposal(p.id, 'applied', '已写回 wiki') }
+```
+
+装配后模型侧自动获得两工具:
+- **`read_content`** —— 读当前内容,返回 `hash=xxx` + 全文;hash 是提案基底锚
+- **`propose_content({ summary, baseHash, ops | content })`** —— 提交提案:
+  - **增量 ops 优先**(token 只花在改动上,不重发整篇):`replace({find, with})` / `insertAfter·insertBefore({anchor, text})` / `append({text})`;`find/anchor` 用**原文字面片段且须唯一命中**(0 命中 = 锚写错或基底已变;≥2 命中 = 锚太短,错误信息会指名第几个 op 与命中数);ops 顺序应用、**原子**(任一失败整批拒)
+  - **`baseHash` 基底锚定**(乐观锁哲学平移):提案时 SDK 重读内容算 hash,与模型 read 时不匹配 → 显式拒「基底已变,请重读」,绝不拿旧底稿的改动往新内容上打
+  - `content` 全量形态留给小改动(与 ops 二选一)
+
+**裁决闭环**:`sdk.resolveProposal(id, 'applied' | 'discarded', detail?)` → `proposal_pending`/`proposal_resolved` 事件 + **下一轮对话自动注入一次性结局段**(「提案已被用户应用/放弃」—— 模型被明确告知结果,你问「改好了吗」它不用猜;afterAgent 自动清除,不残留)。配套:`sdk.proposals` 只读投射(pending/applied/discarded/lastResolved)、`inspect().proposals` 同面、debugLogs `stage:'proposal'` 留痕(pending/rejected/replaced/resolved)。
+
+**去重与替换**:相同基底 + 相同产物的重复提案 → 拒且**不动在审面板**(文案明示);`maxPending`(默认 1)溢出 → 最旧在审提案出队替换(留痕 `kind:'replaced'`)。
+
+**与 4.20 语义标记的联动**(自动,无需配置):`read_content` 自动进 `notifyHostChange` 失效面(换文后旧读取过期)、`propose_content` 自动进零工具门禁「待确认」口径(提案后谎报「已修改完成」被事实清单戳穿回灌)。
+
+**宿主面板渲染**:`onProposal` 收到的 `ReviewableProposal` 已含 `diff.rows`(逐行 diff 行序列)+ 统计,直接渲染即可;`lineDiff` / `applyProposalOps` / `hashContent` 纯函数也从包导出(预演/测试缝用)。完整示例:`examples/proposals-demo`(textarea 真相源 + 折叠 diff 面板 + 应用/放弃 + browser e2e 全链)。
 
 ## 7. 高级:自定义中间件
 

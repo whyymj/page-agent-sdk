@@ -1114,6 +1114,38 @@ Full runnable example: `examples/complex-demo` (`PageRenderer.vue` / `CompRender
 
 > Path validation is "type-valid", not "data-exists": `setFocus` checks the schema shape via `getSchemaAtPath`. An array index like `components.5` is type-valid and focusable even if fewer than 6 exist; a sub-path under a leaf (e.g. `title.sub`) or a non-existent top-level field is rejected. **Open schemas** (`z.record(...)` / `z.any()` / `z.unknown()` subtrees) accept any path — e.g. an editor page tree bound as `z.record(z.string(), z.unknown())` can `setFocus` any picked component path. `capabilities.focus` defaults on.
 
+### 6.23 Content proposals — review & apply (`proposals`, 4.22+)
+
+A controlled editing channel for content that lives **outside** the data slot (notes / CMS articles / config files / code snippets — source of truth on the host or server). **The model has zero write permission**: the AI can only propose; the line-diff review and the actual write-back happen host-side, explicitly by the user. Presence of the option enables it; not configured = zero registration, zero overhead (the model doesn't know the capability exists).
+
+```ts
+createChatSdk({
+  proposals: {
+    contentKind: 'wiki note source Markdown (with frontmatter)',   // goes into the tool description
+    read: () => ({ content: currentMarkdown, label: 'current note' }),   // read channel (SDK computes the hash)
+    onProposal: (p) => renderDiffPanel(p),   // review callback: render the panel; return string goes back to the model (non-blocking)
+  },
+}).mount()
+
+// The panel's "Apply" button: write back yourself (your own validation/audit chain) + report the verdict
+applyBtn.onclick = () => { save(p.content); sdk.resolveProposal(p.id, 'applied', 'written back') }
+```
+
+Once configured the model gets two tools:
+- **`read_content`** — reads the current content, returns `hash=xxx` + the full text; the hash anchors the proposal base.
+- **`propose_content({ summary, baseHash, ops | content })`** — submits a proposal:
+  - **Incremental `ops` preferred** (tokens scale with the change, not the document): `replace({find, with})` / `insertAfter·insertBefore({anchor, text})` / `append({text})`; `find/anchor` are **literal text spans that must match uniquely** (0 hits = wrong anchor or drifted base; ≥2 hits = anchor too short — the error names the op index and hit count); ops apply in order and are **atomic** (any failure rejects the whole batch).
+  - **`baseHash` base anchoring** (optimistic-lock philosophy transplanted): at proposal time the SDK re-reads and hashes the content; a mismatch with the model's read → explicit rejection "base has changed, re-read" — never patches edits computed on a stale base onto new content.
+  - `content` full-text form is for small changes (mutually exclusive with ops).
+
+**Resolution loop**: `sdk.resolveProposal(id, 'applied' | 'discarded', detail?)` → `proposal_pending`/`proposal_resolved` events + a **one-shot outcome segment injected into the next turn** ("the proposal was applied/discarded by the user" — the model is explicitly told the result, so asking "is it done?" needs no guessing; auto-cleared after the turn). Also: `sdk.proposals` read-only projection (pending/applied/discarded/lastResolved), `inspect().proposals`, debugLogs `stage:'proposal'` (pending/rejected/replaced/resolved).
+
+**Dedup & replacement**: an identical proposal (same base + same result) is rejected **without touching the pending panel** (stated in the message); `maxPending` (default 1) overflow → the oldest pending proposal is dropped (logged `kind:'replaced'`).
+
+**Interop with the 4.20 semantic flags** (automatic, zero config): `read_content` joins the `notifyHostChange` invalidation face (stale after navigation); `propose_content` joins the zero-tool gate's "awaiting confirmation" fact-sheet wording (claiming "changes complete" after merely proposing gets exposed and fed back).
+
+**Rendering the panel host-side**: the `ReviewableProposal` handed to `onProposal` already contains `diff.rows` (line-diff rows) + stats — render directly. `lineDiff` / `applyProposalOps` / `hashContent` pure functions are also package exports (for previews / test seams). Full example: `examples/proposals-demo` (textarea as source of truth + collapsible diff panel + apply/discard + browser e2e).
+
 ## 7. Custom middleware
 
 ```ts
