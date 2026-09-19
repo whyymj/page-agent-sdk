@@ -14,6 +14,9 @@ class MiniEl {
       remove: (...cs) => { const s = new Set(list()); cs.forEach((c) => s.delete(c)); if (s.size) self.attrs.class = [...s].join(' '); else delete self.attrs.class },
     }
   }
+  // 读工具兼容接口(full-stack 组合模块复用本假树跑 read_page:遍历走 children、过滤走 tagName)
+  get children() { return this.kids }
+  get tagName() { return this.tag.toUpperCase() }
   get outerHTML() {
     const styleStr = Object.entries(this.style).map(([k, v]) => `${k}:${v}`).join(';')
     const attrStr = Object.entries({ ...this.attrs, ...(styleStr ? { style: styleStr } : {}) }).map(([k, v]) => `${k}="${v}"`).join(' ')
@@ -69,7 +72,7 @@ function parseHtml(html) {
   return roots
 }
 /** 安装假 document(返回还原函数);树:body > article > h1 + p#intro + p.target */
-function installFakeDom() {
+export function installFakeDom() {
   const realDoc = globalThis.document
   const body = new MiniEl('body')
   const article = new MiniEl('article')

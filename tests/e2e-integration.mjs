@@ -42,6 +42,7 @@ import { run as runStaleRead } from './e2e/stale-read-invalidation.mjs'
 import { run as runEvidenceAudit } from './e2e/evidence-audit.mjs'
 import { run as runEvalToolkit } from './e2e/eval-toolkit.mjs'
 import { run as runAutoTitle } from './e2e/auto-title.mjs'
+import { run as runFullStack } from './e2e/full-stack.mjs'
 
 const modules = [
   ['systemprompt', runSystemprompt],
@@ -85,6 +86,7 @@ const modules = [
   ['evidence-audit', runEvidenceAudit],
   ['eval-toolkit', runEvalToolkit],
   ['auto-title', runAutoTitle],
+  ['full-stack', runFullStack],
 ]
 
 let totalPass = 0, totalFail = 0

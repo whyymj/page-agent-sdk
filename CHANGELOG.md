@@ -2,6 +2,12 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.23.1] - 2026-09-20
+
+### Added
+
+- **full-stack 三面组合回归 e2e 模块**(`tests/e2e/full-stack.mjs`,+15):大 JSON 读写/冲突检测 × HTML 生成委派 × DOM 读写/视觉工具拼进同一实例验证共存 —— 各能力模块此前孤立覆盖最小装配面,组合装配下的相互影响无守卫。①全能力共存(单实例 11 工具齐备/零重名/引导共存/冲突武装反射);②大 JSON 实规模全链路(200 元素:jsonPaths 合批读/JSONPath 定位/patches 多路径原子/append 分块累积/restore 只回退最近一次写/分页 hasMore);③冲突 × html commit(dist 级镜像 selftest sec-75:全字段武装下子 commit 经 recomputeBaseline 不误冲突 + 同装配真外部改动照常挂起裁决);④宿主变更失效边界(read_page 旧读占位失效/新读不株连/view_image 结果不在失效面 —— URL 是数据真值不随渲染态过期)。dom-edit.mjs 的 Mini DOM 补 `children`/`tagName` 读接口并导出 `installFakeDom` 供复用(read_page 遍历走 children、过滤走 tagName)。e2e 1263 → **1278**。
+
 ## [4.23.0] - 2026-09-19
 
 ### Added
