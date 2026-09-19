@@ -6,7 +6,7 @@
  */
 import type { TestCtx } from './_ctx'
 import { runFinishGates, createGateChainState, type RunFinishGatesInput } from '../../harness/gateChain'
-import { detectPageAssertion, isZeroPageBasis, type TurnToolUsage } from '../../harness/actionGate'
+import { detectPageAssertion, isZeroPageBasis, buildTurnFactSheet, type TurnToolUsage } from '../../harness/actionGate'
 
 const human = (content: string) => [{ _getType: () => 'human', content }]
 
@@ -67,6 +67,32 @@ export async function run(ctx: TestCtx) {
   assert(isZeroPageBasis(usage({ dom_search: 1, get_dom: 1 })) === false, '✓ dom_search/get_dom → 有页面依据')
   assert(isZeroPageBasis(usage({ read: 3, query_data: 1 })) === true, '✓ 数据 read/query → 仍是零页面依据(scope 隔离)')
   assert(isZeroPageBasis(usage({ echo: 5 })) === true, '✓ 非页面工具 → 零页面依据')
+
+  // ===== action-host-semantics S1-C:readsHostState action 计入页面依据 =====
+  assert(isZeroPageBasis(usage({ read_note_source: 1 })) === true, '✓ 未传扩展集 → action 读不算页面依据(现行为零变化)')
+  assert(isZeroPageBasis(usage({ read_note_source: 1 }), new Set(['read_note_source'])) === false,
+    '✓ readsHostState 标记 action 被调 → 有页面依据(与 S2 失效面同源)')
+
+  // ===== action-host-semantics S1-D:deferredWrite 事实清单「待确认」口径 =====
+  {
+    const u = usage({ read_note_source: 1, propose_note_edit: 1 })
+    u.writePaths = []
+    const deferred = new Set(['propose_note_edit'])
+    const sheet = buildTurnFactSheet(u, undefined, () => false, deferred)
+    assert(sheet.includes('propose_note_edit×1(提案类,待用户确认后才生效,尚未写入)'),
+      '✓ deferredWrite action 调用 → 事实清单注记「待用户确认后才生效」(防「已修改完成」嘴硬)')
+    assert(sheet.includes('read_note_source×1') && !sheet.includes('read_note_source×1('),
+      '✓ 非标记 action 不加注记(只有 deferredWrite 名进注记面)')
+    // 未传集合 → 清单与现行为逐字节一致(既有格式锁)
+    const plain = buildTurnFactSheet(u, undefined, () => false)
+    const legacy = buildTurnFactSheet(u, undefined, () => false, new Set())
+    assert(plain === legacy && plain.includes('propose_note_edit×1'),
+      '✓ 未标记/空集 → 事实清单与现行为逐字节一致(纯 propose_note_edit×1,零注记)')
+    // 多次调用计数如实
+    const u2 = usage({ propose_note_edit: 2 })
+    assert(buildTurnFactSheet(u2, undefined, () => false, deferred).includes('propose_note_edit×2(提案类'),
+      '✓ 多次提案 → 计数如实(propose_note_edit×2)')
+  }
 
   // ===== runFinishGates 集成:三要素 AND 触发 =====
   {

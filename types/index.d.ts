@@ -722,7 +722,7 @@ export interface AgentInfo {
   /** 方案确认留痕(save-and-plan-gates 3c:RHC 带 options 的方案被点选;undefined=本会话无已确认方案) */
   planConfirmation?: PlanConfirmationRecord;
   /** 宿主动作元信息(actions 注册;集成方 save_draft/publish 等) */
-  actions?: Record<string, { description: string; hasParams: boolean }>;
+  actions?: Record<string, { description: string; hasParams: boolean; readsHostState?: boolean; deferredWrite?: boolean }>;
   /** 跨压缩工作记忆(workingMemory 中间件;pin 最近 read/query/search 定位 path + read hash,≤10 LRU) */
   workingMemory?: WorkingMemory;
   /** 写驱动过期读失效会话累计(stale-read-invalidation;写后旧 read/query/search 结果被替换为占位的次数) */
@@ -1286,6 +1286,10 @@ export interface ActionDef {
   run: (args: Record<string, unknown>) => unknown | Promise<unknown>;
   /** 可选参数 schema(ZodObject);不传 = 无参 tool */
   params?: any;
+  /** 标记本 action 读取宿主态(4.20+):旧工具结果随 `sdk.notifyHostChange()` 替换为过期占位(修前仅 read_page 等五个内置页面读工具享受,action 仅靠 reason 文案口头告知);页面断言门禁的「页面依据」计数也计入。不标记 = 现行为零变化 */
+  readsHostState?: boolean;
+  /** 标记本 action 的效果延迟到用户确认才生效(提案类,4.20+):调用成功 ≠ 已写入 → 零工具门禁事实清单对此类调用注记「待用户确认后才生效」,防模型收口「已修改完成」;等效写计数不含此类。不标记 = 现行为零变化 */
+  deferredWrite?: boolean;
 }
 /** actions 配置:动作名 → 定义(动作名即 tool 名,须合法标识符) */
 export type ActionMap = Record<string, ActionDef>;
@@ -1925,7 +1929,7 @@ export declare const getDomTool: any;
 export declare function domToStructure(node: Element | null, opts: { depth: number; attrs?: string[]; includeText?: boolean }): DomNode | null;
 /** 把集成方注册的 actions 转成命名 tool 数组(每个 action 一个 tool) */
 export declare function actionsToTools(actions: ActionMap): any[];
-export declare function actionsToInspectInfo(actions: ActionMap): Record<string, { description: string; hasParams: boolean }>;
+export declare function actionsToInspectInfo(actions: ActionMap): Record<string, { description: string; hasParams: boolean; readsHostState: boolean; deferredWrite: boolean }>;
 export interface DomNode { tag: string; attrs: Record<string, string>; text?: string; children?: DomNode[]; childCount?: number }
 export interface DomReadOptions { depth: number; attrs?: string[]; includeText?: boolean }
 
@@ -2028,6 +2032,10 @@ export interface CreateAgentOptions {
    * 传入(仅页面问答形态装配 —— 数据槽场景「页面上已改成…」误伤路径从结构上切断);false/缺省 = 门禁层不进判定。
    */
   pageAssertionGate?: boolean;
+  /** 有效页面读集扩展(action-host-semantics,4.20):宿主标记 readsHostState 的 action 名 —— 进页面断言门禁「页面依据」计数;缺省 = 仅默认五工具 */
+  pageReadTools?: Set<string>;
+  /** 延迟生效写 action 名集(action-host-semantics,4.20):零工具门禁事实清单对其调用注记「待用户确认后才生效」;缺省 = 清单与现行为逐字节一致 */
+  deferredWriteTools?: Set<string>;
   /** LLM 运行时切换回调(setLlm 后触发,供重解析模型能力 contextWindow/maxOutputTokens) */
   onLlmChange?: (newLlm: import('@langchain/core/language_models/chat_models').BaseChatModel) => void;
   /** 显式声明主模型是否多模态识图(声明 > 查表 > 缺省 false) */

@@ -22,6 +22,15 @@ export interface ActionDef {
   run: (args: Record<string, unknown>) => unknown | Promise<unknown>
   /** 可选参数 schema(ZodObject);不传 = 无参 tool */
   params?: ZodTypeAny
+  /** 标记本 action 读取宿主态(结果随宿主变更过期)→ 注册进 notifyHostChange 失效集(action-host-semantics)。
+   *  适用:read_note_source 类「读宿主文件/状态」的 action —— 修前只有 read_page 等五个内置页面读工具享受
+   *  占位失效,action 旧结果仅靠 reason 文案口头告知,长对话仍可能被引用;标记后旧 ToolMessage 同样被
+   *  替换为过期占位,页面断言门禁的依据计数也计入。不标记 = 现行为零变化 */
+  readsHostState?: boolean
+  /** 标记本 action 的效果延迟到用户确认才生效(提案类,action-host-semantics)。
+   *  语义:调用成功 ≠ 已写入(如 propose_note_edit 只送达提案,用户点「应用」才落地)→ 零工具门禁的
+   *  事实清单对此类调用注记「待用户确认后才生效」,防模型收口「已修改完成」;等效写计数明确不含此类 */
+  deferredWrite?: boolean
 }
 
 /** actions 配置:动作名 → 定义。动作名即 tool 名(需合法标识符,如 save_draft / publish_page) */
@@ -64,11 +73,11 @@ export function actionsToTools(actions: ActionMap): StructuredToolInterface[] {
   return tools
 }
 
-/** inspect().actions 用:动作元信息(名 → {description, hasParams}) */
-export function actionsToInspectInfo(actions: ActionMap): Record<string, { description: string; hasParams: boolean }> {
-  const out: Record<string, { description: string; hasParams: boolean }> = {}
+/** inspect().actions 用:动作元信息(名 → {description, hasParams, readsHostState, deferredWrite}) */
+export function actionsToInspectInfo(actions: ActionMap): Record<string, { description: string; hasParams: boolean; readsHostState: boolean; deferredWrite: boolean }> {
+  const out: Record<string, { description: string; hasParams: boolean; readsHostState: boolean; deferredWrite: boolean }> = {}
   for (const [name, def] of Object.entries(actions)) {
-    if (VALID_NAME.test(name)) out[name] = { description: def.description, hasParams: !!def.params }
+    if (VALID_NAME.test(name)) out[name] = { description: def.description, hasParams: !!def.params, readsHostState: def.readsHostState === true, deferredWrite: def.deferredWrite === true }
   }
   return out
 }

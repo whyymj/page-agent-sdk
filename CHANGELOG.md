@@ -2,6 +2,20 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.20.0] - 2026-09-19
+
+> action-host-semantics(openspec/changes/2026-09-19-action-host-semantics):宿主 action 的两个语义标记 —— 学习门户「笔记编辑 + AI 提案修改」真集成审阅发现的缺口。定级 minor(公开面纯加法,未标记零行为差)。
+
+### Added
+
+- **`ActionDef.readsHostState: true`**(S1-C):标记「action 读取宿主态」(如 `read_note_source` 读笔记源文)→ 该 action 的旧工具结果随 `sdk.notifyHostChange()` **替换为过期占位**(与 read_page 等五个内置页面读工具同款机械保证)。修前 action 只靠 reason 文案「口头告知」模型,长对话仍可能引用旧源文作答;标记后与内置工具对齐,页面断言门禁的「页面依据」计数也计入(`effectivePageReadTools` 单一真相源:默认五工具 ∪ 标记集,`inspect().hostReadsInvalidated` 计数口径不变)。真实案例:学习门户 apply AI 提案写回 wiki 后,模型此前的 `read_note_source` 结果即为过期态。
+- **`ActionDef.deferredWrite: true`**(S1-D):标记「action 的效果延迟到用户确认才生效」(提案类,如 `propose_note_edit` 只送达提案、用户点「应用」才写回)→ 零工具收尾门禁的事实清单对此类调用注记**「propose_note_edit×N(提案类,待用户确认后才生效,尚未写入)」** —— 模型提案后若收口「已修改完成」,事实清单直接戳穿并回灌,模型须改口如实告知;等效写计数明确不含此类(调用成功 ≠ 已写入)。修前只能靠宿主自己在 systemPrompt 写纪律兜。
+- `inspect().actions` 信息面 + `readsHostState` / `deferredWrite` 两布尔(装配态反射);`invalidatePageReads` / `isZeroPageBasis` / `buildTurnFactSheet` 增可选扩展参(空/缺省 = 与现行为逐字节一致)。
+
+### 门槛
+
+- selftest 3705 → **3716**(sec-129 +6:effectivePageReadTools 并集/标记占位/未标记零差/扩展集幂等;sec-130 +5:标记 action 计入页面依据/事实清单注记/空集逐字节一致/多次计数);e2e 1202 → **1214**(action-semantics 新模块 12 项:流内失效对照/inspect 反射/谎报完成回灌闭环);browser 169 不变(纯核心面,无 UI 改动)。
+
 ## [4.19.2] - 2026-09-19
 
 ### Changed

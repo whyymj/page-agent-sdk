@@ -542,7 +542,10 @@ Notes:
 
 - `run(args)` return value is serialized back to the LLM (`undefined` → "action done"; `string` as-is; object → JSON). **Error isolation**: if `run` throws, the error string goes back to the LLM for self-correction (the agent never crashes)
 - Action names must be valid identifiers (`[a-zA-Z][a-zA-Z0-9_]*`, e.g. `save_draft`); invalid names are skipped with a warn
-- `inspect().actions` returns `{ [name]: { description, hasParams } }`
+- **Two semantic flags (4.20+, both optional; unmarked = zero behavior change)**:
+  - `readsHostState: true` — the action reads host state (e.g. `read_note_source` fetching a note's source): its past tool results are **replaced with stale placeholders** when `sdk.notifyHostChange()` fires (before, only the five built-in page-read tools enjoyed that; actions relied on the reason text merely *telling* the model). The page-assertion gate's "page basis" counting also includes it (asserting page content after calling it won't be falsely fed back).
+  - `deferredWrite: true` — the action's effect **only lands after user confirmation** (proposal-style, e.g. `propose_note_edit` delivers a proposal the user must apply): the zero-tool wrap-up gate's fact sheet annotates such calls as "awaiting user confirmation, not yet written" — if the model closes with "changes complete" after merely proposing, the facts expose it and it must correct itself. Equivalent-write counting explicitly excludes such actions (a successful call ≠ a write).
+- `inspect().actions` returns `{ [name]: { description, hasParams, readsHostState, deferredWrite } }`
 
 #### Schema tiered disclosure (`schemaHint`)
 

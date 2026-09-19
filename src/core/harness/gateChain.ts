@@ -103,6 +103,12 @@ export interface RunFinishGatesInput {
    * 误伤路径从结构上切断;false/缺省 = 该层完全不进判定(同未装配)。
    */
   pageGate?: boolean
+  /** 有效页面读集扩展(action-host-semantics S1-C):宿主标记 readsHostState 的 action 名,计入「页面依据」;
+   *  与 S2 占位失效共用 effectivePageReadTools 单一真相源;缺省 = 仅默认五工具 */
+  pageReadTools?: Set<string>
+  /** 延迟生效写 action 名集(action-host-semantics S1-D):事实清单对其中调用注记「待用户确认后才生效」;
+   *  等效写计数不含此类(调用成功 ≠ 已写入);缺省 = 清单与现行为逐字节一致 */
+  deferredWriteTools?: Set<string>
 }
 
 /** 各层预算上限(原 createAgent 常量平移;≤2 = 一次回灌即收敛,两次仍异常则放行强收) */
@@ -208,7 +214,7 @@ export function runFinishGates(i: RunFinishGatesInput): GateOutcome {
     && !declaresNoAction(content)
     && !/[?？]\s*$/.test(content.trim())) {
     g.zeroToolRetries += 1
-    const factSheet = buildTurnFactSheet(i.turnUsage, i.todos, i.isWriteToolByName)
+    const factSheet = buildTurnFactSheet(i.turnUsage, i.todos, i.isWriteToolByName, i.deferredWriteTools)
     return { kind: 'feedback', gate: { stage: 'zero_tool_gate', attempt: g.zeroToolRetries, feedback: buildZeroToolFeedback(factSheet), logData: { factSheet } } }
   }
 
@@ -218,7 +224,7 @@ export function runFinishGates(i: RunFinishGatesInput): GateOutcome {
     && detectStatusQuery(lastHumanContent)
     && assertsCompletion(content)) {
     g.zeroToolRetries += 1
-    const factSheet = buildTurnFactSheet(i.turnUsage, i.todos, i.isWriteToolByName)
+    const factSheet = buildTurnFactSheet(i.turnUsage, i.todos, i.isWriteToolByName, i.deferredWriteTools)
     return { kind: 'feedback', gate: { stage: 'status_query_gate', attempt: g.zeroToolRetries, feedback: buildStatusQueryFeedback(factSheet), logData: { factSheet } } }
   }
 
@@ -229,12 +235,12 @@ export function runFinishGates(i: RunFinishGatesInput): GateOutcome {
   //     与 S2 的交互(A4):S2 占位替换不改变 turnUsage.counts → 判据输入不被掩盖;S2 静默替换不占本池预算。
   if (i.pageGate === true
     && g.pageAssertionRetries < MAX_PAGE_ASSERTION_RETRIES
-    && isZeroPageBasis(i.turnUsage)
+    && isZeroPageBasis(i.turnUsage, i.pageReadTools)
     && detectPageAssertion(content)
     && !declaresNoAction(content)
     && !endsWithQuestion) {
     g.pageAssertionRetries += 1
-    const factSheet = buildTurnFactSheet(i.turnUsage, i.todos, i.isWriteToolByName)
+    const factSheet = buildTurnFactSheet(i.turnUsage, i.todos, i.isWriteToolByName, i.deferredWriteTools)
     return { kind: 'feedback', gate: { stage: 'page_assertion_gate', attempt: g.pageAssertionRetries, feedback: buildPageAssertionFeedback(factSheet), logData: { factSheet } } }
   }
 
@@ -251,7 +257,7 @@ export function runFinishGates(i: RunFinishGatesInput): GateOutcome {
       obs: {
         code: 'ZERO_TOOL_GATE_EXHAUSTED',
         message: '操作指令经 2 次回灌后仍以零工具纯文本收尾(疑似谎报完成),已放行;最终回复可能不实',
-        context: { factSheet: buildTurnFactSheet(i.turnUsage, i.todos, i.isWriteToolByName) },
+        context: { factSheet: buildTurnFactSheet(i.turnUsage, i.todos, i.isWriteToolByName, i.deferredWriteTools) },
       },
     }
   }
@@ -260,7 +266,7 @@ export function runFinishGates(i: RunFinishGatesInput): GateOutcome {
   //     zero_tool 同理:恰是集成方最该知晓的时刻)。诚实不存在声明豁免(「本页没有提到」反复出现是正确行为)
   if (i.pageGate === true
     && g.pageAssertionRetries >= MAX_PAGE_ASSERTION_RETRIES
-    && isZeroPageBasis(i.turnUsage)
+    && isZeroPageBasis(i.turnUsage, i.pageReadTools)
     && detectPageAssertion(content)
     && !declaresNoAction(content)
     && !endsWithQuestion) {
@@ -269,7 +275,7 @@ export function runFinishGates(i: RunFinishGatesInput): GateOutcome {
       obs: {
         code: 'PAGE_ASSERTION_GATE_EXHAUSTED',
         message: '页面断言经 2 次回灌后仍以零页面读取收尾(疑似凭记忆编造页面内容),已放行;最终回复中的页面内容断言可能不实',
-        context: { factSheet: buildTurnFactSheet(i.turnUsage, i.todos, i.isWriteToolByName) },
+        context: { factSheet: buildTurnFactSheet(i.turnUsage, i.todos, i.isWriteToolByName, i.deferredWriteTools) },
       },
     }
   }

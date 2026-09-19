@@ -769,6 +769,15 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
   // 宿主动作(actions):集成方注册的页面操作 → 自动包成命名 tool;异常隔离(run 抛错回灌 LLM 不崩)
   const actionTools: StructuredToolInterface[] = actionsToTools(options.actions ?? {})
   actionTools.forEach((t) => toolSources.set(t.name, 'action'))
+  // action 语义标记收集(action-host-semantics):readsHostState → S2 宿主变更失效面(旧结果置占位,
+  // 修前仅 reason 文案口头告知)+ 页面断言门禁依据计数;deferredWrite → 零工具门禁事实清单「待确认」口径。
+  // 静态装配期收集(actions 不支持运行时增删);未标记 = 两集为空 = 现行为零变化
+  const hostReadActionNames = new Set(
+    Object.entries(options.actions ?? {}).filter(([, def]) => def?.readsHostState === true).map(([name]) => name),
+  )
+  const deferredWriteActionNames = new Set(
+    Object.entries(options.actions ?? {}).filter(([, def]) => def?.deferredWrite === true).map(([name]) => name),
+  )
   // mcpTools 可变:后台握手完成后收集,setTools 重建 extraTools 时纳入
   const mcpTools: StructuredToolInterface[] = []
   // MCP 后台连接释放标记:release 先行(握手完成前 unmount)→ 后台握手完成后直接关连接,
@@ -1101,7 +1110,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       if (hostChangeState.epoch > hostEpochApplied) {
         hostEpochApplied = hostChangeState.epoch
         const lastReason = hostChangeState.notices[hostChangeState.notices.length - 1] ?? ''
-        const inv = invalidatePageReads(req.messages, lastReason || undefined)
+        // hostReadActionNames:readsHostState 标记的 action 一并失效(action-host-semantics S1-C;
+        // 空集 = effectivePageReadTools 原样返回默认集,与旧行为逐字节一致)
+        const inv = invalidatePageReads(req.messages, lastReason || undefined, hostReadActionNames)
         if (inv.invalidatedCount > 0) {
           // 原地拷回:req.messages 与主循环 currentMessages 同数组引用,重赋 req.messages 不回流
           for (let i = 0; i < inv.messages.length; i++) (req.messages as unknown[])[i] = inv.messages[i]
@@ -2282,6 +2293,9 @@ function buildCore(options: ChatSdkOptions, agentId: string): AgentCore {
       // S3 页面断言门禁装配范围(17b 用户拍板):仅 domInspect 开启装配 —— 页面问答形态专属,
       // 数据槽场景「页面上已改成…」的误伤路径从结构上切断(不新增配置项)
       pageAssertionGate: caps.domInspect === true,
+      // action 语义标记(action-host-semantics):页面依据/事实清单口径扩展(空集 = 零行为差)
+      pageReadTools: hostReadActionNames.size ? hostReadActionNames : undefined,
+      deferredWriteTools: deferredWriteActionNames.size ? deferredWriteActionNames : undefined,
       maxRetries: options.maxRetries,
       // P1-7(fix-hang-and-feedback):流停滞看门狗(默认 90s;0 关;chunk 间隔超时中断防 loading 永转)
       stallMs: options.streamStallMs ?? DEFAULT_STREAM_STALL_MS,

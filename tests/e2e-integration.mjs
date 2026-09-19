@@ -31,6 +31,7 @@ import { run as runMainSubIsolation } from './e2e/main-sub-isolation.mjs'
 import { run as runSessionIntegrity } from './e2e/session-integrity.mjs'
 import { run as runContextEconomy } from './e2e/context-economy.mjs'
 import { run as runHostIntegration } from './e2e/host-integration.mjs'
+import { run as runActionSemantics } from './e2e/action-semantics.mjs'
 import { run as runMcp } from './e2e/mcp.mjs'
 import { run as runDiagnostics } from './e2e/diagnostics.mjs'
 import { run as runInstructionAdherence } from './e2e/instruction-adherence.mjs'
@@ -71,6 +72,7 @@ const modules = [
   ['session-integrity', runSessionIntegrity],
   ['context-economy', runContextEconomy],
   ['host-integration', runHostIntegration],
+  ['action-semantics', runActionSemantics],
   ['mcp', runMcp],
   ['diagnostics', runDiagnostics],
   ['instruction-adherence', runInstructionAdherence],

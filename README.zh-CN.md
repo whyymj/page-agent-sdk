@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/page-agent-sdk.svg)](https://www.npmjs.com/package/page-agent-sdk)
 [![license](https://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/whyymj/page-agent-sdk/blob/master/LICENSE)
-[![tests](https://img.shields.io/badge/self%20tests-3705%20asserts-brightgreen.svg)](#自测)
+[![tests](https://img.shields.io/badge/self%20tests-3716%20asserts-brightgreen.svg)](#自测)
 
 ---
 
@@ -247,7 +247,7 @@ ChatDialog, MessageContent, CodePreview, SkillPanel, DebugDrawer, useChat
 | **页面数据** | `data` | `{schema,bind,description?}` | 单主对象:声明 zod schema(校验 + 字段描述自动注入提示词)+ bind(reactive/普通对象,工具直接读写,不挂 window)+ description |
 | | `tools` / `skills` / `memory` | `Tool[]` / `SkillSpec[]` / `string` | 自定义工具 / 技能 / AGENTS.md 风格持久指令 |
 | **能力开关** | `capabilities` | `{planning?,missionAnchor?,dataOps?,fetch?,skills?,vfs?,summarization?,memory?,workingMemory?,subagent?,verify?,domInspect?,focus?}` | 核心默认开（`verify`/`domInspect` 默认关,opt-in;`focus` 上下文聚焦·指定组件精修,默认开）；`false` 关掉省 token |
-| | `actions` | `Record<string,{description,run,params?}>` | **(2.18+) 宿主动作**：注册 save_draft/publish 等页面操作 → SDK 自动生成命名 tool 供 agent 触发 |
+| | `actions` | `Record<string,{description,run,params?,readsHostState?,deferredWrite?}>` | **(2.18+) 宿主动作**：注册 save_draft/publish 等页面操作 → SDK 自动生成命名 tool 供 agent 触发；**(4.20+) 两语义标记**:`readsHostState`(action 读宿主态 → 旧结果随 `notifyHostChange` 置过期占位)/ `deferredWrite`(提案类,效果待用户确认 → 事实清单注记「待确认」防谎报完成) |
 | | `schemaHint` | `{maxKeys?,maxChars?}` · 默认 `{15,4000}` | **(2.18+) 大 schema 分层披露阈值**：超则 systemPrompt 只注入顶层概览（不带约束/不递归）,深层约束按需 `schema_data` 查;小 schema 无感（全量） |
 | | `images` | `{upload?,describe?,describeTimeoutMs?}` | **图片输入(image-input-vision)**：对话框内置三入口(📎/拖拽/粘贴)→ 压缩闸(长边≤1568/≤4 张/超 20MB 拒)。主模型多模态(查表或 `llm.vision:true`)→ 图片直发 content parts,零配置;纯文本主模型 → 配 `describe` 逐图识图转述注入(图不直发),都不配则诚实拒绝不静默丢图;`upload` 原图换 https URL(集成方 OSS)。见 [usage-guide §6.17](doc/usage-guide.md#617-图片输入多模态直发--识图转述旁路) |
 | | `dialog.autoQuote` | `boolean` | **划词引用·静默捕获(page-quote,默认 false)**:true 时打开抽屉/点输入区瞬间懒捕获宿主页面(对话框外)当前选中文本挂「引用 chip」(可删),随下一条消息发给 LLM。隐私 opt-in;`sdk.setQuote/clearQuote` 不受此开关影响。见 [usage-guide §6.20](doc/usage-guide.md#620-划词引用与页面问答page-quote--read_page--pagecontext) |

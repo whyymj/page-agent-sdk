@@ -215,6 +215,12 @@ export interface CreateAgentOptions {
    * 传入(仅页面问答形态装配 —— 数据槽场景「页面上已改成…」误伤路径从结构上切断);false/缺省 = 门禁层不进判定。
    */
   pageAssertionGate?: boolean
+  /** 有效页面读集扩展(action-host-semantics S1-C):宿主标记 readsHostState 的 action 名 —— 进页面断言门禁
+   *  的「页面依据」计数(与 S2 占位失效共用 effectivePageReadTools);缺省 = 仅默认五工具 */
+  pageReadTools?: Set<string>
+  /** 延迟生效写 action 名集(action-host-semantics S1-D):零工具门禁事实清单对其调用注记「待用户确认后才生效」;
+   *  等效写计数不含此类(调用成功 ≠ 已写入);缺省 = 清单与现行为逐字节一致 */
+  deferredWriteTools?: Set<string>
   /** LLM 运行时切换回调(setLlm 后触发,供 createChatSdk 重解析模型能力 contextWindow/maxOutputTokens) */
   onLlmChange?: (newLlm: BaseChatModel) => void
   /**
@@ -1096,6 +1102,8 @@ export function createAgent(options: CreateAgentOptions) {
               turnUsage, isWriteToolByName, messages: currentMessages,
               sessionWritePaths: auditWritePaths, todosStatusAtStart,
               pageGate: options.pageAssertionGate === true,
+              pageReadTools: options.pageReadTools,
+              deferredWriteTools: options.deferredWriteTools,
             })
             if (gateOutcome?.kind === 'feedback') {
               pendingFormatRetry = true

@@ -1,4 +1,4 @@
-import { pathsOverlap, PAGE_READ_TOOLS } from './readInvalidation'
+import { pathsOverlap, effectivePageReadTools } from './readInvalidation'
 
 /**
  * imperative-zero-tool-gate 纯函数 —— 操作指令零工具收尾门禁(防「谎报完成」)
@@ -98,7 +98,7 @@ export function isZeroEffectiveWrite(usage: TurnToolUsage, isWriteTool: (name: s
  * 本轮事实清单(D5 机制供给事实;零 LLM 调用,纯本地统计):
  * `本轮事实:工具调用 read×2, write×0;成功写入路径:无;失败/回灌 0;todos:0/3 完成。`
  */
-export function buildTurnFactSheet(usage: TurnToolUsage, todos: { status: string }[] | undefined, isWriteToolName: (name: string) => boolean = () => false): string {
+export function buildTurnFactSheet(usage: TurnToolUsage, todos: { status: string }[] | undefined, isWriteToolName: (name: string) => boolean = () => false, deferredWriteTools?: Set<string>): string {
   // 写工具零计数也显式列出(write×0 是门禁触发的核心事实,滤掉会弱化对账效果):
   // counts 只记被调过的工具,零写轮无 write 键 → 对「是写工具却零调用」的名(主写 write)强制补 ×0
   const parts = Object.entries(usage.counts)
@@ -106,7 +106,11 @@ export function buildTurnFactSheet(usage: TurnToolUsage, todos: { status: string
     .map(([name, n]) => {
       const rej = usage.rejectedDelegations?.[name] ?? 0
       // 被拒委派如实标注(4.9.1 ③:门禁触发时清单不说「零工具」假话,给模型对账真事实)
-      return rej > 0 && DELEGATION_TOOL_RE.test(name) ? `${name}×${n}(其中 ${rej} 次被拒未生效,如组件锁 COMPONENT_BUSY)` : `${name}×${n}`
+      if (rej > 0 && DELEGATION_TOOL_RE.test(name)) return `${name}×${n}(其中 ${rej} 次被拒未生效,如组件锁 COMPONENT_BUSY)`
+      // 提案类 action 注记(action-host-semantics D):调用成功 ≠ 已写入,防「已修改完成」嘴硬 ——
+      // 事实面供给「待用户确认后才生效」,模型收口须与之对账;未标记/未调用时零文本差(逐字节一致)
+      if (deferredWriteTools?.has(name)) return `${name}×${n}(提案类,待用户确认后才生效,尚未写入)`
+      return `${name}×${n}`
     })
   if (usage.counts['write'] === undefined && isWriteToolName('write')) parts.push('write×0')
   const toolPart = parts.length ? parts.join(', ') : '无'
@@ -305,9 +309,10 @@ export function detectPageAssertion(content: string): boolean {
  * **take_screenshot** —— A2 口径:看过截图也算看过页面)任一被调即有依据。
  * 与 S2 的交互(A4):占位替换不改变 counts → S3 判据不被 S2 掩盖/虚增。
  */
-export function isZeroPageBasis(usage: TurnToolUsage): boolean {
+export function isZeroPageBasis(usage: TurnToolUsage, extraTools?: Set<string>): boolean {
+  const tools = effectivePageReadTools(extraTools)
   for (const [name, n] of Object.entries(usage.counts)) {
-    if (n > 0 && PAGE_READ_TOOLS.has(name)) return false
+    if (n > 0 && tools.has(name)) return false
   }
   return true
 }

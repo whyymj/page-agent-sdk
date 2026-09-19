@@ -5,7 +5,7 @@
  */
 import type { TestCtx } from './_ctx'
 import { AIMessage, ToolMessage, HumanMessage, type BaseMessage } from '@langchain/core/messages'
-import { invalidatePageReads, PAGE_READ_TOOLS, STALE_PLACEHOLDER_MARK } from '../../harness/readInvalidation'
+import { invalidatePageReads, effectivePageReadTools, PAGE_READ_TOOLS, STALE_PLACEHOLDER_MARK } from '../../harness/readInvalidation'
 
 function mkRound(calls: Array<{ id?: string; name: string; args?: Record<string, unknown> }>, contents: string[]): BaseMessage[] {
   const ai = new AIMessage({
@@ -84,4 +84,33 @@ export async function run(ctx: TestCtx) {
   // 5. PAGE_READ_TOOLS 常量完整性(与提案口径一致;take_screenshot 计入 A2)
   assert(PAGE_READ_TOOLS.has('take_screenshot') && !PAGE_READ_TOOLS.has('read') && !PAGE_READ_TOOLS.has('query_data'),
     '✓ PAGE_READ_TOOLS → 页面五工具,数据读不在内(take_screenshot 计入 A2 口径)')
+
+  // ===== action-host-semantics S1-C:readsHostState 标记的 action 进失效面 =====
+  {
+    // 有效集纯函数:空集/缺省 = 原样返回默认集(引用相等,零分配);非空 = 并集
+    assert(effectivePageReadTools() === PAGE_READ_TOOLS && effectivePageReadTools(new Set()) === PAGE_READ_TOOLS,
+      '✓ effectivePageReadTools 空集/缺省 → 原样返回默认集(零行为差)')
+    const merged = effectivePageReadTools(new Set(['read_note_source']))
+    assert(merged.has('read_note_source') && merged.has('read_page') && merged.size === PAGE_READ_TOOLS.size + 1,
+      '✓ effectivePageReadTools 并集 → 默认五工具 + 标记 action 全在')
+
+    // 标记 action 的旧结果被置占位;未标记的照旧保留
+    const msgs = mkRound(
+      [{ name: 'read_note_source' }, { name: 'fetch_doc' }],
+      ['--- title: 旧文 ---\n正文', '文档内容'],
+    )
+    const withExtra = invalidatePageReads(msgs, '用户切换文档', new Set(['read_note_source']))
+    assert(withExtra.invalidatedCount === 1
+      && CONTENT(withExtra.messages[1]).startsWith(STALE_PLACEHOLDER_MARK)
+      && CONTENT(withExtra.messages[1]).includes('read_note_source')
+      && CONTENT(withExtra.messages[2]) === '文档内容',
+      '✓ readsHostState 标记 action → notifyHostChange 后旧结果置过期占位;未标记 action 照旧保留')
+    // 同输入不传 extraTools → action 不在失效面(未标记 = 现行为)
+    const noExtra = invalidatePageReads(msgs, '用户切换文档')
+    assert(noExtra.invalidatedCount === 0 && CONTENT(noExtra.messages[1]) === '--- title: 旧文 ---\n正文',
+      '✓ 未标记/未传扩展集 → action 结果不动(现行为零变化)')
+    // 幂等:扩展集下的二次调用不叠加
+    const twice = invalidatePageReads(withExtra.messages, '再次切换', new Set(['read_note_source']))
+    assert(twice.invalidatedCount === 0, '✓ 扩展集形态同样幂等(已占位不二次替换)')
+  }
 }

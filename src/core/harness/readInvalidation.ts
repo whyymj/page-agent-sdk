@@ -200,6 +200,17 @@ function buildPlaceholder(readPaths: string[], readTool: string, writes: Effecti
 export const PAGE_READ_TOOLS = new Set(['read_page', 'dom_search', 'dom_info', 'get_dom', 'take_screenshot'])
 
 /**
+ * 有效页面读集 = 默认五工具 ∪ 宿主标记 `readsHostState` 的 action 名(action-host-semantics S1-C 单一真相源)。
+ * S2 占位失效与页面断言门禁依据计数共用;空集/缺省 = 原样返回默认集(零行为差)。
+ */
+export function effectivePageReadTools(extra?: Set<string>): Set<string> {
+  if (!extra || extra.size === 0) return PAGE_READ_TOOLS
+  const merged = new Set(PAGE_READ_TOOLS)
+  for (const name of extra) merged.add(name)
+  return merged
+}
+
+/**
  * S2 宿主变更驱动的页面读失效(纯函数):把页面读类工具的 ToolMessage 整体替换为失效占位。
  *
  * 与写驱动 invalidateStaleReads 的关系:**新增触发源,不改数据写判定**(数据读零涉及)。
@@ -207,7 +218,8 @@ export const PAGE_READ_TOOLS = new Set(['read_page', 'dom_search', 'dom_info', '
  * 调用后的新读不受影响 —— 时序由调用侧 epoch 把守);幂等同款(占位开头标记跳过,重复调用不叠加)。
  * 文案族复用 STALE_PLACEHOLDER_MARK + 引导重读。
  */
-export function invalidatePageReads(messages: BaseMessage[], reason?: string): InvalidationResult {
+export function invalidatePageReads(messages: BaseMessage[], reason?: string, extraTools?: Set<string>): InvalidationResult {
+  const tools = effectivePageReadTools(extraTools)
   const typeOf = (m: BaseMessage): string => (m as unknown as { _getType?: () => string })._getType?.() ?? 'unknown'
   let nextMessages: BaseMessage[] | null = null
   let invalidatedCount = 0
@@ -227,7 +239,7 @@ export function invalidatePageReads(messages: BaseMessage[], reason?: string): I
         const mname = (m as unknown as { name?: string }).name
         hit = mname ? pending.find((p) => !p.used && p.name === mname) : pending.find((p) => !p.used)
       }
-      if (!hit || !PAGE_READ_TOOLS.has(hit.name)) continue
+      if (!hit || !tools.has(hit.name)) continue
       hit.used = true
       const content = String((m as unknown as { content?: unknown }).content ?? '')
       if (content.startsWith(STALE_PLACEHOLDER_MARK)) continue // 幂等:已占位不再二次处理
