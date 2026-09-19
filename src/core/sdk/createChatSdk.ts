@@ -67,7 +67,7 @@ import { composeMiddlewareStack } from './middlewareStack'
 import { createSessionVars, createSessionLifecycle } from './sessionLifecycle'
 import { createToolRebuilder } from './toolAssembly'
 import { createImagePipeline, buildImageContentParts } from '../tools/imageInput'
-import { createScreenshotTool } from '../tools/screenshot'
+import { createScreenshotTool, createViewImageTool } from '../tools/screenshot'
 import { createDomEditTools } from '../tools/domEdit'
 import { createHostWatcher, buildHostWatchReason, type HostWatchEvent, type HostWatcherHandle, type HostWatcherTarget, type HostWatchHistory, type HostWatchDocument } from './hostWatcher'
 import { createProposalChannel } from './proposals'
@@ -714,9 +714,22 @@ function buildCore(options: ChatSdkOptions, agentId: string, hostWatchState?: { 
     }
     return e
   }
+  // view_image(4.23,真机 dump 驱动:问「第 N 张图画的是啥」时模型手里有 slide URL 却无工具可看,
+  // 只能截当前渲染帧 —— autoplay 已切帧则答非所问):视觉消费方在即装配(不要求 domInspect,纯图无 DOM 依赖)
+  const visualCapable = modelCaps.vision === true || typeof options.images?.describe === 'function'
+  const viewImageTool = visualCapable
+    ? createViewImageTool({
+        getVision: () => modelCaps.vision === true,
+        describe: options.images?.describe,
+        onShot: (image, meta) => { pendingShots.push({ image, meta }) },
+      })
+    : undefined
   const screenshotTool = screenshotCapable
     ? createScreenshotTool({
         render: options.screenshot?.renderer,
+        // 聚焦取景锚定(2026-09-19):core.getFocus 运行时闭包(此处 core 未构造,工具调用晚于构造)
+        getActiveFocus: () => core.getFocus(),
+        focusSelector: options.screenshot?.focusSelector,
         stow: (image) => {
           if (!image.dataUri) return undefined
           try {
@@ -734,16 +747,19 @@ function buildCore(options: ChatSdkOptions, agentId: string, hostWatchState?: { 
   // req.messages 即循环 currentMessages 同引用(:977 直传)→ 注入消息在本轮 invoke 内持续存活、随 invoke 消亡;
   // trimContextIfNeeded 只裁 ToolMessage(HumanMessage 免疫),offload 只作用于工具结果字符串 —— 双保险
   const imageContentFormat: 'openai' | 'anthropic' = (!isChatModel(options.llm) && ((options.llm as LLMConfig).provider ?? 'openai') === 'anthropic') ? 'anthropic' : 'openai'
-  const screenshotChannelMw: Middleware | null = screenshotTool
+  const screenshotChannelMw: Middleware | null = (screenshotTool || viewImageTool)
     ? {
         name: 'screenshotChannel',
         wrapModelCall: async (req, next) => {
           if (pendingShots.length) {
             const shots = pendingShots.splice(0)
             const text = shots
-              .map((s, i) => `[截图 ${i + 1}] ${s.meta.mode}${s.meta.selector ? ` selector="${s.meta.selector}"` : ''}${s.meta.vfsRef ? `(原图 vfs:${s.meta.vfsRef})` : ''}`)
-              .join('\n') + '\n(take_screenshot 结果如上,请结合图片回答/继续)'
-            const parts = buildImageContentParts(text, shots.map((s) => ({ dataUri: s.image.dataUri })), imageContentFormat)
+              .map((s, i) => s.meta.mode === 'url'
+                ? `[图片 ${i + 1}] 原图直投 ${s.image.url ?? ''}(view_image,全分辨率非渲染态)`
+                : `[截图 ${i + 1}] ${s.meta.mode}${s.meta.selector ? ` selector="${s.meta.selector}"` : ''}${s.meta.vfsRef ? `(原图 vfs:${s.meta.vfsRef})` : ''}`)
+              .join('\n') + '\n(视觉内容如上,请结合图片回答/继续)'
+            // dataUri 优先(截图),无则 url(view_image 原图直投;双协议 buildImageContentParts 均支持)
+            const parts = buildImageContentParts(text, shots.map((s) => ({ dataUri: s.image.dataUri, url: s.image.url })), imageContentFormat)
             if (parts) req.messages.push(new HumanMessage({ content: parts as unknown as string }))
           }
           return next(req)
@@ -772,7 +788,11 @@ function buildCore(options: ChatSdkOptions, agentId: string, hostWatchState?: { 
   const domToolsForPool = caps.domInspect
     ? [...domTools, ...domEditTools, ...(screenshotTool ? [screenshotTool] : []), ...(caps.skills ? [] : [domSearchTool, domInfoTool])]
     : []
-  const builtinTools = selectBuiltinTools(caps, dataOpsFiltered, fetchDocTools, domToolsForPool, inspectTools)
+  const builtinTools = [
+    ...selectBuiltinTools(caps, dataOpsFiltered, fetchDocTools, domToolsForPool, inspectTools),
+    ...(viewImageTool ? [viewImageTool] : []),
+  ]
+  if (viewImageTool) toolSources.set('view_image', 'builtin')
   builtinTools.forEach((t) => toolSources.set(t.name, 'builtin'))
   // userTools 可变:支持运行时 setTools/addTool/removeTool 动态增删用户工具
   // content-proposals 通道工具并入 user 面(回调是集成方代码:read/onProposal —— 看门狗已在工厂内打标)
@@ -1108,6 +1128,7 @@ function buildCore(options: ChatSdkOptions, agentId: string, hostWatchState?: { 
       domEdit: caps.domEdit, // dom-edit:capability 开关(requires domInspect 已由注册表归一)
       hasActions: !!options.actions && Object.keys(options.actions).length > 0, // A8:闭环末环(宿主动作)装配态
       hasProposals: !!options.proposals, // content-proposals:read/propose 纪律(未装不教)
+      viewImage: !!viewImageTool, // view_image:URL 原图直投引导(未装不教)
       // 预声明子 agent(供"规划-反思-执行"路由提示;只取 id/description/temperature 轻量字段)
       subagents: effectiveSubagents?.map(reflectSubagentThinking),
     },

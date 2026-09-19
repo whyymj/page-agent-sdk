@@ -1,6 +1,6 @@
 # auto-host-watch:宿主变更自动报案(hostWatch 声明式监听)+ dom_edit 写后页面读失效
 
-> **状态**:📋 已立项待实施(2026-09-19)。
+> **状态**:✅ 已实施(2026-09-19,随 4.21.0 发布;10/10 任务勾,commit dc41ad9/master ed017ad;服务端边界加固见装配边界段;2026-09-19 归档)。
 > 来源 = host-integration-contract S2(`notifyHostChange`)落地后的复盘:S2 的失效机制本身可靠,但**触发全靠宿主手动调**——两处真空(下文勘察);另 dom_edit(4.17)写后旧页面读不失效。定级 minor(新选项 + 默认开行为联动,纯加法)。与 content-proposals 互不依赖,体量与 action-host-semantics 相当。
 
 ## 现状勘察证据

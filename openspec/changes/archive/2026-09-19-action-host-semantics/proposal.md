@@ -1,6 +1,6 @@
 # action-host-semantics:宿主 action 的读失效追踪与延迟生效写口径
 
-> **状态**:📋 已立项待实施(2026-09-19)。
+> **状态**:✅ 已实施(2026-09-19,随 4.20.0 发布;10/10 任务勾,commit 41c0ce8/master f010524;2026-09-19 归档)。
 > 来源 = 学习门户「笔记编辑 + AI 提案修改」真集成审阅(`Obsidian/learning`,openspec/changes/add-ai-assisted-note-editing):宿主用 `actions` 注册 `read_note_source`/`propose_note_edit` 自建「提案-评审-应用」通道时,发现两处 SDK 级缺口。定级 minor(公开面纯加法)。与 [`2026-09-19-content-proposals`](../2026-09-19-content-proposals/)(大项)互不依赖,先行独立可发。
 
 ## 现状勘察证据

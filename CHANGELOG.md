@@ -2,6 +2,32 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.23.0] - 2026-09-19
+
+### Added
+
+- **take_screenshot 聚焦取景锚定**(真机 dump 驱动:聚焦组件后问「这里画的是啥」,模型截视口/整页漫游 4-5 次,焦点组件从未进画幅、答述泛整屏):聚焦态下**缺省 selector 默认截取聚焦组件** —— SDK 探测宿主 DOM `[data-path="<焦点路径>"]` 锚点(低代码宿主通用约定,complex-demo/editor 选中拾取即此属性),命中精确截取(结果注明「取景=聚焦组件 <path>,data-path 锚定」),未命中回退视口并提示手动 selector,显式 selector/fullPage 不抢;新配置 `screenshot.focusSelector?: (focusPath) => string` 覆盖宿主自定义映射。配套提示词:focus 指代锚定段增「取景与答述同样锚定」句(整屏概况仅用户明问时给,能力演示问句也不例外),工具 description 同步。
+
+- **`view_image({ url })` —— 图片 URL 原图直投工具**(真机 dump 双会话驱动:问「第 N 张图画的是啥」时模型 `read` 已拿到 slide URL 却无工具可看,只能截当前渲染帧 —— autoplay 已切帧则答非所问;模型自己在回复里提出「可以把图片 URL 抓下来看一下」):页面数据里的图 URL 直接投给模型(原图全分辨率、模型服务端拉图,CORS/画布污染/自动轮播切帧/渲染失败整类问题不存在);与 take_screenshot 分工 = 问图本身用 view_image / 看渲染态用截图;**装配面独立**(视觉消费方在即装配,不要求 domInspect);非 vision 自动走 describe 转述;合成图消息(双协议)文案注明「原图直投·全分辨率非渲染态」。**客户端优先物化**(真机 deepseek 400「Failed to download image from \<url\>」驱动:模型服务端拉图会失败〔上游限流对服务商出口〕)—— 浏览器先 CORS fetch 转 dataUri 投递(供应商免下载),物化不可用(无 CORS/网络)才回退 URL 直投由服务端再试;`clientFetch` 可注入桩保测试密闭性。
+
+### Fixed
+
+- **默认渲染器关 `cacheBust`**(真机 5 连败根因):bust 给每张跨域图追加时间戳 query 绕过浏览器缓存全量重拉,连环截图时上游(picsum→fastly)压力翻倍撞间歇性拒连(`ERR_CONNECTION_CLOSED` → html-to-image reject `[object Event]`);同页面四参数形态复验全成 → 定性网络间歇 + bust 放大,截图对图源缓存新鲜度不敏感,复用缓存更稳。
+
+### 门槛
+
+- selftest 3760 → **3774**(sec-127 +7:focusShotSelector 组装/值转义、命中/未命中/无聚焦/自定义映射/显式 selector 优先五路径,经 fake render 捕获取景元素断言);browser 172 → **173**;e2e 1256 → **1263**(screenshot 模块 +7:view_image 装配面独立/url 直投全链/非 vision 转述/零注册)(complex-demo ?shot=1 聚焦两步拾取 → 缺省截图 → 取景锚定断言,真 html-to-image 渲染)。
+
+## [4.22.1] - 2026-09-19
+
+### Fixed
+
+- **modelCaps 表:deepseek-flash 补 `vision: true`**(用户实测纠偏 + 双协议验证):deepseek 官方 `deepseek-flash` **是多模态模型** —— OpenAI 协议 content parts(1×1 像素图答「蓝色」)与 Anthropic 协议 image block(答「红色」)双通道实测通过,修前表值缺省 false。生效面:`take_screenshot` 随 domInspect 自动装配(不再误报「主模型不支持图片」)、用户图片输入走多模态直发(不再绕 describe 旁路)。同批:仓库 `.env` demo 配置切 deepseek 官方(openhubs 账号到限,含 Anthropic 兼容端点 `/anthropic/v1/messages` 实测 ✓)与 vite `/llm` 代理目标同步(仅本地配置,不入库)。
+
+### 门槛
+
+- selftest 3759 → **3760**(sec-53 +1 vision 断言,实测证据入注释);其余套件不受影响(测试面 mock 模型 glm-5.2 不在变更面)。
+
 ## [4.22.0] - 2026-09-19
 
 > content-proposals(openspec/changes/2026-09-19-content-proposals):数据槽之外的内容「AI 提案 → 人评审 → 应用」通道 —— 学习门户笔记编辑真集成审阅驱动的最大缺口收口(此前此类场景集成方需手搓 ~200 行且全量重发提案有 token/截断双坑)。定级 minor(新选项/新事件/新导出,纯加法)。

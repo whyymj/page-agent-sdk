@@ -1,6 +1,6 @@
 import { constructLlmFromConfig, constructOpenLlmSync, normalizeBaseUrl, shapeAnthropicMessages } from '../../llm/constructLlm'
 import { SystemMessage, HumanMessage } from '@langchain/core/messages'
-import { tableMaxOutputTokens } from '../../utils/modelCaps'
+import { tableMaxOutputTokens, resolveModelCaps } from '../../utils/modelCaps'
 import { extractTextDelta, extractReasoningDelta, extractUsage, normalizeUsage } from '../../utils/contentParts'
 import { createAgent } from '../../harness/createAgent'
 import { createSubagentMiddleware } from '../../harness/subagent'
@@ -25,6 +25,7 @@ export async function run(ctx: TestCtx): Promise<void> {
     const mt = (llm: any) => llm.maxTokens ?? llm.lc_kwargs?.maxTokens
     assert(tableMaxOutputTokens('deepseek-v4-flash') === 393216, 'tableMaxOutputTokens(deepseek-v4) → 393216(表命中)')
     assert(tableMaxOutputTokens('deepseek-flash') === 393216, 'tableMaxOutputTokens(deepseek-flash 官方档) → 393216(2026-09-18 实测加条;修前落泛匹配 128K 撞 200K 地板误拒)')
+    assert(resolveModelCaps({ model: 'deepseek-flash' }).vision === true, 'resolveModelCaps(deepseek-flash).vision → true(2026-09-19 双协议图像块实测:OpenAI parts 答「蓝色」/Anthropic block 答「红色」;take_screenshot 装配与图片直发随表生效)')
     assert(tableMaxOutputTokens('gpt-4') === undefined, 'tableMaxOutputTokens(未知模型 gpt-4 无条目) → undefined(不兜)')
     const v4 = constructOpenLlmSync({ apiKey: 'sk-test', model: 'deepseek-v4-flash' })
     assert(mt(v4) === 393216, '未设 maxTokens + deepseek-v4 → 请求 max_tokens=393216(表上限;修前不发落网关 4K)')

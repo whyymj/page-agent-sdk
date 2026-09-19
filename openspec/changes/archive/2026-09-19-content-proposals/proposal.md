@@ -1,6 +1,6 @@
 # content-proposals:内容提案-评审-应用通道(数据槽之外的受控内容修改)
 
-> **状态**:📋 已立项待实施(2026-09-19;建议在 [action-host-semantics](../2026-09-19-action-host-semantics/) 之后实施,复用其 `deferredWrite` 事实清单口径)。
+> **状态**:✅ 已实施(2026-09-19,随 4.22.0 发布;12/12 任务勾,commit 3f9dae1/master bb21feb;残项 = 真 LLM 基线采集已转 deferred;2026-09-19 归档)。前置 action-host-semantics 已同日归档于本目录。
 > 来源 = 学习门户「笔记编辑 + AI 提案修改」真集成审阅:门户为「AI 帮我改这段笔记」手搓了 ~200 行(propose 工具 schema/非阻塞语义/互斥拒绝/diff 面板/绑定校验/相同内容语义),没有一件能从 SDK 拿到;且 `propose_note_edit` 要求模型**重发完整源文**(23KB 笔记 ≈ 每提案上万 token,且有 max_tokens 截断风险 —— 截断提案过不了校验,整轮白跑)。SDK 在 dataOps 侧早已把同款问题解干净(hash 乐观锁 + patch/append 分块),但只对 JSON 数据槽生效。定级 minor(纯加法面)。
 
 ## 现状勘察证据

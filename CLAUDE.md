@@ -30,9 +30,9 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,3759 项断言)
-npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,1256 项;tests/e2e/<module>.mjs 按模块拆分)
-npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,172 项;tests/browser/<demo>.spec.ts)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,3774 项断言)
+npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,1263 项;tests/e2e/<module>.mjs 按模块拆分)
+npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,173 项;tests/browser/<demo>.spec.ts)
 npm run test:node-real  # node 真 LLM 冒烟(server-companion P0:headless dist 双协议 read→write→restore;无 key 自动 skip)
 ```
 
@@ -93,7 +93,7 @@ skills/                         # 分发给使用者的 Agent Skill(入 npm 包 
 - **问句意图守卫**(默认开,无开关):正则三档启发式(句尾问号 / 疑问词+吗呢**么嘛** + 裸「能|可以|会|行」/ 查询词「是什么|怎么用|有哪些」)逐消息定性(nested-demo 实测「你能修改嵌套层级么」漏判驱动补齐,2026-09-02),命中注入「先答勿做」pin 段(`PIN_SEGMENT_NAMES` 白名单保跨压缩/预算裁剪存活);只递信号不阻断工具,裁决归 LLM(文案带「除非同条消息明确要求操作」逃生门);防长对话问句被历史轨迹拖着误路由成操作(「这是啥组件」→ use_html 事故)
 - **Mission**(默认开):会话级目标锚定,启发式 capture(宁漏不误)+ `send({mission})`;pin 段天然跨压缩
 - **workingMemory**(默认开):捕获 read/query/search 的 locatedPaths + read hash(LRU ≤10),防压缩后重复检索/凭记忆写致 autoLock 误冲突
-- **Focus**(默认开,opt-in 聚焦):三层收敛(提示 + 子树 schema 视野 + strict `PATH_DENIED`);**焦点值锚定(4.9.2 A1)**:入栈统一捕获最近数组元素祖先 `__pgId`(`Focus.pgId`,五入栈点 API setFocus/addFocus + 工具 set_focus/add_focus + applySnapshot),消费读点(guard/augmentPrompt/read 注入/委派继承/state)解析 —— 调序跟随元素(锚「值」不锚「位置」,与 freeze-move 同族,修前调序后 strict/全文豁免/vfs 守卫保护错元素)、删除失联门控警告(strict 不自动放宽);**存储恒保原始 path**(getFocuses/事件/persist/chip 匹配不受影响),无 `__pgId` 数据恒等解析零行为面;**invoke-freeze(4.2.3+)**:焦点锚定下一次输入 —— beforeAgent 取生效快照,宿主 API/UI mid-run 到达的焦点变更不追溯掐在途流程(实测事故:方案确认挂起窗口点选组件 → 整页打乱被 PATH_DENIED),agent 自己的 focus 工具变更立即生效(clear_focus 自救依赖);**意图归属引导 + 正路出口(4.1+)**:「增加/修改 X」默认归属聚焦组件本身(写焦点子路径),PATH_DENIED 文案先给子路径出口(动态示例)再给解焦出口(实测「增加tab」被误读为新建组件驱动);**指代问句锚定(4.2+)**:「这是啥/这个/它」类指示代词问句默认指聚焦目标(先 read 焦点子树再答,勿泛答整页 —— 实测点选深层组件后问「这是啥」答了整页概况);API `setFocus`/`addFocus`/`removeFocus`/`clearFocus`/`getFocuses`;子 agent 继承全部焦点(**经 `getActiveFocuses()` 生效快照**,4.5.0 team-audit P1#5 —— 宿主 mid-run 焦点不穿透委派,主/子写面口径一致;UI chip/persist/inspect/宿主 API 等其余消费面仍实时态)
+- **Focus**(默认开,opt-in 聚焦):三层收敛(提示 + 子树 schema 视野 + strict `PATH_DENIED`);**焦点值锚定(4.9.2 A1)**:入栈统一捕获最近数组元素祖先 `__pgId`(`Focus.pgId`,五入栈点 API setFocus/addFocus + 工具 set_focus/add_focus + applySnapshot),消费读点(guard/augmentPrompt/read 注入/委派继承/state)解析 —— 调序跟随元素(锚「值」不锚「位置」,与 freeze-move 同族,修前调序后 strict/全文豁免/vfs 守卫保护错元素)、删除失联门控警告(strict 不自动放宽);**存储恒保原始 path**(getFocuses/事件/persist/chip 匹配不受影响),无 `__pgId` 数据恒等解析零行为面;**invoke-freeze(4.2.3+)**:焦点锚定下一次输入 —— beforeAgent 取生效快照,宿主 API/UI mid-run 到达的焦点变更不追溯掐在途流程(实测事故:方案确认挂起窗口点选组件 → 整页打乱被 PATH_DENIED),agent 自己的 focus 工具变更立即生效(clear_focus 自救依赖);**意图归属引导 + 正路出口(4.1+)**:「增加/修改 X」默认归属聚焦组件本身(写焦点子路径),PATH_DENIED 文案先给子路径出口(动态示例)再给解焦出口(实测「增加tab」被误读为新建组件驱动);**指代问句锚定(4.2+)**:「这是啥/这个/它」类指示代词问句默认指聚焦目标(先 read 焦点子树再答,勿泛答整页;**取景同锚定 4.22+**:take_screenshot 缺省 selector 探测 `[data-path=焦点路径]` 截聚焦组件,`screenshot.focusSelector` 可覆盖映射;**view_image(4.23)**:URL 原图直投工具(视觉消费方在即装配、不要求 domInspect;问「第 N 张图」优先 URL 直投勿截已切帧的渲染帧) —— 实测点选深层组件后问「这是啥」答了整页概况);API `setFocus`/`addFocus`/`removeFocus`/`clearFocus`/`getFocuses`;子 agent 继承全部焦点(**经 `getActiveFocuses()` 生效快照**,4.5.0 team-audit P1#5 —— 宿主 mid-run 焦点不穿透委派,主/子写面口径一致;UI chip/persist/inspect/宿主 API 等其余消费面仍实时态)
 
 ### 子 agent 与并行编排(详见 architecture.md §⑨⑮)
 - `spawn_agent`/`spawn_agents`(默认开)只返回最终结论(省 token);预声明 `subagents:[{id, description, …}]` 生成 `use_<id>`;`maxDepth`(默认 1)物理切断
@@ -141,13 +141,13 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test    # tsx 跑 src/core/__tests__/selftest.ts,3759 项断言
+npm test    # tsx 跑 src/core/__tests__/selftest.ts,3774 项断言
 ```
 按模块拆分:`src/core/__tests__/modules/sec-NN.ts`(130 个模块)各导出 `run(ctx)`,runner 汇总;共享 `TestCtx` 在 `modules/_ctx.ts`。tsx 跑源码(不经构建),触不到 createChatSdk 顶层 API 作用域。**改任何核心模块后必跑**。
 
 #### 2. 集成层 e2e(改 createChatSdk 顶层 API 后必跑)
 ```bash
-npm run build && npm run test:e2e    # node 跑 dist 产物,1256 项
+npm run build && npm run test:e2e    # node 跑 dist 产物,1263 项
 ```
 模块在 `tests/e2e/<module>.mjs`(38 个:systemprompt/dynamic-register/inspect/subagents/events/storage/exports/data-slots/presets/boundary/custom-injection/conflict/automation/llm-provider/focus/images/resources/agent-compression/headless-subpath/legacy-subpath/capability-packs/authorization-surface/hang-feedback/main-sub-isolation/session-integrity/context-economy/host-integration/mcp/diagnostics/instruction-adherence/thinking-mode/eval-toolkit/evidence-audit/stale-read-invalidation/auto-title/action-semantics/host-watch/proposals),共享 stub 在 `tests/e2e/_helpers.mjs`(StubChatModel 在 `_stub-model.mjs`,响应队列驱动真 ReAct)。覆盖顶层 return 对象作用域。**改 createChatSdk 返回对象、AgentCore 接口、动态注册 API、默认提示词、新增导出/配置项后必跑**。
 
@@ -186,7 +186,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(3759/1256/172)与 README 中英文;`node scripts/check-test-counts.mjs` 静态对账(各文件声明计数互相一致),发布前 `--run` 实跑取真值。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(3774/1263/173)与 README 中英文;`node scripts/check-test-counts.mjs` 静态对账(各文件声明计数互相一致),发布前 `--run` 实跑取真值。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判,含 E1 的 Same 互赋值签名断言)→ `npm run test:types-novue`(无 vue 项目解析探针:paths 哨兵阻断,E2)→ `npm run test:size` → `node scripts/check-test-counts.mjs`(三计数+README 徽章+CHANGELOG 对账;漂移即红)→ `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证

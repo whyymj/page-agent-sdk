@@ -206,9 +206,9 @@ export interface ChatSdkOptions {
   images?: ImagesConfig
   /**
    * 截图配置组(take_screenshot;装配条件 = capabilities.domInspect 开 && (主模型多模态 vision || images.describe 已配),
-   * 不满足不装并 warn 留痕)。默认渲染 = 内置 html-to-image;宿主 CSP 限制 SVG data URL 或需特殊裁剪时传 renderer 覆盖。
+   * 不满足不装并 warn 留痕)。默认渲染 = 内置 html-to-image;宿主 CSP 限制 SVG data URL 或需特殊裁剪时传 renderer 覆盖。 `focusSelector`:聚焦态下 take_screenshot 缺省 selector 时的 DOM 锚点映射(缺省探测 `[data-path="<焦点路径>"]`,低代码宿主通用约定;宿主约定不同时覆盖)。
    */
-  screenshot?: { renderer?: ScreenshotRenderer }
+  screenshot?: { renderer?: ScreenshotRenderer; focusSelector?: (focusPath: string) => string | undefined }
   /** 内置能力开关(默认全开;关掉某能力则对应中间件/工具不装载) */
   capabilities?: {
     dataOps?: boolean          // 数据操作工具集(默认 true;关 → 不装数据工具,省 token/上下文)

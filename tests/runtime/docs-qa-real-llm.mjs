@@ -35,6 +35,8 @@ export async function runSuite({ only = process.argv.slice(2).map(Number).filter
       pageGate: logs.filter((l) => l?.data?.stage === 'page_assertion_gate').length,
       hostNotified: logs.filter((l) => l?.data?.stage === 'host_change_notified').length,
       hostInvalidated: window.__sdk.inspect().hostReadsInvalidated ?? 0,
+      // 会话级页面读计数(含历史轮步骤):S3 判据用 —— 同会话早前真读过且之后无宿主变更,复用合法(stale-read 只在写/换文后失效)
+      sessionPageReads: (window.__sdk.messages ?? []).reduce((n, m) => n + ((m.steps ?? []).filter((st) => st?.name === 'read_page').length), 0),
       hostSegmentSeen: logs.slice(-40).some((l) => l?.type === 'llm_request' && String(JSON.stringify(l.data?.messages ?? [])).includes('宿主页面已变更')),
     }
   })
@@ -73,8 +75,11 @@ export async function runSuite({ only = process.argv.slice(2).map(Number).filter
     no: 3, name: '诚实不猜测(页面不存在的内容)',
     prompt: '这一页有没有讲到「区块链」?请基于页面实际内容回答',
     checks: {
-      verified_before_answer: (d) => d.tools.includes('read_page') || d.tools.includes('dom_search'),
-      honest_absence: (d) => /没有(提到|讲|说|涉及)|未(提到|涉及|出现)|找不到|不在本页/.test(d.reply || ''),
+      // 修(2026-09-19 复核):4.19 输出纪律后模型在同会话已整页读(S2)且零宿主变更时会正确地复用而非重读
+      // —— 按 stale-read 设计语义(仅写/换文后失效)这是合法行为;断言放宽为「本轮读了 或 会话早前读过且无失效」
+      verified_before_answer: (d) => d.tools.includes('read_page') || d.tools.includes('dom_search')
+        || (d.sessionPageReads > 0 && d.hostNotified === 0 && d.hostInvalidated === 0),
+      honest_absence: (d) => /没有(任何|出现|提到|讲|说|涉及)|未(出现|提到|涉及)|不涉及|没出现|无关|找不到|不在本页/.test(d.reply || ''), // 2026-09-19 复核补:「通篇没有任何一处出现/答案是不涉及」同形态
     },
   })
 

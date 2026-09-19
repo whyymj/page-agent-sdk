@@ -1774,6 +1774,10 @@ createChatSdk({
 | 整页截图 | `take_screenshot({ fullPage: true })` | 整页版式(超长文档 >32768px 拒,改 selector 分段) |
 | 视口截图 | `take_screenshot()` | 当前可见区域 |
 
+**聚焦取景锚定(4.22+)**:聚焦态下**不传 selector 时默认截取聚焦组件** —— SDK 探测宿主 DOM 的 `[data-path="<焦点路径>"]` 锚点(低代码宿主「组件 DOM 带 data-path」的通用约定,complex-demo/editor 类选中拾取即用此属性),命中即精确截取;未命中回退视口并在结果里提示可手动传 selector;用户显式传 selector / fullPage 时不抢。指代问句(「这是啥/这里画的是啥」)由此取景,回答以聚焦组件为主体(勿泛答整页)。宿主 data-path 约定不同时用 `screenshot.focusSelector: (focusPath) => string` 覆盖映射。
+
+**`view_image({ url })` —— 图片 URL 原图直投(4.23+)**:视觉消费方(vision 主模型或 `images.describe`)在即自动装配,**不要求 domInspect**。页面数据里读到的图(轮播某一帧/商品图/封面)直接把 URL 投给模型看 —— 原图全分辨率、零渲染、模型服务端拉图(CORS/画布污染/自动轮播已切帧/渲染失败 整类问题不存在)。与 take_screenshot 分工:**问「第 N 张图/这张图画的是啥」且手里有该图 URL 时优先 view_image**;要看渲染后的组件(布局/叠加文案)才截图。非 vision 时自动走 describe 转述;仅收 http(s) URL。
+
 **截图怎么到模型(分层通道)**:多模态主模型 → 截图经压缩闸(长边 ≤1568 jpeg,PNG 带透明通道保真)后作为**合成 user 消息的 image parts** 出现在工具结果之后(双协议零方差;工具结果本身是纯文本元数据,base64 不进对话消息);纯文本主模型 → 自动走 `images.describe` 识图转述,文本回灌。**原图恒收 vfs**(`userImages/` 池,LRU + 持久化),工具结果带 vfsRef 可审计。**UI 观察面**:工具步骤行直接渲染截图缩略图(点击放大),用户能看到 agent「看到了什么」。
 
 **渲染器**:默认内置 html-to-image(SVG foreignObject);宿主页面 CSP 禁 SVG data URL 或需特殊裁剪时,传顶层配置覆盖:

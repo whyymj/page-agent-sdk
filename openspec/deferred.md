@@ -718,6 +718,10 @@ A3 曾写「116 个模块」,实测 sec-*.ts = **115**(runner import 同数)—�
 
 ## 2026-09-19(content-proposals 裁出)
 
+## 2026-09-19(content-proposals 归档残项)
+
+- ✅ **proposals 真 LLM 基线采集与「增量 vs 全量」token 对比**(2026-09-19 完成销账):套件扩至 8 场景 30 断言全绿,基线入 real-llm-baseline.json(S2 长文 20×:completion **597** tokens / toolCount 2 —— 全量重发同文档需 ~15-20K completion,增量收益 ~30×);模型行为实测四亮点:插入用 insertBefore 精准锚 / 基底漂移主动重读(hash 变更明说)/ 裁决后诚实答「已放弃」/ 小文档与小改动场景 ops 形态全部成立。
+
 - **approval 宿主自定义预览渲染**(阻塞式 chat 内评审路线):现状基础 = approval 中间件 + ApprovalBar + previewWrite(write 工专享 dryRun old→new 摘要);暂缓理由 = 门户实测**非阻塞页面内面板**体验更优(content-proposals 主路线已覆盖),chat 内评审需求未证实;重启触发 = 集成方明确要「评审留在聊天内」(如 headless 无宿主页面可挂面板)。
 - **read_content 分页与超长内容协议**(offset/limit + 分块 append 提案):现状基础 = dataOps 侧大 JSON 已有完整分页/裁剪/vfs 外存先例;暂缓理由 = 宿主内容典型 <100KB,首个真实超长内容场景未出现;重启触发 = 集成方内容源 >300KB 且提案 token 成本实测不可接受。
 - **DiffPreview 组件导出**(SDK 内置 diff 渲染 Vue 组件):现状基础 = `lineDiff` 纯函数已随 content-proposals 导出,宿主自行渲染门槛低(门户面板 ~60 行);暂缓理由 = UI 组件导出涉及样式主题联动/包体,单一消费者不值得;重启触发 = 第二个集成方需要评审面板且不愿自写渲染。

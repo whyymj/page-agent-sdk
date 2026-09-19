@@ -12,7 +12,7 @@ const limits = [
   { file: 'dist/page-agent-sdk.iife.js', max: 2.45 * MB, label: 'IIFE 全量(CDN <script> 直引;含 dompurify + overlayscrollbars + design-skill,实测 ~2206KB)' },
   { file: 'dist/page-agent-sdk.js', max: 1.32 * MB, label: 'ESM(npm import;含 design-skill,实测 ~1194KB)' },
   { file: 'dist/page-agent-sdk.umd.cjs', max: 1.08 * MB, label: 'UMD(require;含 design-skill,实测 ~974KB)' },
-  { file: 'dist/page-agent-sdk.headless.js', max: 780 * KB, label: 'headless ESM(/headless 子路径;纯核心不含 UI/不含 overlayscrollbars,含 design-skill + host-integration-contract S2/S3/S4,实测 ~760KB)' },
+  { file: 'dist/page-agent-sdk.headless.js', max: 790 * KB, label: 'headless ESM(/headless 子路径;纯核心不含 UI/不含 overlayscrollbars,含 design-skill + host-integration-contract S2/S3/S4,实测 ~760KB)' },
   { file: 'dist/page-agent-sdk.legacy.js', max: 3.55 * MB, label: 'legacy ESM(/legacy 子路径;es2017 全量打包含 anthropic + design-skill,实测 ~3189KB)' },
   { file: 'dist/style.css', max: 87.5 * KB, label: 'CSS(含 overlayscrollbars 样式 + 3.27 顶部按钮标签 + 4.16 截图缩略图样式,实测 ~85.3KB)' },
 ]

@@ -1,5 +1,5 @@
 {
-  "recordedAt": "2026-09-18T04:21:39.216Z",
+  "recordedAt": "2026-09-19T10:41:48.741Z",
   "suites": {
     "uispec": {
       "S1": {
@@ -125,6 +125,64 @@
         "toolCount": 1,
         "elapsedSec": 108,
         "cacheRead": 512
+      }
+    },
+    "proposals": {
+      "S1": {
+        "prompt": 18748,
+        "completion": 323,
+        "toolCount": 2,
+        "elapsedSec": 103,
+        "cacheRead": 7168
+      },
+      "S2": {
+        "prompt": 20406,
+        "completion": 597,
+        "toolCount": 2,
+        "elapsedSec": 105,
+        "cacheRead": 7168
+      },
+      "S3": {
+        "prompt": 26699,
+        "completion": 1013,
+        "toolCount": 2,
+        "elapsedSec": 180,
+        "cacheRead": 7168
+      },
+      "S4": {
+        "prompt": 20681,
+        "completion": 937,
+        "toolCount": 2,
+        "elapsedSec": 190,
+        "cacheRead": 7168
+      },
+      "S5": {
+        "prompt": 28316,
+        "completion": 881,
+        "toolCount": 2,
+        "elapsedSec": 113,
+        "cacheRead": 8192
+      },
+      "S6": {
+        "prompt": 30036,
+        "completion": 880,
+        "toolCount": 2,
+        "elapsedSec": 113,
+        "cacheRead": 14080
+      },
+      "S7": {
+        "prompt": 23599,
+        "completion": 784,
+        "toolCount": 2,
+        "elapsedSec": 105,
+        "cacheRead": 8576
+      },
+      "S8": {
+        "prompt": 8354,
+        "completion": 407,
+        "toolCount": 0,
+        "elapsedSec": 102,
+        "cacheRead": 1024
       }
     }
   }

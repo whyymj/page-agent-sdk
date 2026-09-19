@@ -954,3 +954,34 @@ test('手动编辑:嵌套子组件可点选(data-path 容器透传)+ 提升到�
   })
   expect(lastType).toBe(firstChildType)
 })
+
+test.describe('聚焦取景锚定(focus-shot,4.22+)', () => {
+  test('?shot=1:聚焦组件后 take_screenshot 缺省 selector → data-path 锚定截取聚焦组件', async ({ page }) => {
+    await page.goto('/examples/complex-demo/?shot=1')
+    await page.waitForSelector('.chat-dialog', { state: 'attached' })
+    // 去网络化:picsum 上游间歇拒连曾致渲染 flake(实测 ERR_CONNECTION_CLOSED)→ 路由拦截回内联 1×1 PNG
+    await page.route('**picsum.photos**', (r) => r.fulfill({
+      status: 200, contentType: 'image/png',
+      body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'),
+    }))
+    // 两步拾取聚焦 components.0(与 focus 用例同款路径)
+    await page.click('[data-path="components.0"]')
+    await page.click('.pick-overlay__btn')
+    await expect(page.locator('.focus-chip')).toContainText('components.0')
+    // complex-demo 默认走 anthropic 通道:mock 脚本用 snake_case 原始协议形态(与既有 write 用例同款)
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'take_screenshot', arguments: {} }] },
+      { text: '看到了聚焦组件。' },
+    ])
+    await fillInput(page, '这里画的是啥')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    const shot = await page.evaluate(() => {
+      const logs = (window as any).__sdk.debugLogs?.value ?? []
+      const r = logs.find((l: any) => l.type === 'tool_result' && l.data?.name === 'take_screenshot')
+      return String(r?.data?.result ?? '')
+    })
+    expect(shot).toContain('取景=聚焦组件 components.0')
+    expect(shot).toContain('data-path="components.0"')
+  })
+})

@@ -267,6 +267,8 @@ onMounted(() => {
     storage: 'memory',
     llm: {
       provider: cfg.provider, // 'anthropic' = Claude 原生协议(默认组;经 /llm 同源代理或直连,网关随 .env 配置)
+      // ?shot=1 演示形态(与 docs-demo 同款):声明多模态 → take_screenshot 装配(聚焦取景锚定可演示)
+      ...(typeof location !== 'undefined' && location.search.includes('shot=1') ? { vision: true } : {}),
       apiKey: cfg.apiKey,
       baseUrl: cfg.baseUrl,
       model: cfg.model,

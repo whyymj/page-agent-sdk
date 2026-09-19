@@ -1053,7 +1053,7 @@ export interface ChatSdkOptions {
    * 截图配置组(take_screenshot;装配条件 = capabilities.domInspect 开 && (主模型多模态 vision || images.describe 已配),
    * 不满足不装并 warn 留痕)。默认渲染 = 内置 html-to-image;宿主 CSP 限制 SVG data URL 或需特殊裁剪时传 renderer 覆盖
    */
-  screenshot?: { renderer?: (el: Element, opts: { width?: number; height?: number }) => Promise<string> };
+  screenshot?: { renderer?: (el: Element, opts: { width?: number; height?: number }) => Promise<string>; focusSelector?: (focusPath: string) => string | undefined };
   /** 子 agent 委派(默认开启;{ enabled: false } 关闭) */
   capabilities?: { dataOps?: boolean; fetch?: boolean; planning?: boolean; missionAnchor?: boolean; skills?: boolean; vfs?: boolean; summarization?: boolean; memory?: boolean; subagent?: boolean; verify?: boolean; domInspect?: boolean; inspectEnv?: boolean; draftWrite?: boolean; automation?: boolean; workingMemory?: boolean; focus?: boolean; contextInspector?: boolean; agentCompression?: boolean; pageContext?: boolean; domEdit?: boolean };/** tracing/skillHostScript/preferences/bulkGuard 已于 4.1.0 移除;残键静默忽略 */
   subagent?: { enabled?: boolean; allowedTools?: string[]; systemPrompt?: string; temperature?: number; maxTokens?: number; skills?: SkillSpec[]; llm?: LLMConfig | ChatModelLike; maxDepth?: number; maxParallel?: number; /** 单次委派总时长毫秒(默认 1800000=30min,2026-08-28 抬升;超时 abort 子流 + recoverable 回灌;0 = 不限制) */ timeoutMs?: number; thinkingMode?: 'simple' | 'deep' };

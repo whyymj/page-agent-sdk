@@ -152,6 +152,51 @@ export async function run() {
     } finally { restore() }
   }
 
+  // ===== ⑤ view_image(URL 原图直投,4.23):装配不要求 domInspect + ReAct 全链 url 形态合成图消息 =====
+  {
+    // 装配反射:vision 在即装,无 domInspect 也装(take_screenshot 反之)
+    const stubOn = visionStub()
+    stubOn.responses.push({ text: 'done' })
+    const on = createChatSdk(baseOpts(stubOn))
+    await on.mount()
+    assert(on.inspect().tools.some((t) => t.name === 'view_image'), 'view_image:vision 即装配(不要求 domInspect —— 纯图工具无 DOM 依赖)')
+    assert(!on.inspect().tools.some((t) => t.name === 'take_screenshot'), '无 domInspect → take_screenshot 不在池(view_image 装配面独立)')
+    assert(on.inspect().systemPrompt.includes('view_image'), 'usageHints:URL 直投引导注入(问特定帧勿截渲染帧)')
+    await on.unmount()
+
+    const stubOff = new StubChatModel([{ text: 'done' }])
+    const off = createChatSdk(baseOpts(stubOff))
+    await off.mount()
+    assert(!off.inspect().tools.some((t) => t.name === 'view_image') && !off.inspect().systemPrompt.includes('view_image'),
+      '无 vision/describe → view_image 零注册零引导(勿教不存在工具)')
+    await off.unmount()
+
+    // ReAct 全链:合成 user 消息 parts = image_url(url 形态,非 dataUri)+ 原图直投文案。
+    // 物化路径默认真 fetch 会打外网(非密闭)→ 全局 fetch 包装为强制失败,锁定「物化不可用 → URL 直投」
+    // 兜底路径;物化成功路径(dataUri 优先)在 selftest sec-127 以 clientFetch 桩密闭覆盖
+    const URL_IMG = 'https://picsum.photos/seed/s1/1200/400'
+    const realFetch = globalThis.fetch
+    globalThis.fetch = async () => { throw new Error('e2e: 物化通道强制失败(密闭性)') }
+    const stub = visionStub()
+    stub.responses.push(
+      { toolCalls: [{ name: 'view_image', args: { url: URL_IMG } }] },
+      { text: '第一张图是山景。' },
+    )
+    const sdk = createChatSdk(baseOpts(stub))
+    await sdk.mount()
+    try {
+    await sdk.send('第一张图画的是啥')
+    const partsMsgs = stub.lastMessages.filter((mm) => mm?._getType?.() === 'human' && Array.isArray(mm.content))
+    const dumped = JSON.stringify(partsMsgs.flatMap((mm) => mm.content))
+    assert(dumped.includes('"image_url"') && dumped.includes(URL_IMG) && !dumped.includes('data:image/jpeg'),
+      `view_image → url 形态直投(非 dataUri 压缩产物),实际:${dumped.slice(0, 100)}`)
+    assert(dumped.includes('原图直投') && dumped.includes('全分辨率非渲染态'), '合成文案注明原图直投语义(与截图区分)')
+    const reply = sdk.messages.map((mm) => String(mm.content ?? '')).pop() ?? ''
+    assert(reply.includes('山景'), `模型据图作答,实际:${reply.slice(0, 40)}`)
+    await sdk.unmount()
+    } finally { globalThis.fetch = realFetch }
+  }
+
   console.log(`[e2e:screenshot] 完成: ${ctx.pass} 通过, ${ctx.fail} 失败`)
   return { name: 'screenshot', pass: ctx.pass, fail: ctx.fail }
 }
