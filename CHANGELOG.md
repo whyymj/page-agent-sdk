@@ -2,6 +2,12 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.24.1] - 2026-09-20
+
+### Fixed
+
+- **`approval.previewWrite` 死选项修复(approval-preview-fix)**:公共 d.ts 声明的 `approval.previewWrite`(自定义工具的审批预览)被装配层 spread 后的显式键**静默覆盖丢弃** —— 内部 ChatSdkOptions 类型也从未收过该字段(死面的双实证),集成方回调零执行、自定义工具确认条永远拿不到预览。典型受害场景:门户 `annotate_selection` 的写目标(标哪段)由用户选区决定、不在 args 里,确认条只显示 kind/color,用户**盲批**看不见目标的写操作。修法:组合语义 —— 集成方 `previewWrite` **优先**(挂起前只读预览,items 自由填写如 `op:'标注'`/`jsonPath:'当前选区'`,渲染在确认条);返回 `null` 再落 dataOps write 内置 dryRun 预览(`preview: true` 才接,原有行为不变)。`ApprovalWritePreview.intent` 放宽 `'set'|'edit'|'delete'` → `string`(自定义工具可给任意语义标签;ApprovalBar 只渲染 items/error,intent 不进 UI,零渲染面变化)。e2e 1281 → **1285**(authorization-surface +4:集成方回调真执行/载荷携带预览/组合回落/裁决语义不变;修前实测红〔原版死线形态 14/2〕)。
+
 ## [4.24.0] - 2026-09-20
 
 ### Added

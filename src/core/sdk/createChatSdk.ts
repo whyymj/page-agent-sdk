@@ -985,16 +985,23 @@ function buildCore(options: ChatSdkOptions, agentId: string, hostWatchState?: { 
   // fix-authorization-surface P1-16:permissions/approval 提升具名 const,同实例注入子栈(childGuards)。
   // 修原「委派路径整体绕过把关」—— 子 agent 写操作同样过主 permissions 自动拒 + approval 人工确认
   const permissionsMw = options.permissions?.length ? createPermissionsMiddleware(options.permissions) : undefined
+  // 审批预览组合通道(approval-preview-fix,2026-09-20):集成方 approval.previewWrite **优先** ——
+  // 修前被 spread 后的显式键无条件覆写丢弃(d.ts 声明的公共选项实际是死的):自定义工具(如宿主
+  // annotate_selection 的「标哪段」由选区决定、不在 args 里)确认条永远拿不到预览 = 盲批。集成方返
+  // null 再落 dataOps write 预览(approval.preview 显式开才接;仅 write 名命中,中间件保持通用)
+  const dataOpsApprovalPreview = options.approval?.preview === true && dataOpsPreviewWrite
+    ? (name: string, args: any) => (name === 'write' ? dataOpsPreviewWrite(args) : null)
+    : undefined
+  const approvalPreviewWrite = (options.approval?.previewWrite || dataOpsApprovalPreview)
+    ? (name: string, args: any) => options.approval?.previewWrite?.(name, args) ?? dataOpsApprovalPreview?.(name, args) ?? null
+    : undefined
   // timeoutMs 装配层归一:undefined → approvalNoRespMs(无 UI 默认 30s / UI 无限等);显式值(含 Infinity=0 无限等)原样透传
   const approvalMw = options.approval && (options.approval.tools !== undefined || !!options.approval.confirm)
     ? createApprovalMiddleware({
         ...options.approval,
         timeoutMs: options.approval.timeoutMs ?? approvalNoRespMs,
         onAutoReject: onApprovalAutoReject,
-        // write 审批 diff 预览(ui-quick-wins Q3):approval.preview 显式开且 dataOps 就绪才注入;仅 write 工具名命中(中间件保持通用)
-        previewWrite: options.approval.preview === true && dataOpsPreviewWrite
-          ? (name: string, args: any) => (name === 'write' ? dataOpsPreviewWrite(args) : null)
-          : undefined,
+        previewWrite: approvalPreviewWrite,
       })
     : undefined
   const childGuards: Middleware[] = [...(permissionsMw ? [permissionsMw] : []), ...(approvalMw ? [approvalMw] : []), ...(baselineGuardMw ? [baselineGuardMw] : [])]  // 序同主栈:permissions 外层 → approval 内层;baseline-guard 子栈自定义工具改 bind 同样刷基线

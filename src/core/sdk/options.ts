@@ -268,6 +268,13 @@ export interface ChatSdkOptions {
     humanConfirmTool?: boolean
     /** write 审批 diff 预览(ui-quick-wins Q3;默认 false):挂起 write 时只读预览(dryRun 纯函数通道)附 approval_request 载荷,ApprovalBar 渲染 old→new;预览跑一次校验链有成本,args JSON 已有兜底呈现,故显式开 */
     preview?: boolean
+    /**
+     * 审批 diff 预览计算(approval-preview-fix,2026-09-20):集成方回调**优先** —— 自定义工具的审批预览通道
+     * (写目标由宿主态决定、不在 args 里时,如「标用户选中的那段」);返回 null 再落 dataOps write 内置
+     * dryRun 预览(preview 显式开才接)。修前装配层把集成方回调静默覆盖丢弃(公共 d.ts 声明了、内部类型
+     * 未收,选项实为死面)。
+     */
+    previewWrite?: (name: string, args: any) => import('../harness/approval').ApprovalWritePreview | null
   }
   /**
    * 会话级 checkpoint 回滚(回到上次正常时)。默认关闭,不传 = 不装。

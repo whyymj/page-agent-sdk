@@ -167,5 +167,77 @@ export async function run() {
     sdk.unmount()
   }
 
+  // approval-preview-fix(2026-09-20):集成方 approval.previewWrite 优先,不再被装配层静默覆盖丢弃。
+  // 场景 = 门户 annotate_selection 同款:写目标(标哪段)由宿主态决定、不在 args 里 → 唯一预览通道是集成方回调。
+  console.log('[e2e:authorization-surface] approval.previewWrite 集成方优先(自定义工具审批预览,修前被装配覆写丢弃)')
+  {
+    const previewCalls = []
+    const annotate = defineTool({
+      name: 'annotate_selection',
+      description: '标注当前选区(测试桩)',
+      schema: z.object({ kind: z.enum(['highlight', 'comment']), color: z.enum(['yellow', 'green', 'red']).optional() }),
+      handler: async () => '已标注(测试桩)',
+    })
+    const llm = stubModel(
+      { toolCalls: [{ name: 'annotate_selection', args: { kind: 'highlight', color: 'yellow' } }] },
+      { text: '已标重点' },
+    )
+    const approvals = []
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-approval-preview', storage: false, llm,
+      tools: [annotate],
+      approval: {
+        tools: ['annotate_selection'],
+        humanConfirmTool: false,
+        previewWrite: (name, args) => {
+          previewCalls.push(name)
+          if (name !== 'annotate_selection') return null
+          return { ok: true, intent: 'annotate', items: [{ op: '标注', jsonPath: '当前选区', newSummary: `「${args.kind}/${args.color}」` }] }
+        },
+      },
+      capabilities: CAPS,
+    })
+    await sdk.mount()
+    await sdk.stream([{ role: 'user', content: '把这段标成重点', timestamp: Date.now() }], (e) => {
+      if (e.type === 'approval_request') { approvals.push(e); e.resolve(true) }
+    })
+    assert(previewCalls.includes('annotate_selection'), '✓ 集成方 previewWrite 被真实调用(修前被装配层覆写丢弃,回调零执行)')
+    const preview = approvals[0]?.preview
+    assert(!!preview && preview.intent === 'annotate' && preview.items?.[0]?.op === '标注' && preview.items?.[0]?.newSummary === '「highlight/yellow」',
+      '✓ approval_request 载荷携带集成方预览(自定义工具确认条从盲批变明批;intent 放宽为 string)')
+    sdk.unmount()
+  }
+
+  console.log('[e2e:authorization-surface] approval.previewWrite 组合回落:集成方返 null → dataOps write 内置预览照常(preview 显式开)')
+  {
+    const bind = { title: '旧标题' }
+    const llm = stubModel(
+      { toolCalls: [{ name: 'write', args: { patch: { op: 'set', jsonPath: 'title', value: '新标题' } } }] },
+      { text: '已改' },
+    )
+    const approvals = []
+    const sdk = createChatSdk({
+      ui: false, id: 'e2e-approval-preview-fallback', storage: false, llm,
+      data: { schema: z.object({ title: z.string() }), bind },
+      approval: {
+        tools: ['write'],
+        humanConfirmTool: false,
+        preview: true,
+        // 集成方回调存在但对 write 返 null → 必须回落到 dataOps dryRun 预览(修前同配置下内置预览也会被顶掉)
+        previewWrite: () => null,
+      },
+      capabilities: { ...CAPS, vfs: false },
+    })
+    await sdk.mount()
+    await sdk.stream([{ role: 'user', content: '改标题', timestamp: Date.now() }], (e) => {
+      if (e.type === 'approval_request') { approvals.push(e); e.resolve(true) }
+    })
+    const preview = approvals[0]?.preview
+    assert(!!preview && Array.isArray(preview.items) && preview.items.length > 0 && String(preview.items[0]?.newSummary ?? '').includes('新标题'),
+      `✓ 组合回落:dataOps write 内置 dryRun 预览在集成方返 null 时照常附载(实际 items=${preview?.items?.length})`)
+    assert(bind.title === '新标题', '✓ 允许后写落盘(组合通道不改变裁决语义)')
+    sdk.unmount()
+  }
+
   return { pass: ctx.pass, fail: ctx.fail }
 }

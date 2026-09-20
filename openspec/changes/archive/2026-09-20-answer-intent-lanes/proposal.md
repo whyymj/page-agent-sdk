@@ -1,6 +1,6 @@
 # answer-intent-lanes:作答车道制(问题形态分流 —— 页面事实 / 概念解释 / 求观点)
 
-> **状态**:📝 提案(待评审,2026-09-20)。
+> **状态**:✅ 已实施(2026-09-20 用户评审通过,随 4.24.0 发布归档;14/14 任务勾,develop c4abcf9/816e3c0;真 LLM docs-qa S5/S6 待有 key 环境首跑)。
 > 来源 = 学习门户(Obsidian/learning)真机诊断 dump(`~/Downloads/page-agent-diagnostics-2026-09-20T10-11-33-584Z.json`,deepseek-flash,6 轮对话 / 160K prompt tokens):用户反馈「问的问题总是回答不到点子上,总是扯些有的没的;需要他解释名词术语,结果成了 RAG 问答,找不到的就不答」。逐轮分析定位为**作答纪律单车道** —— 门户与 SDK 默认 prompt 都把一切问题压进「页面事实检索」形态,概念解释与求观点两条车道缺失。定级 minor(新增导出 + 默认 prompt 文案升级)。
 
 ## 现状勘察证据

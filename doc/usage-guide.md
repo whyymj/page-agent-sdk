@@ -1253,6 +1253,7 @@ createChatSdk({
     // timeoutMs: 30000,  // 无响应自动拒(4.1+ 默认 30000;响应方调事件 hold() 接管后不限时;Infinity/负数=不超时)
     // humanConfirmTool: false,  // 传 approval 时亦可关主动侧(等价于顶层 humanConfirm:false)
     // preview: true,  // write 审批 diff 预览(4.10+,默认 false):确认条渲染结构化 old→new,见下方说明
+    // previewWrite: (name, args) => ...,  // 自定义工具的审批预览(4.24.1,优先于内置 write 预览;返 null 回落),见下方说明
   },
 })
 ```
@@ -1268,6 +1269,8 @@ createChatSdk({
 **abort 联动**:用户「停止生成」或进入时 signal 已 abort → 自动拒绝(防永久挂起);`timeoutMs` 超时也自动拒绝。
 
 **write 审批 diff 预览**(`approval.preview: true`,4.10+,默认 false):write 挂起审批时自动跑一次**只读预览**(dryRun 纯函数通道,不碰快照/乐观锁基线),确认条从「args 原文 JSON」升级为**结构化 old→new**(逐 patch / set 逐变更顶层键;op 徽标 + path + 删除线旧值→新值,摘要截 200 字符,>20 条折叠);**校验失败也可见**——预览跑完整校验链(schema/path/保护字段),`ok=false + error` 让用户批准前即知这次写会不会被拒。默认关的原因:预览跑一次校验链有成本,且 args JSON 已有兜底呈现;编辑器类宿主建议开。载荷形态 `approval_request` 事件 `preview?: ApprovalWritePreview` 字段(headless 自建 UI 同样可消费)。
+
+**自定义工具的审批预览**(`approval.previewWrite`,4.24.1):内置预览只覆盖 `write` —— 自定义工具的写目标常常由宿主态决定、不在 args 里(典型:门户「把用户当前选中的那段标成黄色重点」,标哪段来自选区),确认条只能显示 args,用户等于盲批。传 `previewWrite: (name, args) => ApprovalWritePreview | null` 即可:挂起前对需确认调用做只读预览,返回的 `items`(op/jsonPath/oldSummary→newSummary 均自由填写,如 `op: '标注'`、`jsonPath: '当前选区'`)会渲染在确认条上;返回 `null` 再落内置 write 预览(`preview: true` 时)。修前该选项被装配层静默覆盖丢弃(4.24.1 修复)。
 
 **headless 自建 UI**(`ui:false`):自监听 `approval_request` 事件,事件对象含 `{ toolName, args, resolve }`,自建确认框后调 `resolve(true/false/方案)` 收口。
 

@@ -215,10 +215,10 @@ export interface ApprovalPreviewItem {
   oldSummary?: string;
   newSummary?: string;
 }
-/** write 审批 diff 预览结果(三意图只读计算,dryRun 纯函数通道不落盘) */
+/** write 审批 diff 预览结果(三意图只读计算,dryRun 纯函数通道不落盘)。intent 为 string(4.24.1 放宽):内置 write 用 set/edit/delete,集成方自定义工具可给任意语义标签 */
 export interface ApprovalWritePreview {
   ok: boolean;
-  intent: 'set' | 'edit' | 'delete';
+  intent: string;
   items: ApprovalPreviewItem[];
   /** ok=false 时的校验失败说明(预览即看到会被拒的原因) */
   error?: string;

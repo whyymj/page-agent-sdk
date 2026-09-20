@@ -1152,6 +1152,9 @@ export interface ApprovalOptions {
   /**
    * write 审批 diff 预览计算(ui-quick-wins Q3;装配层注入,中间件保持通用):挂起前对需确认调用做只读预览,
    * 结果附在 approval_request 载荷 preview 字段(UI 渲染 old→new)。返回 null/抛错 → 无 preview,不影响挂起流。
+   * **组合语义(4.24.1)**:集成方 previewWrite 优先(自定义工具的审批预览通道 —— 写目标由宿主态决定、
+   * 不在 args 里时,如「标用户选中的那段」);返回 null 再落 dataOps write 内置 dryRun 预览(approval.preview
+   * 显式开才接)。修前装配层把集成方回调静默覆盖丢弃。
    */
   previewWrite?: (name: string, args: any) => ApprovalWritePreview | null;
   /** write 审批 diff 预览(ui-quick-wins Q3;默认 false):挂起 write 时只读预览(dryRun 纯函数通道)附 approval_request 载荷,ApprovalBar 渲染 old→new;预览跑一次校验链有成本,args JSON 已有兜底呈现,故显式开 */
@@ -1164,10 +1167,10 @@ export interface ApprovalPreviewItem {
   oldSummary?: string;
   newSummary?: string;
 }
-/** write 审批 diff 预览结果(ui-quick-wins Q3):三意图只读计算(dryRun 纯函数通道,不落盘) */
+/** write 审批 diff 预览结果(ui-quick-wins Q3):三意图只读计算(dryRun 纯函数通道,不落盘)。intent 为 string(4.24.1 放宽):内置 write 预览用 set/edit/delete,集成方自定义工具可给任意语义标签(如 'annotate')—— ApprovalBar 只渲染 items/error,intent 不进 UI */
 export interface ApprovalWritePreview {
   ok: boolean;
-  intent: 'set' | 'edit' | 'delete';
+  intent: string;
   items: ApprovalPreviewItem[];
   /** ok=false 时的校验失败说明(预览即看到会被拒的原因) */
   error?: string;
