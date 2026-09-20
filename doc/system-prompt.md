@@ -17,7 +17,7 @@ SystemMessage = buildSystemPrompt()   ← createAgent.ts:196,每轮 toLC/replace
 │  │
 │  ├─ A1 身份 + 能力概述(4.16 能力感知)
 │  │     · 不传 systemPrompt → 有 data 声明:DEFAULT_SYSTEM_PROMPT(JSON 操作助手 / 范围控制·schema 校验·快照 / 增量 patch)
-│  │                          → dataOps:false + domInspect:页面内容助手(read_page/get_dom 等能力面 + 引用块引导 + 回答纪律)
+│  │                          → dataOps:false + domInspect:页面内容助手(read_page/get_dom 等能力面 + 引用块引导 + 作答车道三段:answer-intent-lanes —— A 页面事实/B 概念术语页上没有也必须解释/C 求观点不拒答,与 systemPromptHelpers.answerLanes 同源)
 │  │                          → 双无:通用兜底(「你是一个智能助手。」)
 │  │     · 传 systemPrompt   → 用户业务 systemPrompt(身份/知识/流程)
 │  │
@@ -52,7 +52,7 @@ flowchart TD
 
   B -- "否(用默认)" --> C{"能力感知(4.16)"}
   C -- "dataOps(有 data)" --> C1["DEFAULT_SYSTEM_PROMPT<br/>身份 + 能力概述 + '---' + reliableWriteRules"]
-  C -- "dataOps:false + domInspect" --> C2["页面内容助手身份<br/>(无写入规则;截图行随装配态)"]
+  C -- "dataOps:false + domInspect" --> C2["页面内容助手身份<br/>(无写入规则;截图行随装配态;作答车道三段)"]
   C -- "双无" --> C3["通用兜底「智能助手」"]
   B -- "是" --> D{"appendReliableWriteRules?"}
   D -- "默认 true" --> E["用户 systemPrompt + '\n\n---\n\n' + reliableWriteRules"]

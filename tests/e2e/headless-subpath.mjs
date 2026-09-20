@@ -31,6 +31,7 @@ export async function run() {
     assert(typeof mod.normalizeBaseUrl === 'function', 'normalizeBaseUrl 导出(baseUrl 容错归一)')
     assert(typeof mod.stripStainlessFetch === 'function', 'stripStainlessFetch 导出(剥 x-stainless 遥测头)')
     assert(typeof mod.DEFAULT_SYSTEM_PROMPT_EN === 'string' && mod.DEFAULT_SYSTEM_PROMPT_EN.length > 0, 'DEFAULT_SYSTEM_PROMPT_EN 导出非空字符串')
+    assert(typeof mod.systemPromptHelpers?.answerLanes === 'string' && typeof mod.systemPromptHelpers?.answerLanesEn === 'string' && mod.systemPromptHelpers.answerLanes.includes('作答车道'), 'systemPromptHelpers.answerLanes/En 导出(作答车道,主包/headless 双侧同加)')
     assert(!!mod.htmlFragmentSkill && typeof mod.htmlFragmentSkill.name === 'string', 'htmlFragmentSkill 导出为 SkillSpec')
     assert(typeof mod.buildHtmlFragmentSkill === 'function', 'buildHtmlFragmentSkill 导出(自定义 root/codeField 构造)')
 

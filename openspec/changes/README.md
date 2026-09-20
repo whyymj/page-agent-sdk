@@ -1,6 +1,8 @@
 # 活跃 Changes 优先级索引
 
-> **当前活跃 change:1(2026-09-19 更新;host-integration-contract 37/37 归档 —— 活跃仅剩沉睡的 capability-pack-factories)**:
+> **当前活跃 change:2(2026-09-20 更新;新增 answer-intent-lanes 提案;此前活跃仅剩沉睡的 capability-pack-factories)**:
+>
+> **[`2026-09-20-answer-intent-lanes`](./2026-09-20-answer-intent-lanes/)**(SDK,**P1 作答质量,🔧 已实施待发布**(2026-09-20 任务 1-14 全勾,门禁六道绿;commit 见 CHANGELOG Unreleased;发布后随版本归档;来源 = 学习门户真机诊断 dump〔deepseek-flash,6 轮/160K prompt tokens〕:「根据你的经验给出总结」被压成全引文页内索引〔reasoning 自证:*"The system prompt says: only use page content"*〕、讨论类问题答成 RAG miss 报告〔「本页没有正面回答——查了 §4.2、§4.1 补充、§3.1–3.4、§8…」= 门户规则 5「说明查过哪里」的字面执行〕、通篇 § 脚手架;对照组:术语在页上时答得很好 → 缺的是**问题形态分流**不是讲解能力):**作答车道制** —— ①`systemPromptHelpers.answerLanes`/`answerLanesEn` 导出(A 页面事实/B 概念术语〔页上没有也必须解释,「本页未提及,以下是通用解释」〕/C 求观点经验〔先验与笔记口径分列,页面没写不构成不答的理由〕+ 出处密度收敛〔只有页面断言才标,miss 压一句〕)②SDK 默认「页面内容助手」prompt 同源升级(promptBuilder.ts:58 单行「答案须来自页面实料」同病,全部 domInspect 文档站宿主继承)③门户 SYSTEM_PROMPT 采纳(SDK 发布后 learning 仓库另行实施)。不动:车道判定归 LLM 不机制化(与意图守卫同哲学)/usageHints/page-analysis(分层正交)/页面断言门禁(只放开「不引用页面的作答」,不放开「无依据页面断言」)。定级 minor。)
 >
 > **[`2026-09-19-auto-host-watch`](./archive/2026-09-19-auto-host-watch/)**(SDK,**P2 可靠性,✅ 全 10 任务完成随 4.21.0 发布归档 2026-09-19**(commit dc41ad9;实施期挖出并修掉 pushState 多层 patch 链根追踪/双作用域 TDZ/宏任务竞速/浏览器连发 hash+pop 四坑,tasks 注记留痕)来源 = S2 落地后复盘:失效机制可靠但**触发全靠宿主手动调**,两处真空):①**`hostWatch` 声明式自动报案**(配置即开关:原生 hashchange/popstate 零 patch;pushState patch / title observer 两个 opt-in 增强;去抖合并 + `ignore` 钩子;触发即转 `notifyHostChange` 复用 S2 全链路 —— 把「防线靠人记得」变「防线自动」,修漏报案无感知真空;学习门户 hash 路由形态可一行配置删手动调用)②**dom_edit 写后页面读失效默认开**(agent 自己改了页面,此前 read_page/get_dom 仍是改前旧文;修 = 成功后置待失效标记,下轮模型调用前占位替换,不注 pin 段(agent 自己知道改了什么);与数据槽写驱动失效同哲学:SDK 自知写、零误伤、无开关)。不做:内容指纹轮询/全树 observer(4.18 已否决路线,不立项留痕)、fetch/XHR 监听(越权猜业务语义)。
 >

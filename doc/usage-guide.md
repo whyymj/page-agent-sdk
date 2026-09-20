@@ -196,7 +196,7 @@ createChatSdk({
 
   /* ===== 身份与隔离 ===== */
   id: 'my-app',                 // agent 实例 id(强烈建议传稳定值;多 agent 共存隔离 + 刷新恢复)
-  systemPrompt: '...',          // Agent 身份与业务流程指令(可选:不传用内置默认——JSON 操作助手 + reliableWriteRules;传了则完全覆盖。默认 appendReliableWriteRules:true 自动用 '---' 分隔线追加 reliableWriteRules,设 false 关闭;**4.16 能力感知**:dataOps:false + domInspect:true(文档站形态)默认身份切「页面内容助手」且不追加写入规则(勿教池里不存在的工具),双无用通用兜底)
+  systemPrompt: '...',          // Agent 身份与业务流程指令(可选:不传用内置默认——JSON 操作助手 + reliableWriteRules;传了则完全覆盖。默认 appendReliableWriteRules:true 自动用 '---' 分隔线追加 reliableWriteRules,设 false 关闭;**4.16 能力感知**:dataOps:false + domInspect:true(文档站形态)默认身份切「页面内容助手」且不追加写入规则(勿教池里不存在的工具),双无用通用兜底;**页面分支作答纪律 = 作答车道**(answer-intent-lanes:A 页面事实 / B 概念术语·页上没有也必须直接解释 / C 求观点经验·页面没写不构成不答的理由 + 出处密度收敛;同源导出 `systemPromptHelpers.answerLanes` / `answerLanesEn` 供自定义身份宿主拼装 —— 文档问答类集成建议拼入,防「概念解释变检索 miss 报告」「求观点变页内引文索引」))
   // ⚠️ 工具用法(read/write/get/set/patch/snapshot 等)由 usageHints 中间件按能力开关自动注入,无需在此声明;systemPrompt 只写「业务知识」:身份、可改字段含义、业务流程、技能引用
   shareContext: false,          // true:同 id 的多个实例共享同一 Agent(同页多对话框 = 同一 agent);串行闸 core 级 —— 跨实例 send/switchSession 串行,生命周期收口(unmount/switch/reset)中止共享 core 全部在途流(2.41.0+)
 
@@ -2251,7 +2251,7 @@ createChatSdk({
 - **滚动条统一替换**(3.27):主滚动面(消息区 + DebugDrawer 日志区)经 [OverlayScrollbars v2](https://github.com/KingSora/OverlayScrollbars) 接管 —— 隐藏原生滚动条换 overlay 细滚动条(保留原生滚动/键盘/触摸,内容增高自动跟随);对话框级横向不滚(长代码行收敛在代码块内部);其余小滚动区原生细条兜底。手柄颜色经 `--cs-scrollbar-thumb(-hover)` 覆盖(dark 主题已内置适配)
 - **工具步骤展示映射**(⑥,`dialog.toolStepView`):工具调用步骤行的原始工具名(read/write/use_html …)对终端用户往往不友好 → 映射为业务名称/内容。**纯展示层** —— 不影响发给 LLM 的工具名/协议/校验,只改 MessageSteps 步骤行渲染;子 agent 步骤(子进度行)同样应用;展开细节面板的入参/返回值**仍为原始数据**(排查通道不受影响)。规则:返回 `undefined`/漏配回退原始工具名;`detail` 仅单次调用展示(合并组 ×N 各次 args 可能不同,不展示单一 detail 防误导);合并键 = 映射后标题(同名工具映射出不同标题 → 分行显示);status running→done 翻转/args 补齐时以新入参重调(动态 detail 跟随更新);映射函数抛错安全(捕获后回退原始名,不炸渲染)。**`detail` 拿到的是原始 args**,可自行翻译成业务标签 —— 如 `components.5.children.1` 在闭包里查宿主数据解析成「轮播(轮播图)」(`examples/page-demo` 的 `compLabel` 示范),终端用户无须理解 jsonPath
 - **历史记录「删除会话」按钮图标**:`dialog.icons.sessionDelete`(缺省 ✕ 文本;传 `<img src="…" width="12" height="12">` 换自定义图)
-- **默认 systemPrompt 英文版**单独导出:`DEFAULT_SYSTEM_PROMPT_EN` + `systemPromptHelpers.reliableWriteRulesEn`(英文场景想自定义 prompt 时可拼用)
+- **默认 systemPrompt 英文版**单独导出:`DEFAULT_SYSTEM_PROMPT_EN` + `systemPromptHelpers.reliableWriteRulesEn`(英文场景想自定义 prompt 时可拼用);作答车道英文版 `answerLanesEn` 同理(A/B/C 三车道逐段对齐)
 - 完整示例:`examples/i18n-demo`(en locale + statusDone/emptyGreeting HTML 覆盖)
 
 ### 6.17 图片输入(多模态直发 / 识图转述旁路)

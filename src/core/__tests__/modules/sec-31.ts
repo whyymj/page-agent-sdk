@@ -162,6 +162,18 @@ export async function run(ctx: TestCtx): Promise<void> {
   assert(pagePrompt.includes('[引用原文]') && pagePrompt.includes('以页面为准'), '✓ 页面身份含引用块轻量引导 + 回答纪律(页面实料优先)')
   assert(buildSystemPrompt({ dataOps: false, domInspect: true, screenshot: true }).includes('take_screenshot'), '✓ 页面身份 screenshot:true → 教截图(视觉验证优先)')
   assert(!buildSystemPrompt({ dataOps: false, domInspect: true }).includes('take_screenshot'), '✓ 页面身份未传 screenshot → 不教截图(未装配不教)')
+  // === 作答车道(answer-intent-lanes,2026-09-20):单车道 grounding 把概念解释压成 RAG miss 报告、把求观点压成页内索引(门户真机 dump 实证) ===
+  const laneKeys = ['作答车道', 'A. 问页面内容', 'B. 问概念术语', '本页未提及,以下是通用解释', 'C. 求观点经验', '页面没写不构成不答的理由', '出处密度']
+  assert(laneKeys.every((k) => pagePrompt.includes(k)), '✓ 页面身份默认 prompt 含三车道纪律(A 事实 / B 术语页上没有也必须解释 / C 观点不拒答 + 出处密度收敛)')
+  assert(buildSystemPrompt({ dataOps: false, domInspect: true, screenshot: true }).includes('作答车道'), '✓ 页面身份 screenshot 变体同含车道(两装配形态一致)')
+  const laneKeysEn = ['Answer lanes', 'general explanation', 'never treat "it is not on the page" as the answer', 'never a reason to refuse']
+  assert(laneKeysEn.every((k) => buildSystemPrompt({ dataOps: false, domInspect: true, locale: 'en-US' }).includes(k)), '✓ 页面身份英文镜像含三车道(逐段对齐)')
+  assert(
+    systemPromptHelpers.answerLanes.includes('B. 问概念术语') && systemPromptHelpers.answerLanesEn.includes('B. Asking about a concept') &&
+      systemPromptHelpers.answerLanes !== systemPromptHelpers.answerLanesEn && systemPromptHelpers.answerLanes.length > 0,
+    '✓ helpers.answerLanes/En → 独立导出片段(zh/en 各自完整;自定义身份宿主拼装复用)',
+  )
+  assert(pagePrompt.includes(systemPromptHelpers.answerLanes), '✓ 默认页面 prompt 与 helpers.answerLanes 逐字同源(单一数据源,防两套文案漂移)')
   assert(buildSystemPrompt({ dataOps: false }).includes('智能助手。'), '✓ dataOps:false 且无 domInspect → 通用助手兜底(与 createAgent 兜底同文案)')
   assert(buildSystemPrompt({ systemPrompt: '定制', dataOps: false }) === '定制', '✓ 自定义 prompt + dataOps:false → 不追加写入规则(修前教幻影 read/write)')
   assert(buildSystemPrompt({ dataOps: false, domInspect: true, locale: 'en-US' }).includes('page content assistant'), '✓ 页面身份英文镜像(locale:en-US)')

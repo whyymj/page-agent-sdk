@@ -159,6 +159,8 @@ export async function run() {
     const sp = sdk.inspect().systemPrompt
     assert(/页面内容助手/.test(sp), 'dataOps:false+domInspect:true 未传 systemPrompt → 默认身份 = 页面内容助手')
     assert(/输出从简/.test(sp) && /不写过程/.test(sp), '默认页面身份含「输出从简」纪律(禁过程叙述/元话术/方法论自述/套话)')
+    // 作答车道(answer-intent-lanes):三车道 + 出处密度收敛(修单车道 grounding 把概念解释压成 RAG miss 报告)
+    assert(/作答车道/.test(sp) && /本页未提及,以下是通用解释/.test(sp) && /页面没写不构成不答的理由/.test(sp) && /出处密度/.test(sp), '默认页面身份含作答车道(A 事实 / B 术语页上没有也必须解释 / C 观点不拒答 + 出处密度收敛)')
     assert(!/JSON 操作助手/.test(sp), '页面身份不残留「JSON 操作助手」身份(修前对无数据集成谎称主数据对象)')
     assert(!/可靠写入规则/.test(sp), '页面身份不追加 reliableWriteRules(写入工具不在池,勿教不存在的工具)')
     sdk.unmount()

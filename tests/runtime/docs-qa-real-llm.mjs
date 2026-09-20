@@ -5,6 +5,8 @@
  *   S2  整页概括(read_page 智能容器 + 分页)
  *   S3  诚实不猜测(问页面不存在的内容 → 先读后答「本页没有提到」)
  *   S4  宿主变更重读(notifyHostChange → 下一轮 system 提示段 + 重新 read_page)
+ *   S5  作答车道 B(answer-intent-lanes):术语不在页上 → 仍给通用解释,不压成 miss 报告
+ *   S6  作答车道 C:「根据你的经验」→ 先验观点在场,与页面口径分列
  *
  * 基建在 _real-llm-lib.mjs;宿主 = examples/docs-demo(dev server)。
  * 用法:node tests/runtime/docs-qa-real-llm.mjs [场景号…];报告 _real-llm-docs-qa.json(gitignore)。
@@ -92,6 +94,30 @@ export async function runSuite({ only = process.argv.slice(2).map(Number).filter
       host_notified_logged: (d) => d.hostNotified >= 1,
       reread_after_notify: (d) => d.tools.includes('read_page'),
       answer_substantive: (d) => (d.reply || '').length > 60,
+    },
+  })
+
+  await runScenario({
+    page, report, OUT, only, collect,
+    no: 5, name: '作答车道 B:术语不在页上 → 仍给通用解释(修前压成「本页没有提到」拒答)',
+    // CAP 定理:Transformer 学习笔记不会出现;B 车道要求「本页未提及,以下是通用解释」而非检索 miss 报告
+    prompt: 'CAP 定理是什么意思?',
+    checks: {
+      // 实质解释命中关键概念词(CAP = 一致性/可用性/分区容错 三选二)
+      explains_concept: (d) => /一致性/.test(d.reply || '') && /可用/.test(d.reply || '') && /分区/.test(d.reply || ''),
+      // 不是「找不到就不答」:回答主体是解释而非 miss 报告(允许开头一句「本页未提及」)
+      not_bare_miss: (d) => (d.reply || '').length > 120,
+    },
+  })
+
+  await runScenario({
+    page, report, OUT, only, collect,
+    no: 6, name: '作答车道 C:「根据你的经验」→ 给出先验观点并与页面口径分列(修前压成全引文页内索引)',
+    prompt: '根据你的经验,学 Transformer 应该先啃注意力机制还是先学位置编码?给点建议',
+    checks: {
+      // 第一人称判断在场(我的看法/我建议/我会/我认为 —— C 车道的核心特征;修前只有「本页口径」引文索引)
+      first_person_stance: (d) => /我(的)?(看法|认为|建议|经验|倾向|会)|按我(的)?经验|我的建议/.test(d.reply || ''),
+      answer_substantive: (d) => (d.reply || '').length > 100,
     },
   })
 

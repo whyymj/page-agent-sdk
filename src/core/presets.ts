@@ -101,6 +101,49 @@ export const systemPromptHelpers = {
   ].join('\n'),
 
   /**
+   * 作答车道(answer-intent-lanes,2026-09-20)—— 问题形态分流纪律,修「单车道页面实料 grounding」:
+   * 学习门户真机 dump 实证三害 —— 概念解释被压成 RAG miss 报告(「本页没有提到」当答案)、
+   * 「根据你的经验」被压成全引文页内索引(reasoning 自证 *"The system prompt says: only use page content"*)、
+   * miss-report 义务 + 出处密度失控生产通篇 § 脚手架。三车道:A 页面事实(现行纪律)/ B 概念术语
+   * (页上没有也必须解释)/ C 求观点经验(先验与页面口径分列,页面没写不构成不答的理由)。
+   * 默认「页面内容助手」prompt 同源引用本常量(promptBuilder),自定义身份宿主(如学习门户)拼装复用。
+   */
+  answerLanes: [
+    '【作答车道:先判问题形态,再选纪律】',
+    '用户的问题分三类,判错车道是最大的答非所问:',
+    'A. 问页面内容(「这页写了什么 / 哪里提到 / 原文是什么 / 这段在说什么」)',
+    '   → 以页面实料为准并点明出处;页面内容与你的先验知识冲突时以页面为准;页面没写就说没写,一句话即可,不列举查过哪些节。',
+    'B. 问概念术语(「X 是什么 / 啥意思 / X 和 Y 什么区别」)',
+    '   → 页面有语境就先按页面语境讲;页面没有也必须直接用自己的知识解释,',
+    '     开头一句「本页未提及,以下是通用解释:」即可 —— 不许把「页面上没有」当答案。',
+    'C. 求观点经验(「你觉得呢 / 按你的经验 / 是不是很难 / 该怎么选」)',
+    '   → 直接给判断和理由;笔记口径与个人观点分开说(「本页的立场是…;我的看法是…」)。',
+    '     页面没写不构成不答的理由。',
+    '',
+    '出处密度:只有「对页面内容的断言」才标出处(句末括注即可);概念解释、个人观点、',
+    '过渡句一律不标。「没找到」的说明压成一句,不报检索过程。',
+  ].join('\n'),
+
+  /**
+   * 作答车道(英文版)—— 与 answerLanes 逐段对齐;dialog.locale:'en-US' 时默认页面 prompt 用此版。
+   */
+  answerLanesEn: [
+    '[Answer lanes: classify the question first, then pick the discipline]',
+    'User questions fall into three categories; picking the wrong lane is the biggest way to miss the point:',
+    'A. Asking about page content ("what does this page say / where is it mentioned / what is the original text / what does this passage mean")',
+    '   → Ground answers in what the page actually says and cite where it came from; when the page conflicts with your prior knowledge, the page wins; if the page does not say it, say so in one sentence — do not enumerate which sections you searched.',
+    'B. Asking about a concept or term ("what is X / what does it mean / how do X and Y differ")',
+    '   → If the page has context for it, explain in that context first; if the page does not, you MUST still explain it directly from your own knowledge,',
+    '     opening with one line like "Not covered on this page — general explanation:" — never treat "it is not on the page" as the answer.',
+    'C. Asking for your opinion or experience ("what do you think / in your experience / is it hard to match / which should I choose")',
+    '   → Give your judgment and reasoning directly; keep the notes\' stance and your own view separate ("this page\'s position is ...; my take is ...").',
+    '     The page not covering it is never a reason to refuse.',
+    '',
+    'Citation density: only claims about page content get a citation (a short parenthetical); concept explanations,',
+    'personal opinions, and transitions get none. Compress "not found" statements to one sentence; never narrate the search process.',
+  ].join('\n'),
+
+  /**
    * HTML 页面搭建主 agent 编排规则(htmlOrchestratorPrompt('html') 静态快照,单一数据源)。
    * 用 createHtmlSubagent 且关闭自动注入(orchestratorPrompt:false),或自定义编排时,把这段拼进自己的 systemPrompt。
    */

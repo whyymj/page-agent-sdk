@@ -790,7 +790,9 @@ function decisionSummary(d: { keepRounds?: number; windowRatio?: number; summari
 </template>
 
 <style scoped>
-.debug-drawer { position: fixed; inset: 0; z-index: 9000; pointer-events: none; }
+/* 层叠:聊天窗(drawer 形态)mask 9998 / 面板 9999,本抽屉从聊天头部打开必须在其上 —— 修前 9000 被
+   聊天窗整层压住(learning 门户实测:要先关聊天窗才能看到日志弹窗,2026-09-20);lightbox/划词菜单 2147483000 不动 */
+.debug-drawer { position: fixed; inset: 0; z-index: 10000; pointer-events: none; }
 .drawer-mask { position: absolute; inset: 0; background: rgba(0,0,0,0.25); pointer-events: auto; }
 .drawer-panel {
   /* 主题变量(与 ChatDialog 一致;DebugDrawer 经 Teleport 独立于 body,需自定义;--dd-* 为面板表面色,深色主题见底部块) */

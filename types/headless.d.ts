@@ -1825,6 +1825,10 @@ export declare const presets: Record<string, any>;
 export declare const systemPromptHelpers: {
   /** 可靠写入规则:改前先读、动态先 list、字段以 describe 为准、写错看校验错误重试、优先增量 patch */
   readonly reliableWriteRules: string;
+  /** 作答车道(问题形态分流:A 页面事实 / B 概念术语〔页上没有也必须解释〕/ C 求观点经验〔先验与页面口径分列〕+ 出处密度收敛;默认页面 prompt 同源引用) */
+  readonly answerLanes: string;
+  /** 作答车道(英文版;与 answerLanes 逐段对齐) */
+  readonly answerLanesEn: string;
   /** HTML 页面搭建主 agent 编排规则(与 createHtmlSubagent 配套;职责边界 / 逐个委派 / 修改排查 / 预算暂停) */
   readonly htmlPageOrchestrator: string;
   /** HTML 页面搭建「先出方案再生成」(新建/创意类先给 2~3 套方案问用户;产品决策,opt-in 拼进 systemPrompt) */

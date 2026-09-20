@@ -2,6 +2,20 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.24.0] - 2026-09-20
+
+### Added
+
+- **作答车道 `systemPromptHelpers.answerLanes` / `answerLanesEn`**(answer-intent-lanes,learning 门户真机诊断 dump 驱动:deepseek-flash 6 轮对话实证「根据你的经验给出总结」被单车道 grounding 压成全引文页内索引〔reasoning 自证 *"The system prompt says: only use page content"*〕、讨论类问题答成 RAG miss 报告〔「本页没有正面回答——查了 §4.2、§4.1 补充…」〕、通篇 § 脚手架):问题形态三车道分流 —— **A 页面事实**(现行纪律 + miss 压一句不列举查过哪里)/ **B 概念术语**(页上没有也必须直接解释,「本页未提及,以下是通用解释:」—— 不许把「页面上没有」当答案)/ **C 求观点经验**(直接给判断,笔记口径与个人观点分列,页面没写不构成不答的理由)+ 出处密度收敛(只有页面断言才标出处)。自定义身份宿主(文档问答类集成)拼进 systemPrompt 复用;主包与 headless 双侧导出。**页面断言门禁不动**(只放开「不引用页面的作答」,不放开「无依据页面断言」,防幻觉回潮)。selftest 3777 → **3782**(sec-31 +5:三车道关键字/截图变体/en 对齐/helpers 独立片段/同源逐字一致);e2e 1278 → **1281**(exports 主包+headless 双侧 + systemprompt 快照);docs-qa 真 LLM 套件 +2 场景(S5 术语不在页仍解释 / S6 求观点第一人称在场,无 key skip)。
+
+### Changed
+
+- **SDK 默认「页面内容助手」prompt 的回答纪律行升级为作答车道**(`promptBuilder.ts` zh/en 双语,与 `answerLanes` 同源引用防漂移):原单行「答案须来自你实际读到的页面内容…本页找不到的如实说明」对所有问题形态一刀切,概念解释与求观点被压进页面检索形态 —— 全部 dataOps:false + domInspect 宿主(文档站/内容问答)继承同病,随本条修复。门禁面不变:页面断言零依据门禁照常把关「声称页面上写了 X」。
+
+### Fixed
+
+- **Debug 抽屉层叠倒挂修复**(learning 门户实测驱动,2026-09-20:抽屉形态聊天窗开着时,日志弹窗被压在聊天窗之下,要先关聊天窗才能看到):`.debug-drawer` z-index 9000 → **10000** —— 聊天窗 drawer 形态 mask 9998 / 面板 9999,Debug 抽屉从聊天头部打开必须在其上;lightbox / 划词菜单 2147483000 梯度不变。browser 175 → **176**(新增 `multi-agent-demo.spec.ts`:z 序静态断言 + elementFromPoint 重叠区命中抽屉的行为面断言,修前实测红)。
+
 ## [4.23.3] - 2026-09-20
 
 ### Fixed

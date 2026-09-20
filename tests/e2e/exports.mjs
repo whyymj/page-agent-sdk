@@ -11,6 +11,7 @@ export async function run() {
     assert(typeof mod.presets === 'object' && mod.presets !== null, 'presets 导出为对象')
     assert(['pageBuilder', 'researcher', 'minimal'].every((k) => k in mod.presets), 'presets 含 pageBuilder/researcher/minimal')
     assert(typeof mod.systemPromptHelpers?.reliableWriteRules === 'string' && mod.systemPromptHelpers.reliableWriteRules.length > 0, 'systemPromptHelpers.reliableWriteRules 为非空字符串')
+    assert(typeof mod.systemPromptHelpers?.answerLanes === 'string' && typeof mod.systemPromptHelpers?.answerLanesEn === 'string' && mod.systemPromptHelpers.answerLanes.includes('B. 问概念术语'), 'systemPromptHelpers.answerLanes/En 为非空字符串(作答车道三段,自定义身份宿主拼装)')
     assert(typeof mod.defineTool === 'function', 'defineTool 导出为 function')
     assert(typeof mod.defineSkill === 'function', 'defineSkill 导出为 function')
     assert(typeof mod.createMemoryBackend === 'function', 'createMemoryBackend 导出为 function')
