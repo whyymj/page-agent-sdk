@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import type { ToolStep, ToolStepViewFn } from '../../types'
 import { applyStepView } from '../stepView'
 import { copyText } from '../../utils/clipboard'
@@ -8,6 +8,7 @@ import { MESSAGES_ZH_CN, type DialogMessages } from '../messages'
 import SubReasonDetails from './SubReasonDetails.vue'
 import IconGlyph from '../IconGlyph.vue'
 import MsgText from '../MsgText.vue'
+import ImageLightbox from '../ImageLightbox.vue'
 
 // icons 由 MessageRow 从 ctx 下传(纯 props 叶子零依赖);独立复用时缺省用默认图标集
 const props = withDefaults(defineProps<{ steps: ToolStep[]; icons?: DialogIcons; messages?: DialogMessages; stepView?: ToolStepViewFn }>(), {
@@ -110,6 +111,9 @@ const expanded = {
 function toggleExpand(sIdx: number): void {
   expanded.toggle(sIdx)
 }
+/** 大图查看:点开的截图原图 dataUri(undefined = 关闭)。原 `<a href=data: target=_blank>` 被浏览器
+ *  拦 data: 导航降级成当前页跳转(地址栏 base64/空白),改页内 lightbox(用户实测驱动 2026-09-20) */
+const activeShot = ref<string | undefined>(undefined)
 /** 组是否有可展开细节(任一调用有 args 或 result;运行中只有 args 也可看) */
 function hasDetail(calls: ToolStep[] | undefined): boolean {
   return !!calls?.some((c) => c.args != null || c.result != null)
@@ -180,18 +184,17 @@ function copyDetail(text: string, truncated: boolean, full?: unknown): void {
           {{ expanded.has(sIdx) ? messages.collapse : messages.expand }}
         </button>
       </div>
-      <!-- 截图缩略图(page-screenshot 观察面):行内直出无需展开,点击新窗放大;用户能看到 agent「看到了什么」 -->
+      <!-- 截图缩略图(page-screenshot 观察面):行内直出无需展开,点击页内 lightbox 放大;用户能看到 agent「看到了什么」 -->
       <div v-if="step.calls?.some((c) => c.image)" class="step-shots" data-test="step-shots">
-        <a
+        <button
           v-for="(c, cIdx) in step.calls"
           :key="cIdx"
           v-show="c.image"
+          type="button"
           class="step-shot"
-          :href="c.image?.dataUri"
-          target="_blank"
-          rel="noopener noreferrer"
           :title="messages.screenshotAlt"
-        ><img v-if="c.image" class="step-shot-img" :src="c.image.thumb || c.image.dataUri" :alt="messages.screenshotAlt" /></a>
+          @click="activeShot = c.image?.dataUri"
+        ><img v-if="c.image" class="step-shot-img" :src="c.image.thumb || c.image.dataUri" :alt="messages.screenshotAlt" /></button>
       </div>
       <!-- 展开细节:每次调用的入参 + 返回值(×N 合并组逐次列出;超长截断,复制得全量) -->
       <div v-if="expanded.has(sIdx) && step.calls?.length" class="step-detail">
@@ -222,6 +225,8 @@ function copyDetail(text: string, truncated: boolean, full?: unknown): void {
       </div>
     </div>
   </div>
+  <!-- 页内大图查看(Teleport body;点缩略图开,遮罩/✕/Esc 关) -->
+  <ImageLightbox :src="activeShot" :alt="messages.screenshotAlt" :close-title="messages.close" @close="activeShot = undefined" />
 </template>
 
 <style scoped>
@@ -229,7 +234,7 @@ function copyDetail(text: string, truncated: boolean, full?: unknown): void {
 .step-item { display: flex; flex-direction: column; gap: 3px; align-self: flex-start; padding: 5px 10px; border-radius: 8px; background: var(--cs-step-bg); border: 1px solid var(--cs-step-border); font-size: 11px; color: var(--cs-step-text); max-width: 100%; user-select: text; -webkit-user-select: text; }
 /* 截图缩略图(page-screenshot 观察面):行内小图,点击新窗放大 */
 .step-shots { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 2px 14px; }
-.step-shot { display: block; width: 72px; height: 54px; border-radius: 6px; overflow: hidden; border: 1px solid var(--cs-surface-border, rgba(0,0,0,0.1)); }
+.step-shot { display: block; width: 72px; height: 54px; border-radius: 6px; overflow: hidden; border: 1px solid var(--cs-surface-border, rgba(0,0,0,0.1)); padding: 0; background: none; cursor: zoom-in; }
 .step-shot-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .step-head { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .step-name { font-family: 'SF Mono', Monaco, Consolas, monospace; font-weight: 600; }

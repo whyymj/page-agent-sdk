@@ -644,6 +644,12 @@ test.describe('complex-demo: 组件操作(调换顺序 / 改层级 / 聚焦纯�
     await expect(page.locator('.step-sub-reason .sub-reason-toggle'), '子思考摘要行尾有「展开」文字链').toHaveText('展开')
     await page.locator('.step-sub-reason .sub-reason-head').click()
     await expect(page.locator('.step-sub-reason .sub-reason-toggle'), '展开后文字链变「收起」').toHaveText('收起')
+    // 2026-09-20:箭头三角已移除(展开指示由文字链唯一承担,双重指示冗余)
+    const tri = await page.evaluate(() => {
+      const head = document.querySelector('.step-sub-reason .sub-reason-head')
+      return head ? getComputedStyle(head, '::before').content : 'missing'
+    })
+    expect(tri).toBe('none')
   })
 
   test('组件锁互斥:同轮双 use_html 同组件 → 第二个 COMPONENT_BUSY,下轮重委派成功', async ({ page }) => {
@@ -983,5 +989,41 @@ test.describe('聚焦取景锚定(focus-shot,4.22+)', () => {
     })
     expect(shot).toContain('取景=聚焦组件 components.0')
     expect(shot).toContain('data-path="components.0"')
+  })
+})
+
+test.describe('截图缩略图页内大图查看(lightbox)', () => {
+  test('?shot=1:点缩略图 → 页内 overlay 放大不跳页;Esc / 遮罩两路关闭', async ({ page }) => {
+    await page.goto('/examples/complex-demo/?shot=1')
+    await page.waitForSelector('.chat-dialog', { state: 'attached' })
+    await page.route('**picsum.photos**', (r) => r.fulfill({
+      status: 200, contentType: 'image/png',
+      body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'),
+    }))
+    await mockLlm(page, [
+      { tool_calls: [{ name: 'take_screenshot', arguments: {} }] },
+      { text: '看到了。' },
+    ])
+    await fillInput(page, '截个图看看')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    // 步骤行缩略图已渲染(现为 button,不再是指向 data: URI 的 <a>)
+    await expect(page.locator('.step-shots .step-shot')).toHaveCount(1)
+    const urlBefore = page.url()
+    await page.click('.step-shots .step-shot')
+    await expect(page.locator('[data-test="image-viewer"] img')).toBeVisible()
+    expect(page.url()).toBe(urlBefore) // 不跳页:地址栏不出现 base64、原页面不空白
+    const nat = await page.evaluate(() => {
+      const img = document.querySelector('[data-test="image-viewer"] img') as HTMLImageElement | null
+      return img ? { w: img.naturalWidth, complete: img.complete } : null
+    })
+    expect(nat && nat.w > 0).toBeTruthy() // 大图真实可解码(非死链)
+    await page.keyboard.press('Escape')
+    await expect(page.locator('[data-test="image-viewer"]')).toHaveCount(0)
+    // 重开 → 点遮罩边缘关闭(第二路关闭;图片本体点击不冒泡关闭)
+    await page.click('.step-shots .step-shot')
+    await expect(page.locator('[data-test="image-viewer"]')).toBeVisible()
+    await page.locator('[data-test="image-viewer"]').click({ position: { x: 8, y: 8 } })
+    await expect(page.locator('[data-test="image-viewer"]')).toHaveCount(0)
   })
 })

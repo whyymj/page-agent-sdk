@@ -2,6 +2,16 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.23.2] - 2026-09-20
+
+### Changed
+
+- **子 agent 思考块移除「▸」箭头三角**(用户反馈:已有「展开/收起」文字链,双重指示冗余):`SubReasonDetails` summary 行不再渲染 `::before` 三标,展开指示由右缘文字链唯一承担,与主 agent 思考块(`MessageReasoning`)口径一致。browser complex-demo 既有用例补「三角不存在」计算样式断言。
+
+### Fixed
+
+- **截图/贴图缩略图点击 → 页内大图查看(lightbox),不再跳页**:原实现缩略图为 `<a href="data:image/..." target="_blank">` —— 浏览器拦截 data: URI 的顶级/新窗导航,点击降级成**当前页跳转**(地址栏变 base64、页面空白,用户实测报告)。新增内部组件 `ImageLightbox.vue`(Teleport 到 body,不受宿主容器 overflow/contain 裁剪):点击缩略图页内 overlay 放大原图(92vw/92vh),点遮罩 / ✕ / Esc 三路关闭,打开期间锁定 body 滚动,图片本体点击不冒泡(可右键另存);覆盖两处入口 —— `MessageSteps` 截图缩略图(take_screenshot 观察面)+ `MessageRow` 用户贴图缩略图。browser 173 → **175**(complex-demo 截图缩略图开/不跳页/可解码/Esc/遮罩 + images 贴图缩略图同款)。
+
 ## [4.23.1] - 2026-09-20
 
 ### Added

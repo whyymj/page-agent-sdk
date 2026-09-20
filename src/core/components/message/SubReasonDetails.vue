@@ -73,9 +73,8 @@ async function copyReason() {
 .step-sub-reason { margin-top: 4px; border-left: 2px solid var(--cs-sub-border); border-radius: 0 6px 6px 0; background: var(--cs-sub-bg); }
 .sub-reason-head { display: flex; align-items: center; gap: 5px; padding: 3px 8px; cursor: pointer; user-select: none; font-size: 10px; color: var(--cs-sub-text); font-weight: 600; list-style: none; }
 .sub-reason-head::-webkit-details-marker { display: none; }
-/* 展开箭头 ▸ → 旋转 90° */
-.sub-reason-head::before { content: '▸'; display: inline-block; font-size: 9px; color: var(--cs-sub-text); transition: transform 0.15s ease; }
-.step-sub-reason[open] .sub-reason-head::before { transform: rotate(90deg); }
+/* 无箭头三角(2026-09-20 用户反馈):展开指示已由右缘「展开/收起」文字链承担,双重指示冗余;
+   与主 agent 思考块(MessageReasoning)口径一致 —— 摘要行尾文字链,非箭头暗示 */
 /* 运行中脉冲点(思考活跃指示,治"卡住"感) */
 .sub-reason-label.pulsing::after { content: ' ●'; animation: cs-think-pulse 1.2s ease-in-out infinite; margin-left: 1px; }
 @keyframes cs-think-pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }

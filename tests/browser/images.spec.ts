@@ -175,3 +175,23 @@ test.describe('图片输入(image-input-vision)', () => {
     await expect(page.locator('.msg-images')).toHaveCount(1)
   })
 })
+
+test.describe('贴图消息缩略图页内大图查看(lightbox)', () => {
+  test('多模态直发后:点消息缩略图 → 页内 overlay 放大不跳页;Esc 关闭', async ({ page }) => {
+    await page.goto('/examples/complex-demo/')
+    await page.waitForSelector('.chat-dialog')
+    await page.evaluate(() => (window as any).__sdk.setLlm({ apiKey: 'sk-test', model: 'gpt-4.1' }))
+    await mockLlm(page, [{ text: '收到图片' }])
+    await page.setInputFiles('[data-test="attach-input"]', { name: 'a.png', mimeType: 'image/png', buffer: await realPng(page) })
+    await fillInput(page, '看这张图')
+    await clickSend(page)
+    await waitForAgentIdle(page)
+    await expect(page.locator('.msg-images .msg-image')).toHaveCount(1)
+    const urlBefore = page.url()
+    await page.click('.msg-images .msg-image')
+    await expect(page.locator('[data-test="image-viewer"] img')).toBeVisible()
+    expect(page.url()).toBe(urlBefore) // 不跳页:原 <a href=data:> 跳转缺陷已移除
+    await page.keyboard.press('Escape')
+    await expect(page.locator('[data-test="image-viewer"]')).toHaveCount(0)
+  })
+})

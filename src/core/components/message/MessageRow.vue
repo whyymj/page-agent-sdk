@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { AgentMessage, ToolStep } from '../../types'
 import { useChatContext } from '../../composables/chatContext'
 import MessageReasoning from './MessageReasoning.vue'
@@ -9,6 +9,7 @@ import MessageTime from './MessageTime.vue'
 import MessageActions from './MessageActions.vue'
 import AvatarIcon from './AvatarIcon.vue'
 import IconGlyph from '../IconGlyph.vue'
+import ImageLightbox from '../ImageLightbox.vue'
 
 const props = defineProps<{
   message: AgentMessage
@@ -49,6 +50,10 @@ const steps = computed<ToolStep[]>(() =>
 const showActions = computed(() => isAssistant.value && !!props.message.content && !props.loading && props.isLast)
 /** 流式光标:assistant + 生成中 + 末位 + 有内容 */
 const showCursor = computed(() => isAssistant.value && props.loading && props.isLast && !!props.message.content)
+
+/** 大图查看(用户贴图点击放大;原 `<a href=data: target=_blank>` 被浏览器拦 data: 导航降级成
+ *  当前页跳转,改页内 lightbox —— 与 MessageSteps 截图缩略图同款修复 2026-09-20) */
+const activeImage = ref<string | undefined>(undefined)
 </script>
 
 <template>
@@ -71,20 +76,19 @@ const showCursor = computed(() => isAssistant.value && props.loading && props.is
         <blockquote class="msg-quote-text">{{ message.quote.text }}</blockquote>
         <span v-if="message.quote.source" class="msg-quote-source">❝ {{ message.quote.source }}</span>
       </div>
-      <!-- user 消息附带图片(image-input-vision):气泡上方缩略图行(thumb 优先,恢复后轻形态仍有;LRU 淘汰且无 thumb 显示占位框) -->
+      <!-- user 消息附带图片(image-input-vision):气泡上方缩略图行(thumb 优先,恢复后轻形态仍有;LRU 淘汰且无 thumb 显示占位框);点击页内 lightbox 放大 -->
       <div v-if="message.role === 'user' && message.images?.length" class="msg-images" :data-img-count="message.images.length">
-        <a
+        <button
           v-for="im in message.images"
           :key="im.id"
+          type="button"
           class="msg-image"
-          :href="im.url || im.dataUri"
           :title="im.name || ctx.messages.imageAlt"
-          target="_blank"
-          rel="noopener noreferrer"
+          @click="activeImage = im.dataUri || im.url"
         >
           <img v-if="im.thumb || im.dataUri" class="msg-image-thumb" :src="im.thumb || im.dataUri" :alt="im.name || ctx.messages.imageAlt" />
           <span v-else class="msg-image-lost">🖼️</span>
-        </a>
+        </button>
       </div>
       <!-- 空气泡抑制:assistant 无内容且非占位态(已有思考块/步骤块反馈)→ 整泡不渲染,
            修「思考/工具调用期间回复框是空框」+ 步骤后叠加紫色呼吸占位点双 loading -->
@@ -101,6 +105,8 @@ const showCursor = computed(() => isAssistant.value && props.loading && props.is
       <MessageActions v-if="showActions" :messages="ctx.messages" :copied="copied" @copy="$emit('copy')" @regenerate="$emit('regenerate')" />
     </div>
   </div>
+  <!-- 页内大图查看(Teleport body;点缩略图开,遮罩/✕/Esc 关) -->
+  <ImageLightbox :src="activeImage" :alt="ctx.messages.imageAlt" :close-title="ctx.messages.close" @close="activeImage = undefined" />
 </template>
 
 <style scoped>
@@ -123,7 +129,7 @@ const showCursor = computed(() => isAssistant.value && props.loading && props.is
 .message-row.user .message-content { display: flex; flex-direction: column; align-items: flex-end; }
 /* user 消息图片缩略图行(image-input-vision):右对齐(user 侧),点开原图新窗(rel=noopener) */
 .msg-images { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; margin-bottom: 4px; max-width: 100%; }
-.msg-image { display: block; width: 72px; height: 72px; border-radius: 8px; overflow: hidden; border: 1px solid var(--cs-surface-border, rgba(0,0,0,0.08)); flex-shrink: 0; }
+.msg-image { display: block; width: 72px; height: 72px; border-radius: 8px; overflow: hidden; border: 1px solid var(--cs-surface-border, rgba(0,0,0,0.08)); flex-shrink: 0; padding: 0; background: none; cursor: zoom-in; }
 .msg-image-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
 .msg-image-lost { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 20px; background: var(--cs-surface, #f3f4f6); opacity: 0.6; }
 /* 跨边界:hover message-row.assistant 时显示子组件 MessageActions 的 .msg-actions(后代选择器穿透) */
