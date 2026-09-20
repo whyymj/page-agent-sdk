@@ -4,7 +4,7 @@
  * resolveScreenshotTarget 三模式路由 / node 守卫 / usageHints 截图引导按 flag / dom-inspect skill
  * 变体(勿教不存在的工具)。渲染/压缩/canvas 全链在 browser e2e 真跑;vision 合成消息通道在 e2e 断言。
  */
-import { resolveScreenshotTarget, createScreenshotTool, createViewImageTool, SCREENSHOT_MAX_FULLPAGE_HEIGHT, focusShotSelector } from '../../tools/screenshot'
+import { resolveScreenshotTarget, createScreenshotTool, createViewImageTool, SCREENSHOT_MAX_FULLPAGE_HEIGHT, focusShotSelector, countIframesIn } from '../../tools/screenshot'
 import { makeDomInspectSkill, makePageAnalysisSkill } from '../../tools/domTool'
 import { createUsageHintsMiddleware } from '../../harness/usageHints'
 
@@ -114,6 +114,22 @@ export async function run(ctx: { assert: (cond: boolean, msg: string) => void })
       ;(globalThis as { document?: unknown }).document = mkDoc('any')
       await mkTool({ focus: { path: 'components.8' }, captured: c5 }).invoke({ selector: '.user-pick' }, {})
       assert(tag(c5.el) === 'picked', `✓ 显式 selector 优先(按用户 selector 取景),实际:${tag(c5.el)}`)
+      // ⑥ iframe 盲区预警(2026-09-20 真机 dump 驱动):取景含 iframe → 结果预警并给替代路径;
+      //    纯元素桩无 querySelectorAll → countIframesIn 返 0 不炸(①-⑤ 零预警即证)
+      assert(countIframesIn({ querySelectorAll: (s: string) => (s === 'iframe' ? [{ tag: 'f1' }, { tag: 'f2' }] : []) } as unknown as Element) === 2,
+        '✓ countIframesIn → 数取景范围内 iframe 数')
+      const docIframe = {
+        documentElement: { scrollHeight: 800 },
+        querySelector: () => ({ tag: 'code-comp', querySelectorAll: (s: string) => (s === 'iframe' ? [{ tag: 'frame' }] : []) }),
+        querySelectorAll: () => [],
+      } as unknown as Document
+      ;(globalThis as { document?: unknown }).document = docIframe
+      const resIframe = await mkTool({ captured: {} }).invoke({ selector: '[data-path="components.24"]' }, {})
+      assert(resIframe.includes('⚠️ 取景范围内含 1 个 iframe') && resIframe.includes('数据侧核对'),
+        '✓ 取景含 iframe → 结果带盲区预警 + 替代路径(修前只报「成功」,主 agent 4 次截图试错才发现)')
+      ;(globalThis as { document?: unknown }).document = mkDoc('any')  // 换回无 iframe 桩做阴性对照
+      const resClean = await mkTool({ captured: {} }).invoke({ selector: '[data-path="components.24"]' }, {})
+      assert(!resClean.includes('⚠️ 取景范围内含'), '✓ 取景不含 iframe(元素桩无 querySelectorAll)→ 零预警不误报')
   } finally {
       ;(globalThis as { document?: unknown }).document = realDoc
     }

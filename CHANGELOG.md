@@ -2,6 +2,12 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.23.3] - 2026-09-20
+
+### Fixed
+
+- **take_screenshot iframe 盲区预警**(2026-09-20 真机 dump 驱动:complex-demo 新建代码组件后,主 agent 连试 4 次截图〔含 1 次同参重复〕才发现 iframe 内部捕不到,工具全程报「成功」零提示):取景范围内含 iframe 时结果附 `⚠️ 取景范围内含 N 个 iframe` 预警行 + 替代路径引导(数据侧核对 read/validate_code/get_dom,勿重复截图);渲染失败/压缩失败 ERROR 同样携带(盲区与成败无关)。`countIframesIn` 纯函数导出(node/duck 桩无 querySelectorAll 返 0 不炸)。selftest 3774 → **3777**(sec-127 +3:countIframesIn 计数/预警行含替代路径/无 iframe 零误报)。
+
 ## [4.23.2] - 2026-09-20
 
 ### Changed

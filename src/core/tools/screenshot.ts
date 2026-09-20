@@ -40,6 +40,17 @@ export function focusShotSelector(path: string): string {
   return `[data-path="${v}"]`
 }
 
+/** 取景范围内 iframe 数量(纯函数;node/duck 桩无 querySelectorAll 时返回 0 不炸)。
+ *  iframe 内部(代码组件沙箱等跨 frame 内容)截图捕获不到 —— 结果预警的判定源(2026-09-20) */
+export function countIframesIn(root: Element | null | undefined): number {
+  try {
+    if (!root || typeof (root as Element).querySelectorAll !== 'function') return 0
+    return (root as Element).querySelectorAll('iframe').length
+  } catch {
+    return 0
+  }
+}
+
 /** dataUri → Blob(compressImage 复用桥;atob 手解避免依赖 WhatWG fetch data: 支持) */
 function dataUriToBlob(dataUri: string): Blob {
   const [head, data] = dataUri.split(',', 2)
@@ -123,6 +134,12 @@ export function createScreenshotTool(deps: ScreenshotToolDeps) {
       const resolved = resolveScreenshotTarget(document, typeof window !== 'undefined' ? window : {}, effectiveArgs)
       if (!resolved.ok) return `ERROR: ${resolved.error}`
       const rootEl = resolved.el ?? deps.getRootEl?.() ?? document.documentElement
+      // iframe 盲区预警(2026-09-20 真机 dump 驱动):代码组件沙箱等 iframe 内容截图捕不到(图里只有外壳/空白),
+      // 工具却报「成功」—— 主 agent 连试 4 次截图(含同参重复)才发现。渲染/压缩失败路径同样携带(盲区与成败无关)。
+      const iframeCount = countIframesIn(rootEl)
+      const iframeNote = iframeCount > 0
+        ? `⚠️ 取景范围内含 ${iframeCount} 个 iframe:跨 frame 内容(如代码组件沙箱)截图捕获不到,图里只会是其外壳/空白区域 —— 验证 iframe 内部请走数据侧核对(read/validate_code/get_dom),勿再对同一区域重复截图。`
+        : ''
       // fullPage:documentElement 布局高只有视口高,须显式传 scrollHeight 才能截到整页;
       // 同时做高度守卫(超长文档渲染耗时/内存失控,拒并提示分段)
       let renderOpts: { width?: number; height?: number } = { width: resolved.width, height: resolved.height }
@@ -138,14 +155,14 @@ export function createScreenshotTool(deps: ScreenshotToolDeps) {
         pngDataUri = await render(rootEl, renderOpts)
       } catch (e) {
         // foreignObject/CSP 限制、跨域图污染 canvas 等渲染失败:可读降级 + 缩小范围建议
-        return `ERROR: 截图渲染失败(${e instanceof Error ? e.message : String(e)})${focusNote}.常见原因:宿主页面 CSP 禁止 SVG data URL / 跨域图片污染画布 / 元素含无法克隆的内容。建议:① 改用 selector 缩小到目标区域;② 结构验证可改用 get_dom / dom_info(rect+styles);③ 宿主可配 screenshot.renderer 自定义渲染器绕过。`
+        return `ERROR: 截图渲染失败(${e instanceof Error ? e.message : String(e)})${focusNote}.常见原因:宿主页面 CSP 禁止 SVG data URL / 跨域图片污染画布 / 元素含无法克隆的内容。建议:① 改用 selector 缩小到目标区域;② 结构验证可改用 get_dom / dom_info(rect+styles);③ 宿主可配 screenshot.renderer 自定义渲染器绕过。${iframeNote}`
       }
       // 压缩闸:dataUri → Blob → compressImage(jpeg q0.85 ≤1568,产物含 thumb/dims/bytes)
       let image: AgentImage
       try {
         image = await compressImage(dataUriToBlob(pngDataUri), { name: `screenshot-${resolved.mode}.png` })
       } catch (e) {
-        return `ERROR: 截图压缩失败(${e instanceof Error ? e.message : String(e)}),未投递。`
+        return `ERROR: 截图压缩失败(${e instanceof Error ? e.message : String(e)}),未投递。${iframeNote}`
       }
       const vfsRef = deps.stow?.(image)
       const meta = { mode: resolved.mode, ...(effectiveArgs.selector ? { selector: effectiveArgs.selector } : {}) }
@@ -172,6 +189,8 @@ export function createScreenshotTool(deps: ScreenshotToolDeps) {
         vfsRef ? `原图已存 vfs:${vfsRef}` : 'vfs 未开启,原图仅本轮内存',
         `投递形态:${delivered}`,
       ]
+      // iframe 盲区预警(2026-09-20 真机 dump 驱动):iframeNote 在 rootEl 解析后已算好(成功/失败路径共用)
+      if (iframeNote) lines.push(iframeNote)
       if (description) lines.push(`识图转述:${description}`)
       return lines.join('\n')
     },
