@@ -40,6 +40,11 @@ export async function run(ctx: { assert: (cond: boolean, msg: string) => void })
     const noShot = createUsageHintsMiddleware({ domInspect: true } as never, false)
     const seg2 = noShot.augmentPrompt?.(undefined as never) ?? ''
     assert(!seg2.includes('take_screenshot'), '✓ screenshot flag 缺省 → 不教(工具未装配)')
+    // dom_search 引导按 skills flag 门控(2026-09-21 门户真机:模型不知 load 可得检索,整页翻页 50K/轮)
+    const withSearch = createUsageHintsMiddleware({ domInspect: true, skills: true } as never, false)
+    const seg3 = withSearch.augmentPrompt?.(undefined as never) ?? ''
+    assert(seg3.includes('load_skill("dom-inspect")') && seg3.includes('dom_search'), '✓ skills+domInspect 同开 → 教「先 load_skill 取 dom_search 再窄读」(修整页翻页找的 50K/轮根因)')
+    assert(!seg2.includes('dom-inspect'), '✓ skills 关 → 不教 load_skill(load 工具不在池,幻影勿教)')
   }
 
   // ---- dom-inspect skill 变体 ----

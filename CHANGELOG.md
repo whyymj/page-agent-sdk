@@ -2,6 +2,14 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [4.24.3] - 2026-09-21
+
+### Changed
+
+- **focus 幻影面收窄(门户真机 dump 驱动)**:无数据槽(dataOps:false 文档站形态)时 focus 四工具不再装配(`useFocus = caps.focus && useDataOps`)+ usageHints 不再注入「上下文聚焦」教学段 —— jsonPath 聚焦概念对文档问答门户是纯幻影(修前 4 个 schema 死重/请求 + 「调导航栏/改 components.3」误导教学);focusMw 实例仍建(UI chip/截图取景消费零影响),有数据槽宿主行为零变化。
+- **dom_search 命中语境窗口**:hit 的 text 从「直接文本子节点前 120 字」改为 **text 模式围绕首个命中位置的 ±100 字符窗口**(带 … 截断标记;全文取 textContent 含内联子孙,duck-typing mock 回退直接文本节点)/ selector 模式取归一化前缀 —— 门户真机实证:命中 `pre>code` 等容器时旧形态只有一行代码,模型无法判读语境 → 连环换 query 重试 + read_page 跟读(单问 13 步)。selftest 3784 → **3786**(sec-56 门控负例 + sec-36 窗口断言);e2e 1285 → **1287**(systemprompt:页面身份不教聚焦段 + focus 工具不装)。
+- **usageHints 教「长文先取 dom_search 再窄读」**(门户真机 dump 驱动:模型 reasoning 自证 *"no search tool except read_page"*,dom_search 经 dom-inspect skill 按需注入但模型不知 load 可得,长文定位只能整页翻页,50K tokens/轮):domInspect+skills 同开时 read_page 引导行附「先 load_skill("dom-inspect") 取得 dom_search 文本检索,命中后窄读那一节,勿整页翻页找」;skills 关不教(幻影工具勿教;sec-127 +2 门控正/负,计数并入下条)。
+
 ## [4.24.2] - 2026-09-21
 
 ### Changed

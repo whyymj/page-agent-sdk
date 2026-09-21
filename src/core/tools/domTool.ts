@@ -342,14 +342,23 @@ export function searchDom(root: ParentNode | null, query: string, opts: { mode?:
   }
   const cap = Math.min(matched.length, limit)
   const hits = matched.slice(0, cap).map((el) => {
-    const direct = Array.from(el.childNodes).filter((n) => n.nodeType === 3).map((n) => n.textContent || '').join('').trim()
-    let text = direct
-    if (mode === 'text' && !text) {
-      const all = (el.textContent || '').trim()
-      const i = all.indexOf(query)
-      text = all.slice(Math.max(0, i - 20), i + query.length + 40)
+    // 命中语境窗口(2026-09-21 门户真机 dump 驱动):旧形态取「直接文本子节点前 120 字」—— 命中
+    // pre>code 等容器时只有一行代码/前缀(直接文本子节点不含内联元素),模型无法判读语境 → 连环
+    // 换 query 重试 + read_page 跟读(实测单问 13 步)。改为:全文取 textContent(真 DOM,含内联
+    // 子孙;duck-typing mock 无 textContent 回退直接文本节点拼接),text 模式围绕首个命中位置取
+    // ±100 字符窗口(带 … 截断标记);selector 模式无查询串,取归一化前缀
+    const raw = typeof el.textContent === 'string' && el.textContent
+      ? el.textContent
+      : Array.from(el.childNodes ?? []).filter((n: ChildNode) => n.nodeType === 3).map((n) => n.textContent || '').join('')
+    const all = raw.replace(/\s+/g, ' ').trim()
+    let text = all.slice(0, 120)
+    if (mode !== 'selector' && query) {
+      const i = all.indexOf(String(query))
+      if (i >= 0) {
+        text = (i > 100 ? '…' : '') + all.slice(Math.max(0, i - 100), i + 120) + (i + 120 < all.length ? '…' : '')
+      }
     }
-    return { selector: buildCssPath(el), tag: el.tagName.toLowerCase(), text: text.slice(0, 120) }
+    return { selector: buildCssPath(el), tag: el.tagName.toLowerCase(), text }
   })
   return { hits, total: matched.length, truncated: matched.length > cap }
 }

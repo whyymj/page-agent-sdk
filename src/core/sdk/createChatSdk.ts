@@ -867,7 +867,9 @@ function buildCore(options: ChatSdkOptions, agentId: string, hostWatchState?: { 
   checkpointTools.forEach((t) => toolSources.set(t.name, 'builtin'))
   // 上下文聚焦工具 set_focus/clear_focus(focus-context;advanced 暴露,simple/minimal 经 UI/宿主 API 触发)。
   // set_focus 校验 path 在 schema 内(getSchemaAtPath 命中)才聚焦,非法回灌错误让 LLM 自纠(同 sdk.setFocus 校验逻辑)
-  const useFocus = caps.focus
+  // focus 工具装配门(2026-09-21 收窄):无数据槽(dataOps:false)时 set_focus 系列是 jsonPath 幻影
+  // —— 门户真机 dump:4 个 schema 死重/请求 + 教学误导;focusMw 实例仍建(UI chip/截图取景消费零影响)
+  const useFocus = caps.focus && useDataOps
   const setFocusTool = tool(
     async ({ path, label }: { path: string; label?: string }) => {
       const schema = liveData()?.schema

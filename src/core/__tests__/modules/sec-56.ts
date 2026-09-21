@@ -30,6 +30,10 @@ export async function run(ctx: TestCtx) {
   const def = hintPrompt({}, true)
   assert(/上下文聚焦/.test(def), '✓ usageHints → 默认(focus opt-out 默认开)注入 focus 段')
 
+  // ===== focus 幻影面收窄(2026-09-21):无数据槽(dataOps:false 文档站)不教聚焦段 =====
+  const bare = hintPrompt({ focus: true }, false)
+  assert(!/上下文聚焦/.test(bare), '✓ usageHints → focus 开但无数据槽 → 不注入(jsonPath 聚焦对文档站是幻影,门户真机 4 schema 死重)')
+
   // ===== 与 planning 段共存 + 「## 能力使用提示」包裹结构保持 =====
   const both = hintPrompt({ planning: true, focus: true }, true)
   assert(/自适应规划/.test(both) && /上下文聚焦/.test(both), '✓ usageHints → planning + focus 段共存')

@@ -111,6 +111,16 @@ export async function run(ctx: TestCtx): Promise<void> {
   // ✓ searchDom → text 模式:命中含关键词元素(跳过空文本),返回 CSS 路径 + 片段
   const r1 = searchDom(root as any, '大促', { mode: 'text' })
   assert(r1.total === 1 && r1.hits[0].tag === 'h1' && r1.hits[0].text.includes('大促'), '✓ searchDom → text 模式命中 h1(CSS 路径 + 文本片段)')
+  // 命中语境窗口(2026-09-21 门户真机驱动):长文本命中 → ±100 字符窗口带 … 截断标记,
+  // 命中词前后文可见(旧形态只有元素文本前 120 字,命中 pre>code 时无法判读语境致连环重试)
+  {
+    const long = mockEl('p', {}, '前'.repeat(200) + '术语在这里' + '后'.repeat(200))
+    long.textContent = '前'.repeat(200) + '术语在这里' + '后'.repeat(200)
+    const rootLong: any = { querySelectorAll: () => [long] }
+    const rw = searchDom(rootLong as any, '术语', { mode: 'text' })
+    assert(rw.hits[0].text.startsWith('…') && rw.hits[0].text.endsWith('…') && rw.hits[0].text.includes('术语在这里') && rw.hits[0].text.length <= 222,
+      '✓ searchDom → 长文本命中取 ±100 窗口(… 前后标记 + 命中词带语境,长度收敛)')
+  }
   // ✓ searchDom → selector 模式 + limit 截断标注
   const rootMany: any = { querySelectorAll: () => Array.from({ length: 15 }, (_, i) => mockEl('li', { class: 'it' }, `项${i}`)) }
   const r2 = searchDom(rootMany as any, '.it', { mode: 'selector', limit: 5 })

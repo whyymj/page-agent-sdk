@@ -163,6 +163,9 @@ export async function run() {
     assert(/作答车道/.test(sp) && /本页未提及,以下是通用解释/.test(sp) && /页面没写不构成不答的理由/.test(sp) && /出处密度/.test(sp), '默认页面身份含作答车道(A 事实 / B 术语页上没有也必须解释 / C 观点不拒答 + 出处密度收敛)')
     assert(!/JSON 操作助手/.test(sp), '页面身份不残留「JSON 操作助手」身份(修前对无数据集成谎称主数据对象)')
     assert(!/可靠写入规则/.test(sp), '页面身份不追加 reliableWriteRules(写入工具不在池,勿教不存在的工具)')
+    assert(!/上下文聚焦/.test(sp), '页面身份不教 jsonPath 聚焦段(无数据槽 = 幻影面,2026-09-21 收窄)')
+    const toolNames = (sdk.inspect().tools ?? []).map((t) => t?.name)
+    assert(!toolNames.includes('set_focus') && !toolNames.includes('clear_focus'), `dataOps:false → focus 四工具不装(修前 4 schema 死重/请求;实际:${toolNames.filter((n) => String(n).includes('focus')).join(',') || '无'})`)
     sdk.unmount()
     // 自定义 systemPrompt 同口径:dataOps:false 不自动追加写入规则
     const sdk2 = createChatSdk({

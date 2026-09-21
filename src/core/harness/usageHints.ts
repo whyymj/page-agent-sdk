@@ -26,6 +26,8 @@ type HintCapabilityFlags = {
   subagents?: { id: string; description: string; temperature?: number }[]
   /** take_screenshot 已装配(非 capability:装配条件含 vision/describe,装配侧传入;未装不教) */
   screenshot?: boolean
+  /** skills 能力开(load_skill 在池;domInspect 引导行的「先取 dom_search」段按此门控,勿教幻影工具) */
+  skills?: boolean
   /** DOM 编辑已装配(capabilities.domEdit + requires domInspect 归一;未装不教) */
   domEdit?: boolean
   /** 宿主已注册 actions(A8:domInspect 行末「改数据→看渲染→触发动作」闭环只在两环都在时教) */
@@ -116,7 +118,13 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
           : hasDataOps
             ? '改完数据可用截图/get_dom 查看渲染效果(本集成未注册宿主动作)。'
             : ''
-        hints.push(`回答用户关于当前页面/文档的问题时优先用 read_page({selector?,offset?,limit?}) 读页面正文纯文本(长文按 hasMore 分页续读;自动排除本对话框自身);需要页面结构(检查渲染是否生效/定位元素/辅助 UI 设计问答)再用 get_dom({selector?,depth?}) 读渲染后 DOM(结构化返回 tag/attrs/text/children,depth 控制深度防爆炸,只读)。${loopTail}`)
+        // dom_search/dom_info 经 dom-inspect skill 按需注入,skills 开着才教「先取再搜」——
+        // 门户真机 dump(2026-09-21):模型 reasoning 自证 "no search tool except read_page",
+        // 长文定位只能整页翻页(50K tokens/轮);load_skill 一跳即得定向检索
+        const searchTail = (caps as HintCapabilityFlags | undefined)?.skills
+          ? '长文按关键词定位(找某术语/某节在哪)先 load_skill("dom-inspect") 取得 dom_search 文本检索,命中后窄读那一节 —— 勿整页翻页找。'
+          : ''
+        hints.push(`回答用户关于当前页面/文档的问题时优先用 read_page({selector?,offset?,limit?}) 读页面正文纯文本(长文按 hasMore 分页续读;自动排除本对话框自身);需要页面结构(检查渲染是否生效/定位元素/辅助 UI 设计问答)再用 get_dom({selector?,depth?}) 读渲染后 DOM(结构化返回 tag/attrs/text/children,depth 控制深度防爆炸,只读)。${loopTail}${searchTail}`)
       }
       if ((caps as HintCapabilityFlags | undefined)?.screenshot) hints.push('视觉验证(看布局/样式/渲染效果像不像、对不对)用 take_screenshot({selector?, fullPage?}) 截图查看:selector 截指定元素、fullPage 截整页、默认当前视口;截图自动压缩投递(多模态直看图/纯文本模型走识图转述)。优先级:视觉问题先截图,结构/属性问题用 dom_info。')
       if ((caps as HintCapabilityFlags | undefined)?.domEdit) hints.push('修改宿主页面元素(高亮/改文案/调样式/插删移元素)用 dom_edit({patches:[{op,selector,...}],dryRun?}) 批量原子操作(op:set_text/set_html/set_attr/add_class/remove_class/set_style/insert/remove/move/highlight);selector 必须唯一命中(先 get_dom/dom_search 定位);改前自动快照,dom_restore 回滚最近一批;改动为会话临时态(刷新即失)——数据驱动页面改数据(write)不要改 DOM。')
@@ -127,7 +135,9 @@ export function createUsageHintsMiddleware(caps: HintCapabilityFlags | undefined
         hints.push('⚠️ 大 JSON 分块构建是典型多轮工具调用(draft_write×N + draft_commit + read 确认 + 调研 read/query),默认 maxToolRounds=30(3.43 起;轮次预算吃紧时 system 会注入预算提示段,按提示优先收口);目标组件数很大时集成方仍可在 createChatSdk 显式上调 maxToolRounds(按 N+10 估算)。draft_commit 提交同样走乐观锁(改前 read 拿 hash,bind 被改过会触发冲突介入,不静默覆盖)。')
       }
       // todoDeps 层级依赖教学已随 config-surface-pruning 撤除(schema 的 parentId/deps 字段描述仍自解释;evidence 教学在 A1 无条件段)
-      if (rc.focus) {
+      // focus 幻影面收窄(2026-09-21 门户真机 dump):无数据槽(dataOps:false 文档站形态)时聚焦是
+      // jsonPath 概念幻影 —— 教「调导航栏/改 components.3」给笔记门户纯误导 + 工具调用必失败
+      if (rc.focus && hasDataOps) {
         hints.push('【上下文聚焦】判断任务范围,用 set_focus/add_focus/remove_focus/clear_focus 自动收敛工作范围:')
         hints.push('  · 局部任务(只改某一组件/区域,如「调导航栏」「改 components.3 样式」)→ 先 read 定位 jsonPath,再 set_focus({path:"该子树路径"}) 聚焦;聚焦后每轮只看该子树结构,写其他位置会被 PATH_DENIED 拒绝。')
         hints.push('  · 多个相关组件(如「同时改导航栏和页脚」)→ set_focus 聚焦首个后用 add_focus({path}) 追加其余;聚焦后可写任一焦点子树,越界仍被拒;移除单个用 remove_focus({path})。')
