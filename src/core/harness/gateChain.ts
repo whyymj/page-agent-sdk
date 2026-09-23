@@ -29,6 +29,7 @@ import {
   assertsCompletion,
   mentionsLocation,
   declaresNoAction,
+  declaresDeferredPending,
   buildTurnFactSheet,
   buildZeroToolFeedback,
   buildStatusQueryFeedback,
@@ -207,11 +208,14 @@ export function runFinishGates(i: RunFinishGatesInput): GateOutcome {
   //    出口①机械化:收口文本已含位置说明(mentionsLocation)不回灌。
   //    出口③机械化(2026-09-09):诚实未做声明(declaresNoAction,「未做任何修改/已停止/无法完成」类
   //    否定完成态 + 无完成态断言)不回灌 —— RHC/审批拒绝后模型如实收口曾被回灌 ×2 烧满 + 误报 EXHAUSTED
+  //    出口④(2026-09-23,proposals 真机 dump):提案待确认豁免(declaresDeferredPending)—— 本轮唯一
+  //    写向动作是提案类工具且收口已披露「待你确认/尚未写入」→ 如实收口不回灌(反:嘴硬「已写入」不豁免)
   if (g.zeroToolRetries < MAX_ZERO_TOOL_RETRIES
     && isZeroEffectiveWrite(i.turnUsage, i.isWriteToolByName)
     && detectActionImperative(lastHumanContent)
     && !mentionsLocation(content)
     && !declaresNoAction(content)
+    && !declaresDeferredPending(content, i.turnUsage, i.deferredWriteTools)
     && !/[?？]\s*$/.test(content.trim())) {
     g.zeroToolRetries += 1
     const factSheet = buildTurnFactSheet(i.turnUsage, i.todos, i.isWriteToolByName, i.deferredWriteTools)
@@ -246,11 +250,13 @@ export function runFinishGates(i: RunFinishGatesInput): GateOutcome {
 
   // 5. 预算耗尽仍零工具收尾:observable 留痕(谎报放行恰是最该让集成方知晓的时刻,不能零感知)。
   //    诚实未做声明同样豁免(与第 3 层同口径):拒绝后如实收口不该被误报 EXHAUSTED;
+  //    提案待确认豁免同口径(出口④):披露待确认的提案收口不是谎报;
   //    句尾问号豁免(B2,flow 审计 #1,2026-09-09):回灌 ×2 后模型改为向用户征询(「要我继续修改吗?」)
   //    非完成声明,文案「疑似谎报」对问句收尾属误报 —— 与第 3 层 startsWith 口径对齐,复用头部 endsWithQuestion
   if (g.zeroToolRetries >= MAX_ZERO_TOOL_RETRIES && isZeroEffectiveWrite(i.turnUsage, i.isWriteToolByName)
     && detectActionImperative(lastHumanContent)
     && !declaresNoAction(content)
+    && !declaresDeferredPending(content, i.turnUsage, i.deferredWriteTools)
     && !endsWithQuestion) {
     return {
       kind: 'observable',

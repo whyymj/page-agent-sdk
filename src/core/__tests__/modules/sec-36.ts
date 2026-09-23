@@ -9,7 +9,7 @@
  */
 import { z } from 'zod'
 import { actionsToTools, actionsToInspectInfo } from '../../sdk/actions'
-import { domToStructure, searchDom, getElementInfo, buildCssPath, ensureDomListenerRecorder, getRecordedListeners, domInspectSkill, getDomTool } from '../../tools/domTool'
+import { domToStructure, searchDom, getElementInfo, buildCssPath, ensureDomListenerRecorder, getRecordedListeners, domInspectSkill, getDomTool, readPageSelectorFeedback } from '../../tools/domTool'
 import type { TestCtx } from './_ctx'
 
 export async function run(ctx: TestCtx): Promise<void> {
@@ -190,4 +190,14 @@ export async function run(ctx: TestCtx): Promise<void> {
   const domNodeResult = await invoke(getDomTool, {})
   assert(String(domNodeResult).includes('ERROR') && String(domNodeResult).includes('node/服务端'),
     '✓ get_dom node 守卫 → 友好 ERROR 回灌并指引数据工具(server-companion P0;修前裸 ReferenceError 炸工具调用)')
+
+  // ===== read_page selector 失败反馈(2026-09-23 门户真机驱动) =====
+  // 纯函数层:非法 selector 引导复用 dom_search 命中 selector(修前:裸抛 querySelector 语法错,
+  // 模型自编 `:has(> h2#…)` 失败后退化整页翻页浪费 1 轮);未命中 selector 补 dom_search 建议尾巴
+  const invFb = readPageSelectorFeedback(':has(> h2#sec)', 'invalid')
+  assert(invFb.startsWith('ERROR:') && invFb.includes('dom_search') && invFb.includes('复用命中结果的 selector'),
+    '✓ readPageSelectorFeedback → 非法 selector 返回 ERROR 引导复用 dom_search 的 selector')
+  const missFb = readPageSelectorFeedback('.not-exist', 'miss')
+  assert(missFb.startsWith('未找到匹配元素') && missFb.includes('dom_search'),
+    '✓ readPageSelectorFeedback → 未命中 selector 补 dom_search 定位建议(不再裸「未找到匹配元素」)')
 }

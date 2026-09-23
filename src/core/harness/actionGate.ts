@@ -188,6 +188,31 @@ export function detectStatusQuery(text: string): boolean {
   return STATUS_QUERY_RE.test((text || '').trim())
 }
 
+// ===== 提案待确认豁免(proposals 真机 dump 2026-09-23 驱动) =====
+// propose_content 收口已如实说「提案已送到评审面板,待你确认」,零工具门禁仍回灌 ×2 —— 逼出的只是
+// 一段「对账:」轻度冗余 + 每次多烧 1 轮 LLM。豁免三条件 AND(反向保护:嘴硬「已写入」不豁免):
+// ① 本轮唯一「写向」动作是提案类工具(deferredWriteTools 在场且确有调用);
+// ② 收口文本明确披露待确认语义;③ 无硬写入完成断言。
+// 注意硬断言用窄集(不复用 COMPLETION_ASSERT_RE):提案收口合法说「已生成提案」(生成确实发生了),
+// 宽集会误杀豁免;只拦「已写入/已保存/已应用」这类与「待确认」直接冲突的数据态断言。
+const PENDING_DISCLOSE_RE = /(待(你|用户)?(确认|评审|审核|批准)|尚未写入|未写入|才会写入|保持原样)/
+const HARD_WRITE_CLAIM_RE = /(已(写入|保存|应用)|写入(了|到)(文档|笔记|正文|文件)|已插入(文档|笔记|正文))/
+
+/**
+ * 判定收口文本是否为「提案待确认的如实披露」(纯函数;zero_tool 门禁与 EXHAUSTED observable 共用)。
+ * 宁漏勿误方向:任一条件不成立 → 返回 false → 门禁照常回灌(多烧 1 轮的代价 < 谎报溜过的代价)。
+ */
+export function declaresDeferredPending(content: string, usage: TurnToolUsage, deferredWriteTools?: Set<string>): boolean {
+  if (!deferredWriteTools?.size) return false
+  const hasDeferredCall = Object.entries(usage.counts).some(([name, n]) => n > 0 && deferredWriteTools.has(name))
+  if (!hasDeferredCall) return false
+  const t = content || ''
+  if (!PENDING_DISCLOSE_RE.test(t)) return false
+  // 混合硬断言不豁免:「已写入…(另)待确认」自相矛盾 → 按谎报嫌疑走对账;
+  // 窄集放行「已生成提案」(生成属实,写的部分已披露待确认)
+  return !HARD_WRITE_CLAIM_RE.test(t)
+}
+
 /** 判定回复是否断言完成态(零核实断言的必要条件之一) */
 export function assertsCompletion(text: string): boolean {
   return COMPLETION_ASSERT_RE.test(text || '')

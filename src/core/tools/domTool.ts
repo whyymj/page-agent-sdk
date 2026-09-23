@@ -193,6 +193,19 @@ function subtreeNeedsDescend(el: Element): boolean {
   }
 }
 
+/**
+ * 纯函数:read_page 的 selector 失败反馈(非法 / 未命中两形态)。
+ * 抽出为可测纯函数:工具本体有 node 守卫先返,selftest 在 node 触不到该分支。
+ * 引导复用 dom_search 命中 selector(2026-09-23 门户真机:模型手编 `:has(> h2#…)` 非法选择器
+ * 失败后退化整页翻页,浪费 1 轮 —— dom_search 其实已返回正确 selector `h2#…`,没被复用)。
+ */
+export function readPageSelectorFeedback(selector: string, kind: 'invalid' | 'miss'): string {
+  if (kind === 'invalid') {
+    return `ERROR: selector 非法 "${selector}"。不要手编复杂选择器 —— 先 dom_search 关键词定位,复用命中结果的 selector 原文。`
+  }
+  return `未找到匹配元素:selector="${selector}"(若不确定元素定位,先 dom_search 关键词取其 selector 再复用)`
+}
+
 export const readPageTool = tool(
   ({ selector, offset, limit }) => {
     // node/服务端守卫(get_dom 同款):误开在 node 跑时给 LLM 可读出路
@@ -202,8 +215,13 @@ export const readPageTool = tool(
     let root: Element | null
     let container: string
     if (selector) {
-      root = document.querySelector(selector)
-      if (!root) return `未找到匹配元素:selector="${selector}"`
+      try {
+        root = document.querySelector(selector)
+      } catch {
+        // 非法选择器(如手编 :has(> h2#…) 形态):引导复用 dom_search 命中的 selector 而非自造
+        return readPageSelectorFeedback(selector, 'invalid')
+      }
+      if (!root) return readPageSelectorFeedback(selector, 'miss')
       container = selector
     } else {
       root = pickContentRoot(document)

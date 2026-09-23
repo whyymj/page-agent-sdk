@@ -142,6 +142,24 @@ export async function run(ctx: TestCtx) {
     assert(honestDecline === null, '✓ runFinishGates 诚实未做豁免 → RHC 拒绝后如实收口不回灌(修前烧满 2 次 + 误报 EXHAUSTED)')
     const mixedClaim = runFinishGates({ state: createGateChainState(), garbled: false, rounds: 0, finalContent: '该字段此前未更新,现已更新修复。', todos: [], isSubagent: false, turnUsage: usage, isWriteToolByName: isW, messages: [{ _getType: () => 'human', content: '把标题改成X' }] })
     assert(mixedClaim?.kind === 'feedback' && mixedClaim.gate.stage === 'zero_tool_gate', '✓ runFinishGates 诚实未做豁免边界 → 混合完成态断言(「此前未更新,现已更新修复」)不豁免照常对账')
+    // 提案待确认豁免(2026-09-23,proposals 真机 dump):祈使消息(「答案写入文档」)+ 零等效写 +
+    // 本轮唯一写向动作是提案类工具 + 收口已披露「待你确认/才会写入」→ 如实收口不回灌
+    // (修前:propose_content 收口被回灌,逼出「对账:」段冗余 + 每次多烧 1 轮 LLM)
+    const propUsage = { counts: { read_content: 1, propose_content: 1 }, writePaths: [], failures: 0 }
+    const propDeferred = new Set(['propose_content'])
+    const propContent = '已生成提案:在 §6 面试表后插入「答案补全」小节。提案已送到评审面板,待你确认 —— 点「应用并写回」才会写入,在此之前文件保持原样。'
+    assert(runFinishGates({ state: createGateChainState(), garbled: false, rounds: 0, finalContent: propContent, todos: [], isSubagent: false, turnUsage: propUsage, isWriteToolByName: isW, deferredWriteTools: propDeferred, messages: [{ _getType: () => 'human', content: '答案写入文档' }] }) === null, '✓ runFinishGates 提案待确认豁免 → 已披露「待你确认/才会写入」的提案收口不回灌(「已生成提案」不误杀)')
+    // 边界①:硬写入断言 + 待确认自相矛盾 → 不豁免(防「已写入文档,待你确认」式嘴硬溜过)
+    const lieContent = '已写入文档,内容已应用。待你确认。'
+    const lieGate = runFinishGates({ state: createGateChainState(), garbled: false, rounds: 0, finalContent: lieContent, todos: [], isSubagent: false, turnUsage: propUsage, isWriteToolByName: isW, deferredWriteTools: propDeferred, messages: [{ _getType: () => 'human', content: '答案写入文档' }] })
+    assert(lieGate?.kind === 'feedback' && lieGate.gate.stage === 'zero_tool_gate', '✓ runFinishGates 提案待确认豁免边界 → 「已写入/已应用」硬断言不豁免照常对账')
+    // 边界②:未配 deferredWriteTools(提案语义不在场)→ 豁免结构关闭,同款收口照常回灌
+    const noDeferredGate = runFinishGates({ state: createGateChainState(), garbled: false, rounds: 0, finalContent: propContent, todos: [], isSubagent: false, turnUsage: propUsage, isWriteToolByName: isW, messages: [{ _getType: () => 'human', content: '答案写入文档' }] })
+    assert(noDeferredGate?.kind === 'feedback' && noDeferredGate.gate.stage === 'zero_tool_gate', '✓ runFinishGates 提案待确认豁免边界 → 无 deferredWriteTools 时豁免关闭(零行为面回归)')
+    // 边界③:EXHAUSTED 层同口径豁免 —— 预算耗尽后待确认披露不误报 ZERO_TOOL_GATE_EXHAUSTED
+    const ztProp = createGateChainState()
+    ztProp.zeroToolRetries = 2
+    assert(runFinishGates({ state: ztProp, garbled: false, rounds: 0, finalContent: propContent, todos: [], isSubagent: false, turnUsage: propUsage, isWriteToolByName: isW, deferredWriteTools: propDeferred, messages: [{ _getType: () => 'human', content: '答案写入文档' }] }) === null, '✓ runFinishGates 提案待确认豁免 → 预算耗尽后待确认披露不误报 EXHAUSTED')
     const ztHonest = createGateChainState()
     ztHonest.zeroToolRetries = 2
     assert(runFinishGates({ state: ztHonest, garbled: false, rounds: 0, finalContent: '未修改任何数据,请确认方案后我再继续。', todos: [], isSubagent: false, turnUsage: usage, isWriteToolByName: isW, messages: [{ _getType: () => 'human', content: '把标题改成X' }] }) === null, '✓ runFinishGates 诚实未做豁免 → 预算耗尽后诚实声明不误报 ZERO_TOOL_GATE_EXHAUSTED')

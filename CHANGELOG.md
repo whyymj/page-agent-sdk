@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+## [4.24.5] - 2026-09-23
+
+### Fixed
+
+- **零工具门禁提案待确认豁免 + read_page selector 失败引导**(门户真机 dump 2026-09-23 驱动,两处「如实收口仍被机制多烧 1 轮」):① `declaresDeferredPending` 出口④ —— 本轮唯一写向动作是提案类工具(deferredWriteTools 在场)+ 收口已披露「待你确认/尚未写入/才会写入」+ 无硬写入断言(窄集 `已写入|已保存|已应用`;不复用宽集 COMPLETION_ASSERT_RE ——「已生成提案」是合法真话,宽集误杀豁免)→ 不回灌;修前 propose_content 收口被 zero_tool_gate 回灌,逼出一段「对账:」轻度冗余 + 每次多烧 1 轮 LLM;EXHAUSTED observable 同口径豁免;反例「已写入文档,待你确认」式嘴硬照常对账。② `readPageSelectorFeedback` 纯函数 —— 非法 selector(模型手编 `:has(> h2#…)` 形态)从裸抛 querySelector 语法错改为 ERROR 引导「复用 dom_search 命中结果的 selector 原文」,未命中 selector 补同款定位建议;修前模型失败后退化整页翻页浪费 1 轮(dom_search 其实已返回正确 selector 未被复用)。selftest 3787 → **3793**(sec-101 +4 豁免/硬断言/无配置关闭/EXHAUSTED 同口径;sec-36 +2 两形态反馈文案)。
+
+## [4.24.4] - 2026-09-23
+
 ### Added
 
 - **demo `examples/quick-ask-demo`(选区一次性问答)**:无历史快问模式参考实现 —— headless 实例(`ui:false` + `storage:'memory'`)+ 每问 `resetSession()`(单轮上下文只有选区引用,经 `send` 的 `quote` 选项注入)+ 宿主自建迷你面板;「记录」不经 agent(宿主自己收:demo 落右栏,真实宿主为批注库/CMS);SDK 懒加载零首屏。browser 176 → **179**(quick-ask-demo spec:选中→浮钮→面板→回答→记录全链 + 无选区阴性 + docs-demo 同款入口;实施期修 `[hidden]` 被 `display:grid` 压制的经典坑)。另在 `examples/docs-demo` 挂同款入口(`quickAsk.ts`,Vue 页内 vanilla 模块 + 自包含样式,与主对话 SDK 并存互不干扰)。**过程展示(2026-09-21 追加)**:demo 与门户快问均改走 `stream`(quote 以 `AgentMessage.quote` 侧字段携带,与 `send` 的 SendOptions.quote 同形态),面板新增「过程」折叠区 —— 思考尾窗(300 字滑窗 + 计数)+ 工具调用行(`🔧 名称 args 摘要`,完成态带耗时/失败态);spec 补过程断言(mock 带 reasoning + tool_calls)。
