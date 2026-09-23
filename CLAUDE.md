@@ -30,9 +30,9 @@
 npm run dev       # 本地开发(端口 3000;被占则自动换)
 npm run build     # 库模式构建到 dist/(lib + headless + iife 三产物)
 npm run preview   # 预览构建产物
-npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,3786 项断言)
+npm run test          # 自测(tsx 跑 src/__tests__/selftest.ts,3787 项断言)
 npm run test:e2e      # 集成层 e2e(node 跑构建产物 dist,1287 项;tests/e2e/<module>.mjs 按模块拆分)
-npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,176 项;tests/browser/<demo>.spec.ts)
+npm run test:browser  # 浏览器 E2E(Playwright + mock LLM 双协议拦截,179 项;tests/browser/<demo>.spec.ts)
 npm run test:node-real  # node 真 LLM 冒烟(server-companion P0:headless dist 双协议 read→write→restore;无 key 自动 skip)
 ```
 
@@ -56,7 +56,7 @@ src/core/                       # 通用 SDK 核心(框架无关)
 ├── composables/                # useChat/useContextManager/useMarkdown/contextIndex/chatContext(provide/inject)
 ├── components/                 # ChatDialog(组合容器:provide ctx + 9 区块 slot)+ MessageContent/CodePreview/DebugDrawer/ChatHeader/ChatInput/QueuedBar/ApprovalBar/ConflictBar/FocusBar/SkillPanel/message/*
 └── presets.ts · types/index.ts · index.ts(主入口,注入 UI)· index.headless.ts(headless)
-examples/                       # 各 demo(minimal/page/complex/nested/dynamic/subagent/human-confirm/planner/toolsets/animation/multi-agent/proxy/customize/rag(四模式:memory/子agent mock/子agent+MCP/MCP直连)/html-page/proposals(内容提案-评审-应用:textarea 真相源+diff 面板)/images(图片输入:纯文本主模型 describe 转述旁路)/headless/eval-demo(eval-toolkit 回归面板:跑一轮/存基线/对比))每个自带 index.html + main.ts;node/(server-companion 冒烟脚本,非浏览器 demo)
+examples/                       # 各 demo(minimal/page/complex/nested/dynamic/subagent/human-confirm/planner/toolsets/animation/multi-agent/proxy/customize/rag(四模式:memory/子agent mock/子agent+MCP/MCP直连)/html-page/proposals(内容提案-评审-应用:textarea 真相源+diff 面板)/images(图片输入:纯文本主模型 describe 转述旁路)/quick-ask-demo(选区一次性问答:headless 无历史 + quote 注入 + 记录落宿主)/headless/eval-demo(eval-toolkit 回归面板:跑一轮/存基线/对比))每个自带 index.html + main.ts;node/(server-companion 冒烟脚本,非浏览器 demo)
 doc/                            # architecture.md(①-⑮ 架构细节)+ README.md(索引)+ usage-guide/context-management/system-prompt
 demo/plain.html                 # 框架无关集成示例
 skills/                         # 分发给使用者的 Agent Skill(入 npm 包 files)
@@ -141,7 +141,7 @@ before 类正序、after 类逆序、wrap 类洋葱。新增能力做成**中间
 
 #### 1. 单元/集成自测(必跑,无 LLM 依赖)
 ```bash
-npm test    # tsx 跑 src/core/__tests__/selftest.ts,3786 项断言
+npm test    # tsx 跑 src/core/__tests__/selftest.ts,3787 项断言
 ```
 按模块拆分:`src/core/__tests__/modules/sec-NN.ts`(130 个模块)各导出 `run(ctx)`,runner 汇总;共享 `TestCtx` 在 `modules/_ctx.ts`。tsx 跑源码(不经构建),触不到 createChatSdk 顶层 API 作用域。**改任何核心模块后必跑**。
 
@@ -153,9 +153,9 @@ npm run build && npm run test:e2e    # node 跑 dist 产物,1287 项
 
 #### 2.5 浏览器 E2E(改 UI/ChatDialog/dataOps 后必跑)
 ```bash
-npm run test:browser  # 176 项;也可 /browser-test 斜杠命令。**并行分片(browser-test-sharding)**:`workers:4` + `fullyParallel:false`(spec 文件级分片、文件内保序,与串行行为一致;实测全量 ~1.4-1.6min)。禁依赖「预启动 dev server + 复用」(遗留旧 server optimizeDeps 失配 → 强制 reload 假性失败,§3.5 前科);**依赖变更后首跑遇批量 reload 型失败 → 重跑一次预热,不判回归**;单跑复跑用 `--grep`;时序敏感观察名单(queue/icons 净化/page-demo 流式占位)如现 flake 优先加大 delays 窗口而非上 retries
+npm run test:browser  # 179 项;也可 /browser-test 斜杠命令。**并行分片(browser-test-sharding)**:`workers:4` + `fullyParallel:false`(spec 文件级分片、文件内保序,与串行行为一致;实测全量 ~1.4-1.6min)。禁依赖「预启动 dev server + 复用」(遗留旧 server optimizeDeps 失配 → 强制 reload 假性失败,§3.5 前科);**依赖变更后首跑遇批量 reload 型失败 → 重跑一次预热,不判回归**;单跑复跑用 `--grep`;时序敏感观察名单(queue/icons 净化/page-demo 流式占位)如现 flake 优先加大 delays 窗口而非上 retries
 ```
-**原理**:`tests/browser/_helpers.ts` 的 `mockLlm()` 用 `page.route()` 拦截 LLM API 端点,按脚本返回 SSE 流,使 agent ReAct 循环确定性走完,不依赖真 LLM。**双协议**:同时拦截 OpenAI 兼容(`**/chat/completions`)与 Anthropic Messages API(`**/v1/messages`),各返对应格式 SSE,共享 script 计数。spec 按 demo 拆分(22 个:complex-demo / page-demo / quick-actions / images / icons / html-page-demo / render-check / customize-demo / i18n / human-confirm-demo / header-labels / session-transfer / rag-demo / queue / nested-demo / multi-agent-demo / streaming-false / scrollbar / lifecycle / xss-sanitize / error-recovery / perf-stress;部分 spec 含动态生成用例,总数以实测为准,勿手工维护逐 spec 计数)。写新测试模板见 `.claude/skills/browser-e2e-testing/SKILL.md`。
+**原理**:`tests/browser/_helpers.ts` 的 `mockLlm()` 用 `page.route()` 拦截 LLM API 端点,按脚本返回 SSE 流,使 agent ReAct 循环确定性走完,不依赖真 LLM。**双协议**:同时拦截 OpenAI 兼容(`**/chat/completions`)与 Anthropic Messages API(`**/v1/messages`),各返对应格式 SSE,共享 script 计数。spec 按 demo 拆分(23 个:complex-demo / page-demo / quick-actions / images / icons / html-page-demo / render-check / customize-demo / i18n / human-confirm-demo / header-labels / session-transfer / rag-demo / queue / nested-demo / multi-agent-demo / quick-ask-demo / streaming-false / scrollbar / lifecycle / xss-sanitize / error-recovery / perf-stress;部分 spec 含动态生成用例,总数以实测为准,勿手工维护逐 spec 计数)。写新测试模板见 `.claude/skills/browser-e2e-testing/SKILL.md`。
 
 #### 3. 浏览器手动验证(改 UI/示例后跑)
 `npm run dev` 逐个 demo 验证(见目录结构 examples 清单;各 demo 侧重点见 `doc/usage-guide.md`)。
@@ -186,7 +186,7 @@ rg -o "createChatSdk|setData|systemPromptHelpers" /tmp/sdk.mjs | sort -u
 | 构建配置 | — | ✅(用 dist) | — | plain.html | — |
 
 #### 新增功能测试同步约定(强制)
-每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(3786/1287/176)与 README 中英文;`node scripts/check-test-counts.mjs` 静态对账(各文件声明计数互相一致),发布前 `--run` 实跑取真值。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
+每新增功能/配置项/导出 API,**必须同步补测试**(同 commit),至少 1 条「正常工作」+ 1 条「边界/错误」。判定:selftest = 底层纯函数/工具逻辑/中间件 hooks;e2e = 顶层返回对象方法/AgentCore/新 capabilities/新导出/inspect 反射。命名以 `✓` 开头写「功能名 → 预期行为」。**计数同步**:更新本文件断言计数(3787/1287/179)与 README 中英文;`node scripts/check-test-counts.mjs` 静态对账(各文件声明计数互相一致),发布前 `--run` 实跑取真值。自检:`npm test && npm run build && npm run test:e2e` 三绿方可提交。
 
 #### 发布前必跑顺序
 `npm run build` → `npm test` → `npm run test:e2e` → `npm run test:browser` → `npm run test:exports`(types 与 src 导出对齐)→ `npm run test:types`(对外 types 对齐;**src 真错门禁**:`npx tsc -p tsconfig.json --noEmit 2>&1 | grep 'error TS' | grep -v __tests__ | grep -v examples/` 须为空)→ `npm run test:types-alignment`(d.ts↔src 双向互判,含 E1 的 Same 互赋值签名断言)→ `npm run test:types-novue`(无 vue 项目解析探针:paths 哨兵阻断,E2)→ `npm run test:size` → `node scripts/check-test-counts.mjs`(三计数+README 徽章+CHANGELOG 对账;漂移即红)→ `npm pack --dry-run`(核对不含 `.env`/`src`/`examples`/笔记)→ 版本 bump → publish → CDN 验证

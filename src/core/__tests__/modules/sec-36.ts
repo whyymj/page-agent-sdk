@@ -111,6 +111,14 @@ export async function run(ctx: TestCtx): Promise<void> {
   // ✓ searchDom → text 模式:命中含关键词元素(跳过空文本),返回 CSS 路径 + 片段
   const r1 = searchDom(root as any, '大促', { mode: 'text' })
   assert(r1.total === 1 && r1.hits[0].tag === 'h1' && r1.hits[0].text.includes('大促'), '✓ searchDom → text 模式命中 h1(CSS 路径 + 文本片段)')
+  // 排除 SDK 自身 UI(2026-09-23 门户真机:关键词搜进对话历史自身,自引用噪声 + 检索循环)
+  {
+    const inSdk: any = { ...mockEl('div', { class: 'chat-dialog' }, '模型自己说过的意图话术'), textContent: '模型自己说过的意图话术', closest: () => ({}), contains: () => false }
+    const hostP: any = { ...mockEl('p', {}, '页面正文里的意图识别'), textContent: '页面正文里的意图识别', closest: () => null, contains: () => false }
+    const rootMix: any = { querySelectorAll: (q: string) => (q === '*' ? [inSdk, hostP] : [inSdk, hostP]) }
+    const rs = searchDom(rootMix as any, '意图', { mode: 'text' })
+    assert(rs.total === 1 && rs.hits.length === 1 && rs.hits[0].tag === 'p', `✓ searchDom → 排除 SDK 对话框内命中(isInsideSdkUi),宿主元素照常命中(实际 total=${rs.total})`)
+  }
   // 命中语境窗口(2026-09-21 门户真机驱动):长文本命中 → ±100 字符窗口带 … 截断标记,
   // 命中词前后文可见(旧形态只有元素文本前 120 字,命中 pre>code 时无法判读语境致连环重试)
   {

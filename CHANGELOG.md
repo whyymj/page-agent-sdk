@@ -2,7 +2,17 @@
 
 本变更日志基于 git commit 历史整理,遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 风格,版本号对应 npm 发布版本。
 
+## [Unreleased]
+
+### Added
+
+- **demo `examples/quick-ask-demo`(选区一次性问答)**:无历史快问模式参考实现 —— headless 实例(`ui:false` + `storage:'memory'`)+ 每问 `resetSession()`(单轮上下文只有选区引用,经 `send` 的 `quote` 选项注入)+ 宿主自建迷你面板;「记录」不经 agent(宿主自己收:demo 落右栏,真实宿主为批注库/CMS);SDK 懒加载零首屏。browser 176 → **179**(quick-ask-demo spec:选中→浮钮→面板→回答→记录全链 + 无选区阴性 + docs-demo 同款入口;实施期修 `[hidden]` 被 `display:grid` 压制的经典坑)。另在 `examples/docs-demo` 挂同款入口(`quickAsk.ts`,Vue 页内 vanilla 模块 + 自包含样式,与主对话 SDK 并存互不干扰)。**过程展示(2026-09-21 追加)**:demo 与门户快问均改走 `stream`(quote 以 `AgentMessage.quote` 侧字段携带,与 `send` 的 SendOptions.quote 同形态),面板新增「过程」折叠区 —— 思考尾窗(300 字滑窗 + 计数)+ 工具调用行(`🔧 名称 args 摘要`,完成态带耗时/失败态);spec 补过程断言(mock 带 reasoning + tool_calls)。
+
 ## [4.24.3] - 2026-09-21
+
+### Fixed
+
+- **dom_search/get_dom/dom_info 排除 SDK 自身 UI**(门户真机 dump 驱动:对话历史渲染在宿主页里,关键词会搜进模型自己说过的话 —— 命中 div#chat-root/侧栏,自引用噪声 +「搜意图命中自己讲意图的答案」检索循环;read_page 的 isInsideSdkUi 防线平移):searchDom 命中过滤(SDK UI 内元素剔除,duck-typing mock 零行为面)+ get_dom/dom_info 显式命中 SDK UI 时可读拒绝。selftest 3786 → **3787**(sec-36 混合桩排除断言)。
 
 ### Changed
 

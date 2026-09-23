@@ -104,6 +104,7 @@ export const getDomTool = tool(
     }
     const root = selector ? document.querySelector(selector) : document.body
     if (!root) return `未找到匹配元素:selector="${selector}"`
+    if (isInsideSdkUi(root)) return 'ERROR: 该 selector 命中 SDK 对话框自身(工具读它只会读到对话历史,无页面意义)。请用宿主页面元素的选择器。'
     const struct = domToStructure(root, {
       depth: depth ?? 3,
       attrs,
@@ -340,6 +341,11 @@ export function searchDom(root: ParentNode | null, query: string, opts: { mode?:
       return true
     })
   }
+  // 排除 SDK 自身 UI(2026-09-23 门户真机 dump 驱动):对话历史渲染在宿主页里,关键词会搜进
+  // 模型自己说过的话(命中 div#chat-root / 侧栏;自引用噪声 + 「搜意图命中自己讲意图的答案」
+  // 检索循环)。read_page 同款防线(extractPageText 的 isInsideSdkUi);duck-typing mock 无
+  // closest 时 isInsideSdkUi 恒 false,零行为面
+  matched = matched.filter((el) => !isInsideSdkUi(el))
   const cap = Math.min(matched.length, limit)
   const hits = matched.slice(0, cap).map((el) => {
     // 命中语境窗口(2026-09-21 门户真机 dump 驱动):旧形态取「直接文本子节点前 120 字」—— 命中
@@ -478,6 +484,8 @@ export const domInfoTool = tool(
     ensureDomListenerRecorder()
     const el = document.querySelector(selector)
     if (!el) return `未找到匹配元素:selector="${selector}"(可先用 dom_search 定位)`
+    if (isInsideSdkUi(el)) return 'ERROR: 该 selector 命中 SDK 对话框自身(排障应读宿主页面元素)。'
+
     const info = getElementInfo(el, { styles, includeHtml, htmlLimit, includeEvents, includeRect, pseudo })
     if (!info) return `selector="${selector}" 读取失败`
     return JSON.stringify(info, null, 2)

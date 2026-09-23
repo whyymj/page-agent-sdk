@@ -16,6 +16,7 @@
  * - 无 data 配置(文档问答无 JSON 槽,dataOps 关)—— SDK 最小集成面 = container + llm。
  */
 import { onMounted, onUnmounted, ref } from 'vue'
+import { initQuickAsk } from './quickAsk'
 import { createChatSdk, type ChatSdk } from '../../src/core'
 import DevNav from '../_shared/DevNav.vue'
 
@@ -26,6 +27,8 @@ let agent: ChatSdk | null = null
 const shotMode = typeof location !== 'undefined' && location.search.includes('shot=1')
 
 onMounted(() => {
+  // 快问(选区一次性问答,无历史):独立 headless 实例 + 自建迷你面板,与主对话 SDK 并存互不干扰
+  initQuickAsk()
   agent = createChatSdk({
     id: 'docs-demo',
     container: '#chat-root',
@@ -86,6 +89,7 @@ const openAsk = (): void => agent?.show()
       <div class="docs-tip">
         💡 选中正文任意文字 → 浮出「❝ 引用提问」点击即挂引用并打开对话框;或选中后点右下角「问 AI」/输入框(自动捕获)→ 引用 chip 挂上 → 输入问题发送。
         🎨 浮层菜单自定义:本 demo 把按钮文案换成了「引用提问」(i18n.messages 键级覆盖)、配色改成墨绿(宿主 CSS 覆盖,见 App.vue 末尾非 scoped style)。
+        ✦ 快问演示:选中正文任意文字 → 浮出「✦ 快问」→ 针对选中内容一次性问答(无对话历史),回答可「记录」落右下角清单(与主对话框独立,headless 实例)。
         📸 截图演示:URL 加 ?shot=1 声明多模态,agent 获得 take_screenshot 视觉验证能力(纯文本模型走识图转述)
       </div>
     </header>
@@ -142,16 +146,18 @@ const openAsk = (): void => agent?.show()
 <style scoped>
 .docs-page { max-width: 780px; margin: 0 auto; padding: 24px 20px 120px; }
 .docs-hero h1 { font-size: 26px; margin: 12px 0 4px; }
-.docs-meta { color: #6b7280; font-size: 13px; margin: 0 0 10px; }
+/* 深色适配(2026-09-21 用户实测:共享主题深底 #1a1a2e,原硬编码浅色系字色 → 深底深字看不清):
+   正文/提示/表格统一走 --ark-* 主题变量,与 _shared/theme.css 同源 */
+.docs-meta { color: var(--ark-muted); font-size: 13px; margin: 0 0 10px; }
 .docs-tip {
-  background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25);
-  border-radius: 8px; padding: 8px 12px; font-size: 13px; color: #374151; margin-bottom: 20px;
+  background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: 8px; padding: 8px 12px; font-size: 13px; color: var(--ark-fg); margin-bottom: 20px;
 }
-.docs-article h2 { font-size: 19px; margin: 28px 0 10px; }
-.docs-article p { font-size: 14.5px; line-height: 1.85; color: #1f2937; margin: 0 0 12px; }
+.docs-article h2 { font-size: 19px; margin: 28px 0 10px; color: var(--ark-fg); }
+.docs-article p { font-size: 14.5px; line-height: 1.85; color: var(--ark-fg); margin: 0 0 12px; }
 .docs-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0 16px; }
-.docs-table th, .docs-table td { border: 1px solid #e5e7eb; padding: 6px 10px; text-align: left; }
-.docs-table th { background: #f9fafb; }
+.docs-table th, .docs-table td { border: 1px solid #3a3a5e; padding: 6px 10px; text-align: left; }
+.docs-table th { background: var(--ark-panel); color: var(--ark-fg); }
 .ask-btn {
   position: fixed; right: 28px; bottom: 96px; z-index: 30;
   padding: 10px 18px; border-radius: 999px; border: none; cursor: pointer;
